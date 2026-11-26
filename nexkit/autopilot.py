@@ -35,7 +35,6 @@ from .state import (
     BOT_LOGINS,
     CONTINUED,
     FAILURE,
-    MAX_PARTS,
     PAUSED,
     RUNNING,
     SUCCESS,
@@ -1156,8 +1155,10 @@ def _later(text, since):
 
 
 def engine_round(run):
-    """Whether the engine decides what follows the `/nexkit go` whose marker is `run`: one
-    that stopped as blocked with questions or with protected paths its change needs."""
+    """Whether the engine decides what follows the `/nexkit go` whose marker is `run` on a
+    pull request's round, as `_pull_step` asks: one that stopped as blocked with questions or
+    with protected paths its change needs. The sweep of an issue sends every blocked
+    `/nexkit go` to the engine (`_assess`)."""
     blocked = run.get("outcome") == "agent_blocked"
     return blocked and bool(run.get("questions") or run.get("protected_paths"))
 
@@ -1181,56 +1182,6 @@ def _since_stop(gh, issue, comments, stop):
         reason = f"{listed}, which blocked it, closed after the stopped `/nexkit go`"
         return f"{reason}, so autopilot plans again"
     return None
-
-
-def _split(gh, issue, plan, data, record, start, pull):
-    """The step for an issue whose pull request's round ran out of time and whose plan since
-    is too large: split it as the plan suggests, and close the pull request as superseded;
-    or, when it suggests no parts or parts titled like the issue, ask once for the plan
-    again; or wait for a person at `MAX_DEPTH` and after a second such plan. The engine
-    decides every other plan's split (`host.after_plan`), but it never splits an item that
-    has a change (docs/engine.md#states), so this split stays NexKit 6's
-    (docs/engine.md#getting-there)."""
-    if depth(issue, lineage(gh, issue)) >= MAX_DEPTH:
-        # Its scope was set levels above, so a person splits it on, or implements it.
-        return _step(issue, "waits", person(DEPTH_DO, DEPTH_REASON))
-    parts = planned_parts(plan, data)
-    if parts > MAX_PARTS and record.get("fewer_asked"):
-        why = f"its plan has {parts} parts again, and autopilot files at most {MAX_PARTS}"
-        return _step(issue, "waits", person(SPLIT_DO, why))
-    if parts > MAX_PARTS:
-        start = {
-            **start,
-            "note": FEWER_NOTE.format(parts=parts, most=MAX_PARTS),
-            "remember": {"fewer_asked": True},
-        }
-        reason = (
-            f"the plan has {parts} parts and autopilot files at most {MAX_PARTS}, so autopilot "
-            "plans again for fewer"
-        )
-        return _step(issue, "start", reason, command="plan", **start)
-    if not data.get("split") and record.get("parts_asked"):
-        why = "its plan is too large for one session and suggests no parts again"
-        return _step(issue, "waits", person(SPLIT_DO, why))
-    if not data.get("split"):
-        start = {**start, "note": PARTS_NOTE, "remember": {"parts_asked": True}}
-        reason = "the plan is too large and suggests no parts, so autopilot plans again"
-        return _step(issue, "start", reason, command="plan", **start)
-    repeated = repeated_titles(issue, data["split"])
-    if repeated and record.get("titles_asked"):
-        why = "the parts of its plan are titled like the issue again"
-        return _step(issue, "waits", person(SPLIT_DO, why))
-    if repeated:
-        titles = ", ".join(f'"{title}"' for title in repeated)
-        start = {
-            **start,
-            "note": TITLE_NOTE.format(titles=titles),
-            "remember": {"titles_asked": True},
-        }
-        reason = "parts of the plan are titled like the issue, so autopilot plans again"
-        return _step(issue, "start", reason, command="plan", **start)
-    fields = {"parts": data["split"], "plan_url": plan.get("html_url") or "", "pull": pull}
-    return _step(issue, "split", "the plan splits the issue", **fields, **start)
 
 
 def _meaningful(rounds):
@@ -1339,41 +1290,22 @@ def _tries(record):
     return 1 if record.get("retried") else 0
 
 
-def _again(issue, record, now, what, fields, extra=None):
+def _again(cfg, issue, record, now, what, fields, extra=None, person=False):
     """The step for a command whose run GitHub never started, or that ended without a
     report (`what` says which): start it again, as `fields` says, `AGAIN[n]` after the
     last start, for its n-th time; wait meanwhile, with the run on its way as far as
     `max_parallel` goes; and once the tries are used up, wait for a person. `record` is
     autopilot's record of the last start of the same command, or {} when there is none. A
     start that `record` names `once` was the one more start of a round that started the
-    next by itself, which waits for a person when it does not run either."""
-    extra = extra or {}
-    tries, command = _tries(record), f"`/nexkit {fields['command']}`"
-    limit = 1 if record.get("once") else len(AGAIN)
-    if tries >= limit:
-        if record.get("once"):
-            why = f"{what}, after autopilot started it once more"
-            return _step(issue, "waits", person(LOST_DO, why), **extra)
-        why = (
-            f"{what}, {tries + 1} times: GitHub created no job for it, or ended its run "
-            "without a report, as it does while GitHub Actions has an outage"
-        )
-        return _step(issue, "waits", person(OUTAGE_DO.format(command=command), why), **extra)
-    due = (parse_iso(record.get("at")) or now) + AGAIN[tries] if tries else now
-    if now < due:
-        reason = (
-            f"{what}; autopilot starts {command} again after {due:%H:%M} UTC, since GitHub "
-            "may not start runs for a while"
-        )
-        return _step(issue, "active", reason, **extra)
-    remember = {
-        **fields.get("remember", {}),
-        "tries": tries + 1,
-        **({"once": True} if record.get("once") else {}),
-    }
-    again = "once more" if not tries else "again"
-    reason = f"{what}, so autopilot starts {command} {again}"
-    return _step(issue, "start", reason, **{**fields, "remember": remember}, **extra)
+    next by itself, which waits for a person when it does not run either. With `person`,
+    the command is a person's, which waits for them. The engine decides each of these
+    (`host.lost_again`)."""
+    from .host import Refused, lost_again, refused_reason
+
+    try:
+        return lost_again(cfg, issue, record, now, what, fields, extra, person)
+    except Refused as exc:
+        return _step(issue, "waits", refused_reason(exc), **(extra or {}))
 
 
 def _stalled(gh, issue, comment, run, record, start, target, now, cfg=None):
@@ -1390,7 +1322,7 @@ def _stalled(gh, issue, comment, run, record, start, target, now, cfg=None):
         return _handed_on(issue, comment, run, start, now, cfg, "the run that continues it")
     if status != RUNNING or not _ended(gh, run):
         return None
-    return _reportless(gh, issue, comment, run, record, start, target, now, stale=True)
+    return _reportless(gh, cfg, issue, comment, run, record, start, target, now, stale=True)
 
 
 # The jobs of a run whose agent session spends agent time.
@@ -1415,7 +1347,7 @@ def _agent_ran(gh, run):
     )
 
 
-def _reportless(gh, issue, comment, run, record, start, target, now, stale=False):
+def _reportless(gh, cfg, issue, comment, run, record, start, target, now, stale=False):
     """The step for a run that ended without a report: it starts again when NexKit started
     it by itself, later each time (see `_again`), or once more only when its agent ran,
     since those starts count toward no budget; a person's command waits for them. Tries
@@ -1425,19 +1357,18 @@ def _reportless(gh, issue, comment, run, record, start, target, now, stale=False
     follows a failed run."""
     command = run.get("command") or ("fix" if run_action(run) == "fix" else "review")
     extra = {"stale": {"number": target, "comment": comment["id"]}} if stale else {}
-    if not _automatic(run):
-        return _step(issue, "waits", person(LOST_DO, REPORTLESS), **extra) if stale else None
+    automatic = _automatic(run)
     at = parse_iso(record.get("at"))
     same = (record.get("command"), record.get("target")) == (command, target)
     record = record if same and at is not None and now - at <= LOST else {}
-    if _agent_ran(gh, run):
+    if automatic and _agent_ran(gh, run):
         record = {**record, "once": True}
     fields = {**start, "target": target, "command": command}
     auto = _auto_input(run)
     if auto:
         # The same kind of round: one after failing checks merges the base branch first.
         fields["auto"] = auto
-    return _again(issue, record, now, REPORTLESS, fields, extra)
+    return _again(cfg, issue, record, now, REPORTLESS, fields, extra, person=not automatic)
 
 
 def _handed_on(issue, comment, run, start, now, cfg, what):
@@ -1470,7 +1401,7 @@ def _handed_on(issue, comment, run, start, now, cfg, what):
     }
     minutes = cfg["autopilot"]["lost_after_minutes"]
     reason = f"{what} did not start within {minutes} minutes"
-    return _again(issue, {"once": True}, now, reason, fields)
+    return _again(cfg, issue, {"once": True}, now, reason, fields)
 
 
 def settle_ended(gh, number, comment, run):
@@ -1537,7 +1468,7 @@ def _pull_step(gh, cfg, issue, pull, rounds, record, start, comments, pull_comme
         lost = _handed_on(issue, comment, latest, start, now, cfg, what)
         return lost or _step(issue, "active", f"pull request #{pull} has a round on its way")
     if latest.get("outcome") == "lost":
-        lost = _reportless(gh, issue, comment, latest, record, start, pull, now)
+        lost = _reportless(gh, cfg, issue, comment, latest, record, start, pull, now)
         if lost:
             return lost
     if latest.get("outcome") in (UNTRUSTED_ROUND, UNTRUSTED_MERGE):
@@ -1732,21 +1663,18 @@ def _merge_step(gh, cfg, issue, pull, comment, run, start, now):
 
 def _replanned(gh, cfg, issue, plan, last, record, start, comments, pull):
     """The step after the plan autopilot asked for when a round of the pull request ran out
-    of time: split the issue as the plan suggests (`_split`), or what the engine decides
-    (`host.after_plan`): answer its questions, or, when it needs nobody, a fix round on the
-    pull request that follows the revised plan."""
+    of time, which the engine decides (`host.after_plan`): split the issue and close the pull
+    request as superseded, plan once more for what a split needs, answer its questions, or,
+    when it needs nobody, start a fix round on the pull request that follows the revised plan."""
     if last.get("status") != SUCCESS:
         return _step(issue, "waits", last.get("attention") or failed_reason("plan"))
-    data = plan_data(plan) if plan else None
-    if (data or {}).get("too_large"):
-        return _split(gh, issue, plan, data, record, start, pull)
     return _after_plan(gh, cfg, issue, plan, last, record, start, comments, pull)
 
 
 def _after_go(gh, cfg, issue, comment, last, record, start, comments):
-    """The step after a `/nexkit go` that stopped as blocked with questions or protected
-    paths, which the engine decides (`host.after_go`). An issue whose next step the engine
-    refuses to decide waits for a person, alone."""
+    """The step after a `/nexkit go` that stopped as blocked, with questions, protected paths
+    or nothing to answer, which the engine decides (`host.after_go`). An issue whose next step
+    the engine refuses to decide waits for a person, alone."""
     from .host import Refused, after_go, refused_reason
 
     try:
@@ -1946,9 +1874,8 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
             "basis": current,
             **({"auto": record["auto"]} if record.get("auto") else {}),
         }
-        return _again(
-            issue, record, now, f"the {command} that autopilot started did not run", fields
-        )
+        what = f"the {command} that autopilot started did not run"
+        return _again(cfg, issue, record, now, what, fields)
     start = {"basis": current, "target": number, "note": "", "remember": {}}
     found = [(c, run) for c, run in run_comments(comments) if "command" in run]
     last = found[-1][1] if found else None
@@ -1958,7 +1885,7 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
         reason = retry_waits(last) or f"`/nexkit {last['command']}` is {last['status']}"
         return stalled or _step(issue, "active", reason)
     if last and last.get("outcome") == "lost" and not pull:
-        lost = _reportless(gh, issue, found[-1][0], last, record, start, number, now)
+        lost = _reportless(gh, cfg, issue, found[-1][0], last, record, start, number, now)
         if lost:
             return lost
     plan = latest_plan(comments)
@@ -1998,7 +1925,7 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
                 "its pull request was closed, and autopilot opens no other by itself",
             )
             return _step(issue, "waits", reason)
-        if engine_round(last):
+        if last.get("outcome") == "agent_blocked":
             return _after_go(gh, cfg, issue, *found[-1], record, start, comments)
         if last.get("timed_out"):
             return _after_stop(gh, cfg, issue, last, record, start, comments)
@@ -2011,7 +1938,7 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
     return _after_plan(gh, cfg, issue, plan, last, record, start, comments)
 
 
-def carries_on(gh, cfg, decision, outcome, agent):
+def carries_on(gh, cfg, decision, outcome, agent, ran=None):
     """Whether autopilot takes over after a run that would otherwise need a person, so
     `report` mentions nobody: it answers a plan's or a blocked round's questions, splits a
     plan that is too large or plans it again for its parts, or asks for a split after the
@@ -2021,17 +1948,17 @@ def carries_on(gh, cfg, decision, outcome, agent):
     agent = agent or {}
     output = agent.get("output") or {}
     if outcome == "planned":
-        return _plan_carried_on(gh, cfg, decision, output)
+        return _plan_carried_on(gh, cfg, decision, output, ran)
     if outcome == "agent_blocked" and decision["action"] == "implement":
-        return _round_carried_on(gh, cfg, decision, agent)
+        return _round_carried_on(gh, cfg, decision, agent, ran)
     if output.get("protected_paths"):
         # Only a person changes protected paths.
         return False
     timed_out = outcome == "agent_error" and agent.get("timed_out")
     if outcome == "agent_blocked" and decision["action"] == "fix":
-        return _stop_carried_on(gh, cfg, decision, agent)
+        return _stop_carried_on(gh, cfg, decision, agent, ran)
     if timed_out and decision["action"] in ("implement", "fix"):
-        return _stop_carried_on(gh, cfg, decision, agent)
+        return _stop_carried_on(gh, cfg, decision, agent, ran)
     if outcome != "agent_blocked":
         return False
     # The blocked round of another stage, which no engine decision follows.
@@ -2050,7 +1977,7 @@ def carries_on(gh, cfg, decision, outcome, agent):
         return False
 
 
-def _round_carried_on(gh, cfg, decision, agent):
+def _round_carried_on(gh, cfg, decision, agent, ran=None):
     """Whether autopilot carries on after a `/nexkit go` that stopped as blocked, as the
     engine decides what follows it (`host.round_carried_on`). One whose next step the
     engine refuses to decide needs a person."""
@@ -2058,12 +1985,12 @@ def _round_carried_on(gh, cfg, decision, agent):
 
     try:
         issue = gh.issue(decision["issue"])
-        return taken(gh, cfg, issue) and round_carried_on(gh, cfg, issue, decision, agent)
+        return taken(gh, cfg, issue) and round_carried_on(gh, cfg, issue, decision, agent, ran)
     except (GitHubError, Refused):
         return False
 
 
-def _stop_carried_on(gh, cfg, decision, agent):
+def _stop_carried_on(gh, cfg, decision, agent, ran=None):
     """Whether autopilot carries on after a fix round that stopped as blocked, or a round
     that ran out of time, as the engine decides what follows it (`host.stop_carried_on`).
     One whose next step the engine refuses to decide needs a person."""
@@ -2071,12 +1998,12 @@ def _stop_carried_on(gh, cfg, decision, agent):
 
     try:
         issue = gh.issue(decision["issue"])
-        return taken(gh, cfg, issue) and stop_carried_on(gh, cfg, issue, decision, agent)
+        return taken(gh, cfg, issue) and stop_carried_on(gh, cfg, issue, decision, agent, ran)
     except (GitHubError, Refused):
         return False
 
 
-def _plan_carried_on(gh, cfg, decision, output):
+def _plan_carried_on(gh, cfg, decision, output, ran=None):
     """Whether autopilot carries on after a plan, as the engine decides what follows it
     (`host.plan_carried_on`). One whose next step the engine refuses to decide needs a
     person."""
@@ -2084,7 +2011,7 @@ def _plan_carried_on(gh, cfg, decision, output):
 
     try:
         issue = gh.issue(decision["issue"])
-        return taken(gh, cfg, issue) and plan_carried_on(gh, cfg, issue, decision, output)
+        return taken(gh, cfg, issue) and plan_carried_on(gh, cfg, issue, decision, output, ran)
     except (GitHubError, Refused):
         return False
 

@@ -72,9 +72,9 @@ INPUTS = {
 WORK = ("runAgent", "runChecks", "publish", "accept", "createParts", "replaceChange", "wait")
 # The actions that the host carries out again under a new id when it lost them: they only
 # tell, show or end, so doing one again changes nothing that one done already changed.
-AGAIN = ("close", "cancel", "needPerson", "show", "wait")
+AGAIN = ("close", "cancel", "needPerson", "show", "wait", "withdrawChange")
 # What a review-only item never gets: it is only checked and reviewed.
-WRITES = ("publish", "replaceChange", "accept", "createParts")
+WRITES = ("publish", "replaceChange", "accept", "createParts", "withdrawChange")
 # The states of a round, which keep the policies that the round started with.
 ROUND = ("working", "fixing", "checking", "reviewing")
 # The waits that a tick ends: those for a time.
@@ -101,6 +101,7 @@ DEFAULTS = {
     "conflictRounds": 3,
     "splits": False,
     "answers": "never",
+    "afterFailure": "person",
     "splitParts": 10,
     "splitDepth": 3,
     "retryWaits": [15, 30, 60],
@@ -360,6 +361,9 @@ class Step:
             # round keeps it, as NexKit 6's `retry` goes through the stages of one command.
             self.forget_retries()
         self.s["rounds"]["started"] += stage in ("implement", "fix") and not again
+        if stage in ("implement", "fix") and not again and "supersede" in self.s["asked"]:
+            # The change goes on, so a later plan no longer replaces it (`timed_out`).
+            self.s["asked"].remove("supersede")
         repeated = self.s["rounds"].get("repeated") or []
         fields = {"diagnose": repeated[:DIAGNOSES] if diagnose else []} if stage == "fix" else {}
         self.do(
@@ -434,6 +438,19 @@ class Step:
             for part in plan["split"]
         ]
         self.do("createParts", parts=parts)
+        change = self.s["change"]
+        if change:
+            # The parts carry the work of the change, which a split would leave with nothing
+            # to end it (`timed_out`).
+            self.do(
+                "withdrawChange",
+                changeId=change["id"],
+                reason="The parts of the split carry the work.",
+            )
+            self.s["change"] = None
+            self.s["observed"] = None
+        if "supersede" in self.s["asked"]:
+            self.s["asked"].remove("supersede")
 
     def next_fix(self):
         """The checks or the review fail: an automatic fix round while one is left
@@ -703,13 +720,16 @@ class Step:
         """An implement or fix agent ran out of time. With splits on, as autopilot does, the
         item asks once for a plan that splits it; otherwise, the second time, or for an item
         at the deepest level of parts, which is not split, a person decides
-        (`autopilot._stopped`, `split_refused`)."""
+        (`autopilot._stopped`, `split_refused`). An item with a change marks that plan
+        `supersede`: if it is too large, its split withdraws the change."""
         self.by = None
         deepest = self.s.get("depth", 0) >= self.p["splitDepth"]
         if self.p["splits"] and "split" not in self.s["asked"] and not deepest:
-            # NexKit 6 asks after a fix round too. An item with a change is never split, so its
-            # new plan goes on as one change on it, with the plan revised.
+            # NexKit 6 asks after a fix round too. The plan of an item with a change is split
+            # only while this mark stands; otherwise it goes on as one change, revised.
             self.s["asked"].append("split")
+            if self.s["change"] and "supersede" not in self.s["asked"]:
+                self.s["asked"].append("supersede")
             self.start_plan()
         else:
             self.move("failed")
@@ -1091,16 +1111,31 @@ class Step:
     def on_textChanged(self, event):
         return False
 
+    def fails_for_nothing(self):
+        """Whether the item failed because its round was blocked with nothing to answer, on no
+        change, and `afterFailure` plans it again: the item waits in `failed` with attention
+        `blocked`, which only that round gives (`autopilot._since_stop`)."""
+        return (
+            self.state == "failed"
+            and not self.s["change"]
+            and (self.s["attention"] or {}).get("reason") == "blocked"
+            and self.p["afterFailure"] == "replan"
+        )
+
     def on_commented(self, event):
         """A person's comment: the engine may answer the next plan's questions again, and with
         automatic approval a plan that waits for a person on an item with no change is
         planned again, since the plan did not hold what the comment says
-        (`autopilot._commented_after`)."""
+        (`autopilot._commented_after`). An item that failed for nothing is planned again
+        under `afterFailure` `replan` (`fails_for_nothing`)."""
         if event["by"]["role"] == "outside":
             return False
         answered = "answers" in self.s["asked"]
         self.forget_answers()
         if self.round_commented():
+            return True
+        if self.fails_for_nothing():
+            self.start_plan()
             return True
         plan = self.s["plan"]
         if (
@@ -1134,9 +1169,15 @@ class Step:
         """An item that blocks this one ended, or the bug issue of a failure that the base
         branch has: the waits on it end. With automatic approval, the questions of a round on
         an item with no change, which the engine could not answer, are planned again: the
-        round may have stopped for that work (`autopilot._since_stop`)."""
+        round may have stopped for that work (`autopilot._since_stop`). An item that failed for
+        nothing is planned again whether or not it waited on that blocker
+        (`fails_for_nothing`)."""
         ends = ("blocker", "baseFailure")
         waits = [w for w in self.s["waits"] if w["for"] in ends and w["on"] == event["blocker"]]
+        if self.fails_for_nothing():
+            self.s["waits"] = [wait for wait in self.s["waits"] if wait not in waits]
+            self.start_plan()
+            return True
         if not waits and self.p["planApproval"] == "autoWhenClean" and not self.s["change"]:
             if self.round_waits("question"):
                 self.start_plan()
@@ -1368,7 +1409,11 @@ class Step:
         self.do("show", what="plan", text=plan["text"])
         if self.p["planApproval"] != "autoWhenClean":
             self.plan_waits()
-        elif plan["tooLarge"] and self.p["splits"] and not self.s["change"]:
+        elif (
+            plan["tooLarge"]
+            and self.p["splits"]
+            and (not self.s["change"] or "supersede" in self.s["asked"])
+        ):
             self.split_or_ask()
         elif plan["tooLarge"]:
             self.ask("approval", "The plan is too large, and a person decides how to go on.")

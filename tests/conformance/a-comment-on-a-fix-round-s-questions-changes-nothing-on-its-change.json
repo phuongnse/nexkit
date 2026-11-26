@@ -1,7 +1,9 @@
 {
+  "note": "On an item with a change, a comment or a blocker that closes changes nothing to a fix round's questions, under automatic approval.",
   "policies": {
     "planApproval": "autoWhenClean",
-    "splits": true
+    "answers": "never",
+    "reviewAfterFailingChecks": "onlyAfterPassing"
   },
   "steps": [
     {
@@ -43,7 +45,14 @@
             "id": "308",
             "version": "v1"
           },
-          "refused": null
+          "refused": null,
+          "observed": {
+            "changeId": "308",
+            "version": "v1",
+            "conflicts": false,
+            "merged": false,
+            "empty": false
+          }
         }
       },
       "state": "checking",
@@ -60,25 +69,13 @@
           "checks": [
             {
               "name": "test",
-              "passed": true,
+              "passed": false,
               "skipped": false,
-              "signature": null,
+              "signature": "fail test_x",
               "knownBaseFailure": false
             }
           ]
         }
-      },
-      "state": "reviewing",
-      "changed": true,
-      "actions": [
-        "runAgent"
-      ]
-    },
-    {
-      "event": {
-        "kind": "actionFinished",
-        "action": "runAgent",
-        "result": "@agent:reviewChanges"
       },
       "state": "fixing",
       "changed": true,
@@ -90,28 +87,42 @@
       "event": {
         "kind": "actionFinished",
         "action": "runAgent",
-        "result": "@timeout"
-      },
-      "state": "planning",
-      "changed": true,
-      "actions": [
-        "runAgent"
-      ]
-    },
-    {
-      "event": {
-        "kind": "actionFinished",
-        "action": "runAgent",
-        "result": "@agent:planSplit"
+        "result": "@agent:fixQuestions"
       },
       "state": "awaitingApproval",
       "changed": true,
       "actions": [
-        "show",
         "needPerson"
       ],
       "expect": {
-        "attention.reason": "approval"
+        "attention.reason": "question",
+        "questions.stage": "fix"
+      }
+    },
+    {
+      "event": {
+        "kind": "commented"
+      },
+      "state": "awaitingApproval",
+      "changed": false,
+      "actions": [],
+      "expect": {
+        "attention.reason": "question",
+        "change.id": "308"
+      }
+    },
+    {
+      "event": {
+        "kind": "blockerClosed",
+        "blocker": "7",
+        "completed": false
+      },
+      "state": "awaitingApproval",
+      "changed": false,
+      "actions": [],
+      "expect": {
+        "attention.reason": "question",
+        "change.id": "308"
       }
     }
   ]

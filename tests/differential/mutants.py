@@ -134,10 +134,42 @@ MUTANTS = {
     # One conflict round more than `conflictRounds` (#347).
     "conflict-rounds-plus-one": {
         "path": MACHINE,
-        "old": """elif policy == "resolve" and rounds["conflicts"] < self.p["conflictRounds"]:""",
-        "new": """elif policy == "resolve" and rounds["conflicts"] <= self.p["conflictRounds"]:""",
+        "old": """return self.s["rounds"]["conflicts"] < self.p["conflictRounds"]""",
+        "new": """return self.s["rounds"]["conflicts"] <= self.p["conflictRounds"]""",
         "seen": ("harness", "walker"),
-        "families": ("conflict", "released", "chains"),
+        "families": ("conflict", "released", "chains", "conflicted"),
+    },
+    # The conflict rounds used never reach the engine at a merge, so it starts a round past
+    # `conflicts.max_rounds` (#423).
+    "accept-answer-ignores-conflict-rounds": {
+        "path": HOST,
+        "old": """    doc["rounds"]["conflicts"] = max(int(conflicts or 0), 0)""",
+        "new": """    doc["rounds"]["conflicts"] = 0""",
+        "seen": ("harness",),
+        "families": ("conflicted",),
+    },
+    # A `dirty` state that GitHub could not explain sooner starts a conflict round, where
+    # NexKit 6 leaves it to a person (#423).
+    "unknown-dirty-sent-as-conflict": {
+        "path": "nexkit/report.py",
+        "old": '''        refusal_kind = "needsPerson" if auto_resolve else "conflict"''',
+        "new": '''        refusal_kind = "conflict"''',
+        "seen": ("harness",),
+        "families": ("conflicted",),
+    },
+    # A conflict at the merge always waits for a person, whatever the policy and the rounds
+    # left (#423).
+    "conflict-at-the-accept-always-a-person": {
+        "path": MACHINE,
+        "old": """        elif result["refusal"] == "conflict":
+            self.on_conflict_found()
+""",
+        "new": """        elif result["refusal"] == "conflict":
+            self.move("ready")
+            self.need("acceptRefused", result["text"] or "The accept was refused.")
+""",
+        "seen": ("harness", "walker"),
+        "families": ("conflicted",),
     },
     # A judged round's next fix round starts even under a hold (#341).
     "hold-ignored-on-fix": {
@@ -304,8 +336,8 @@ MUTANTS = {
         "path": MACHINE,
         "old": """        if count >= (min(1, len(waits)) if once else len(waits)):""",
         "new": """        if count >= len(waits):""",
-        "seen": ("walker",),
-        "families": ("round", "give"),
+        "seen": ("harness", "walker"),
+        "families": ("lost",),
     },
     # A person's lost work starts again as the engine's own does, where NexKit 6's
     # `_reportless` waits for a person (#397).
@@ -315,8 +347,22 @@ MUTANTS = {
             return False
         if action["kind"] == "runAgent":""",
         "new": """        if action["kind"] == "runAgent":""",
-        "seen": ("walker",),
-        "families": ("round", "give"),
+        "seen": ("harness", "walker"),
+        "families": ("lost",),
+    },
+    # Lost work waits as long as the last wait, not the next (#399).
+    "lost-waits-shifted": {
+        "path": MACHINE,
+        "old": """        if waits[count] == 0:
+            self.resume()
+            return
+        until = _later(self.at, waits[count])""",
+        "new": """        if waits[count] == 0:
+            self.resume()
+            return
+        until = _later(self.at, waits[-1])""",
+        "seen": ("harness", "walker"),
+        "families": ("lost",),
     },
     # A transient stop waits as long as the last wait, not the next (#398).
     "transient-waits-shifted": {
@@ -342,6 +388,29 @@ MUTANTS = {
     },
     # A change that became empty ends the item as accepted, not as `noChange`, so the host
     # closes no pull request on its base branch (#393).
+    # A split of an item with a change leaves it open, with no action that withdraws it. The
+    # host refuses it, so on GitHub the issue waits for a person, where NexKit 6 splits it and
+    # closes its pull request (#413).
+    "split-keeps-the-change": {
+        "path": MACHINE,
+        "old": """            self.do(
+                "withdrawChange",
+                changeId=change["id"],
+                reason="The parts of the split carry the work.",
+            )""",
+        "new": """            pass""",
+        "seen": ("harness", "walker"),
+        "families": ("replan",),
+    },
+    # The plan that a round that ran out of time asked for is sent without `supersede`, so a
+    # too-large one waits for a person, where NexKit 6 splits the issue (#413).
+    "replan-without-supersede": {
+        "path": HOST,
+        "old": """            doc["asked"].append("supersede")""",
+        "new": """            pass""",
+        "seen": ("harness",),
+        "families": ("replan",),
+    },
     "an-emptied-change-is-accepted": {
         "path": MACHINE,
         "old": """        elif observed["empty"]:
@@ -350,6 +419,28 @@ MUTANTS = {
             self.move("accepted")""",
         "seen": ("harness",),
         "families": ("ended",),
+    },
+    # A person's comment no longer plans again an item that failed for nothing (#415). The
+    # sweep of NexKit 6 does, so both the differential check and the walker see it.
+    "failure-comment-ignored": {
+        "path": MACHINE,
+        "old": """        if self.fails_for_nothing():
+            self.start_plan()
+            return True
+        plan = self.s["plan"]""",
+        "new": """        plan = self.s["plan"]""",
+        "seen": ("harness", "walker"),
+        "families": ("failure",),
+    },
+    # An item with a change fails for nothing too and is planned again by a comment (#415).
+    # On GitHub an issue's `/nexkit go` never has a change, so only the walker sees it.
+    "failure-ignores-change": {
+        "path": MACHINE,
+        "old": """            and not self.s["change"]
+            and (self.s["attention"] or {}).get("reason") == "blocked\"""",
+        "new": """            and (self.s["attention"] or {}).get("reason") == "blocked\"""",
+        "seen": ("walker",),
+        "families": ("failure",),
     },
 }
 

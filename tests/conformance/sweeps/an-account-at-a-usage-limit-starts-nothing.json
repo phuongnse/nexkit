@@ -1,0 +1,51 @@
+{
+  "note": "An item on a limited account waits for the usage limit even when it is awaited and a place is free, and takes no place, while items on other accounts start.",
+  "policies": {
+    "maxParallel": 3
+  },
+  "running": 0,
+  "limited": [
+    "acme"
+  ],
+  "items": [
+    {
+      "item": "1",
+      "account": "other"
+    },
+    {
+      "item": "2",
+      "account": "acme"
+    },
+    {
+      "item": "3",
+      "account": "acme",
+      "awaited": true
+    },
+    {
+      "item": "4",
+      "account": null
+    }
+  ],
+  "starts": [
+    {
+      "item": "1",
+      "beyondLimit": false
+    },
+    {
+      "item": "4",
+      "beyondLimit": false
+    }
+  ],
+  "waits": [
+    {
+      "item": "2",
+      "for": "usageLimit",
+      "running": 1
+    },
+    {
+      "item": "3",
+      "for": "usageLimit",
+      "running": 1
+    }
+  ]
+}

@@ -206,6 +206,15 @@ def _load(path):
     return json.loads(path.read_text()) if path.is_file() else None
 
 
+def _ran(path):
+    """The runner's result in `run.json` at `path`, or None when it is missing or not JSON;
+    `host.spent` checks it against the protocol."""
+    try:
+        return _load(path)
+    except (ValueError, RecursionError):
+        return None
+
+
 def _tokens(*results):
     """The tokens of the stages that ran, or None when one of them has no count."""
     return add_tokens(*(r.get("tokens") for r in results if r))
@@ -1555,6 +1564,7 @@ def _engine_refused(target, message, error):
 
 def _refused(gh, cfg, target, row, message, exc, workflow, default_branch, after_move=False):
     """(outcome, message) after GitHub refused the merge: a conflict round for a conflict,
+    or a person once the rounds are used up, as the engine decides (`host.accept_answer`),
     a review of a head that moved, an automatic fix round for required checks that failed,
     at the first try or while the merge waits (see `_required_failed`), an update of a
     branch that is behind with a review of the new commit, `merge_waiting` for required
@@ -1581,7 +1591,26 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch, after
     message += f" Automatic merge was not possible: {exc}"
     auto_resolve, limit = cfg["conflicts"]["auto_resolve"], cfg["conflicts"]["max_rounds"]
     if auto_resolve and is_conflicting(gh, pr):
-        started = start_conflict_round(gh, pr, base, workflow, default_branch, limit, row=row)
+        # Whether a round is left, or a person decides, is the engine's (`host.accept_answer`).
+        from .host import Refused, accept_answer, refused_parts
+
+        result = {"accepted": False, "refusal": "conflict", "text": f"It conflicts with `{base}`."}
+        auto_fixes = (target.get("state") or {}).get("auto_fixes", 0)
+        used = conflict_rounds_of(gh, pr, row)
+        try:
+            end, _ = accept_answer(
+                cfg, target["issue"], pr, head, auto_fixes, result, conflicts=used
+            )
+            if end not in ("fix", "person"):
+                raise Refused(f"The engine answers {end!r} to a conflict at the merge.")
+        except Refused as error:
+            do, why = refused_parts(error)
+            target["found"] = {"refused": (do, why)}
+            unblocks = autopilot.person(do, why)
+            return "merge_refused", f"{message}\n\n**What unblocks it:** {unblocks}."
+        started = start_conflict_round(
+            gh, pr, base, workflow, default_branch, limit, row=row, left=end == "fix"
+        )
         if started.startswith("Started"):
             return "conflict_fix", f"{message}\n\nIt conflicts with `{base}`. {started}"
         target["found"] = {
@@ -1649,9 +1678,28 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch, after
     if state == "clean":
         # GitHub calls it mergeable and still refuses it: sweeps do not try this head again.
         row["refused_clean"] = head
-    if state in ("dirty", "behind"):
-        # Only without `conflicts.auto_resolve` does a refusal for these get here.
-        do, why = _not_up_to_date(state, base)
+    if state == "dirty":
+        # With `conflicts.auto_resolve` on, GitHub could not say before whether it conflicts,
+        # so a person decides (`needsPerson`); with it off, a conflict is the engine's.
+        from .host import Refused, accept_answer, refused_parts
+
+        refusal_kind = "needsPerson" if auto_resolve else "conflict"
+        text = f"It conflicts with `{base}`."
+        result = {"accepted": False, "refusal": refusal_kind, "text": text}
+        auto_fixes = (target.get("state") or {}).get("auto_fixes", 0)
+        try:
+            used = 0 if auto_resolve else conflict_rounds_of(gh, pr, row)
+            end, _ = accept_answer(
+                cfg, target["issue"], pr, head, auto_fixes, result, conflicts=used
+            )
+            if end != "person":
+                raise Refused(f"The engine answers {end!r} to a conflict at the merge.")
+            do, why = _not_up_to_date("dirty", base)
+        except Refused as error:
+            do, why = refused_parts(error)
+    elif state == "behind":
+        # Only without `conflicts.auto_resolve` does a refusal for this get here.
+        do, why = _not_up_to_date("behind", base)
     else:
         from .host import Refused
 
@@ -2310,6 +2358,7 @@ def linked_line(*results):
 def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     action = decision["action"]
     agent = _load(artifacts / "nexkit-agent" / "result.json")
+    agent_ran = _ran(artifacts / "nexkit-agent" / "run.json")
     review_result = _load(artifacts / "nexkit-review" / "result.json")
     shortened = "\n\n".join(
         line
@@ -2383,7 +2432,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
                 reason = autopilot.protected_reason(protected)
             if refused:
                 reason = refused
-            if reason and autopilot.carries_on(gh, cfg, decision, outcome, agent):
+            if reason and autopilot.carries_on(gh, cfg, decision, outcome, agent, ran=agent_ran):
                 reason = None
                 message += "\n\nNexKit autopilot carries on from here."
             if shortened:
@@ -2405,7 +2454,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             plan = publish.get("comment")
             reason = needs_person("planned", cfg, plan=agent.get("output"))
             summary = f"[Plan]({plan}) posted." if plan else ""
-            if reason and autopilot.carries_on(gh, cfg, decision, "planned", agent):
+            if reason and autopilot.carries_on(gh, cfg, decision, "planned", agent, ran=agent_ran):
                 reason = None
                 summary += " NexKit autopilot carries on from here."
             if shortened:
@@ -2430,6 +2479,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     if config_error:
         checks = [config_check(config_error), *(checks or [])]
     reviewed = _load(artifacts / "nexkit-review" / "result.json")
+    review_ran = _ran(artifacts / "nexkit-review" / "run.json")
     given = reviewed["output"] if reviewed and reviewed.get("status") == "done" else None
     review = apply_criteria(given) if given else None
     confirm = unverified(review)
@@ -2519,7 +2569,16 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         the same way before and after a fix round, which the next automatic fix round
         diagnoses first, kept in the state comment."""
         found_end, repeated = round_ended(
-            cfg, decision, pr, head, state["auto_fixes"], checks, before, given, recheck
+            cfg,
+            decision,
+            pr,
+            head,
+            state["auto_fixes"],
+            checks,
+            before,
+            given,
+            recheck,
+            ran=review_ran,
         )
         state["feedback"] = _with_repeated(state["feedback"], repeated)
         return found_end
@@ -2614,6 +2673,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
                 label,
                 before,
                 seen,
+                ran=review_ran,
             )
         except Refused as error:
             ends, refused = "needs_human", error

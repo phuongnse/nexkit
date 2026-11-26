@@ -24,4 +24,8 @@ FAMILIES = {
     "refusals": "#391",
     "pause": "#398",
     "ended": "#393",
+    "failure": "#415",
+    "lost": "#399",
+    "replan": "#413",
+    "conflicted": "#423",
 }

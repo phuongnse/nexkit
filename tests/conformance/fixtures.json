@@ -279,6 +279,19 @@
     "cause_outside": false,
     "open_conflicts": []
   },
+  "fixBlocked": {
+    "status": "blocked",
+    "summary": "Fix the failing test.",
+    "blocker": "A choice.",
+    "questions": [],
+    "checks_run": [
+      "python3 -m unittest"
+    ],
+    "protected_paths": [],
+    "cause": "The test read a stale fake issue.",
+    "cause_outside": false,
+    "open_conflicts": []
+  },
   "review": {
     "verdict": "approve",
     "summary": "The change does what the plan says.",
@@ -693,6 +706,38 @@
     "reviewer_notes": [],
     "no_change": ""
   },
+  "implementClosingReplans": {
+    "status": "blocked",
+    "summary": "Read the issue again after a failed close.",
+    "blocker": "Two ways to read.",
+    "questions": [
+      {
+        "question": "Keep the old API?",
+        "options": [
+          "Keep it",
+          "Split it into two",
+          "Close the work item"
+        ],
+        "recommended": 3,
+        "closes": 3,
+        "replans": [
+          2,
+          3
+        ]
+      }
+    ],
+    "checks_run": [
+      "python3 -m unittest"
+    ],
+    "protected_paths": [],
+    "changes": [
+      "report.py reads the issue again."
+    ],
+    "testing": "tests/test_report.py covers the race.",
+    "outside_plan": [],
+    "reviewer_notes": [],
+    "no_change": ""
+  },
   "implementProtected": {
     "status": "blocked",
     "summary": "Read the issue again after a failed close.",
@@ -770,6 +815,31 @@
     "cause": "The test read a stale fake issue.",
     "cause_outside": false,
     "open_conflicts": []
+  },
+  "fixCloseFinding": {
+    "status": "blocked",
+    "summary": "Fix the failing test.",
+    "blocker": "A choice.",
+    "questions": [
+      {
+        "question": "Keep the old API?",
+        "options": [
+          "Keep it",
+          "Close the work item"
+        ],
+        "recommended": 2,
+        "replans": [],
+        "closes": 2
+      }
+    ],
+    "checks_run": [
+      "python3 -m unittest"
+    ],
+    "protected_paths": [],
+    "cause": "The test read a stale fake issue.",
+    "cause_outside": false,
+    "open_conflicts": [],
+    "no_change": "Nothing to change, as the test shows."
   },
   "planManyPartsQuestions": {
     "summary": "Close an issue that GitHub closed at the same moment.",

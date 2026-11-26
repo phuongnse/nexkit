@@ -46,6 +46,9 @@ other difference grouped by where it differs, with an example, and exits 1 when 
 | `refusals` | #391 | a merge refused because the head moved, or for a reason only a person clears: the round's own merge, a sweep, a writer's approval |
 | `pause` | #398 | a plan, implement or fix stage that stopped at a usage limit or on a transient error, then the resume that comes due, under a hold or not |
 | `ended` | #393 | what a merge finds and a parent's end: a pull request a person merged or closed, a change the base branch holds, a head pushed while the merge waits, and the parent after the merge |
+| `replan` | #413 | a pull request's round that ran out of time, then the plan it asked for: too large or not, parts, titles, depth, autopilot's record, questions, no change, protected paths |
+| `failure` | #415 | a `/nexkit go` that stopped as blocked with nothing to answer, then a comment or a blocker's close, with autopilot on or off |
+| `conflicted` | #423 | a merge refused for a conflict, or found conflicting at the end of the refusal, under both `conflicts.auto_resolve` values: the round's own merge, a sweep, a writer's approval, with conflict rounds used, a round on its way and `mergeable` unknown |
 
 A family is a module with `scenarios()`, which yields each scenario as plain JSON in a fixed
 order whatever tree plays it, and `run(sc)`, which plays one and returns what it recorded. A time

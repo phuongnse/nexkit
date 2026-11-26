@@ -7,12 +7,16 @@ which the engine's next event carries it on. It reads only the markers of NexKit
 only where it ends the comment, so a person's or an agent's text sets none of it, and it
 changes nothing on GitHub.
 
+A `/nexkit go` that stopped as blocked is placed where the engine puts the round's result, under
+the GitHub host's policies (`Item.after_go`).
+
 Each place the import can put an item is one of KINDS, and a case in
 `tests/conformance/imports/` imports each.
 """
 
 from __future__ import annotations
 
+import copy
 import re
 from datetime import UTC, datetime
 
@@ -105,7 +109,14 @@ KINDS = {
     "planned": "A plan waits for its approval, its answers or a hand-made change.",
     "no change": "A plan or a round found that no change is needed.",
     "go again": "A `/nexkit go` whose pull request was closed waits for a person to approve again.",
-    "asks": "A round that asks questions waits for answers.",
+    "asks": (
+        "A round that asks questions, or whose change needs paths only a person changes, waits "
+        "for a person."
+    ),
+    "answered": (
+        "A round or plan that the engine's answers to a blocked `/nexkit go` start waits for "
+        "the sweep to start it."
+    ),
     "failed": "A run or a round that failed waits for a person.",
     "no round yet": "A pull request whose first round has not reported is in its checks.",
     "next round": "A round that started the next one by itself: that one is on its way.",
@@ -176,6 +187,7 @@ def situation(
     held=False,
     depth=0,
     waves=(),
+    taken=None,
 ):
     """(kind, document): where the import puts `issue`, a GitHub issue, or a person's pull
     request for a review-only item, and its first state document. It reads the item's
@@ -183,7 +195,8 @@ def situation(
     sub-issues `parts`; the open issues that block it, `blockers`; whether a label holds it,
     `held`; how many levels of parts the issue is below the issue first split, `depth`, as
     `autopilot.depth` gives it; the numbers of the open issues of a lower wave that it waits for,
-    `waves`; the configuration `cfg`, and the time `now`."""
+    `waves`; the configuration `cfg`; the time `now`, and whether autopilot takes the issue,
+    `taken`, where None means `autopilot.takes(cfg)`."""
     doc = empty(str(issue["number"]))
     if issue.get("title") is not None:
         doc["title"] = str(issue["title"])[: LONGEST["title"]]
@@ -198,9 +211,10 @@ def situation(
     if pull:
         doc["change"] = {"id": str(pull["number"]), "version": pull["head"]["sha"]}
         doc["observed"] = observed(pull)
-    item = Item(doc, issue, list(comments), pull, list(pull_comments), cfg, now)
+    taken = autopilot.takes(cfg) if taken is None else taken
+    item = Item(doc, issue, list(comments), pull, list(pull_comments), cfg, now, taken)
     item.place(list(parts), list(blockers), list(waves))
-    if doc["state"] in ANSWERING and item.answered():
+    if doc["state"] in ANSWERING and "answers" not in doc["asked"] and item.answered():
         doc["asked"].append("answers")
     if fit(doc) is None:
         raise item_state.StateError(f"The state of #{issue['number']} does not fit its limit.")
@@ -235,8 +249,9 @@ def imported(*args, **fields):
 class Item:
     """One item's NexKit 6 comments, read once, and the document that the import fills."""
 
-    def __init__(self, doc, issue, comments, pull, pull_comments, cfg, now):
+    def __init__(self, doc, issue, comments, pull, pull_comments, cfg, now, taken):
         self.doc, self.issue, self.pull, self.cfg, self.now = doc, issue, pull, cfg, now
+        self.comments, self.taken = comments, taken
         self.kind = None
         review_only = doc["itemKind"] == "reviewOnly"
         self.runs = [] if review_only else [r for r in run_comments(comments) if "command" in r[1]]
@@ -257,6 +272,17 @@ class Item:
             approved = any(c["id"] > self.plan["id"] for c in after)
             doc["plan"] = plan_of(self.plan, self.data, approved)
         doc["asked"] = [name for key, name in ASKED.items() if self.record.get(key)]
+        if (
+            pull
+            and not review_only
+            and self.record.get("split_asked")
+            and self.record.get("command") == "plan"
+            and self.runs
+            and self.runs[-1][1]["command"] == "plan"
+        ):
+            # The plan that autopilot asked for after the pull request's round ran out of time
+            # (`autopilot._assess`): its split withdraws the pull request.
+            doc["asked"].append("supersede")
         self.all = comments if review_only else [*comments, *pull_comments]
         doc["used"]["tokens"] = _tokens([run for _, run in self.runs + self.rows])
         if pull and not review_only:
@@ -365,11 +391,49 @@ class Item:
             # Its pull request was closed: a person asks for another, as after a plan.
             ref = (self.doc["plan"] or {}).get("text", {}).get("ref")
             return self.be("go again", "awaitingApproval", "approval", run, ref=ref)
-        if outcome == "agent_blocked" and run.get("questions"):
-            # The run's comment asked: a person's answer names it.
-            return self.asks(comment, run, "implement")
-        blocked = outcome in ("agent_blocked", UNTRUSTED_ROUND)
-        return self.be("failed", "failed", "blocked" if blocked else "failed", run)
+        if outcome == "agent_blocked":
+            return self.after_blocked(comment, run)
+        # An untrusted edit's stop is `failed`, so that a comment does not plan it again under
+        # `afterFailure`: NexKit 6 waits for a writer to vouch.
+        return self.be("failed", "failed", "failed", run)
+
+    def after_blocked(self, comment, run):
+        """A `/nexkit go` that stopped as blocked, in the state where the engine puts the
+        round's result under the GitHub host's policies. Autopilot's answers apply only to an
+        issue it takes. The questions and the attention name the run's comment, as a person's
+        answer on GitHub does."""
+        from . import host  # host imports this module
+
+        doc = host._working(copy.deepcopy(self.doc), autopilot.asked_again(self.comments))
+        policies = host.policies(self.cfg)
+        if not self.taken:
+            policies["planApproval"] = "person"
+        event = host._round_result(self.issue["number"], comment, run)
+        try:
+            found = host.step(doc, event, policies)["state"]
+        except host.Refused:
+            return self.be("failed", "failed", "failed", run)
+        name = found["state"]
+        if name == "awaitingApproval":
+            ref = str(comment["id"])
+            items = [
+                {key: value for key, value in item.items() if key != "closes" or value}
+                for item in found["questions"]["items"]
+            ]
+            self.doc["questions"] = {**found["questions"], "ref": ref, "items": items}
+            attention = found["attention"]
+            return self.be("asks", name, attention["reason"], run, text=attention["text"], ref=ref)
+        if name == "failed":
+            return self.be("failed", "failed", "blocked", run)
+        if name == "noChange":
+            self.doc["waits"] = []
+            return self.be("no change", name)
+        if name in ("planning", "working"):
+            # The engine's answers start this stage again: the sweep carries that out.
+            self.doc["asked"] = list(found["asked"])
+            self.wait("start")
+            return self.be("answered", name)
+        raise item_state.StateError(f"The engine put a blocked `/nexkit go` in {name!r}.")
 
     def after_plan(self, run):
         plan = self.doc["plan"]
@@ -560,6 +624,10 @@ class Item:
             return self.be("lost for a person", "failed", "outage", run, SAYS["outage"])
         due = max((at or self.now) + autopilot.AGAIN[tries], self.now) if tries else self.now
         self.wait("time", until=iso(due))
+        # The engine counts this loss as it does before it waits, so later restarts go on from it.
+        self.doc["again"] = {"lost": min(tries + 1, 10)}
+        if record.get("once"):
+            self.doc["again"]["once"] = True
         return self.be("lost", OF_COMMAND.get(command, "planning"))
 
     # What the state holds beside its name.
@@ -777,6 +845,7 @@ def import_item(gh, cfg, number, pull=None, now=None):
     comments = gh.comments(number)
     if "pull_request" in issue:
         return imported(issue, comments, cfg, now, gh.pull(number))
+    taken = autopilot.takes(cfg) and autopilot.taken(gh, cfg, issue)
     details = gh.pull(pull) if pull else None
     pull_comments = gh.comments(pull) if pull else []
     blockers = [found for found in gh.blocked_by(number) if found.get("state") == "open"]
@@ -795,4 +864,5 @@ def import_item(gh, cfg, number, pull=None, now=None):
         bool(autopilot.hold_label(cfg, issue)),
         autopilot.depth(issue, autopilot.lineage(gh, issue)),
         (waited[2] or []) if waited else [],
+        taken,
     )

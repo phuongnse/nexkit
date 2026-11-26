@@ -486,8 +486,9 @@ def cmd_agent(args):
 
 
 def _agent(args, decision, stage, out):
-    from .agent import conflicts_with_base, on_base, run_stage, run_triage, up_to_date
+    from .agent import action_for, conflicts_with_base, on_base, run_action, up_to_date
     from .checks import find_commits, setup
+    from .gitutil import git
     from .redact import Redactor
     from .runlog import summary, write_summary
 
@@ -531,7 +532,14 @@ def _agent(args, decision, stage, out):
             return 0
     triage = None
     if stage == "plan" and cfg["profiles"]:
-        triage = run_triage(context, cfg, decision.get("previous_profile"), out)
+        triage, _ = run_action(
+            action_for("triage", cfg),
+            context,
+            cfg,
+            args.repo,
+            out,
+            previous=decision.get("previous_profile"),
+        )
         if triage["status"] == "paused":
             # The plan would stop at the same limit; it runs again after the reset.
             keys = ("status", "error", "limit", "resume_at", "reset_known")
@@ -548,8 +556,12 @@ def _agent(args, decision, stage, out):
         path = Path(args.checks)
         found = json.loads(path.read_text()) if path.is_file() else None
         checks = with_skipped(cfg, found, decision.get("skipped_checks"))
-    result = run_stage(
-        stage,
+    # The change a fix or review starts from; none when the checkout has no commit to read.
+    version = None
+    if stage in ("fix", "review"):
+        version = git(args.repo, "rev-parse", "--verify", "-q", "HEAD", ok=(0, 1, 128)).strip()
+    result, _ = run_action(
+        action_for(stage, cfg, version or None),
         context,
         cfg,
         args.repo,

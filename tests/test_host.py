@@ -4,9 +4,10 @@ autopilot and `route` carry out in NexKit 6's words, storing no state
 
 import base64
 import json
+import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest import mock
+from unittest import TestCase, mock
 
 from nexkit import autopilot, engine, host, item_state
 from nexkit import report as reports
@@ -177,6 +178,66 @@ class AfterPlanTest(HostCase):
         with mock.patch.object(host, "step", return_value=answer):
             self.assertEqual(self.step(5)["parts"], [split[1]])
 
+    SPLIT = [
+        {"title": "First part", "body": "Do A.", "depends_on": []},
+        {"title": "Second part", "body": "Do B.", "depends_on": [1]},
+    ]
+
+    def timed_out_plan(self):
+        """An issue whose pull request's round ran out of time, and the too-large plan that
+        autopilot asked for after it."""
+        self.issue(5)
+        self.plan(5)
+        self.run_comment(5, "go", outcome="ready")
+        self.gh.add_pull(9, 5)
+        timed_out = {
+            "round": 2,
+            "trigger": "fix",
+            "status": "failure",
+            "url": "u",
+            "outcome": "agent_error",
+            "timed_out": True,
+        }
+        self.gh.comment(9, render_run(timed_out))
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 5)])
+        self.plan(5, {"too_large": True, "split": self.SPLIT})
+
+    def test_the_plan_after_a_timed_out_round_goes_to_the_engine_with_its_pull_request(self):
+        self.timed_out_plan()
+        [request] = self.requests(5)
+        self.assertIn("supersede", request["state"]["asked"])
+        head = self.gh.pulls[9]["head"]["sha"]
+        self.assertEqual(request["state"]["change"], {"id": "9", "version": head})
+
+    def test_a_split_of_a_pull_request_s_issue_needs_the_engine_to_withdraw_the_change(self):
+        self.timed_out_plan()
+        create = {
+            "kind": "createParts",
+            "parts": [
+                {"key": 1, "title": "First part", "needs": []},
+                {"key": 2, "title": "Second part", "needs": [1]},
+            ],
+        }
+        answer = {"actions": [create], "state": {"asked": []}}
+        with mock.patch.object(host, "step", return_value=answer):
+            step = self.step(5)
+        self.assertEqual(step["state"], "waits")
+        self.assertIn("refused to decide", step["reason"])
+        self.assertIn("without withdrawing pull request #9", step["reason"])
+        withdraw = {"kind": "withdrawChange", "changeId": "9", "reason": "The parts carry it."}
+        # Another change than the issue's pull request is not carried out.
+        answer = {"actions": [create, {**withdraw, "changeId": "10"}], "state": {"asked": []}}
+        with mock.patch.object(host, "step", return_value=answer):
+            self.assertIn("refused to decide", self.step(5)["reason"])
+        answer = {"actions": [create, withdraw], "state": {"asked": []}}
+        with mock.patch.object(host, "step", return_value=answer):
+            step = self.step(5)
+            self.assertEqual((step["state"], step["pull"]), ("split", 9))
+            self.sweep()
+        self.assertEqual(self.gh.pulls[9]["state"], "closed")
+        self.assertTrue(self.gh.comments_matching(9, "Superseded by"))
+
     def test_each_reason_the_engine_waits_for_is_said_in_nexkit_6_s_words(self):
         self.issue(5)
         self.plan(5)
@@ -209,6 +270,85 @@ class AfterPlanTest(HostCase):
         self.assertEqual(self.started(), [("go", 5)])
         for number in (5, 6):
             self.assertEqual(item_state.read(self.gh, number), (None, None))
+
+
+class EventIdTest(HostCase):
+    def test_a_source_gives_the_same_id_each_time_and_no_two_share_one(self):
+        comment, review, event = {"id": 7}, {"id": 7, "state": "approved"}, {"id": 9}
+        for kind, source in (("comment", comment), ("review", review), ("issue-event", event)):
+            self.assertEqual(host.event_id(kind, dict(source)), host.event_id(kind, dict(source)))
+        self.assertEqual(host.event_id("dispatch", 123), "dispatch-123")
+        self.assertEqual(host.event_id("run", 123), host.event_id("run", 123))
+        self.assertNotEqual(host.event_id("comment", comment), host.event_id("review", review))
+        self.assertNotEqual(host.event_id("comment", comment), host.event_id("comment", {"id": 8}))
+        self.assertNotEqual(host.event_id("dispatch", 123), host.event_id("run", 123))
+
+    def test_only_a_positive_number_of_a_known_kind_names_an_event(self):
+        for kind, source in (
+            ("label", 1),
+            ("comment", {"id": "7"}),
+            ("comment", {}),
+            ("comment", 0),
+            ("comment", True),
+            ("comment", -3),
+        ):
+            with self.assertRaises(ValueError, msg=(kind, source)):
+                host.event_id(kind, source)
+
+    def test_the_same_comment_sent_again_on_the_stored_state_changes_nothing(self):
+        self.issue(5)
+        self.plan(5, {"questions": [ASKED]})
+        self.gh.human_comment(5, "Keep it, but only for a day.")
+        [request] = self.requests(5)
+        event = request["event"]
+        self.assertEqual(event["kind"], "commented")
+        self.assertRegex(event["id"], r"^comment-\d+$")
+        self.assertEqual(self.requests(5)[0]["event"]["id"], event["id"])
+        stored = {**request["state"], "revision": 1}
+        self.assertTrue(item_state.write(self.gh, 5, stored, (None, None)))
+
+        def answer(state):
+            found = host.step(state, event, request["policies"])
+            return found["state"], found["actions"], found["changed"]
+
+        first = []
+        item_state.apply(self.gh, 5, lambda state: first.append(answer(state)) or first[-1])
+        self.assertTrue(first[0][2])
+        again = []
+        item_state.apply(self.gh, 5, lambda state: again.append(answer(state)) or again[-1])
+        self.assertEqual((again[0][1], again[0][2]), ([], False))
+
+    def test_a_closing_command_is_named_by_its_comment(self):
+        self.issue(5)
+        self.plan(5, {"questions": [{**ASKED, "recommended": 0}]})
+        ids = []
+        for number in (77, 78):
+            event = comment_event(5, "/nexkit plan Close the issue")
+            event["comment"]["id"] = number
+            with mock.patch.object(host, "step", wraps=host.step) as step:
+                self.assertEqual(route(self.gh, "issue_comment", event)["task"], "close_answer")
+            ids.append(step.call_args.args[1]["id"])
+        self.assertEqual(ids, ["comment-77", "comment-78"])
+
+    def test_the_report_job_and_the_sweep_name_one_result_by_its_run(self):
+        self.issue(5)
+        url = "https://github.com/acme/app/actions/runs/123"
+        self.run_comment(5, "plan", status="running", url=url)
+        cfg = pilot(answer="recommended")
+        decision = {"issue": 5, "pr": None, "action": "plan"}
+        agent = {"output": {"questions": [ASKED]}}
+        with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": "123"}):
+            with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+                autopilot.carries_on(self.gh, cfg, decision, "planned", agent)
+        [reported] = [call.args[0]["event"]["id"] for call in answer.call_args_list]
+        self.plan(5, {"questions": [ASKED]}, url=url)
+        [swept] = [request["event"]["id"] for request in self.requests(5)]
+        self.assertEqual((reported, swept), ("run-123", "run-123"))
+
+    def test_a_run_outside_github_actions_has_no_source(self):
+        with mock.patch.dict(os.environ, clear=True):
+            self.assertEqual(host._run_event_id(), "run-local")
+            self.assertEqual(host._run_event_id("https://example.com/x"), "run-local")
 
 
 class RefusedTest(HostCase):
@@ -325,6 +465,7 @@ class PoliciesTest(HostCase):
                 "conflicts": "person",
                 "conflictRounds": 3,
                 "answers": "recommended",
+                "afterFailure": "replan",
                 "splits": True,
                 "splitParts": 10,
                 "splitDepth": 3,
@@ -333,8 +474,8 @@ class PoliciesTest(HostCase):
             },
         )
         found = host.policies(self.cfg | {"autopilot": {**self.cfg["autopilot"], "enabled": False}})
-        found = (found["planApproval"], found["answers"], found["splits"])
-        self.assertEqual(found, ("person", "never", False))
+        found = (found["planApproval"], found["answers"], found["afterFailure"], found["splits"])
+        self.assertEqual(found, ("person", "never", "person", False))
         cfg = make_config(
             merge={"auto": True},
             fix={"max_auto_rounds": 5},
@@ -351,8 +492,22 @@ class PoliciesTest(HostCase):
 
 
 class AfterGoTest(HostCase):
-    """What follows a `/nexkit go` that stopped as blocked with questions or protected paths
-    is the engine's answer, in NexKit 6's words."""
+    """What follows a `/nexkit go` that stopped as blocked, with questions, protected paths or
+    nothing to answer, is the engine's answer, in NexKit 6's words."""
+
+    def blocked(self, number, **fields):
+        """A plan, then a `/nexkit go` that stopped as blocked with nothing to answer."""
+        self.issue(number)
+        self.plan(number)
+        run = {"outcome": "agent_blocked", "attention": "It needs a secret.", **fields}
+        return self.run_comment(number, "go", status="failure", **run)
+
+    def since_stop(self, number):
+        """NexKit 6's own reason for the issue's latest `/nexkit go`."""
+        issue = self.gh.issue(number)
+        comments = self.gh.comments(number)
+        [stop] = [c for c in comments if c.get("id") == self.stop_id]
+        return autopilot._since_stop(self.gh, issue, comments, stop)
 
     def stopped(self, number, asked=(), **fields):
         """A plan, then a `/nexkit go` that stopped as blocked with the questions `asked`, as
@@ -448,6 +603,53 @@ class AfterGoTest(HostCase):
         step = self.step(5)
         self.assertEqual(step["command"], "plan")
         self.assertIn("#7, which blocked it, closed after the stopped", step["reason"])
+
+    def test_a_go_blocked_with_nothing_to_answer_waits_with_the_run_s_attention(self):
+        self.blocked(5)
+        [request] = self.requests(5)
+        self.assertEqual(request["event"]["kind"], "actionFinished")
+        self.assertEqual(request["policies"]["afterFailure"], "replan")
+        step = self.step(5)
+        self.assertEqual((step["state"], step["reason"]), ("waits", "It needs a secret."))
+        self.blocked(6, attention=None)
+        self.assertEqual(self.step(6)["reason"], autopilot.failed_reason("go"))
+
+    def test_a_go_blocked_with_nothing_to_answer_plans_again_after_a_comment(self):
+        comment = self.blocked(5)
+        self.stop_id = comment["id"]
+        self.gh.human_comment(5, "The secret is set now.")
+        kinds = [request["event"]["kind"] for request in self.requests(5)]
+        self.assertEqual(kinds, ["actionFinished", "commented"])
+        step = self.step(5)
+        self.assertEqual((step["state"], step["command"]), ("start", "plan"))
+        self.assertIn(
+            "collaborators commented after the stopped `/nexkit go`, so autopilot plans again",
+            step["reason"],
+        )
+        self.assertEqual(step["reason"], self.since_stop(5))
+
+    def test_a_go_blocked_with_nothing_to_answer_plans_again_after_a_blocker_closes(self):
+        comment = self.blocked(5)
+        self.stop_id = comment["id"]
+        comment["created_at"] = "2026-01-02T00:00:00Z"
+        self.issue(7, state="closed", reason="completed")
+        self.gh.issues[7]["closed_at"] = "2026-01-03T00:00:00Z"
+        self.gh.blockers[5] = [7]
+        step = self.step(5)
+        self.assertEqual(step["command"], "plan")
+        self.assertIn("#7, which blocked it, closed after the stopped", step["reason"])
+        self.assertEqual(step["reason"], self.since_stop(5))
+
+    def test_a_blocker_that_closed_before_the_round_leaves_it_waiting(self):
+        comment = self.blocked(5)
+        self.stop_id = comment["id"]
+        comment["created_at"] = "2026-01-04T00:00:00Z"
+        self.issue(7, state="closed", reason="completed")
+        self.gh.issues[7]["closed_at"] = "2026-01-03T00:00:00Z"
+        self.gh.blockers[5] = [7]
+        step = self.step(5)
+        self.assertEqual((step["state"], step["reason"]), ("waits", "It needs a secret."))
+        self.assertIsNone(self.since_stop(5))
 
     def test_a_reason_the_host_has_no_words_for_is_refused_for_that_issue_alone(self):
         self.stopped(5, [ASKED])
@@ -861,6 +1063,20 @@ class AcceptAnswerTest(ReportCase):
         self.assertEqual(self.answer("conflict", resolve)[0], "fix")
         end, state = self.answer("conflict", person)
         self.assertEqual((end, state["attention"]["reason"]), ("person", "acceptRefused"))
+
+    def test_a_conflict_counts_the_conflict_rounds_used_against_the_limit(self):
+        conflicts = {"auto_resolve": True, "max_rounds": 2}
+        resolve = make_config(merge={"auto": True}, conflicts=conflicts)
+        for used in (0, 1, 2, 3):
+            with self.subTest(used=used):
+                with mock.patch.object(host, "step", wraps=host.step) as step:
+                    end, state = self.answer("conflict", resolve, conflicts=used)
+                self.assertEqual(step.call_args.args[0]["rounds"]["conflicts"], used)
+                if used < 2:
+                    self.assertEqual(end, "fix")
+                else:
+                    reason = state["attention"]["reason"]
+                    self.assertEqual((end, reason), ("person", "acceptRefused"))
 
     def test_the_events_before_the_answer_are_heard_first_at_the_given_time(self):
         seen = {"changeId": "6", "version": self.HEAD, "conflicts": False}
@@ -1606,3 +1822,144 @@ class MergeStepTest(ReportCase):
             step = self.step()
         self.assertEqual(step["state"], "waits")
         self.assertIn("refused to decide", step["reason"])
+
+
+class LostAgainTest(TestCase):
+    """A command that autopilot started and that was lost starts again, waits, or waits for a
+    person as the engine decides, with NexKit 6's words, due times and counts."""
+
+    CFG = make_config(autopilot={"enabled": True})
+    NOW = datetime(2099, 1, 1, 12, 0, tzinfo=UTC)
+    AT = "2099-01-01T11:50:00Z"
+    ISSUE = {"number": 5, "title": "Add it"}
+    WHAT = "the run ended without a report"
+    # Each command and the target of its start: the issue, or its pull request.
+    COMMANDS = (("plan", 5), ("go", 5), ("fix", 6), ("review", 6))
+    # The minutes after the last start that the n-th start waits.
+    DUE = (0, 30, 60, 120)
+
+    def lost(self, command="plan", target=5, tries=0, now=None, at=None, **kwargs):
+        record = {"command": command, "target": target, "at": at or self.AT, "tries": tries}
+        record.update(kwargs.pop("record", {}))
+        fields = {"command": command, "target": target, "note": "", "remember": {}}
+        fields.update(kwargs.pop("fields", {}))
+        now = now or self.NOW
+        with mock.patch.object(host, "step", wraps=host.step) as sent:
+            found = host.lost_again(self.CFG, self.ISSUE, record, now, self.WHAT, fields, **kwargs)
+        return found, [call.args for call in sent.call_args_list]
+
+    def test_a_lost_command_starts_again_when_it_is_due(self):
+        for command, target in self.COMMANDS:
+            for tries in range(4):
+                with self.subTest(command=command, tries=tries):
+                    due = datetime(2099, 1, 1, 11, 50, tzinfo=UTC) + timedelta(
+                        minutes=self.DUE[tries]
+                    )
+                    found, _ = self.lost(command, target, tries, now=due)
+                    self.assertEqual((found["state"], found["command"]), ("start", command))
+                    self.assertEqual(found["target"], target)
+                    self.assertEqual(found["remember"]["tries"], tries + 1)
+                    self.assertNotIn("once", found["remember"])
+                    again = "again" if tries else "once more"
+                    self.assertIn(f"autopilot starts `/nexkit {command}` {again}", found["reason"])
+
+    def test_a_lost_command_waits_until_its_due_time(self):
+        for command, target in self.COMMANDS:
+            for tries in range(1, 4):
+                with self.subTest(command=command, tries=tries):
+                    due = datetime(2099, 1, 1, 11, 50, tzinfo=UTC) + timedelta(
+                        minutes=self.DUE[tries]
+                    )
+                    early = due - timedelta(seconds=1)
+                    found, requests = self.lost(command, target, tries, now=early)
+                    self.assertEqual(found["state"], "active")
+                    self.assertEqual([r[1]["kind"] for r in requests], ["actionLost"])
+                    self.assertIn(f"again after {due:%H:%M} UTC", found["reason"])
+                    self.assertIn(f"`/nexkit {command}`", found["reason"])
+
+    def test_the_loss_is_sent_at_the_last_start_and_a_run_again_after_its_wait(self):
+        _, requests = self.lost("fix", 6, 2, now=self.NOW + timedelta(hours=2))
+        lost, tick = [event for _, event, _ in requests]
+        self.assertEqual((lost["kind"], lost["at"]), ("actionLost", self.AT))
+        self.assertEqual((lost["tokens"], lost["action"]), (None, "a1.1"))
+        self.assertEqual(tick["kind"], "tick")
+        self.assertEqual(tick["at"], autopilot.iso(self.NOW + timedelta(hours=2)))
+        document = requests[0][0]
+        self.assertEqual(document["state"], "fixing")
+        self.assertEqual(document["again"], {"lost": 2})
+        self.assertEqual(document["change"], {"id": "6", "version": "6"})
+
+    def test_a_loss_without_a_usable_record_is_sent_at_the_sweeps_time(self):
+        found, requests = self.lost("plan", 5, 0, record={"at": "soon"})
+        self.assertEqual(found["state"], "start")
+        self.assertEqual(requests[0][1]["at"], autopilot.iso(self.NOW))
+
+    def test_a_review_runs_the_checks_again(self):
+        _, requests = self.lost("review", 6, 1, now=self.NOW + timedelta(hours=1))
+        document = requests[0][0]
+        self.assertEqual(document["state"], "checking")
+        self.assertEqual(document["pending"][0]["kind"], "runChecks")
+        self.assertEqual(requests[0][1]["changeVersion"], "6")
+
+    def test_what_a_start_carried_stays(self):
+        fields = {"auto": "autopilot", "note": "Mind the cache.", "remember": {"split_asked": 1}}
+        found, _ = self.lost("go", 5, 0, fields=fields)
+        self.assertEqual(found["auto"], "autopilot")
+        self.assertEqual(found["note"], "Mind the cache.")
+        self.assertEqual(found["remember"], {"split_asked": 1, "tries": 1})
+        stale = {"number": 5, "comment": 9}
+        found, _ = self.lost("go", 5, 0, extra={"stale": stale})
+        self.assertEqual(found["stale"], stale)
+
+    def test_the_fifth_loss_waits_for_a_person(self):
+        for tries in (4, 7):
+            with self.subTest(tries=tries):
+                found, _ = self.lost("go", 5, tries)
+                self.assertEqual(found["state"], "waits")
+                self.assertIn(f"{tries + 1} times", found["reason"])
+                self.assertTrue(
+                    found["reason"].startswith(
+                        autopilot.OUTAGE_DO.format(command="`/nexkit go`")[:40]
+                    )
+                )
+                self.assertIn("GitHub created no job for it", found["reason"])
+
+    def test_a_run_whose_agent_ran_starts_once_more_only(self):
+        found, requests = self.lost("fix", 6, 0, record={"once": True})
+        self.assertEqual(found["state"], "start")
+        self.assertEqual(found["remember"], {"tries": 1, "once": True})
+        self.assertEqual(requests[0][0]["again"], {"once": True})
+        found, _ = self.lost("fix", 6, 1, record={"once": True})
+        self.assertEqual(found["state"], "waits")
+        self.assertIn("after autopilot started it once more", found["reason"])
+        self.assertTrue(found["reason"].startswith(autopilot.LOST_DO))
+
+    def test_a_persons_command_waits_for_that_person(self):
+        stale = {"number": 6, "comment": 9}
+        found, requests = self.lost("fix", 6, 0, extra={"stale": stale}, person=True)
+        self.assertEqual(found["state"], "waits")
+        self.assertEqual(found["reason"], autopilot.person(autopilot.LOST_DO, self.WHAT))
+        self.assertEqual(found["stale"], stale)
+        self.assertEqual(requests[0][0]["pending"][0]["by"], "person")
+        found, _ = self.lost("fix", 6, 0, person=True)
+        self.assertIsNone(found)
+
+    def test_a_hold_label_is_sent_and_a_held_restart_answers_held(self):
+        found, requests = self.lost("plan", 5, 0, label="on-hold")
+        self.assertEqual([r[1]["kind"] for r in requests], ["held", "actionLost"])
+        self.assertEqual(found["state"], "held")
+        self.assertIn("`on-hold`", found["reason"])
+        due = self.NOW + timedelta(hours=1)
+        found, requests = self.lost("plan", 5, 1, now=due, label="on-hold")
+        self.assertEqual([r[1]["kind"] for r in requests], ["held", "actionLost", "tick"])
+        self.assertEqual(found["state"], "held")
+
+    def test_a_command_nexkit_never_writes_is_refused(self):
+        with self.assertRaises(host.Refused):
+            self.lost("close", 5, 0)
+
+    def test_autopilot_waits_for_a_person_when_the_engine_refuses(self):
+        fields = {"command": "close", "target": 5, "note": "", "remember": {}}
+        found = autopilot._again(self.CFG, self.ISSUE, {}, self.NOW, self.WHAT, fields)
+        self.assertEqual(found["state"], "waits")
+        self.assertIn("refused to decide", found["reason"])

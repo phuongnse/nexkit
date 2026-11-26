@@ -302,7 +302,7 @@ def largest():
     ]
     rounds["criteria"] = ["unverifiable"] * most("rounds.criteria")
     rounds["checklist"] = ["not_applicable"] * most("rounds.checklist")
-    asked = ["split", "titles", "parts", "fewer", "answers", "replan"]
+    asked = ["split", "titles", "parts", "fewer", "answers", "replan", "supersede"]
     state["asked"] = (asked * 4)[: most("asked")]
     state["parts"] = [{"item": str(4300 + n), "state": None} for n in range(most("parts"))]
     parts = [

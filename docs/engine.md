@@ -3,7 +3,9 @@
 _Planned for NexKit 7. Built so far: the protocol's schemas, in `nexkit/protocol/`; the engine's
 `step` call with its states, whose decisions are a frame that takes NexKit 6's own rules one group
 at a time, and its `prompt` call, which writes each stage's prompt as NexKit 6 does, as
-`nexkit-engine step` and `nexkit-engine prompt` and over HTTP as `nexkit-engine serve`; the
+`nexkit-engine step` and `nexkit-engine prompt` and over HTTP as `nexkit-engine serve`; its
+`sweep` call, which orders and limits the items that start, as `nexkit-engine sweep`, which no host
+calls yet; the
 GitHub host's state comment and its import of NexKit 6's open work, which nothing calls yet; and
 the decisions that follow a plan, a blocked `/nexkit go` and a round on a pull request, its
 review, diagnosis and conflict rounds, the end of a round's wait and which rounds count, which
@@ -87,7 +89,8 @@ of the protocol it speaks (see [versions](#versions)):
 - **`prompt(state, stage, inputs, policies, texts) -> (text, shortened, notRead, files)`** writes
   the prompt of a stage from the texts the host fetched for it, so the prompts and their rules
   stay in the engine while the host does the reading.
-- **`sweep(items) -> starts`** chooses which waiting work items start, and in what order.
+- **`sweep(items, running, limited, policies) -> (starts, waits)`** chooses which waiting work
+  items start, and in what order.
 
 All three read no network, no clock and no files but the engine's own prompt templates: the time is
 a field of each event. They hold no secret and never see one. The policies of the host come with
@@ -186,6 +189,12 @@ The protocol is built for delivery at least once, in any order a host's queues g
   names the event, such as `<delivery>:<kind>`. The state keeps the ids of the 20 latest events
   that changed it, and the engine takes an event whose id it holds as a duplicate that changes
   nothing.
+  The GitHub host names each event by its source on GitHub (`host.event_id`): `comment-<id>`
+  for a comment, whether it is a remark, an answer or a command, `review-<id>`,
+  `issue-event-<id>` from the issue events API, `dispatch-<run id>`, and `run-<run id>` for an
+  agent's result, so the report job and the sweep give one result the same id. An id is built
+  only from GitHub's number, never from a text, and its kind keeps a comment and a review with
+  one number apart.
 - **A person's decision names what it decides on.** `planApproved`, and a `go`, name the plan by
   its text's ref; `answered` names the questions by the ref that asked them, as the state's
   attention has it: a plan's text ref, or a round's agent action; `changeApproved` names the change
@@ -240,8 +249,8 @@ The protocol is built for delivery at least once, in any order a host's queues g
 - **Leaving a state cancels its work.** An item that moves on cancels the actions of the state it
   left that still run, such as its checks when a person pushes to the change, so their late
   results find nothing pending. One it asked for earlier in the same step is withdrawn from the
-  answer instead, since the host never got it. A lost action that only tells, shows, waits or
-  ends is carried out again under a new id while it still stands: a lost notice is not sent again
+  answer instead, since the host never got it. A lost action that only tells, shows, waits,
+  ends the item or withdraws its change is carried out again under a new id while it still stands: a lost notice is not sent again
   once attention has another reason or is about something else. A lost agent run or lost checks
   that the engine started by itself, in the state that runs them, start again as the same round,
   which counts nothing again, after each wait of `lostWaits` in turn: a wait of 0 in the same
@@ -290,26 +299,28 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
 
 - **Approval leads to the change that exists.** An approved plan goes to `working` when the item
   has no change, and to `fixing` when it has one, such as after a re-plan or a question in a fix
-  round. An item that has a change is never split, since nothing would then end the change: once
-  a person approves its split plan, it goes on as one change, and under `autoWhenClean` the plan
-  waits for a person. A split goes on as one change too when its rules refuse it, as below. A
-  plan that asks questions waits for answers, even one an item was made with.
+  round. An item that has a change is split only from the plan that a round which ran out of
+  time asked for, and that split withdraws the change, so nothing is left with no end. Once a
+  person approves the split plan of an item with a change, it goes on as one change. A split goes
+  on as one change too when its rules refuse it, as below. A plan that asks questions waits for
+  answers, even one an item was made with.
 - **What follows a plan.** Under `person`, every plan waits for a person, a plan that finds no
   change too, for what NexKit 6 asks of them first: the approval of a plan that is too large or
   finds no change, a hand-made change, answers, or the approval of a clean plan. A person may
   answer a plan's questions whatever its attention names first, under `autoWhenClean` too. Under
   `autoWhenClean`, as NexKit 6's autopilot decides:
   - A plan that is too large is split into its parts, all of them, when splits are on and the
-    item has no change. A split is refused for an item at `splitDepth` levels of parts, which
-    waits for a person, and for a plan with more parts than `splitParts`, with no parts, or with a
-    part titled by the item's own title or starting with it, ignoring case, spaces and punctuation
-    at its end. For each of these three the item is planned once more, and a second such plan
+    item has no change, or has one and the plan is the one that a round which ran out of time
+    asked for (`supersede`). A split of an item with a change withdraws the change. A split is
+    refused for an item at `splitDepth` levels of parts, which waits for a person, and for a plan
+    with more parts than `splitParts`, with no parts, or with a part titled by the item's own
+    title or starting with it, ignoring case, spaces and punctuation at its end. For each of these three the item is planned once more, and a second such plan
     waits for a person.
     A split ends as `accepted` once every part ended and one was accepted, under `parentEnd`
     `whenPartAccepted`; under `person`, or when no part was accepted, a person decides
     (`splitIncomplete`).
-  - A plan that is too large and is not split, because splits are off or the item has a change,
-    waits for a person (`approval`). Otherwise, a plan that finds no change ends the item in
+  - A plan that is too large and is not split, because splits are off or the item has a change
+    and the plan is not that one, waits for a person (`approval`). Otherwise, a plan that finds no change ends the item in
     `noChange`, one that needs paths only a person changes waits for that person, and a clean
     plan is approved and starts the change.
   - Questions wait for a person unless `answers` is `recommended` and every question has a
@@ -326,8 +337,10 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   `awaitingApproval` for their answers, and the state keeps the round's questions while they
   wait. One whose change needs paths only a person changes waits for that person
   (`handMadeChange`), whatever it asks, and one that neither asks nor needs such paths fails, for
-  a person. Under `autoWhenClean`, with `answers` `recommended` and a recommended option for
-  every question, the engine answers, once in a row as for a plan:
+  a person. Under `afterFailure` `replan`, a person's comment, or the end of an item that blocks
+  it, plans such an item again when it has no change. Under `autoWhenClean`, with `answers`
+  `recommended` and a recommended option for every question, the engine answers, once in a row
+  as for a plan:
   - An implement round whose one question recommends only closing the item, with its finding
     that no change is needed, ends the item in `noChange`, unless the item has a change, such as
     one made anew after a conflict, which a person closes. Any other recommended option that only
@@ -455,9 +468,10 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   otherwise, the second time, and for an item at `splitDepth` levels of parts, which is not
   split, it goes to `failed` for a person, as NexKit 6 does. A host marks a part whose parent
   already asked as having asked, since NexKit 6's parts inherit that. An item that has a change
-  asks too, as NexKit 6 does after a fix round, but the engine never splits
-  it: its new plan goes on as one change on it, where NexKit 6 may instead split it and close
-  the pull request as superseded.
+  asks too, as NexKit 6 does after a fix round, and marks the plan `supersede`. If that plan is
+  too large, the split rules apply and `withdrawChange` ends the change. Any other plan goes on
+  as one change on it. The mark is dropped once a fix or implement run starts, or the item is
+  split.
 - **A final item that a person reopens** waits for a person, with attention, as NexKit 6 does.
   One whose change went in or became empty, as its state or the latest observation says, such
   as a change merged after a person dropped the item, starts again without it and with its rounds
@@ -537,6 +551,7 @@ Three things sit beside the state, never in place of it:
 | `runChecks` | Runs its checks on a version of the change | Each result, its failure signature, and whether the failure matches a known failure of the base; the item about that failure when every failing check matches it |
 | `accept` | Accepts the change: a merge, or an accept of a draft | `accepted`, or refused with a kind: `transient`, `waitingForChecks`, `checkFailed`, `behind`, `headMoved`, `conflict`, `notAccepted` or `needsPerson`; for `checkFailed`, the item about a failure the base branch has when every check that failed fails as it does there |
 | `createParts` | Makes the parts of a split, each blocked by the earlier parts it needs | The parts' ids |
+| `withdrawChange` | Withdraws the change that a split replaces, such as closing its pull request as superseded | Done |
 | `close` | Ends the work item with its outcome | Done |
 | `cancel` | Stops an action that runs | Done |
 | `needPerson` | Tells the people who decide, once, with the reason and what they decide on (`ref`) | Done |
@@ -567,7 +582,12 @@ write for implement and fix. There are two kinds of runner:
 
 - **An agent CLI in a workspace:** Claude Code today, and Codex and Gemini when their runtimes
   are added. The agent works on files, and the host publishes them. NexKit 6's `Runtime` and
-  `Provider` stay the Python interface inside this runner, which this repository holds.
+  `Provider` stay the Python interface inside this runner, which this repository holds. The runner
+  is `agent.run_action`. It refuses a `runAgent` action that does not fit the protocol, or that
+  names another agent, model, effort or access than the configuration gives the stage, before any
+  agent starts. It saves its result as `run.json`, beside the stage's `result.json`. The session,
+  the change version and the money are null: the publish job makes the commit, and nothing asks
+  the same session again.
 - **A model with tools:** the agent works only through the tools the host offers for the stage,
   such as an MCP server. A host that keeps its users' keys implements this runner itself, so that
   a key never leaves the host.
@@ -586,12 +606,15 @@ shapes, and a host shows them in its own words.
 
 A host gives the engine its policies in its configuration. Each has a default, and the
 protocol's `policies.schema.json` names it, as the first column does below. The policies with no
-name there, start, budgets, usage limits, agents, after a failure and
+name there, start, budgets, usage limits, agents and
 the checklist, are not in the protocol yet: they come into it as the
 engine takes over the decisions that read them, and until then the host applies them itself. The
 `prompt` call already reads three of them beside the host's policies, as its schema names them:
 `checklist`, the items the plan and the review answer; `profiles`, the profiles triage chooses
-from; and `budgets`, of which the plan prompt names the implement stage's time.
+from; and `budgets`, of which the plan prompt names the implement stage's time. The `sweep` call
+reads two more beside them, as its schema names them: `maxParallel`, the most items that run at
+once, and `priority`, the labels that go first. Neither is in `policies.schema.json`, so no state
+document keeps them.
 
 | Policy | Values | GitHub | An application, for example |
 | --- | --- | --- | --- |
@@ -610,7 +633,7 @@ from; and `budgets`, of which the plan prompt names the implement stage's time.
 | Agents | Agents, models and efforts per stage, fallbacks, profiles and triage | `agents`, `stages`, `profiles` | The model the request names |
 | Splits (`splits`, `splitParts`, `splitDepth`) | Off or on, with the most parts, 1–10, and the depth, 1–10; the re-plan for fewer parts, no parts or repeated titles happens only with `autoWhenClean`, and a person's approval of a split that these rules refuse goes on as one change | Off; on with autopilot, at most 10 parts, 3 levels | On: the person approves the split |
 | A parent's end (`parentEnd`) | `whenPartAccepted`, `person`: whether the parent ends once every part ended and one was completed, or a person decides (`splitIncomplete`); a host that leaves it out gets `whenPartAccepted` | `whenPartAccepted` with `close_parent_issues`, else `person`: the engine's default differs from GitHub's, where `close_parent_issues` is off by default | `whenPartAccepted`: the parent ends when its parts end |
-| After a failure | `person`, `replan`, `newItem` | `person`, then `replan` on a comment | `newItem`: the person sends the request again |
+| After a failure (`afterFailure`) | `person`, `replan`: whether an item that failed because its round was blocked with nothing to answer, with no change, is planned again after a person's comment or the end of an item that blocks it | `person`; `replan` with autopilot | `person` |
 | Checklist | Items the plan and the review answer, some for a person | `review.checklist` | The application's own checklist |
 
 **Someone else may do a stage.** `created` says who does each stage: the engine's runners, a
@@ -631,6 +654,21 @@ repeated start changes nothing. A host that starts each item when it is made, as
 may, needs no sweep, but still sends `blockerClosed` when a part's earlier part ends, and still
 observes every open change from time to time.
 
+The `sweep` call trusts its items. The host lists, oldest first, only the items that may start,
+and gives each its labels, the index of its milestone in the host's milestone order (none when it
+has no milestone), its wave, whether other changes wait for it (`awaited`) and its account. The
+call refuses only a request that breaks its schema or names one item twice. It orders the items by
+the first of the `priority` labels that an item has, then by milestone with no milestone last, then
+by wave among items of the same milestone, then by the order the host listed them in. An item with
+no milestone ignores its wave.
+
+Starts stay within `maxParallel`, counting the items that already run. Each start takes a place. An
+`awaited` item starts even when the limit is reached, and its start is flagged `beyondLimit`. An
+item on an account in `limited` never starts, takes no place, and waits even when it is awaited.
+Each item that does not start gets a wait: `for` is `place` or `usageLimit`, and `running` is how
+many items ran at that point, those that already ran and the starts before it. A host shows that
+count as its own words say, such as "4 issues are in progress".
+
 ## Hosts
 
 | | GitHub | An application, for example |
@@ -650,7 +688,7 @@ observes every open change from time to time.
 | Observed as empty | No file differs between the base and the head | The draft changes nothing any more |
 | Observes on | `pull_request` synchronize, closed and reopened; a push to the base, for each open change; each sweep | A change of the draft or of the release; its worker, from time to time |
 | A change closed unmerged | Not an observation: the host tells a person, who drops the item or asks for the work again | The draft was discarded: the same |
-| One event at a time | Planned in [#332](https://github.com/phuongnse/nexkit/issues/332): every run that writes an item's state shares one concurrency group keyed by the item, which a routing job derives and passes on; the sweep sends one event into each item's group rather than writing states itself. A run that waits may be replaced by a newer one, so a run takes the item's events from their sources (comments, reviews, labels) and gives each a stable id from its source, such as the comment's id. The run is then the state comment's only writer, which stands for the compare-and-set. The sweep's one event per item and the stable ids are criteria of #332. Today NexKit groups runs by issue, by pull request, and in separate autopilot and `approved-N` review groups (`nexkit/templates/workflow.yml`), and the sweep writes many items in one run | The request's row, locked while its event is handled |
+| One event at a time | Planned in [#332](https://github.com/phuongnse/nexkit/issues/332): every run that writes an item's state shares one concurrency group keyed by the item, which a routing job derives and passes on; the sweep sends one event into each item's group rather than writing states itself. A run that waits may be replaced by a newer one, so a run takes the item's events from their sources (comments, reviews, labels) and each already has a stable id from its source, such as the comment's id (see [Events and actions arrive more than once](#events-and-actions-arrive-more-than-once)). The run is then the state comment's only writer, which stands for the compare-and-set. The sweep's one event per item is a criterion of #332. Today NexKit groups runs by issue, by pull request, and in separate autopilot and `approved-N` review groups (`nexkit/templates/workflow.yml`), and the sweep writes many items in one run | The request's row, locked while its event is handled |
 
 What exists only because of GitHub stays in the GitHub host: the GitHub App, statuses, branch
 clean-up, watching CI and flaky runs, Dependabot, artifacts, carrying a review over a base merge,
@@ -673,6 +711,11 @@ give. They come from the decisions that `tests/test_scenarios.py` plays today. I
 are about GitHub alone, such as vouching, Dependabot, shards, branch updates and carried reviews,
 stay as tests of the GitHub host.
 
+`tests/conformance/sweeps/` holds the cases of the `sweep` call: the items, the running count, the
+limited accounts and the policies, and the exact starts and waits. A test sends each to
+`nexkit-engine sweep` on standard input and to `POST /sweep`, and checks that both give the same
+text, which fits the answer's schema.
+
 A case may start from an example state of the protocol. After every call, the suite checks the
 answer against the protocol, that the same request gives the same answer, and the outbox: every
 action of the answer is pending, and an action leaves `pending` only with its result, its cancel
@@ -680,9 +723,10 @@ or its loss. It also checks NexKit's rule: every item that is not final has an a
 on it (`runAgent`, `runChecks`, `publish`, `accept`, `createParts`, `replaceChange` or `wait`), a
 wait, a hold or attention. The rule that a round counts only when its agent ran to its end or
 published joins these checks with the engine's rules of rounds, and so does the rule that a fix
-round waits to be issued (`rounds.due`) only in `fixing`. Across the cases, every
-transition of the states table is played, no case makes one that the page does not name for its
-policies and for whether the item had a change, and an item is dropped from every state that is
+round waits to be issued (`rounds.due`) only in `fixing`. A state keeps a round's questions only
+while they wait for answers: in `awaitingApproval`, with attention naming them. Across the cases,
+every transition of the states table is played, no case makes one that the page does not name for
+its policies and for whether the item had a change, and an item is dropped from every state that is
 not final. The engine passes the suite in this repository, and each host runs it through its own
 adapter. A new rule of the engine comes with a case.
 
@@ -728,7 +772,16 @@ adapter. A new rule of the engine comes with a case.
   split is imported with how many levels of parts it is below the issue first split, so a part at
   the deepest level whose plan is too large waits for a person. Autopilot's answers are kept in
   `asked` only while the plan or round they started is on its way: a person's comment, or a run
-  that reported and changed the item, ends them. A NexKit 6 run on its way becomes the action the
+  that reported and changed the item, ends them. A `/nexkit go` that stopped as blocked is placed
+  where the engine puts the round's result, under the GitHub host's policies, and automatic
+  approval applies only to an issue autopilot takes. Its questions wait for answers, with the
+  ones that only a new plan carries out kept, and a change that needs protected paths waits for a
+  person whatever the round asks. A round with nothing to answer fails, one whose only question
+  recommends closing with a finding that no change is needed ends in `noChange`, and one that the
+  engine refuses fails for a person. Answers that the engine would give leave the plan or round
+  they start waiting for the sweep to start it. The plan that autopilot asked for after a pull
+  request's round ran out of time is imported with `supersede`, so its split withdraws the pull
+  request. A NexKit 6 run on its way becomes the action the
   engine waits for, and an automatic fix round on its way, with a count, is marked
   `rounds.automatic`, so that a stop gives its count back. A run paused at a usage limit, or until
   it runs again after a transient stop, becomes a wait with its time, the second keeping the
@@ -765,8 +818,8 @@ adapter. A new rule of the engine comes with a case.
    the engine holds, the GitHub host builds the item's document for each of them from NexKit 6's
    markers, as its import reads them, sends the event that GitHub shows, and carries out the
    answer with NexKit 6's code and in its words. So far these are the decisions that follow a
-   plan, but one: a plan that splits an item whose round ran out of time on its pull request,
-   which NexKit 6 still splits, closing the pull request as superseded. They are also the
+   plan, a split after a round that ran out of time on its pull request included, whose
+   `withdrawChange` the host carries out by closing the pull request as superseded. They are also the
    decisions that follow a `/nexkit go` that stopped as blocked with questions or with paths
    only a person changes, a writer's command that answers its questions with the option that
    only closes the issue, the reason a plan waits for without autopilot, what follows the
@@ -782,7 +835,11 @@ adapter. A new rule of the engine comes with a case.
    the new head as an observation, so that the engine checks it, the last refusal after the
    base branch kept moving, the guards that stop a merge before it is tried (an issue closed,
    edited after a vouch or unreadable), and GitHub's other refusals that only a person clears.
-   The merge's observations reach the engine too
+   A merge refused for a conflict is sent too, with the conflict rounds used: under
+   `conflicts.auto_resolve` the engine answers a conflict round while `conflicts.max_rounds`
+   has one left, and otherwise a person. A pull request that GitHub reports as `dirty` only at
+   the end of the refusal is sent as a conflict without `conflicts.auto_resolve` and as
+   `needsPerson` with it. The merge's observations reach the engine too
    (`host.change_seen`): a pull request that a person merged first ends the item as `accepted`, a
    change that the base branch already holds ends it as `noChange`, and a commit that a person
    pushes while the merge waits is checked. After NexKit's own merge, `host.part_ended` sends the
@@ -801,21 +858,31 @@ adapter. A new rule of the engine comes with a case.
    transient error, and `maintain.resume_paused` sends the tick of each due resume; the host
    carries out the wait, or leaves the run to a person. Which reset the host gives stays the
    host's, and so do a review that NexKit 6 runs again after a transient error and a transient
-   stop of publish. It also decides the start again of lost work under `lostWaits`; no GitHub
-   path asks it yet. After a blocked `/nexkit go` or fix round whose recommended
+   stop of publish. After a plan, a stopped round and a review, `report` also sends the tokens,
+   seconds, money and session that the runner's `run.json` gives. It checks the file against the
+   protocol first. The rest of the result stays NexKit 6's, so the engine decides as before, and
+   a file that is missing or does not fit sends none. It also decides what follows a command that
+   autopilot started and lost, when its run never started, ended without a report, or handed the work on to a run that never
+   started (`autopilot._again`, called by `_reportless` and `_handed_on`): `lost_again` sends
+   `actionLost` at the time of the last start, with autopilot's count of losses, and the host
+   carries out the start, the wait or the person. What counts as lost and the six-hour window of
+   the count stay the host's. A person's own lost command waits for that person. After a blocked `/nexkit go` or fix round whose recommended
    answer only closes the issue, `report` mentions the person, as for any other wait, and the
    sweep does not mention them again; NexKit 6 said autopilot carries on and left the mention
    to the sweep, and this differs from it on purpose. A conflict that the base branch's move makes, found
    after an implement round or on a push to the base branch (`maintain`), stays NexKit 6's,
    as does the merge itself (`report.merge_pull`) but for the refusals above: those for required
-   checks that fail or have not passed yet, a head that moved, a base branch that kept moving
-   and a reason only a person clears, a change that a person merged, one that became empty, a
-   commit pushed while the merge waits, and the end of the direct parent. The parents above it,
-   and a parent's end outside the merge, stay NexKit 6's. A
+   checks that fail or have not passed yet, a head that moved, a base branch that kept moving,
+   a reason only a person clears and a conflict, a change that a person merged, one that became
+   empty, a commit pushed while the merge waits, and the end of the direct parent. The parents
+   above it, and a parent's end outside the merge, stay NexKit 6's, and so does a branch behind
+   its base at the merge. A
    person's push during the wait for the base branch's failure is not sent yet: NexKit 6's
    sweep does not read the head then either. A `/nexkit go`
-   that stopped as blocked with neither stays NexKit 6's: it plans again after a comment, as
-   the policy after a failure, which the protocol does not hold yet, says. Every existing test
+   that stopped as blocked with neither is the engine's too: it waits for a person, and with
+   autopilot, under `afterFailure`, a comment or the close of an issue that blocks it plans it
+   again. Only a `/nexkit go` that ended in an agent error stays NexKit 6's
+   (`autopilot._since_stop`). Every existing test
    passes after each step, and the engine's part of `tests/test_scenarios.py` becomes the
    conformance suite as it goes.
 2. NexKit 7 is released when the GitHub host runs only through the engine. Repositories on

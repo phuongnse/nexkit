@@ -12,8 +12,9 @@ The runner sends each request to the program twice and checks that both answers 
 text, checks every answer against the protocol, and after every call checks the outbox: every
 action of the answer is pending, whole, an action leaves `pending` only with its result, its
 cancel or its loss, a notice stays pending only while attention says it, and a fix round waits
-to be issued (`rounds.due`) only in `fixing`. It also checks NexKit's rule: each item that is
-not final has a work action pending, a wait, a hold or attention. Across the cases, every
+to be issued (`rounds.due`) only in `fixing`. A state keeps a round's questions only while they
+wait: in `awaitingApproval`, with attention naming them. It also checks NexKit's rule: each item
+that is not final has a work action pending, a wait, a hold or attention. Across the cases, every
 transition of the page's table is played, none that the page does not name for the case's
 policies is, and a drop is played from every state that is not final.
 """
@@ -234,6 +235,7 @@ class ConformanceTest(unittest.TestCase):
         state = start_of(case)
         if state is not None:
             self.assertEqual(protocol.check(state, "state.schema.json"), [], path.stem)
+            self.check_questions(state, f"{path.stem} start")
         open_ = {action["id"]: action for action in (state or {}).get("pending", [])}
         for number, step, request, text in play(case):
             where = f"{path.stem} step {number} ({step['event']['kind']})"
@@ -262,6 +264,7 @@ class ConformanceTest(unittest.TestCase):
                 self.assertNotIn(field, new, f"{where}: {field}")
             open_ = self.check_outbox(open_, event, answer, where)
             self.check_due(new, where)
+            self.check_questions(new, where)
             # A close stays pending only while the item is final: a reopen takes it back.
             if new["state"] not in FINAL:
                 closes = [action["id"] for action in new["pending"] if action["kind"] == "close"]
@@ -312,6 +315,17 @@ class ConformanceTest(unittest.TestCase):
         if state["rounds"].get("due"):
             self.assertEqual(state["state"], "fixing", f"{where}: a fix round waits outside it")
 
+    def check_questions(self, state, where):
+        """A round's questions are kept only while they wait for answers: in `awaitingApproval`,
+        with attention naming them by their ref."""
+        questions = state.get("questions")
+        if questions:
+            self.assertEqual(
+                state["state"], "awaitingApproval", f"{where}: questions kept outside it"
+            )
+            ref = (state.get("attention") or {}).get("ref")
+            self.assertEqual(ref, questions["ref"], f"{where}: attention names other questions")
+
     def test_the_cases(self):
         seen, dropped = set(), set()
         paths = cases()
@@ -333,6 +347,22 @@ class ConformanceTest(unittest.TestCase):
         # A fix round that waits to be issued outside `fixing` is found.
         with self.assertRaises(AssertionError):
             self.check_due({"state": "checking", "rounds": {"due": True}}, "here")
+        # Questions kept outside `awaitingApproval` are found, and so are questions that the
+        # attention does not name.
+        with self.assertRaises(AssertionError):
+            self.check_questions(
+                {"state": "planning", "attention": None, "questions": {"ref": "r1", "items": []}},
+                "here",
+            )
+        with self.assertRaises(AssertionError):
+            self.check_questions(
+                {
+                    "state": "awaitingApproval",
+                    "attention": {"reason": "question", "text": "t", "ref": "r2"},
+                    "questions": {"ref": "r1", "items": []},
+                },
+                "here",
+            )
         # A transition the conflict policy does not lead to is not allowed.
         self.assertNotIn(("working", "fixing"), allowed({"conflicts": "person"}, True))
         self.assertIn(("working", "fixing"), allowed({"conflicts": "resolve"}, True))

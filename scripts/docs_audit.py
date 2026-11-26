@@ -71,6 +71,8 @@ MILESTONE_ROW = re.compile(
 # Punctuation that ends a sentence after a link is not part of it.
 LINK_TARGET = r"([^\s)>\"'\]#?]*[^\s)>\"'\]#?.,;:!])(?:#([^\s)>\"'\]]*[^\s)>\"'\].,;:!]))?"
 LINE_ANCHOR = re.compile(r"^L\d+(?:-L\d+)?$")
+# An evidence file of the agent that may stand in a link as it is.
+PLAIN_PATH = re.compile(r"[\w.-][\w./-]*", re.ASCII)
 HEADING = re.compile(r"^#{1,6} (.+?)\s*$", re.M)
 FENCE = re.compile(r"^```.*?^```", re.M | re.S)
 HOMES = {
@@ -234,10 +236,16 @@ def _link(repository, file, line=None):
     return f"[{file}{f':{line}' if line else ''}]({repository}/blob/main/{file}{anchor})"
 
 
+def _source(repository, evidence):
+    file, line = evidence["file"], evidence["line"]
+    if PLAIN_PATH.fullmatch(file):
+        return _link(repository, file, line)
+    return _quoted(file) + (f":{line}" if line else "")
+
+
 def _evidence(repository, finding):
     return "; ".join(
-        _link(repository, e["file"], e["line"])
-        + (f", {_quoted(e['note'])}" if e.get("note") else "")
+        _source(repository, e) + (f", {_quoted(e['note'])}" if e.get("note") else "")
         for e in finding["evidence"]
     )
 

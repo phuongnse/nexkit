@@ -4,21 +4,26 @@ Decisions move into the engine a group at a time, and until the GitHub host runs
 it, NexKit 6's code moves an item between the decisions that the engine holds. The host keeps no
 state document for them: for each one, it builds the item's document from NexKit 6's markers, as
 the import reads them (`first_state`), sends the event that GitHub shows, and carries out the
-answer with NexKit 6's code, in NexKit 6's words.
+answer with NexKit 6's code, in NexKit 6's words. After a plan, a stopped round and a review,
+`report` also sends what the runner's `run.json` says the agent spent (`spent`).
 
 So far the engine decides what follows a plan: its approval by autopilot, the answers to its
 questions, once in a row, a writer's answer that only closes the issue, a plan that finds no
 change or needs a hand-made change, splits and their rules, a new plan after a collaborator's
-comment, and what a plan waits for without autopilot. One stays NexKit 6's
-(`autopilot._replanned`): a plan that splits an issue whose pull request's round ran out of
-time, since the engine never splits an item that has a change (docs/engine.md#states).
+comment, and what a plan waits for without autopilot. That includes the plan that autopilot asked
+for after a round of the issue's pull request ran out of time (`autopilot._replanned`): the host
+sends it with the pull request as the change and `supersede` asked, and when the engine splits the
+issue and answers `withdrawChange`, the host closes the pull request as superseded.
 
 It also decides what follows a `/nexkit go` that stopped as blocked with questions or with
 protected paths its change needs (`autopilot.engine_round`): the answers to its questions, once
 in a row, a recommended option that only closes the issue, with the round's finding that no
 change is needed or without it, one that only a new plan carries out, a writer's answer that
 only closes the issue, by a comment or a command, and a new plan after a collaborator's comment
-or the close of an issue that blocks it.
+or the close of an issue that blocks it. So does one that stopped as blocked with nothing to
+answer, which waits for a person and, with autopilot, is planned again after a comment or the
+close of an issue that blocks it (`afterFailure`). Only a `/nexkit go` that ended in an agent
+error stays NexKit 6's.
 
 And it decides what follows a round's checks and review on a NexKit pull request (`report`):
 the review's verdict and criteria, an automatic fix round within `fix.max_auto_rounds`, counted,
@@ -54,14 +59,27 @@ It decides what follows the other refusals of a merge (`report._refused`, `repor
 first, so that the engine checks it, or a person decides when none was read or it is the head
 the round checked; the last refusal after the base branch kept moving through the host's quick
 tries; the checks before the merge, an issue closed, edited after a vouch or unreadable; and
-any other refusal GitHub gives that only a person clears. A refusal for a conflict, or for a
-branch behind its base, stays NexKit 6's.
+any other refusal GitHub gives that only a person clears.
+
+It decides what follows a merge that GitHub refused for a conflict (`report._refused`):
+`accept_answer` sends it as a `conflict` result with the conflict rounds used, and the engine
+answers a conflict round while `conflicts.max_rounds` has one left, or a person. The host starts
+the round with `start_conflict_round(left=...)`, which keeps NexKit 6's other reasons not to
+start one. A pull request found `dirty` only at the end goes as a `conflict` without
+`conflicts.auto_resolve` and as `needsPerson` with it. A branch behind its base stays NexKit 6's.
 
 It decides when a plan, implement or fix stage runs again after its agent stopped at a usage
 limit or on a transient error (`stage_limited`, `stage_transient`, called by `report`), and when
 a paused or waiting run starts at its time (`resumes`, called by `maintain.resume_paused`), a hold
 on the issue included. A reset stays the host's to give, and a transient stop of publish stays
 its own retry.
+
+It decides what follows a command that autopilot started and lost, whose run GitHub never
+started, or that ended without a report, or that handed the work on to a run that never started
+(`autopilot._again`, called by `_reportless` and `_handed_on`): `lost_again` sends `actionLost`
+at the time of the last start, with autopilot's count of losses, and carries out the start
+again, the wait or the person. What counts as lost, and the six-hour window of the count, stay
+`autopilot`'s. A person's own lost command waits for that person.
 
 It decides what the merge finds too (`report.merge_pull`, `autopilot._merge_step`):
 `change_seen` sends a pull request that a person merged first, a change that its base branch
@@ -88,8 +106,9 @@ held up by it.
 from __future__ import annotations
 
 import json
+import os
 
-from . import autopilot, engine, first_state, usage
+from . import autopilot, engine, first_state, protocol, usage
 from .checks import failing_signatures
 from .engine.machine import RUNS
 from .protocol.size import LONGEST, MOST
@@ -123,6 +142,20 @@ AGENT = {
     "seconds": None,
     "usd": None,
 }
+# What the runner's result says an agent spent, which the engine adds to the item's `used`.
+SPENT = ("tokens", "seconds", "usd", "session")
+
+
+def spent(ran):
+    """`AGENT` with what the runner's result `ran` (`run.json`) spent, when it fits the protocol;
+    otherwise `AGENT`. The rest stays NexKit 6's, so the engine decides as before."""
+    if not isinstance(ran, dict) or protocol.check(
+        ran, "actions/runAgent.result.schema.json", "run.json"
+    ):
+        return dict(AGENT)
+    return {**AGENT, **{key: ran[key] for key in SPENT}}
+
+
 # What the engine asks a plan once more for, as autopilot's record keeps it.
 REMEMBER = {"fewer": "fewer_asked", "parts": "parts_asked", "titles": "titles_asked"}
 # The time of an event that GitHub gives no time for.
@@ -149,6 +182,7 @@ def policies(cfg):
         "conflicts": "resolve" if cfg["conflicts"]["auto_resolve"] else "person",
         "conflictRounds": cfg["conflicts"]["max_rounds"],
         "answers": cfg["autopilot"]["answer"],
+        "afterFailure": "replan" if taken else "person",
         "splits": taken,
         "splitParts": MAX_PARTS,
         "splitDepth": autopilot.MAX_DEPTH,
@@ -280,6 +314,37 @@ def _waiting(doc):
     return doc
 
 
+# The kinds of source that name an event: a comment, a review, an event of the issue events API,
+# a dispatch (by its run) and an agent's result (by its run).
+SOURCES = ("comment", "review", "issue-event", "dispatch", "run")
+
+
+def event_id(kind, source):
+    """The id `<kind>-<id>` of an event that GitHub's object `source` (or its id) gives, so a
+    source gives the same id each time and two sources never share one. Only GitHub's positive
+    numeric id counts, never a text that a person wrote. Raises `ValueError`.
+    See docs/engine.md#events-and-actions-arrive-more-than-once."""
+    if kind not in SOURCES:
+        raise ValueError(f"No event is named by a {kind!r}.")
+    found = source.get("id") if isinstance(source, dict) else source
+    if not isinstance(found, int) or isinstance(found, bool) or found <= 0:
+        raise ValueError(f"A {kind} names an event by its positive number, not {found!r}.")
+    return f"{kind}-{found}"
+
+
+def _run_event_id(url=None):
+    """The id of the agent's result of the workflow run that the link `url` of a run comment
+    names, or of the run this process is in when there is no link. A process outside GitHub
+    Actions, or a comment without a link, has no source and gives `run-local`."""
+    from .route import RUN_ID
+
+    match = RUN_ID.search(url or "")
+    found = match.group(1) if match else None
+    if found is None and not url:
+        found = os.environ.get("GITHUB_RUN_ID", "")
+    return event_id("run", int(found)) if found and found.isdigit() else "run-local"
+
+
 def _event(kind, number, at, name, **fields):
     return {
         "protocol": 1,
@@ -298,7 +363,7 @@ def _result(number, plan, data, run, change=None):
         "actionFinished",
         number,
         plan.get("created_at"),
-        f"plan-{plan.get('id')}",
+        _run_event_id(run.get("url")),
         action=first_state.RUN_ID,
         changeVersion=version,
         result={**AGENT, "changeVersion": version, "output": plan_output(plan, data, run)},
@@ -342,14 +407,14 @@ def _said(gh, number, comment, picked, doc):
         role = "writer" if by and gh.can_write(by) else "reader"
         answers = [{"question": picked[0], "option": picked[1]}]
         asked = doc["attention"]["ref"]
-        name = f"answer-{comment['id']}"
+        name = event_id("comment", comment)
         fields = {"by": _person(by, role), "answers": answers, "note": "", "asked": asked}
         return _event("answered", number, at, name, **fields)
     # A collaborator, as `autopilot._commented_after` reads them: whether they may write
     # matters only to an answer that closes.
     text = {"name": "comment", "ref": str(comment["id"])}
     by = _person(by, "reader")
-    return _event("commented", number, at, f"comment-{comment['id']}", by=by, text=text)
+    return _event("commented", number, at, event_id("comment", comment), by=by, text=text)
 
 
 # -- what follows a plan -------------------------------------------------------------------
@@ -373,6 +438,9 @@ def after_plan(gh, cfg, issue, plan, run, record, start, comments, pull=None):
         if pull:
             change = {"id": str(pull), "version": gh.pull(pull)["head"]["sha"]}
         doc = _document(issue, record, change=change)
+        if pull:
+            # The plan that a round that ran out of time asked for: its split withdraws the change.
+            doc["asked"].append("supersede")
         doc = _planning(doc, _depth(gh, issue, data), autopilot.asked_again(comments))
         event = _result(number, plan, data, run, change)
     found = step(doc, event, policies(cfg))
@@ -392,7 +460,7 @@ class _PlanView:
         if "close" in kinds:
             return self.closed(kinds["close"])
         if "createParts" in kinds:
-            return self.split(kinds["createParts"])
+            return self.split(kinds["createParts"], kinds.get("withdrawChange"))
         if "runAgent" in kinds:
             shown = any(a["kind"] == "show" and a["what"] == "answers" for a in actions)
             asked = [name for name in after if name not in before]
@@ -414,7 +482,14 @@ class _PlanView:
         reason = "its plan finds that no change is needed"
         return self.step("close", reason, finding=self.data["no_change"], plan_url=url)
 
-    def split(self, create):
+    def split(self, create, withdraw):
+        # The engine withdraws a change when it splits the item that has one, and only then.
+        named = (withdraw or {}).get("changeId")
+        if named != (str(self.pull) if self.pull else None):
+            if not self.pull:
+                raise Refused("The engine withdraws a change from an issue with no pull request.")
+            why = f"The engine splits the issue without withdrawing pull request #{self.pull}."
+            raise Refused(why)
         # The parts the engine files, as the plan's record holds them, which needs no more
         # than the earlier parts that each part's `needs` names.
         recorded = self.data.get("split") or []
@@ -479,7 +554,8 @@ class _PlanView:
         elif reason == "handMadeChange":
             text = autopilot.protected_reason(self.data["protected_paths"])
         elif reason == "approval":
-            # The plan is too large, and the engine splits no item with a change.
+            # The plan is too large, and the engine splits an item with a change only from the
+            # plan that a round which ran out of time asked for.
             text = TOO_LARGE
         elif reason == "splitDepth":
             # Its scope was set levels above, so a person splits it on, or implements it.
@@ -498,7 +574,7 @@ class _PlanView:
         return self.step("waits", text)
 
 
-def plan_carried_on(gh, cfg, issue, decision, output):
+def plan_carried_on(gh, cfg, issue, decision, output, ran=None):
     """Whether autopilot carries on after the plan `output` that a run of `decision` posted,
     as the engine decides what follows it, so that `report` mentions nobody. A plan that finds
     no change carries on whatever else it says. A recommended answer that only closes the
@@ -514,12 +590,12 @@ def plan_carried_on(gh, cfg, issue, decision, output):
     data = plan_record(output)
     doc = _document(issue, autopilot.find_record(comments)[1])
     doc = _planning(doc, _depth(gh, issue, data), again)
-    result = {**AGENT, "output": plan_output({}, data, {})}
+    result = {**spent(ran), "output": plan_output({}, data, {})}
     event = _event(
         "actionFinished",
         number,
         None,
-        f"run-{decision.get('run_id') or number}",
+        _run_event_id(),
         action=first_state.RUN_ID,
         changeVersion=None,
         result=result,
@@ -627,8 +703,9 @@ def _plan_doc(issue, record, comments):
 
 def after_go(gh, cfg, issue, comment, run, record, start, comments):
     """The step after the `/nexkit go` of `issue` whose run comment `comment`, with the
-    marker `run`, says it stopped as blocked with questions or protected paths
-    (`autopilot.engine_round`), as the engine decides it: a writer's comment since that
+    marker `run`, says it stopped as blocked, with questions or protected paths or with
+    nothing to answer (`autopilot.engine_round`, `autopilot._assess`), as the engine decides
+    it: a writer's comment since that
     picks the option that only closes the issue closes it; otherwise the round's result,
     then a collaborator's comment since, or the close of an issue that blocked it after the
     round started (`autopilot._since_stop`). `record` is autopilot's record and `start` what
@@ -644,7 +721,7 @@ def after_go(gh, cfg, issue, comment, run, record, start, comments):
         answers = [{"question": picked[0], "option": picked[1]}]
         asked = doc["attention"]["ref"]
         fields = {"by": _person(by, "writer"), "answers": answers, "note": "", "asked": asked}
-        at, name = said[-1].get("created_at"), f"answer-{said[-1]['id']}"
+        at, name = said[-1].get("created_at"), event_id("comment", said[-1])
         event = _event("answered", number, at, name, **fields)
         return view.carry(step(doc, event, policies(cfg))["actions"])
     doc = _working(_plan_doc(issue, record, comments), autopilot.asked_again(comments))
@@ -653,7 +730,7 @@ def after_go(gh, cfg, issue, comment, run, record, start, comments):
         # A collaborator, as `autopilot._commented_after` reads them.
         login = (said[-1].get("user") or {}).get("login") or ""
         text = {"name": "comment", "ref": str(said[-1]["id"])}
-        at, name = said[-1].get("created_at"), f"comment-{said[-1]['id']}"
+        at, name = said[-1].get("created_at"), event_id("comment", said[-1])
         events.append(_event("commented", number, at, name, by=_person(login, "reader"), text=text))
     else:
         closed = _closed_since(gh, issue, comment)
@@ -687,7 +764,7 @@ def _round_result(number, comment, run):
         "actionFinished",
         number,
         comment.get("created_at"),
-        f"go-{comment.get('id')}",
+        _run_event_id(run.get("url")),
         action=first_state.RUN_ID,
         changeVersion=None,
         result={**AGENT, "output": round_output(run)},
@@ -769,7 +846,7 @@ class _RoundView:
             text = autopilot.REPEATED
         elif reason == "closeRecommended":
             text = autopilot.CLOSE_UNFOUNDED
-        elif reason == "question":
+        elif reason in ("question", "blocked"):
             text = self.run.get("attention") or autopilot.failed_reason("go")
         else:
             raise Refused(f"The engine waits for a person for {reason!r} after a blocked round.")
@@ -784,7 +861,7 @@ def _carries_on(actions):
     return any(action["kind"] in ("runAgent", "close") for action in actions)
 
 
-def round_carried_on(gh, cfg, issue, decision, agent):
+def round_carried_on(gh, cfg, issue, decision, agent, ran=None):
     """Whether autopilot carries on after the `/nexkit go` that a run of `decision` ran and
     that stopped as blocked, with the agent's result `agent`, as the engine decides what
     follows it, so that `report` mentions nobody. A wait for a person, the closing answer
@@ -800,10 +877,10 @@ def round_carried_on(gh, cfg, issue, decision, agent):
         "actionFinished",
         issue["number"],
         None,
-        f"run-{decision.get('run_id') or issue['number']}",
+        _run_event_id(),
         action=first_state.RUN_ID,
         changeVersion=None,
-        result={**AGENT, "output": round_output(run)},
+        result={**spent(ran), "output": round_output(run)},
     )
     return _carries_on(step(doc, event, policies(cfg))["actions"])
 
@@ -859,9 +936,9 @@ def _round_doc(issue, record, again, pull=None, head=None, place=(0, False)):
     return doc
 
 
-def _stop_event(number, name, doc, output, timed_out):
+def _stop_event(number, name, doc, output, timed_out, ran=None):
     version = (doc["change"] or {}).get("version")
-    result = {**AGENT, "timedOut": timed_out, "output": None if timed_out else output}
+    result = {**spent(ran), "timedOut": timed_out, "output": None if timed_out else output}
     return _event(
         "actionFinished",
         number,
@@ -887,7 +964,7 @@ def stopped(gh, cfg, issue, run, record, start, comments, pull=None, pull_commen
     if not timed_out:
         again = autopilot.asked_again(pull_comments, comments)
     doc = _round_doc(issue, record, again, pull, run.get("head"), place)
-    event = _stop_event(number, f"stop-{pull or number}", doc, fix_output(run), timed_out)
+    event = _stop_event(number, _run_event_id(run.get("url")), doc, fix_output(run), timed_out)
     actions = step(doc, event, policies(cfg))["actions"]
     kinds = {action["kind"]: action for action in actions}
     found = [
@@ -932,7 +1009,7 @@ ROUND_WAITS = {
 }
 
 
-def stop_carried_on(gh, cfg, issue, decision, agent):
+def stop_carried_on(gh, cfg, issue, decision, agent, ran=None):
     """Whether autopilot carries on after a fix round of `decision` that stopped as blocked,
     or an implement or fix round that ran out of time, with the agent's result `agent`, as
     the engine decides what follows it, so that `report` mentions nobody. A wait for a person,
@@ -951,20 +1028,22 @@ def stop_carried_on(gh, cfg, issue, decision, agent):
     run = {**found, "protected_paths": ((agent.get("output") or {}).get("protected_paths") or [])}
     doc = _round_doc(issue, record, again, pr, decision.get("head"), place)
     output = fix_output(run) if pr else round_output(run)
-    name = f"run-{decision.get('run_id') or issue['number']}"
-    actions = step(doc, _stop_event(issue["number"], name, doc, output, timed_out), policies(cfg))
+    name = _run_event_id()
+    event = _stop_event(issue["number"], name, doc, output, timed_out, ran)
+    actions = step(doc, event, policies(cfg))
     return _carries_on(actions["actions"])
 
 
 # -- a person's command ----------------------------------------------------------------
 
 
-def closing_command(gh, decision, comments):
+def closing_command(gh, decision, comments, command):
     """A writer's `/nexkit plan` or `/nexkit go` on an issue whose questions NexKit asked
     last, those of its latest plan or of a `/nexkit go` that stopped as blocked
     (`state.asked_last`): when its note picks the option that only closes the issue and the
     engine drops the issue for it, the `maintain` job closes the issue as not planned, with
-    no agent run. Otherwise the command goes to its round as it is."""
+    no agent run. Otherwise the command goes to its round as it is. `command` is the comment
+    of the command, which names the event."""
     number = decision["issue"]
     asked = asked_last(comments)
     if asked is None:
@@ -987,7 +1066,7 @@ def closing_command(gh, decision, comments):
     answers = [{"question": picked[0], "option": picked[1]}]
     fields = {"answers": answers, "note": "", "asked": doc["attention"]["ref"]}
     by = _person(decision.get("actor"), "writer")
-    event = _event("answered", number, None, f"command-{number}", by=by, **fields)
+    event = _event("answered", number, None, event_id("comment", command), by=by, **fields)
     try:
         found = step(doc, event, {})
     except Refused:
@@ -1035,6 +1114,7 @@ def after_round(
     label,
     before=None,
     seen=None,
+    ran=None,
 ):
     """What follows a round of the NexKit pull request `pr` whose checks and review ended on
     `head`, as the engine decides it: one of `ROUND_ENDS`. `auto_fixes` is how many automatic
@@ -1046,7 +1126,18 @@ def after_round(
     the state comment recorded them. `seen`, a dict, gets the checks that failed the same
     way before and after a fix round as `repeated` (`round_ended`). Raises `Refused`."""
     end, repeated = round_ended(
-        cfg, decision, pr, head, auto_fixes, checks, before, ("done", review), recheck, wait, label
+        cfg,
+        decision,
+        pr,
+        head,
+        auto_fixes,
+        checks,
+        before,
+        ("done", review),
+        recheck,
+        wait,
+        label,
+        ran,
     )
     if seen is not None:
         seen["repeated"] = repeated
@@ -1071,6 +1162,7 @@ def round_ended(
     recheck=False,
     wait=None,
     label=None,
+    ran=None,
 ):
     """What follows the checks and the review of the round of `decision` on the pull request
     `pr`, which ended on `head`, as the engine decides it: (end, repeated). `review` is
@@ -1121,17 +1213,21 @@ def round_ended(
     if kind == "again":
         return "again", _repeated(answer)
     if kind == "done":
-        result = {**AGENT, "output": _review_output(given)}
+        result = {**spent(ran), "output": _review_output(given)}
     elif kind == "paused":
         message = "The review stopped at its usage limit."
-        result = {**AGENT, "output": None, "limit": {"message": message, "reset": _time(given)}}
+        result = {
+            **spent(ran),
+            "output": None,
+            "limit": {"message": message, "reset": _time(given)},
+        }
     else:
-        result = {**AGENT, "output": None, "error": str(given or "The review failed.")}
+        result = {**spent(ran), "output": None, "error": str(given or "The review failed.")}
     event = _event(
         "actionFinished",
         number,
         None,
-        f"review-{pr}-{head}",
+        f"round-review-{pr}-{head}",
         action=review_run[0]["id"],
         changeVersion=head,
         result=result,
@@ -1470,17 +1566,21 @@ def head_observed(issue, pr, head):
     return _event("changeObserved", issue, None, f"head-{pr}-{head}", **fields)
 
 
-def accept_answer(cfg, issue, pr, head, auto_fixes, result, before=(), since=None, at=None):
+def accept_answer(
+    cfg, issue, pr, head, auto_fixes, result, before=(), since=None, at=None, conflicts=0
+):
     """What follows the answer of GitHub's merge of the NexKit pull request `pr`, as the engine
     decides it (`report._refused`): the accept's `result`, as `accepted` or with its refusal
     kind, sent after the events `before`, which tell the engine what the host read, such as a
     head that moved. `since`, when given, is when required checks first had not passed on
-    `head`, as NexKit 6's `waiting_since` says, and `at` the time of the events. Returns
+    `head`, as NexKit 6's `waiting_since` says, and `at` the time of the events. `conflicts`
+    is the conflict rounds used, which `conflicts.max_rounds` limits. Returns
     `(end, state)`, `end` being `accepted`, `waiting` while the required checks are awaited,
     `review` for the checks and review of a newer head that `before` observed, `fix` or `redo`
     for the round that follows, `base_failure` while a failure the base branch has is awaited,
     or `person`, whose reason `state["attention"]` names. Raises `Refused`."""
     doc = _pull_doc(cfg, issue, pr, head, "accepting", auto_fixes)
+    doc["rounds"]["conflicts"] = max(int(conflicts or 0), 0)
     version = doc["change"]["version"]
     action = {"id": first_state.RUN_ID, "next": None, "kind": "accept"}
     doc["pending"] = [{**action, "changeVersion": version, "by": "engine"}]
@@ -1657,7 +1757,7 @@ def stage_limited(cfg, decision, reset, label=None):
     result = {**AGENT, "changeVersion": version, "output": None, "limit": limit}
     fields = {"action": first_state.RUN_ID, "changeVersion": version, "result": result}
     events = _hold_events(number, label)
-    events.append(_event("actionFinished", number, None, f"limit-{number}", **fields))
+    events.append(_event("actionFinished", number, None, _run_event_id(), **fields))
     _, actions = _answers(doc, events, policies(cfg))
     kinds = {action["kind"]: action for action in actions}
     if "wait" in kinds:
@@ -1679,7 +1779,7 @@ def stage_transient(cfg, decision, now, error, label=None):
     result["error"] = str(error)
     fields = {"action": first_state.RUN_ID, "changeVersion": version, "result": result}
     events = _hold_events(number, label)
-    events.append(_event("actionFinished", number, usage.iso(now), f"transient-{number}", **fields))
+    events.append(_event("actionFinished", number, usage.iso(now), _run_event_id(), **fields))
     state, actions = _answers(doc, events, policies(cfg))
     kinds = {action["kind"]: action for action in actions}
     count = (state.get("again") or {}).get("transient")
@@ -1718,3 +1818,109 @@ def resumes(cfg, run, number, now, label=None):
     if any(action["kind"] in ("runAgent", "runChecks") for action in actions):
         return True
     raise Refused("The engine starts nothing at a resume, which the host cannot do.")
+
+
+# -- a command that autopilot started again after it was lost -------------------------------
+
+
+def lost_again(cfg, issue, record, now, what, fields, extra=None, person=False, label=None):
+    """The step for a command whose run GitHub never started, or that ended without a report
+    (`autopilot._again`, `_reportless`, `_handed_on`), as the engine decides it, or None for a
+    person's command whose comment already shows its end. `what` says which loss it is, `fields`
+    the command's start, `record` autopilot's record of its last start, or {} when none counts,
+    and `extra` what the step carries besides. With `person`, the command is a person's, which
+    waits for them. Raises `Refused`.
+
+    The loss is sent at the time of the last start, as the engine measures a wait from the loss
+    and NexKit 6 from that start, and the host keeps nothing that a later sweep could count
+    from. The agent's tokens are not sent: the record's `once` says that the agent ran."""
+    extra = extra or {}
+    command = str(fields["command"])
+    if command not in RESUMED:
+        raise Refused(f"NexKit writes no start of the command `{command}`.")
+    number, shown = issue["number"], f"`/nexkit {command}`"
+    tries = autopilot._tries(record)
+    doc, version = _lost_doc(RESUMED[command], number, fields["target"])
+    if person:
+        doc["pending"][0]["by"] = "person"
+    if tries >= 1:
+        doc["again"] = {"lost": min(tries, MOST_AGAIN)}
+    if record.get("once"):
+        doc.setdefault("again", {})["once"] = True
+    found = {
+        **(policies(cfg) if cfg else {}),
+        "lostWaits": [int(wait.total_seconds() // 60) for wait in autopilot.AGAIN],
+    }
+    lost = _event(
+        "actionLost",
+        number,
+        _time(record.get("at")) or usage.iso(now),
+        f"lost-{number}-{tries}",
+        action=first_state.RUN_ID,
+        changeVersion=version,
+        tokens=None,
+        seconds=None,
+        usd=None,
+    )
+    state, actions = _answers(doc, [*_hold_events(number, label), lost], found)
+    kinds = {action["kind"]: action for action in actions}
+    if "wait" in kinds:
+        due = autopilot.parse_iso(kinds["wait"]["until"])
+        if due > now:
+            reason = (
+                f"{what}; autopilot starts {shown} again after {due:%H:%M} UTC, since GitHub "
+                "may not start runs for a while"
+            )
+            return autopilot._step(issue, "active", reason, **extra)
+        name, wait = f"lost-tick-{number}-{tries}", kinds["wait"]["wait"]
+        tick = _event("tick", number, usage.iso(now), name, wait=wait)
+        state, actions = _answers(state, [tick], found)
+        kinds = {action["kind"]: action for action in actions}
+    if "runAgent" in kinds or "runChecks" in kinds:
+        again = state["again"]
+        remember = {
+            **fields.get("remember", {}),
+            "tries": again["lost"],
+            **({"once": True} if again.get("once") else {}),
+        }
+        reason = f"{what}, so autopilot starts {shown} {'again' if tries else 'once more'}"
+        return autopilot._step(issue, "start", reason, **{**fields, "remember": remember}, **extra)
+    if (kinds.get("needPerson") or {}).get("reason") == "outage":
+        if person:
+            if not extra:
+                return None
+            return autopilot._step(
+                issue, "waits", autopilot.person(autopilot.LOST_DO, autopilot.REPORTLESS), **extra
+            )
+        if record.get("once"):
+            why = f"{what}, after autopilot started it once more"
+            return autopilot._step(
+                issue, "waits", autopilot.person(autopilot.LOST_DO, why), **extra
+            )
+        why = (
+            f"{what}, {tries + 1} times: GitHub created no job for it, or ended its run "
+            "without a report, as it does while GitHub Actions has an outage"
+        )
+        do = autopilot.OUTAGE_DO.format(command=shown)
+        return autopilot._step(issue, "waits", autopilot.person(do, why), **extra)
+    if label:
+        return autopilot._step(issue, "held", autopilot.held_reason(label), running=False)
+    raise Refused(f"The engine answers {sorted(kinds)} after a lost run, which it cannot do.")
+
+
+def _lost_doc(stage, number, target):
+    """(document, change version) of `number` while the run of `stage` on `target`, the pull
+    request of a fix round or a review, runs: the document that a lost run waits in."""
+    if stage not in ("fix", "review"):
+        return _stage_doc(stage, number, None, 0)
+    change = {"id": target, "version": target}
+    if stage == "fix":
+        return _stage_doc(stage, number, change, 0)
+    doc = first_state.empty(str(number))
+    version = str(target)
+    doc["state"] = "checking"
+    doc["change"] = {"id": version, "version": version}
+    doc["pending"] = [
+        {"id": first_state.RUN_ID, "next": None, "kind": "runChecks", "changeVersion": version}
+    ]
+    return doc, version

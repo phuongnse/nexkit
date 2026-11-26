@@ -91,7 +91,7 @@ Some other events start a run too; they run only `route` and `maintain` (see
 | `combine` | go, fix, review, with `parallel_checks` | Joins the results of the check jobs into the one `nexkit-checks` artifact that the review, `report` and the next fix round read, and writes each check job's time to the [run summary](#logs-summary-and-artifacts), from the Actions API. Never checks out or executes repository code. |
 | `review` | go, fix, review | A fresh agent session with read-only access reviews the diff against the plan, the discussion, the check results and the previous review round. After NexKit brought an approved pull request up to date with its base branch, it first checks with git whether the approval [carries over](stages.md#stages), and then runs no agent. |
 | `report` | every action | Sets commit statuses, posts the review, shows the outcome in the run's comment, starts the next automatic round or asks for a person. With `merge.auto`, merges an approved pull request, closes its issue, deletes its branch when the repository deletes head branches on merge, and starts the `merge.after_workflows` that are due on the base branch. Never checks out or executes repository code. |
-| `maintain` | issue and milestone events, pushes to the default branch, finished runs of other workflows, the schedule, the `resume`, `autopilot` and `step` dispatches, `/nexkit trust` | Work that follows an event rather than a command: closing a parent issue, resuming a command paused at the usage limit or one that waits to run again after a transient error, starting a round for a pull request that conflicts with its base branch, stopping a round whose checks a move of the base branch left without a purpose, an [autopilot](work-without-a-command.md#autopilot) sweep, or one issue's autopilot step. Runs no agent, and never checks out or executes repository code. |
+| `maintain` | issue and milestone events, pushes to the default branch, finished runs of other workflows, the schedule, the `resume`, `autopilot` and `step` dispatches, `/nexkit trust`, a writer's approval of a NexKit pull request, a writer's `/nexkit plan` or `/nexkit go` that picks the option that only closes the issue, a command on a pull request whose base branch already holds its change, and a command NexKit started that `route` refused. The full list is `TASKS` in `nexkit/maintain.py`. | Work that follows an event rather than a command: closing a parent issue, resuming a command paused at the usage limit or one that waits to run again after a transient error, starting a round for a pull request that conflicts with its base branch, stopping a round whose checks a move of the base branch left without a purpose, merging a pull request after a writer's approval, closing an issue as not planned when a writer's answer picks the option that only closes it, closing a pull request that its base branch already holds, with its issue, answering `/nexkit trust`, an [autopilot](work-without-a-command.md#autopilot) sweep, or one issue's autopilot step. Runs no agent, and never checks out or executes repository code. |
 | `finish` | a command whose `report` did not finish | When `report` failed, was cancelled or lost its runner, starts a sweep that waits for the run to end and then handles its run comment ([autopilot](work-without-a-command.md#autopilot)) and the conflict round held back while it ran ([Resolving conflicts](work-without-a-command.md#work-without-a-command)). Not for a round NexKit stopped in its checks after the base branch moved: that round's `report` and `finish` do not run, and the next round has started already. Runs no agent, and never checks out or executes repository code. |
 
 The agent does not commit or push. It edits the working tree, and another job turns those edits
@@ -370,7 +370,7 @@ the files that had conflicts). Recorded text is clipped, and only the last five 
 rounds are kept, so the comment and the prompts stay bounded. Of a passed check, the
 record keeps its name, command and exit code, not its output, which no prompt reads. The
 comment always fits GitHub's 65,536 characters: when the record would not, NexKit first
-leaves out any passed check's output an older release recorded, then shortens, in this
+leaves out any passed check's output, then shortens, in this
 order and each to the most that fits, the failing checks' outputs (keeping their end, down to 2,000
 characters each, with the lines that report a failure from what it cut joining their
 failure lines), the findings other than blocking ones (keeping their start, down to 300
@@ -453,9 +453,6 @@ These are the outcomes a person meets in run comments and in that output:
 | `merge_refused` | GitHub refused the automatic merge. A person decides how to unblock it. See [Troubleshooting](troubleshooting.md). |
 | `retry_failed` | The run stopped on a transient error again after every wait of `retry.wait_minutes`. See [Troubleshooting](troubleshooting.md). |
 | `close_failed`, `on_base_failed` | No change is needed, or the base branch already holds this change, but GitHub refused NexKit's close. A person closes the issue, or the pull request and its issue. See [Troubleshooting](troubleshooting.md). |
-
-A pull request from NexKit 1.1.0 has a single status comment instead. NexKit reads its
-state, leaves it as it is and saves the state in a new state comment.
 
 The reasons are in [D1](decisions/d1-state-lives-only-on-github.md).
 

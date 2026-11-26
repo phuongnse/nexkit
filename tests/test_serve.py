@@ -219,7 +219,9 @@ class ServeTest(unittest.TestCase):
     def test_what_is_not_a_request_is_refused_with_an_error_answer(self):
         with server() as port:
             self.assertRefused(
-                send(port, "/dance", b"{}"), 404, "the calls are /describe, /step, /prompt."
+                send(port, "/dance", b"{}"),
+                404,
+                "the calls are /describe, /step, /prompt, /sweep.",
             )
             for method in ("GET", "PUT", "DELETE", "PATCH", "OPTIONS"):
                 self.assertRefused(send(port, "/step", method=method), 405, "with POST")

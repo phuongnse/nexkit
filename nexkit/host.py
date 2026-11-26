@@ -54,6 +54,13 @@ and `checks_waited` sends the sweep's tick, which tries the merge again or, once
 have not passed for `machine.CHECKS_END`, leaves it to a person. A merge whose issue no
 sweep looks at is the host's own refusal, since no tick would come for it.
 
+It decides what follows a merge that GitHub refused for a conflict (`report._refused`):
+`accept_answer` sends it as a `conflict` result with the conflict rounds used, and the engine
+answers a conflict round while `conflicts.max_rounds` has one left, or a person. The host starts
+the round with `start_conflict_round(left=...)`, which keeps NexKit 6's other reasons not to
+start one. A pull request found `dirty` only at the end goes as a `conflict` without
+`conflicts.auto_resolve` and as `needsPerson` with it. A branch behind its base stays NexKit 6's.
+
 It decides when a plan, implement or fix stage runs again after its agent stopped at a usage
 limit or on a transient error (`stage_limited`, `stage_transient`, called by `report`), and when
 a paused or waiting run starts at its time (`resumes`, called by `maintain.resume_paused`), a hold
@@ -1574,16 +1581,20 @@ def required_failed(cfg, issue, pr, head, auto_fixes, wait):
     raise Refused(f"The engine answers {sorted(kinds)} after a required check failed.")
 
 
-def accept_answer(cfg, issue, pr, head, auto_fixes, result, before=(), since=None, at=None):
+def accept_answer(
+    cfg, issue, pr, head, auto_fixes, result, before=(), since=None, at=None, conflicts=0
+):
     """What follows the answer of GitHub's merge of the NexKit pull request `pr`, as the engine
     decides it (`report._refused`): the accept's `result`, as `accepted` or with its refusal
     kind, sent after the events `before`, which tell the engine what the host read, such as a
     head that moved. `since`, when given, is when required checks first had not passed on
-    `head`, as NexKit 6's `waiting_since` says, and `at` the time of the events. Returns
+    `head`, as NexKit 6's `waiting_since` says, and `at` the time of the events. `conflicts`
+    is the conflict rounds used, which `conflicts.max_rounds` limits. Returns
     `(end, state)`, `end` being `accepted`, `waiting` while the required checks are awaited,
     `fix` or `redo` for the round that follows, `base_failure` while a failure the base branch
     has is awaited, or `person`, whose reason `state["attention"]` names. Raises `Refused`."""
     doc = _pull_doc(cfg, issue, pr, head, "accepting", auto_fixes)
+    doc["rounds"]["conflicts"] = max(int(conflicts or 0), 0)
     version = doc["change"]["version"]
     action = {"id": first_state.RUN_ID, "next": None, "kind": "accept"}
     doc["pending"] = [{**action, "changeVersion": version, "by": "engine"}]

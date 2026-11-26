@@ -1,0 +1,33 @@
+{
+  "note": "Without maxParallel every item starts, none beyond the limit, however many already run.",
+  "policies": {},
+  "running": 5,
+  "limited": [],
+  "items": [
+    {
+      "item": "1"
+    },
+    {
+      "item": "2",
+      "awaited": true
+    },
+    {
+      "item": "3"
+    }
+  ],
+  "starts": [
+    {
+      "item": "1",
+      "beyondLimit": false
+    },
+    {
+      "item": "2",
+      "beyondLimit": false
+    },
+    {
+      "item": "3",
+      "beyondLimit": false
+    }
+  ],
+  "waits": []
+}

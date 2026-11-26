@@ -1,0 +1,44 @@
+{
+  "note": "With maxParallel 3 and one item running, two items start and the others wait for a place with the running count of 3.",
+  "policies": {
+    "maxParallel": 3
+  },
+  "running": 1,
+  "limited": [],
+  "items": [
+    {
+      "item": "1"
+    },
+    {
+      "item": "2"
+    },
+    {
+      "item": "3"
+    },
+    {
+      "item": "4"
+    }
+  ],
+  "starts": [
+    {
+      "item": "1",
+      "beyondLimit": false
+    },
+    {
+      "item": "2",
+      "beyondLimit": false
+    }
+  ],
+  "waits": [
+    {
+      "item": "3",
+      "for": "place",
+      "running": 3
+    },
+    {
+      "item": "4",
+      "for": "place",
+      "running": 3
+    }
+  ]
+}

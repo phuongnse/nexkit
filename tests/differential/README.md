@@ -48,6 +48,7 @@ other difference grouped by where it differs, with an example, and exits 1 when 
 | `replan` | #413 | a pull request's round that ran out of time, then the plan it asked for: too large or not, parts, titles, depth, autopilot's record, questions, no change, protected paths |
 | `failure` | #415 | a `/nexkit go` that stopped as blocked with nothing to answer, then a comment or a blocker's close, with autopilot on or off |
 | `new` | #438 | the first plan of a new issue, with a hold label, a blocker, a lower wave, a failed plan or `/nexkit go`, an author outside the repository, `max_parallel` with another issue busy, and a parent |
+| `conflicted` | #423 | a merge refused for a conflict, or found conflicting at the end of the refusal, under both `conflicts.auto_resolve` values: the round's own merge, a sweep, a writer's approval, with conflict rounds used, a round on its way and `mergeable` unknown |
 
 A family is a module with `scenarios()`, which yields each scenario as plain JSON in a fixed
 order whatever tree plays it, and `run(sc)`, which plays one and returns what it recorded. A time

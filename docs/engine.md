@@ -3,7 +3,9 @@
 _Planned for NexKit 7. Built so far: the protocol's schemas, in `nexkit/protocol/`; the engine's
 `step` call with its states, whose decisions are a frame that takes NexKit 6's own rules one group
 at a time, and its `prompt` call, which writes each stage's prompt as NexKit 6 does, as
-`nexkit-engine step` and `nexkit-engine prompt` and over HTTP as `nexkit-engine serve`; the
+`nexkit-engine step` and `nexkit-engine prompt` and over HTTP as `nexkit-engine serve`; its
+`sweep` call, which orders and limits the items that start, as `nexkit-engine sweep`, which no host
+calls yet; the
 GitHub host's state comment and its import of NexKit 6's open work, which nothing calls yet; and
 the decisions that follow a plan, a blocked `/nexkit go` and a round on a pull request, its
 review, diagnosis and conflict rounds, the end of a round's wait and which rounds count, and the
@@ -88,7 +90,8 @@ of the protocol it speaks (see [versions](#versions)):
 - **`prompt(state, stage, inputs, policies, texts) -> (text, shortened, notRead, files)`** writes
   the prompt of a stage from the texts the host fetched for it, so the prompts and their rules
   stay in the engine while the host does the reading.
-- **`sweep(items) -> starts`** chooses which waiting work items start, and in what order.
+- **`sweep(items, running, limited, policies) -> (starts, waits)`** chooses which waiting work
+  items start, and in what order.
 
 All three read no network, no clock and no files but the engine's own prompt templates: the time is
 a field of each event. They hold no secret and never see one. The policies of the host come with
@@ -602,7 +605,10 @@ the checklist, are not in the protocol yet: they come into it as the
 engine takes over the decisions that read them, and until then the host applies them itself. The
 `prompt` call already reads three of them beside the host's policies, as its schema names them:
 `checklist`, the items the plan and the review answer; `profiles`, the profiles triage chooses
-from; and `budgets`, of which the plan prompt names the implement stage's time.
+from; and `budgets`, of which the plan prompt names the implement stage's time. The `sweep` call
+reads two more beside them, as its schema names them: `maxParallel`, the most items that run at
+once, and `priority`, the labels that go first. Neither is in `policies.schema.json`, so no state
+document keeps them.
 
 | Policy | Values | GitHub | An application, for example |
 | --- | --- | --- | --- |
@@ -641,6 +647,21 @@ which `step` takes only for an item in `new` that waits to start and is not held
 repeated start changes nothing. A host that starts each item when it is made, as an application
 may, needs no sweep, but still sends `blockerClosed` when a part's earlier part ends, and still
 observes every open change from time to time.
+
+The `sweep` call trusts its items. The host lists, oldest first, only the items that may start,
+and gives each its labels, the index of its milestone in the host's milestone order (none when it
+has no milestone), its wave, whether other changes wait for it (`awaited`) and its account. The
+call refuses only a request that breaks its schema or names one item twice. It orders the items by
+the first of the `priority` labels that an item has, then by milestone with no milestone last, then
+by wave among items of the same milestone, then by the order the host listed them in. An item with
+no milestone ignores its wave.
+
+Starts stay within `maxParallel`, counting the items that already run. Each start takes a place. An
+`awaited` item starts even when the limit is reached, and its start is flagged `beyondLimit`. An
+item on an account in `limited` never starts, takes no place, and waits even when it is awaited.
+Each item that does not start gets a wait: `for` is `place` or `usageLimit`, and `running` is how
+many items ran at that point, those that already ran and the starts before it. A host shows that
+count as its own words say, such as "4 issues are in progress".
 
 ## Hosts
 
@@ -683,6 +704,11 @@ it is sent again, never dropped.
 give. They come from the decisions that `tests/test_scenarios.py` plays today. Its scenarios that
 are about GitHub alone, such as vouching, Dependabot, shards, branch updates and carried reviews,
 stay as tests of the GitHub host.
+
+`tests/conformance/sweeps/` holds the cases of the `sweep` call: the items, the running count, the
+limited accounts and the policies, and the exact starts and waits. A test sends each to
+`nexkit-engine sweep` on standard input and to `POST /sweep`, and checks that both give the same
+text, which fits the answer's schema.
 
 A case may start from an example state of the protocol. After every call, the suite checks the
 answer against the protocol, that the same request gives the same answer, and the outbox: every
@@ -798,8 +824,12 @@ adapter. A new rule of the engine comes with a case.
    `maintain`), what follows required checks that fail at the merge (`report`), and the wait
    for required checks that have not passed yet, with its end after a time (`report` and the
    sweep's `autopilot`). `host.accept_answer` sends a merge's answer to `step` as an `accept`
-   result and carries out what the engine answers, and so far only a merge refused for required
-   checks that have not passed yet is sent. The merge's observations reach the engine too
+   result and carries out what the engine answers. So far a merge refused for required checks
+   that have not passed yet is sent, and a merge refused for a conflict, with the conflict rounds
+   used: under `conflicts.auto_resolve` the engine answers a conflict round while
+   `conflicts.max_rounds` has one left, and otherwise a person. A pull request that GitHub
+   reports as `dirty` only at the end of the refusal is sent too, as a conflict without
+   `conflicts.auto_resolve` and as `needsPerson` with it. The merge's observations reach the engine too
    (`host.change_seen`): a pull request that a person merged first ends the item as `accepted`, a
    change that the base branch already holds ends it as `noChange`, and a commit that a person
    pushes while the merge waits is checked. After NexKit's own merge, `host.part_ended` sends the
@@ -832,9 +862,9 @@ adapter. A new rule of the engine comes with a case.
    to the sweep, and this differs from it on purpose. A conflict that the base branch's move makes, found
    after an implement round or on a push to the base branch (`maintain`), stays NexKit 6's,
    as does the merge itself (`report.merge_pull`) but for required checks that fail or have not
-   passed yet, a change that a person merged, one that became empty, a commit pushed while the
+   passed yet, a conflict, a change that a person merged, one that became empty, a commit pushed while the
    merge waits, and the end of the direct parent. The parents above it, and a parent's end
-   outside the merge, stay NexKit 6's. A
+   outside the merge, stay NexKit 6's, and so does a branch behind its base at the merge. A
    person's push during the wait for the base branch's failure is not sent yet: NexKit 6's
    sweep does not read the head then either. A `/nexkit go`
    that stopped as blocked with neither is the engine's too: it waits for a person, and with

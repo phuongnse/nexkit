@@ -1,0 +1,56 @@
+{
+  "policies": {
+    "conflicts": "resolve",
+    "conflictRounds": 2
+  },
+  "state": {
+    "example": "accepting",
+    "set": {
+      "pending": [],
+      "rounds": {
+        "started": 1,
+        "counted": 0,
+        "conflicts": 2,
+        "signatures": [],
+        "findings": [],
+        "criteria": [
+          "met"
+        ],
+        "checklist": []
+      }
+    }
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "tick",
+        "wait": "w7.1"
+      },
+      "state": "accepting",
+      "changed": true,
+      "actions": [
+        "accept"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "accept",
+        "result": {
+          "accepted": false,
+          "refusal": "conflict",
+          "text": "Refused: conflict."
+        }
+      },
+      "state": "ready",
+      "changed": true,
+      "actions": [
+        "needPerson"
+      ],
+      "expect": {
+        "attention.reason": "acceptRefused",
+        "rounds.conflicts": 2
+      }
+    }
+  ]
+}

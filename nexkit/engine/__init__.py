@@ -13,10 +13,10 @@ import json
 import re
 
 from .. import __version__, protocol
-from . import prompt
+from . import prompt, sweep
 from .machine import EngineError, step
 
-CALLS = ("describe", "step", "prompt")
+CALLS = ("describe", "step", "prompt", "sweep")
 # How deep a request may nest. The protocol's documents nest less than ten deep; the bound
 # refuses deeper text before anything recurses into it, so a request is refused alike however
 # many frames the program or the server already uses, and far below any stack's limit.
@@ -86,6 +86,8 @@ def _answer(request):
         return _describe(request)
     if request["call"] == "prompt":
         return _prompt(request, protocol.check(request, "calls/prompt.schema.json", "request"))
+    if request["call"] == "sweep":
+        return _sweep(request)
     event = request.get("event")
     kind = event.get("kind") if isinstance(event, dict) else None
     if kind not in protocol.names("events"):
@@ -139,3 +141,14 @@ def _prompt(request, found):
     if found:
         raise EngineError("; ".join(found))
     return {"protocol": protocol.VERSION, **prompt.answer(request)}
+
+
+def _sweep(request):
+    """The answer to a `sweep` call: the items that start, in order, and why the others wait."""
+    found = protocol.check(request, "calls/sweep.schema.json", "request")
+    if found:
+        raise EngineError("; ".join(found))
+    starts, waits = sweep.sweep(
+        request["items"], request["policies"], request["running"], request.get("limited") or []
+    )
+    return {"protocol": protocol.VERSION, "starts": starts, "waits": waits}

@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/calls/sweep.schema.json",
+  "$comment": "A sweep call: the work items that may start, which the host lists oldest first and sends only when `step` would take their start. `running` is how many items already run, and `limited` the accounts at a usage limit. An item's `milestone` is its index in the host's milestone order, null when it has none, and its `wave` counts only within a milestone. Beside the host's policies, `maxParallel`, the most items that run at once (left out or null for no limit), and `priority`, the labels that go first, the first one first, feed the sweep. The sweep trusts its items and reads no state.",
+  "type": "object",
+  "required": [
+    "protocol",
+    "call",
+    "policies",
+    "running",
+    "items"
+  ],
+  "properties": {
+    "protocol": {
+      "const": 1
+    },
+    "call": {
+      "const": "sweep"
+    },
+    "policies": {
+      "$comment": "The host's policies, as every call has them, and two that only the sweep reads: `maxParallel`, from 1 to 100, and `priority`.",
+      "$ref": "../policies.schema.json",
+      "properties": {
+        "maxParallel": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 100
+        },
+        "priority": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "running": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "limited": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "item"
+        ],
+        "properties": {
+          "item": {
+            "$ref": "../common.schema.json#/$defs/id"
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "milestone": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "wave": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "awaited": {
+            "type": "boolean"
+          },
+          "account": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

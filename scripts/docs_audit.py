@@ -662,7 +662,7 @@ def main(argv):
         print(json.dumps({"issues": planned, "relinks": relinks(homes, issues)}, indent=2))
         for finding in left_out:
             print(
-                f"Left out by the cap of {MAX_ISSUES}; the next audit reports it again: "
+                f"Left out by the cap of {MAX_ISSUES}, until a later audit finds it again: "
                 f"{finding['page']}:{finding['line']} {finding['kind']}",
                 file=sys.stderr,
             )

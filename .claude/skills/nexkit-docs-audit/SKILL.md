@@ -30,7 +30,9 @@ opens issues, which NexKit takes.
    exist.
 5. `plan <findings> <homes> <run id>` adds what needs no judgement, groups the findings into
    issues, leaves out each that an open issue covers, and keeps at most ten. It prints each finding
-   the cap leaves out, and the next audit reports it again. What it adds on its own:
+   that the cap leaves out. The next audit finds again what the plan adds on its own, listed
+   below. A finding from reading a page comes back only when an audit reads that page again,
+   four runs later. What it adds on its own:
    - each milestone whose close on GitHub disagrees with the [roadmap](../../../docs/roadmap.md):
      closed while its row is not under *Done*, open while it is, or with no row;
    - a `built` finding for each planned marker of any page whose issue is closed;

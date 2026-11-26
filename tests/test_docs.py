@@ -30,9 +30,9 @@ and profiles and the failure handling pages list as marking a failing line match
 The retry delays that the failure handling page gives for `publish` and for every other GitHub API
 call match `publish.WAITS` and `github.GitHub.waits`, with their counts of tries.
 The tools that the access table of agents and profiles gives the plan and review stages match
-READ_ONLY_TOOLS. The README's table of
-supported versions is compared with the pins in nexkit/__init__.py, and each ubuntu-NN.NN in the
-README with the pinned runner. The local commands
+READ_ONLY_TOOLS. The issue states that the status skill lists match those
+`status.issue_item` sets. The README's table of supported versions is compared with the pins in
+nexkit/__init__.py, and each ubuntu-NN.NN in the README with the pinned runner. The local commands
 table of the README lists each command the CLI defines for people and no other, and each option a
 row names exists. The configuration example of the README is what `nexkit init` writes for the
 README's own setup command. No doc, the README, AGENTS.md or a skill repeats a pinned version:
@@ -71,6 +71,7 @@ from nexkit import (
     runtimes,
     scaffold,
     state,
+    status,
 )
 from nexkit.engine import prompt, textutil
 from nexkit.runtimes import claude_code
@@ -1631,6 +1632,11 @@ FAILURE_WORDS = re.compile(r"contains? (`[^`]+`(?:(?:, | or )`[^`]+`)*), in any 
 # The page and the row of its access table that give the tools of the plan and review stages.
 ACCESS_PAGE = DOCS / "agents-and-profiles.md"
 READ_ACCESS_ROW = "| plan, review |"
+# The status skill's list of issue states: the `issues` bullet names them after "a `state` (". The
+# lookahead keeps the match inside that bullet, so a bullet without the list is not read as another.
+STATUS_SKILL = ROOT / "skills" / "status" / "SKILL.md"
+ISSUE_STATES = re.compile(r"- `issues`: (?:(?!- `).)*?a `state` \(([^)]*)\)")
+LISTED_STATE = re.compile(r"(?:^|, )`(\w+)`")
 # The row of failure handling that gives the retry delays of `publish` and of every other GitHub API
 # call. Its first cell starts with PUBLISH_ROW; its second cell is the one the regexes read.
 FAILURE_PAGE = DOCS / "failure-handling.md"
@@ -1790,6 +1796,64 @@ class ReadOnlyToolsTests(unittest.TestCase):
                 self.fail(
                     f"docs/agents-and-profiles.md lists {tool!r}, "
                     "which READ_ONLY_TOOLS does not give Claude Code"
+                )
+
+
+def state_values(node):
+    """The strings that a value can be: the branches of a conditional, or the string itself.
+    The test of a conditional is not a value, so its strings do not count."""
+    if isinstance(node, ast.IfExp):
+        return state_values(node.body) + state_values(node.orelse)
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return [node.value]
+    return []
+
+
+def issue_states_of_code():
+    """The states that `status.issue_item` sets: the value of each `state` key, subscript
+    assignment or keyword in its source."""
+    states = set()
+    for node in ast.walk(ast.parse(inspect.getsource(status.issue_item))):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if (
+                    isinstance(target, ast.Subscript)
+                    and isinstance(target.slice, ast.Constant)
+                    and target.slice.value == "state"
+                ):
+                    states.update(state_values(node.value))
+        elif isinstance(node, ast.keyword) and node.arg == "state":
+            states.update(state_values(node.value))
+        elif isinstance(node, ast.Dict):
+            for key, value in zip(node.keys, node.values, strict=True):
+                if isinstance(key, ast.Constant) and key.value == "state":
+                    states.update(state_values(value))
+    return states
+
+
+class StatusSkillTests(unittest.TestCase):
+    def test_the_skill_lists_each_issue_state_the_code_sets_and_no_other(self):
+        # The page wraps its lines, so the regex reads the text with one space between words.
+        match = ISSUE_STATES.search(" ".join(STATUS_SKILL.read_text().split()))
+        if not match:
+            self.fail("skills/status/SKILL.md has no list of issue states in its `issues` bullet")
+        listed = set(LISTED_STATE.findall(match.group(1)))
+        if not listed:
+            self.fail("skills/status/SKILL.md lists no issue state")
+        code = issue_states_of_code()
+        if not code:
+            self.fail("status.issue_item sets no issue state that the test can read")
+        for issue_state in sorted(code - listed):
+            with self.subTest(state=issue_state):
+                self.fail(
+                    f"skills/status/SKILL.md does not list {issue_state!r}, "
+                    "which status.issue_item sets"
+                )
+        for issue_state in sorted(listed - code):
+            with self.subTest(state=issue_state):
+                self.fail(
+                    f"skills/status/SKILL.md lists {issue_state!r}, "
+                    "which status.issue_item does not set"
                 )
 
 

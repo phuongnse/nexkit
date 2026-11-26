@@ -263,9 +263,11 @@ when a list of what the code defines misses an entry. These rules close each of 
    give for `publish` and for every other GitHub API call are those of `publish.WAITS` and
    `github.GitHub.waits`, with their counts of tries; that the tools
    [agents and profiles](agents-and-profiles.md#agents) give the
-   plan and review stages are those of `READ_ONLY_TOOLS`; that no doc, the README, AGENTS.md or a
-   skill repeats a pinned version: each pin that [D9](decisions/d9-pins-live-in-one-place.md)
-   governs, or a lint tool's version from `scripts/lint.sh`; that each test the security page
+   plan and review stages are those of `READ_ONLY_TOOLS`; that the issue states
+   [the status skill](../skills/status/SKILL.md) lists are those that `issue_item` in
+   `nexkit/status.py` sets; that no doc, the README, AGENTS.md or a skill repeats a pinned version:
+   each pin that [D9](decisions/d9-pins-live-in-one-place.md) governs, or a lint tool's version from
+   `scripts/lint.sh`; that each test the security page
    names exists; that the refusals of `unaffected_by` that
    [the checks page](checks.md#checks-that-a-change-cannot-affect) lists are
    the code's, and that the code refuses each one; that the outcome table of

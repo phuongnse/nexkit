@@ -108,7 +108,10 @@ again, the wait or the person. What counts as lost, and the six-hour window of t
 It decides what the merge finds too (`report.merge_pull`, `autopilot._merge_step`):
 `change_seen` sends a pull request that a person merged first, a change that its base branch
 already holds, and a commit that a person pushed while the merge waited, as observations, and the
-item ends or its new head is checked as the engine answers. Every parent's end goes through it:
+item ends or its new head is checked as the engine answers. An implement round that finds no
+change is needed (`no_change_found`, called by `report._no_change`) and a fix round that finds its
+change on the base branch (`on_base_found`, called by `report._already_on_base`) reach it too, and
+close only when it ends the item as `noChange`. Every parent's end goes through it:
 `part_ended` sends the end of a part to its parent's document, at every level and on every close
 of the part (a merge, a person's close, a change already on the base branch, no change needed,
 autopilot's sweep), and the parent ends only when every part ended and one was completed, under
@@ -2271,6 +2274,52 @@ def change_seen(cfg, issue, pr, head, auto_fixes, seen, waiting=False):
     if "runChecks" in kinds:
         return "review"
     raise Refused(f"The engine answers {sorted(kinds)} to what the merge found.")
+
+
+def no_change_found(cfg, decision, finding):
+    """`noChange` when the engine ends the item of `decision`, an implement round whose agent
+    found that no change is needed, with `finding`, where the issue or its plan says to stop
+    then (`report._no_change`): the host sends the round's result, which holds the finding, and
+    closes the issue only as the engine ends the item. Raises `Refused` for any other answer,
+    and for an item that is not final."""
+    number = decision["issue"]
+    doc, _ = _stage_doc("implement", number, None, int(decision.get("retry") or 0))
+    output = {**round_output({}), "status": "done", "no_change": finding}
+    result = {**AGENT, "changeVersion": None, "output": output}
+    fields = {"action": first_state.RUN_ID, "changeVersion": None, "result": result}
+    event = _event("actionFinished", number, None, _run_event_id(), **fields)
+    state, actions = _answers(doc, [event], policies(cfg))
+    if state["state"] == "noChange" and any(action["kind"] == "close" for action in actions):
+        return "noChange"
+    kinds = sorted({action["kind"] for action in actions})
+    raise Refused(f"The engine answers {kinds} to an implement round that found no change.")
+
+
+def on_base_found(cfg, decision):
+    """`noChange` when the engine ends the item of `decision`, a fix round that found, before
+    its agent, that its base branch already holds the pull request's change
+    (`report._already_on_base`): the host sends the observation that the change is empty, as
+    the merge does (`change_seen`), but while the fix round's agent is pending, and closes the
+    pull request and its issue only as the engine ends the item. Raises `Refused` for any other
+    answer."""
+    number, pr, head = decision["issue"], decision["pr"], decision.get("head")
+    change = {"id": pr, "version": head or pr}
+    doc, version = _stage_doc("fix", number, change, int(decision.get("retry") or 0))
+    doc["observed"] = {
+        "changeId": str(pr),
+        "version": version,
+        "conflicts": False,
+        "merged": False,
+        "empty": False,
+    }
+    seen = {"conflicts": False, "version": version, "merged": False, "empty": True}
+    name = f"onbase-{pr}-{version}"
+    event = _event("changeObserved", number, None, name, changeId=str(pr), **seen)
+    state, actions = _answers(doc, [event], policies(cfg))
+    if state["state"] == "noChange" and any(action["kind"] == "close" for action in actions):
+        return "noChange"
+    kinds = sorted({action["kind"] for action in actions})
+    raise Refused(f"The engine answers {kinds} to a change that its base branch already holds.")
 
 
 def part_ended(cfg, parent, subs, part, state):

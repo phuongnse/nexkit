@@ -5,15 +5,17 @@ pages split from it resolves, each task of the nexkit-maintain skill links a sec
 page, AGENTS.md keeps within its word limits, the architecture page's job and module tables match
 the workflows and nexkit/, the how-it-works page's job table matches the jobs of pipeline.yml, the
 permissions its rows name and the number in its heading, each test the security page names exists,
-and the outcome table of how it works lists each outcome the code defines and no other. The
-decisions index matches the decision files, and each decision is linked, as
-docs/writing-docs.md#how-the-docs-stay-correct says."""
+and the outcome table of how it works lists each outcome the code defines and no other. The plan
+and review layouts of stages match the sections the code writes, and the values the pages repeat
+match their constants. The decisions index matches the decision files, and each decision is
+linked, as docs/writing-docs.md#how-the-docs-stay-correct says."""
 
 import re
 import unittest
 from pathlib import Path
 
-from nexkit import autopilot, report, state
+from nexkit import autopilot, checks, config, context, github, publish, report, runtimes, state
+from nexkit.engine import prompt, textutil
 from tests.test_cli import jobs_of, permissions_of
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -24,6 +26,7 @@ FENCE = re.compile(r"^```.*?^```", re.M | re.S)
 AGENTS = ROOT / "AGENTS.md"
 ARCH = DOCS / "architecture.md"
 HOW_IT_WORKS_PAGE = DOCS / "how-it-works.md"
+STAGES = DOCS / "stages.md"
 SECURITY = DOCS / "security.md"
 OUTCOMES_HEADER = "| Outcome | Meaning |"
 DECISIONS = DOCS / "decisions"
@@ -453,6 +456,144 @@ class MaintenanceSkillsTests(unittest.TestCase):
                 if file == (DOCS / "delivery.md").resolve() and anchor in delivery
             ]
             self.assertTrue(sections, f"{task.name} links no section of docs/delivery.md")
+
+
+def block_after(path, marker):
+    """The first ```markdown block of `path` after the text `marker`, without its fences."""
+    text = path.read_text()
+    opening = text.index("```markdown\n", text.index(marker)) + len("```markdown\n")
+    return text[opening : text.index("\n```", opening)]
+
+
+def parts(text):
+    """The bold parts that start a line of `text`, except **Checks**, which a review writes last."""
+    return [part for part in re.findall(r"^\*\*([^*]+)\*\*", text, re.M) if part != "Checks"]
+
+
+def restart_delays():
+    """The restart delays of a command that did not run, as the pages word them: 30, 60 and 120
+    minutes."""
+    minutes = [int(delay.total_seconds() // 60) for delay in autopilot.AGAIN[1:]]
+    return ", ".join(str(m) for m in minutes[:-1]) + f" and {minutes[-1]} minutes"
+
+
+def full_plan():
+    """A plan that fills every field its layout shows, as a re-plan that split its issue."""
+    return {
+        "summary": "add() returns the sum of its arguments.",
+        "changes": ["add(a, b) returns a + b."],
+        "decisions": [{"decision": "add() keeps its name.", "reason": "Callers use it today."}],
+        "risks": ["Floats are out of scope."],
+        "acceptance_criteria": ["add(2, 3) returns 5."],
+        "checklist": [
+            {"number": 1, "item": "Docs change with the code", "how": "It updates the page."}
+        ],
+        "questions": [
+            {"question": "Which name?", "options": ["Keep add.", "Rename it."], "recommended": 1}
+        ],
+        "no_change": "The host answered 409, and a retry went through.",
+        "protected_paths": [".github/workflows/ci.yml"],
+        "too_large": True,
+        "split": [{"title": "Add the sum", "body": "Changes add().", "depends_on": []}],
+        "implementation_notes": ["Edit `calc.py`: `return a + b`."],
+        "revision": {"started_over": False, "changes": ["Added a question."]},
+    }
+
+
+def full_review():
+    """A review that fills every part its layout shows."""
+    return {
+        "status": "done",
+        "output": {
+            "verdict": "request_changes",
+            "summary": "One finding is blocking.",
+            "criteria": [
+                {"criterion": "add works", "status": "met", "test": "test_add", "evidence": "e"},
+                {"criterion": "floats add", "status": "unmet", "test": "", "evidence": "No test."},
+            ],
+            "findings": [
+                {"severity": "blocking", "file": "calc.py", "line": 2, "body": "Floats are cut."}
+            ],
+            "previous_findings": [
+                {"finding": "Add a docstring.", "resolution": "resolved", "evidence": "calc.py:1"},
+                {"finding": "Keep the name.", "resolution": "unresolved", "severity": "blocking"},
+            ],
+            "checklist": [
+                {"item": "Docs change", "answer": "met", "evidence": "docs/calc.md"},
+                {"item": "No dependency", "answer": "not_met", "person": True, "evidence": "e"},
+            ],
+        },
+    }
+
+
+VALUES = (
+    ("agents-and-profiles.md", f"latest {prompt.MAX_COMMENTS} comments"),
+    ("agents-and-profiles.md", f"{prompt.BLOCK_LIMIT:,} characters"),
+    ("agents-and-profiles.md", f"first {prompt.SHORT:,} characters"),
+    (
+        "agents-and-profiles.md",
+        f"at most {context.MAX_LINKED} linked comments and "
+        f"{context.MAX_LINKED_ISSUES} linked issues",
+    ),
+    ("agents-and-profiles.md", f"up to {context.MAX_SKIPPED} of them"),
+    ("agents-and-profiles.md", f"last {textutil.OUTPUT_TAIL:,}"),
+    ("agents-and-profiles.md", f"last {prompt.FIX_OUTPUT_TAIL:,} characters"),
+    ("agents-and-profiles.md", f"last {prompt.REVIEW_OUTPUT_TAIL:,}"),
+    ("agents-and-profiles.md", f"one of {runtimes.SECRET_SLOTS} slots"),
+    ("agents-and-profiles.md", f"at most {config.MAX_STAGE_MINUTES} minutes"),
+    ("how-it-works.md", f"last {textutil.OUTPUT_TAIL:,} characters"),
+    ("how-it-works.md", f"at most {checks.RESULTS_LIMIT // 1_000_000} MB per round"),
+    ("how-it-works.md", f"{checks.JOB_RESULTS_FLOOR // 1_000_000} MB per job"),
+    ("work-without-a-command.md", f"last {github.DOWNLOAD_LIMIT // 1_000_000} MB"),
+    ("work-without-a-command.md", f"at most {NUMBERS[context.MAX_EARLIER]} of those parts"),
+    ("work-without-a-command.md", f"first {NUMBERS[context.MAX_EARLIER * 2]} blockers"),
+    ("work-without-a-command.md", f"at most {autopilot.ISSUES_LIMIT:,} of each"),
+    ("work-without-a-command.md", f"{restart_delays()} after its last start"),
+    ("failure-handling.md", f"{restart_delays()} after its last start"),
+)
+
+
+class LayoutTests(unittest.TestCase):
+    def test_the_plan_layout_lists_the_sections_the_code_writes(self):
+        block = block_after(STAGES, "**Plan.**")
+        listed = [
+            re.split(r"\s{2,}", line[4:])[0]
+            for line in block.splitlines()
+            if line.startswith("### ")
+        ]
+        written = [
+            line[4:]
+            for line in publish.render_plan(full_plan(), replan=True).splitlines()
+            if line.startswith("### ")
+        ]
+        self.assertEqual(
+            listed,
+            written,
+            f"docs/stages.md says the plan's sections are {listed}; "
+            f"publish.render_plan writes {written}",
+        )
+
+    def test_the_review_layout_lists_the_parts_the_code_writes(self):
+        listed = parts(block_after(STAGES, "The pull request review starts with"))
+        body = report.review_body(full_review(), [{"name": "test", "passed": True}])
+        written = parts(body.split("<details>", 1)[0])  # the evidence repeats some parts
+        self.assertEqual(
+            listed,
+            written,
+            f"docs/stages.md says the review's parts are {listed}; "
+            f"report.review_body writes {written}",
+        )
+
+
+class ValuesTests(unittest.TestCase):
+    def test_each_value_a_page_repeats_is_its_constant(self):
+        for name, phrase in VALUES:
+            with self.subTest(page=name, phrase=phrase):
+                # Lines are wrapped, so the page is compared with its spaces made one each.
+                text = " ".join((DOCS / name).read_text().split())
+                self.assertIn(
+                    phrase, text, f"docs/{name} does not say {phrase!r}, the code's value"
+                )
 
 
 if __name__ == "__main__":

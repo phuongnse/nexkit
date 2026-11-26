@@ -5,7 +5,9 @@ pages split from it resolves, each task of the nexkit-maintain skill links a sec
 page, AGENTS.md keeps within its word limits, the architecture page's job and module tables match
 the workflows and nexkit/, the how-it-works page's job table matches the jobs of pipeline.yml, the
 permissions its rows name and the number in its heading, each test the security page names exists,
-and the outcome table of how it works lists each outcome the code defines and no other. The mention
+and the outcome table of how it works lists each outcome the code defines and no other. The table
+of a stage's keys under `## Stages` in the configuration reference lists each stage key the code
+accepts and no other. The mention
 table of the troubleshooting page lists each outcome that needs a person and no other, with the
 code's text for what to do and why. The command table of the README lists each comment command the
 code accepts, where it accepts it, and no other. The key tables and the complete configuration of
@@ -103,6 +105,7 @@ PERMISSION_NAMES = {
     "Dependabot alerts": "vulnerability_alerts",
 }
 KEYS_HEADER = "| Key | Default | Meaning |"
+STAGE_KEYS_HEADER = "| Key | Meaning |"
 TRIGGERS_HEADER = "| Trigger | Starts NexKit for |"
 WORKFLOW_TEMPLATE = ROOT / "nexkit/templates/workflow.yml"
 RUNTIMES_HEADER = "| Runtime | Providers | `effort` |"
@@ -674,6 +677,20 @@ def key_rows():
     return {cells[0].strip("`"): cells for cells in tables(CONFIG_PAGE, KEYS_HEADER)}
 
 
+def stage_key_rows():
+    """The rows of the table of a stage's keys under '## Stages' of the configuration reference.
+
+    Empty when that section has no such table, so the test fails rather than skips."""
+    parts = CONFIG_PAGE.read_text().split("\n## Stages\n", 1)
+    if len(parts) < 2:
+        return []
+    lines = parts[1].split("\n## ", 1)[0].splitlines()
+    for i, line in enumerate(lines):
+        if line == STAGE_KEYS_HEADER:
+            return rows_from(lines, i + 1)
+    return []
+
+
 def is_key(key):
     """Whether config.DEFAULTS defines `key`, top-level or `group.sub` of a group."""
     head, _, sub = key.partition(".")
@@ -771,6 +788,19 @@ class ConfigurationTests(unittest.TestCase):
             for name in names:
                 with self.subTest(key=name):
                     self.assertIn(name, listed, f"docs/configuration.md has no row for {name}")
+
+    def test_the_stage_table_lists_each_stage_key_the_code_defines_and_no_other(self):
+        rows = stage_key_rows()
+        self.assertTrue(
+            rows, "docs/configuration.md has no table of a stage's keys under ## Stages"
+        )
+        listed = {cells[0].strip("`") for cells in rows}
+        for key in sorted(config.STAGE_KEYS - listed):
+            with self.subTest(key=key):
+                self.fail(f"docs/configuration.md does not list the stage key {key}")
+        for key in sorted(listed - config.STAGE_KEYS):
+            with self.subTest(key=key):
+                self.fail(f"docs/configuration.md lists {key}, which STAGE_KEYS does not define")
 
     def test_each_key_row_gives_the_code_default_and_range(self):
         seen = recorded_ranges()

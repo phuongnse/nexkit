@@ -31,9 +31,10 @@ The retry delays that the failure handling page gives for `publish` and for ever
 call match `publish.WAITS` and `github.GitHub.waits`, with their counts of tries.
 The tools that the access table of agents and profiles gives the plan and review stages match
 READ_ONLY_TOOLS. The issue states that the status skill lists match those `status.issue_item`
-sets. The jobs that the autopilot page lists as those in which a round can be stopped are
-CHECK_JOBS, and those in which it never is are jobs of pipeline.yml outside it. The README's
-table of supported versions is compared with the pins in nexkit/__init__.py, and each
+sets. The outcomes after which a writer's approval merges, which the work-without-a-command page
+lists, match APPROVABLE. The jobs that the autopilot page lists as those in which a round can be
+stopped are CHECK_JOBS, and those in which it never is are jobs of pipeline.yml outside it. The
+README's table of supported versions is compared with the pins in nexkit/__init__.py, and each
 ubuntu-NN.NN in the README with the pinned runner. The local commands
 table of the README lists each command the CLI defines for people and no other, and each option a
 row names exists. The configuration example of the README is what `nexkit init` writes for the
@@ -1645,6 +1646,10 @@ READ_ACCESS_ROW = "| plan, review |"
 STATUS_SKILL = ROOT / "skills" / "status" / "SKILL.md"
 ISSUE_STATES = re.compile(r"- `issues`: (?:(?!- `).)*?a `state` \(([^)]*)\)")
 LISTED_STATE = re.compile(r"(?:^|, )`(\w+)`")
+# The page and the sentence that list the outcomes after which a writer's approval merges. The
+# group keeps the word `as` before the first outcome, which the outcomes are found after.
+APPROVAL_PAGE = DOCS / "work-without-a-command.md"
+APPROVAL_OUTCOMES = re.compile(r"latest round ended (as .+?), merges it on the head")
 # The row of failure handling that gives the retry delays of `publish` and of every other GitHub API
 # call. Its first cell starts with PUBLISH_ROW; its second cell is the one the regexes read.
 FAILURE_PAGE = DOCS / "failure-handling.md"
@@ -1890,6 +1895,32 @@ class StatusSkillTests(unittest.TestCase):
                 self.fail(
                     f"skills/status/SKILL.md lists {issue_state!r}, "
                     "which status.issue_item does not set"
+                )
+
+
+class ApprovableTests(unittest.TestCase):
+    def test_the_page_lists_each_outcome_an_approval_merges_after_and_no_other(self):
+        # Lines are wrapped, so the page is searched with its spaces made one each.
+        text = " ".join(APPROVAL_PAGE.read_text().split())
+        match = APPROVAL_OUTCOMES.search(text)
+        if match is None:
+            self.fail(
+                "docs/work-without-a-command.md has no list of the outcomes after which "
+                "an approval merges"
+            )
+        listed = sorted(set(re.findall(r"\bas `(\w+)`", match.group(1))))
+        code = sorted(set(maintain.APPROVABLE))
+        for outcome in sorted(set(code) - set(listed)):
+            with self.subTest(outcome=outcome):
+                self.fail(
+                    f"docs/work-without-a-command.md does not list {outcome!r}, after which "
+                    "maintain.APPROVABLE lets an approval merge"
+                )
+        for outcome in sorted(set(listed) - set(code)):
+            with self.subTest(outcome=outcome):
+                self.fail(
+                    f"docs/work-without-a-command.md lists {outcome!r}, which "
+                    "maintain.APPROVABLE does not hold"
                 )
 
 

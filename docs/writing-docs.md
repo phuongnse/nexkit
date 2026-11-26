@@ -263,7 +263,9 @@ when a list of what the code defines misses an entry. These rules close each of 
    give for `publish` and for every other GitHub API call are those of `publish.WAITS` and
    `github.GitHub.waits`, with their counts of tries; that the tools
    [agents and profiles](agents-and-profiles.md#agents) give the
-   plan and review stages are those of `READ_ONLY_TOOLS`; that the issue states
+   plan and review stages are those of `READ_ONLY_TOOLS`; that the outcomes after which a writer's
+   approval merges, which [work without a command](work-without-a-command.md#work-without-a-command)
+   lists, are those of `APPROVABLE`; that the issue states
    [the status skill](../skills/status/SKILL.md) lists are those that `issue_item` in
    `nexkit/status.py` sets; that no doc, the README, AGENTS.md or a skill repeats a pinned version:
    each pin that [D9](decisions/d9-pins-live-in-one-place.md) governs, or a lint tool's version from

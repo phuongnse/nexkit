@@ -28,7 +28,7 @@ succeeds. Help the user write issues that one session can finish and test.
      than copy it: NexKit reads them for every other agent, and the parts of a split, also
      those a writer files by hand as sub-issues, read the issues above them (see *What an
      agent reads of the texts an issue links to* in
-     [How it works](../../docs/how-it-works.md#agents)). Link the comment itself when the
+     [Agents and profiles](../../docs/agents-and-profiles.md#agents)). Link the comment itself when the
      rule is in a discussion: of a linked issue, agents read only its text.
    - **Expected behaviour**: concrete and observable.
    - **Acceptance criteria**: two to five checks that a test in the change or one of the

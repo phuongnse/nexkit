@@ -37,7 +37,7 @@ trust that repository; only on their word, run it again with
      [Autopilot](../../docs/configuration.md#autopilot)), which only a person releases. A `waiting` pull
      request has `waits_for`, the autopilot `bug` issue it waits for, and the `reason`
      (see *Failing checks the default branch has* under
-     [Stages](../../docs/how-it-works.md#stages)). Like a `merge_waiting` one, it needs
+     [Stages](../../docs/stages.md#stages)). Like a `merge_waiting` one, it needs
      nobody unless it is also in `needs_person`.
    - `recent_merges`: pull requests NexKit merged, newest first by merge time, with the
      state of each `merge.after_workflows` run.
@@ -55,7 +55,7 @@ trust that repository; only on their word, run it again with
    markers. Do not post a command for an item whose state is `planning`,
    `implementing` or `running`; it would queue behind the running one. A `paused` item
    resumes by itself after the time shown, unless it is also in `needs_person` (see
-   [Usage limits](../../docs/how-it-works.md#usage-limits)). A `retrying` item stopped on
+   [Usage limits](../../docs/work-without-a-command.md#usage-limits)). A `retrying` item stopped on
    a transient error and runs its command again by itself at `retry_at` (see [Transient
    errors](../../docs/configuration.md#transient-errors)); posting the command meanwhile
    replaces that wait. A run comment showing ⏭️ `continued` was carried on by a later run.
@@ -76,7 +76,7 @@ trust that repository; only on their word, run it again with
    manual change, also on a person's pull request, such as one for a protected path. For a pull
    request that is ready to merge, suggest the checks in [Reviewing a pull
    request](../../docs/how-it-works.md#reviewing-a-pull-request); for a change to a plan,
-   [Changing a plan](../../docs/how-it-works.md#stages). To see a plan, read the newest
+   [Changing a plan](../../docs/stages.md#stages). To see a plan, read the newest
    plan comment (`gh issue view <n> --comments`): it names the profile, the models of each
    stage and why triage chose them. With autopilot on, do not post `/nexkit plan` or
    `/nexkit go` on an issue whose autopilot state is `start` or `active`: autopilot starts

@@ -13,7 +13,7 @@ Each kind of content has one home. Write a fact in its home and link to it from 
 | Content | Home |
 | --- | --- |
 | What NexKit is, what it adds around an agent, how to install it | The [README](../README.md) |
-| How NexKit behaves on a repository: commands, jobs, stages, state, failure handling | [How it works](how-it-works.md) |
+| How NexKit behaves on a repository: commands, jobs, stages, state, failure handling | [How it works](how-it-works.md) and the pages it links: [stages](stages.md), [work without a command](work-without-a-command.md), [agents and profiles](agents-and-profiles.md) and [failure handling](failure-handling.md) |
 | Every setting, its default and what it does | The [configuration reference](configuration.md) |
 | Why a run stopped or waits, and what to do | [Troubleshooting](troubleshooting.md) |
 | The engine, its protocol and its hosts | [The engine](engine.md) |
@@ -79,7 +79,9 @@ It never holds progress, dates, names or issue numbers.
 ## Reference pages
 
 A reference page describes how NexKit behaves, as it is, and the agreed work that is not built yet.
-[How it works](how-it-works.md), the [configuration reference](configuration.md),
+[How it works](how-it-works.md) and the pages split from it ([stages](stages.md), [work without a
+command](work-without-a-command.md), [agents and profiles](agents-and-profiles.md) and [failure
+handling](failure-handling.md)), the [configuration reference](configuration.md),
 [troubleshooting](troubleshooting.md), [the engine](engine.md) and [security](security.md) are
 reference pages.
 
@@ -129,8 +131,8 @@ Write for a reader who knows software and GitHub but not NexKit.
   what it covers and why it matters.
 - **Write whole sentences.** Join related facts with "and", "because" or "so". A sentence that must be
   decoded is too short, and one that needs a second reading is too long.
-- **Use NexKit's words** as [how it works](how-it-works.md) and [the engine](engine.md#words) define
-  them, such as round, stage, sweep and work item, and name the role that acts: a person with write
+- **Use NexKit's words** as [how it works](how-it-works.md), the pages it links and [the engine](engine.md#words)
+  define them, such as round, stage, sweep and work item, and name the role that acts: a person with write
   access, the owner, an agent, NexKit's App.
 - **Pick the form that fits.** A table for things with the same attributes, a numbered list for steps,
   a bulleted list for rules a reader scans, prose for an explanation. Use a bold lead-in only in a
@@ -228,7 +230,8 @@ when a list of what the code defines misses an entry. These rules close each of 
 9. **Checks catch what a machine can.** `tests/test_docs.py` checks that [the map](README.md) lists
    every doc, that the links of the map, of this page, of the architecture page, of the security
    page, of [AGENTS.md](../AGENTS.md) and of the maintenance skills under `.claude/skills/`
-   resolve, that each task of the `nexkit-maintain` skill links a section of
+   resolve, that each link to how it works and the pages split from it resolves, that each task of
+   the `nexkit-maintain` skill links a section of
    [Delivery](delivery.md), that AGENTS.md keeps within its word limits, that the job and module
    tables of the architecture page match the workflows and `nexkit/`, and that each test the
    security page names exists. A docs check is added only once the whole tree passes

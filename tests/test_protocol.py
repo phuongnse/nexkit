@@ -1,19 +1,29 @@
 """The engine's protocol: its schemas match docs/engine.md, every example fits its schema, and
 the stages' result schemas that agents receive stay NexKit 6's."""
 
+import contextlib
+import copy
 import fnmatch
+import importlib.util
+import io
 import json
 import re
+import tempfile
 import tomllib
 import unittest
 from pathlib import Path
 
-from nexkit import agent, protocol
+from nexkit import agent, engine, protocol
 from nexkit.schema import problems
 from tests.support import make_config, profile_config
 from tests.test_agent import CHECKLIST
 
 HERE = Path(__file__).resolve().parent
+spec = importlib.util.spec_from_file_location(
+    "protocol_freeze", HERE.parent / "scripts" / "protocol_freeze.py"
+)
+freeze = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(freeze)
 # The pages that hold the engine's states, events and actions, and what a host decides.
 PAGES = [HERE.parent / "docs" / name for name in ("engine-states.md", "engine-hosts.md")]
 EXAMPLES = protocol.ROOT / "examples"
@@ -449,6 +459,310 @@ class AgentSchemaTest(unittest.TestCase):
             walk(protocol.load(f"results/{stage}.schema.json"), stage)
         for stage, entry in protocol.load("results/checklist.schema.json")["$defs"].items():
             walk(entry, f"checklist.{stage}")
+
+
+def mutated(base, name, change):
+    """A copy of the schemas `base` in which `change` has changed the file `name`."""
+    new = copy.deepcopy(base)
+    change(new[name])
+    return new
+
+
+def add_file(base, name, schema):
+    new = copy.deepcopy(base)
+    new[name] = schema
+    return new
+
+
+class CompatibilityTest(unittest.TestCase):
+    """The rules of docs/engine.md#versions, proven on copies made here: the copy of a release
+    in `tests/golden/protocol/` exists only from 7.0's release pull request."""
+
+    tick = "events/tick.schema.json"
+    state = "state.schema.json"
+
+    def setUp(self):
+        self.base = freeze.read(protocol.ROOT)
+
+    def refused(self, new, expected, minor=0):
+        found = freeze.problems(self.base, new, minor)
+        self.assertTrue(any(expected in line for line in found), f"{expected!r} not in {found!r}")
+
+    def test_the_tree_matches_a_copy_of_itself(self):
+        self.assertEqual(freeze.problems(self.base, copy.deepcopy(self.base), 0), [])
+
+    def test_each_refused_change_is_found(self):
+        def rename(schema):
+            schema["properties"]["waitId"] = schema["properties"].pop("wait")
+            schema["required"][schema["required"].index("wait")] = "waitId"
+
+        def seconds(schema):
+            schema["properties"]["seconds"]["type"] = "string"
+
+        cases = {
+            "removed property": (
+                mutated(self.base, self.tick, lambda s: s["properties"].pop("wait")),
+                f"{self.tick}#/properties/wait was removed",
+            ),
+            "renamed property": (
+                mutated(self.base, self.tick, rename),
+                f"{self.tick}#/properties/wait was removed",
+            ),
+            "renamed property, new name": (
+                mutated(self.base, self.tick, rename),
+                f"{self.tick}#/properties/waitId was added",
+            ),
+            "new required property": (
+                mutated(
+                    self.base,
+                    self.tick,
+                    lambda s: (
+                        s["properties"].update(extra={"type": "integer", "x-since": "1.1"}),
+                        s["required"].append("extra"),
+                    ),
+                ),
+                f"{self.tick}#/properties/extra was added",
+            ),
+            "required list": (
+                mutated(self.base, self.tick, lambda s: s["required"].pop()),
+                f"{self.tick}#/required changed",
+            ),
+            "changed type": (
+                mutated(self.base, "actions/runAgent.result.schema.json", seconds),
+                "actions/runAgent.result.schema.json#/properties/seconds/type changed",
+            ),
+            "new enum value": (
+                mutated(
+                    self.base,
+                    "events/requested.schema.json",
+                    lambda s: s["properties"]["what"]["enum"].append("poke"),
+                ),
+                "events/requested.schema.json#/properties/what/enum changed",
+            ),
+            "changed const": (
+                mutated(
+                    self.base,
+                    self.tick,
+                    lambda s: s["properties"]["kind"].update(const="tock"),
+                ),
+                f"{self.tick}#/properties/kind/const changed",
+            ),
+            "narrower limit": (
+                mutated(
+                    self.base,
+                    "policies.schema.json",
+                    lambda s: s["properties"]["conflictRounds"].update(maximum=5),
+                ),
+                "policies.schema.json#/properties/conflictRounds/maximum changed",
+            ),
+            "new event kind": (
+                add_file(
+                    mutated(
+                        self.base,
+                        "event.schema.json",
+                        lambda s: s["anyOf"].append({"$ref": "events/poked.schema.json"}),
+                    ),
+                    "events/poked.schema.json",
+                    {"type": "object"},
+                ),
+                "events/poked.schema.json was added",
+            ),
+            "new event kind in the union": (
+                mutated(
+                    self.base,
+                    "event.schema.json",
+                    lambda s: s["anyOf"].append({"$ref": "events/poked.schema.json"}),
+                ),
+                "event.schema.json#/anyOf changed",
+            ),
+            "new action kind": (
+                add_file(self.base, "actions/poke.schema.json", {"type": "object"}),
+                "actions/poke.schema.json was added",
+            ),
+            "removed file": (
+                {name: s for name, s in self.base.items() if name != self.tick},
+                f"{self.tick} was removed",
+            ),
+            "changed description": (
+                mutated(
+                    self.base,
+                    self.tick,
+                    lambda s: s["properties"]["wait"].update(description="Another."),
+                ),
+                f"{self.tick}#/properties/wait/description was added",
+            ),
+        }
+        for name, (new, expected) in cases.items():
+            with self.subTest(name):
+                self.refused(new, expected)
+
+    def test_a_new_optional_property_with_a_later_x_since_is_allowed(self):
+        def add(since):
+            prop = {"type": "integer"}
+            if since:
+                prop["x-since"] = since
+            return mutated(self.base, self.tick, lambda s: s["properties"].update(extra=prop))
+
+        self.assertEqual(freeze.problems(self.base, add("1.1"), 0), [])
+        self.assertEqual(freeze.problems(self.base, add("1.3"), 2), [])
+        for name, since, minor in (
+            ("no x-since", None, 0),
+            ("x-since not above", "1.0", 0),
+            ("x-since of the copy", "1.1", 1),
+            ("x-since of another major", "2.5", 0),
+            ("x-since that is not a version", "soon", 0),
+        ):
+            with self.subTest(name):
+                self.refused(add(since), f"{self.tick}#/properties/extra was added", minor)
+
+    def test_a_new_optional_property_deep_in_a_schema_is_allowed(self):
+        name = "policies.schema.json"
+        new = mutated(
+            self.base,
+            name,
+            lambda s: s["properties"].update(extra={"type": "integer", "x-since": "1.1"}),
+        )
+        self.assertEqual(freeze.problems(self.base, new, 0), [])
+
+    def test_a_changed_comment_is_allowed(self):
+        def comment(schema):
+            schema["$comment"] = "Another text."
+            schema["properties"]["wait"]["$comment"] = "A new one."
+
+        self.assertEqual(freeze.problems(self.base, mutated(self.base, self.tick, comment), 0), [])
+
+    def test_the_state_schema_changes_only_with_its_schema_version(self):
+        def limit(schema):
+            schema["properties"]["recentEvents"]["maxItems"] += 1
+
+        def raised(schema):
+            limit(schema)
+            schema["properties"]["schemaVersion"]["const"] += 1
+
+        def optional(schema):
+            schema["properties"]["extra"] = {"type": "integer", "x-since": "1.1"}
+
+        current = self.base[self.state]["properties"]["schemaVersion"]["const"]
+        self.assertIn("recentEvents", self.base[self.state]["properties"])
+        self.refused(mutated(self.base, self.state, limit), f"{self.state}#/properties")
+        self.refused(
+            mutated(self.base, self.state, optional), f"{self.state}#/properties/extra was added"
+        )
+        self.assertEqual(freeze.problems(self.base, mutated(self.base, self.state, raised), 0), [])
+        lowered = mutated(
+            self.base,
+            self.state,
+            lambda s: s["properties"]["schemaVersion"].update(const=current - 1),
+        )
+        self.refused(lowered, f"{self.state}#/properties/schemaVersion/const changed")
+
+    def test_the_script_copies_every_schema_and_compares_with_its_copy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            freeze.write(tmp)
+            found = {
+                path.relative_to(tmp).as_posix() for path in Path(tmp).rglob("*") if path.is_file()
+            }
+            self.assertEqual(found, {*schema_files(), "version.json"})
+            version = json.loads((Path(tmp) / "version.json").read_text())
+            self.assertEqual(version, {"major": protocol.VERSION, "minor": protocol.MINOR})
+            self.assertEqual(
+                freeze.problems(freeze.read(tmp), freeze.read(protocol.ROOT), protocol.MINOR), []
+            )
+            for name in schema_files():
+                self.assertEqual(
+                    (Path(tmp) / name).read_bytes(), (protocol.ROOT / name).read_bytes(), name
+                )
+            mutant = mutated(freeze.read(tmp), self.tick, lambda s: s["properties"].pop("wait"))
+            self.assertNotEqual(freeze.problems(freeze.read(tmp), mutant, protocol.MINOR), [])
+
+    def test_the_script_refuses_a_tree_that_breaks_its_copy_and_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            freeze.write(tmp)
+            path = Path(tmp) / self.tick
+            schema = json.loads(path.read_text())
+            schema["properties"]["extra"] = {"type": "integer"}
+            path.write_text(json.dumps(schema))
+            before = {p: p.read_bytes() for p in Path(tmp).rglob("*") if p.is_file()}
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                code = freeze.main(["--out", tmp])
+            self.assertEqual(code, 1)
+            self.assertIn("extra was removed", out.getvalue())
+            after = {p: p.read_bytes() for p in Path(tmp).rglob("*") if p.is_file()}
+            self.assertEqual(after, before)
+
+    def test_the_script_replaces_a_copy_that_the_tree_keeps(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            freeze.write(tmp)
+            stale = Path(tmp) / "events" / "old.schema.json"
+            (Path(tmp) / "version.json").write_text('{"major": 0, "minor": 9}\n')
+            stale.write_text("{}")
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(freeze.main(["--out", tmp]), 0)
+            self.assertFalse(stale.exists())
+            self.assertEqual(
+                json.loads((Path(tmp) / "version.json").read_text()),
+                {"major": protocol.VERSION, "minor": protocol.MINOR},
+            )
+
+    def test_the_tree_keeps_the_copy_of_the_last_release(self):
+        # `tests/golden/protocol/` is empty until 7.0's release pull request runs
+        # `scripts/protocol_freeze.py` (docs/engine.md#versions): the rules are proven above.
+        golden = HERE / "golden" / "protocol"
+        if not (golden / "version.json").exists():
+            return
+        version = json.loads((golden / "version.json").read_text())
+        self.assertEqual(version["major"], protocol.VERSION)
+        self.assertLessEqual(version["minor"], protocol.MINOR)
+        self.assertEqual(
+            freeze.problems(freeze.read(golden), freeze.read(protocol.ROOT), version["minor"]), []
+        )
+
+
+class StateDocumentsTest(unittest.TestCase):
+    """The engine reads each state document that a host stored at an older schema version."""
+
+    folder = HERE / "golden" / "state"
+
+    def current(self):
+        return protocol.load("state.schema.json")["properties"]["schemaVersion"]["const"]
+
+    def test_there_is_a_folder_for_each_schema_version(self):
+        names = sorted(path.name for path in self.folder.iterdir())
+        self.assertEqual(names, [f"v{n}" for n in range(1, self.current() + 1)])
+
+    def test_the_engine_steps_each_document_and_answers_the_current_version(self):
+        policies = example("calls/step.json")["policies"]
+        for path in sorted(self.folder.glob("v*/*.json")):
+            doc = json.loads(path.read_text())
+            name = f"{path.parent.name}/{path.name}"
+            with self.subTest(name):
+                waits = doc.get("waits") or []
+                event = {
+                    "protocol": 1,
+                    "kind": "tick",
+                    "id": f"d-golden-{path.parent.name}-{path.stem}",
+                    "item": doc["item"],
+                    "at": "2026-11-23T15:01:11Z",
+                    "wait": waits[0]["id"] if waits else "w0.0",
+                }
+                request = {
+                    "protocol": 1,
+                    "call": "step",
+                    "state": doc,
+                    "event": event,
+                    "policies": policies,
+                }
+                answer = engine.answer(request)
+                self.assertNotIn("error", answer, answer.get("error"))
+                self.assertEqual(protocol.check(answer["state"], "state.schema.json"), [])
+                self.assertEqual(answer["state"]["schemaVersion"], self.current())
+
+    def test_each_folder_holds_a_document_of_each_state(self):
+        for folder in self.folder.iterdir():
+            states = {json.loads(path.read_text())["state"] for path in folder.glob("*.json")}
+            every = set(protocol.load("common.schema.json")["$defs"]["state"]["enum"])
+            self.assertEqual(states, every, folder.name)
 
 
 if __name__ == "__main__":

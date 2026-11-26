@@ -89,6 +89,9 @@ over the version or the changelog.
   and adds a `## X.Y.Z` changelog entry, ending with `### Upgrade` steps when the configuration,
   caller workflow or permissions must change. Its description holds the output of
   `python3 scripts/release_notes.py X.Y.Z`.
+- The release pull request of 7.0, and each later one that raises `protocol.MINOR`, also runs
+  `python3 scripts/protocol_freeze.py` and commits `tests/golden/protocol/`, the copy of the
+  protocol's schemas that a test compares with the tree ([versions](engine.md#versions)).
 - After the merge, the owner releases `vX.Y.Z` (titled `NexKit X.Y.Z`) on the merge commit with
   those notes.
 - Publishing it runs `release.yml`, which builds `Dockerfile` and publishes the engine's image

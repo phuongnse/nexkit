@@ -1,13 +1,15 @@
 # The engine's image (docs/engine.md#the-parts). Every pull request and push to main builds it
-# and checks that it serves the answers of standard input, as does the run that
+# and plays the whole conformance suite against it over HTTP, as does the run that
 # update-image.yml starts on its pull request, which moves the base image's digest. When a
 # release is published, the image of the release's commit is published as
-# ghcr.io/phuongnse/nexkit-engine:<version>.
-# The job that builds and runs the image holds a read-only token; the job that publishes it
-# runs no repository code, only loads the built image and pushes it. It refuses a version
-# already in the registry, so a release never replaces an image, and attests the pushed
-# image's build provenance: `gh attestation verify oci://<image> --repo phuongnse/nexkit`
-# shows the commit and workflow that built it.
+# ghcr.io/phuongnse/nexkit-engine:<version>, and the suite it passed is attached to the
+# release as nexkit-engine-conformance-<version>.json (docs/engine.md#conformance).
+# The job that builds and runs the image holds a read-only token; the jobs that publish the
+# image and attach the suite run no repository code, and each holds only the write it needs.
+# Publishing refuses a version already in the registry, so a release never replaces an image,
+# and attests the pushed image's build provenance:
+# `gh attestation verify oci://<image> --repo phuongnse/nexkit` shows the commit and workflow
+# that built it.
 name: Release
 
 on:
@@ -66,17 +68,19 @@ jobs:
           base=$(python -c 'import nexkit; print(nexkit.PYTHON_IMAGE)')
           docker build --build-arg PYTHON_IMAGE="$base" \
             --label org.opencontainers.image.version="$VERSION" --tag "$IMAGE:$VERSION" .
-      - name: Check that the image serves the answers of standard input
+      - name: Play the whole conformance suite against the image over HTTP
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          request=nexkit/protocol/v1/examples/calls/step.json
+          suite="$RUNNER_TEMP/nexkit-engine-conformance-$VERSION.json"
+          python scripts/conformance.py build "$suite"
           docker run --detach --name engine --publish 127.0.0.1:8080:8080 "$IMAGE:$VERSION"
+          # Waits until the engine answers, then plays every request and fails on a difference.
           curl --fail --silent --show-error --retry 10 --retry-all-errors --retry-delay 1 \
-            --data-binary "@$request" http://127.0.0.1:8080/step > served.json
+            --data-binary @nexkit/protocol/v1/examples/calls/step.json \
+            http://127.0.0.1:8080/step > /dev/null
+          python scripts/conformance.py check --url http://127.0.0.1:8080 "$suite"
           docker stop engine
-          python bin/nexkit-engine step < "$request" > expected.json
-          cmp served.json expected.json
       - name: Save the image
         if: github.event_name == 'release'
         env:
@@ -87,6 +91,13 @@ jobs:
         with:
           name: nexkit-engine-image
           path: ${{ runner.temp }}/nexkit-engine.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+      - if: github.event_name == 'release'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nexkit-engine-conformance
+          path: ${{ runner.temp }}/nexkit-engine-conformance-${{ steps.version.outputs.version }}.json
           if-no-files-found: error
           retention-days: 1
 
@@ -154,3 +165,26 @@ jobs:
       - name: Log out of the registry
         if: always()
         run: docker logout ghcr.io
+
+  attach:
+    # Attaches the suite the image passed, once the image is published, so a host plays the
+    # suite of the version it pins. Writes with github.token, like publish.
+    if: github.event_name == 'release'
+    needs: [build, publish]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write # upload the release's asset
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: nexkit-engine-conformance
+          path: ${{ runner.temp }}
+      # Without --clobber, an asset of the same name fails the upload: a release keeps its suite.
+      - name: Attach the conformance suite to the release
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          TAG: ${{ github.event.release.tag_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$TAG" "$RUNNER_TEMP/nexkit-engine-conformance-$VERSION.json" \
+            --repo "$GITHUB_REPOSITORY"

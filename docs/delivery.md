@@ -94,8 +94,9 @@ over the version or the changelog.
   protocol's schemas that a test compares with the tree ([versions](engine.md#versions)).
 - After the merge, the owner releases `vX.Y.Z` (titled `NexKit X.Y.Z`) on the merge commit with
   those notes.
-- Publishing it runs `release.yml`, which builds `Dockerfile` and publishes the engine's image
-  `ghcr.io/phuongnse/nexkit-engine:X.Y.Z`. It refuses a tag that is not `v` and the version in
+- Publishing it runs `release.yml`, which builds `Dockerfile`, publishes the engine's image
+  `ghcr.io/phuongnse/nexkit-engine:X.Y.Z` and attaches the [conformance suite](engine.md#conformance)
+  that the image passed. It refuses a tag that is not `v` and the version in
   `nexkit/__init__.py`, and a commit that is not on `main`. Every pull request builds and checks
   the image the same way, without publishing it. Its `publish` job pushes the image with
   `github.token` and `packages: write`, since a GitHub App gets no access to packages. It is the

@@ -54,7 +54,7 @@ The reasons for this split are in [D10](decisions/d10-an-engine-decides-hosts-ca
 | Protocol | The events, actions, results and state document, as versioned JSON Schema | This repository, in `nexkit/protocol/` |
 | Host | Stores the work and its state, sends events, carries out actions, tells people | Its own code, in its own language |
 | Runner | Runs one agent session for one stage | This repository for agent CLIs; a host may bring its own |
-| Conformance suite | Events and the actions and state they must give | This repository |
+| Conformance suite | Events and the actions and state they must give | This repository; each release attaches it as `nexkit-engine-conformance-<version>.json` |
 
 A host never imports the engine's code. It runs the engine as a program, `nexkit-engine <call>`,
 that reads one JSON request on standard input and writes one JSON answer, or runs
@@ -89,6 +89,9 @@ without a change to any host, as long as the conformance suite passes.
   Each image carries an attestation of its build provenance, so a host can check the commit
   and workflow that built it with
   `gh attestation verify oci://ghcr.io/phuongnse/nexkit-engine:<version> --repo phuongnse/nexkit`.
+  Every pull request, push to `main` and release builds the image and plays the whole
+  [conformance suite](#conformance) against it over HTTP; an answer that differs fails the build,
+  so no such image is published.
 
 ## The engine
 
@@ -381,7 +384,10 @@ starts with `sweeps/`. Each request is whole and comes with the exact text of th
 answer, a refusal's included. The cases in `tests/conformance/imports/` stay out, since an import is
 the GitHub host's work and not a call of the engine. The file fits
 `nexkit/protocol/v1/conformance.schema.json`. It is not committed, because it is large and carries
-NexKit's version. Build it when you need it.
+NexKit's version. Build it when you need it, or take the suite of the version you pin: each release
+attaches the file that its image passed as `nexkit-engine-conformance-<version>.json`, which
+`gh release download v<version> --repo phuongnse/nexkit --pattern 'nexkit-engine-conformance-*'`
+fetches.
 
 `python3 scripts/conformance.py check FILE` plays a file against an engine. With `--url URL` it sends
 each request to `POST URL/<call>`, as `nexkit-engine serve` answers. With `--program COMMAND` it runs

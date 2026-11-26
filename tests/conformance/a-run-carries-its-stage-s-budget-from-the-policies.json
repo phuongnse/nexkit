@@ -55,7 +55,6 @@
         "pending.2.budget": {
           "tokens": 50000,
           "seconds": 2700,
-          "usd": null,
           "modelCalls": 40
         },
         "policies": {

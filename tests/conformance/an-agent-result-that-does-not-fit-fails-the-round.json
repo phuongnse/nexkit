@@ -33,7 +33,6 @@
           "changeVersion": null,
           "timedOut": false,
           "seconds": 60,
-          "usd": 0.5,
           "output": {
             "status": "done"
           }
@@ -46,8 +45,7 @@
       ],
       "expect": {
         "attention.reason": "roundFailed",
-        "used.seconds": 60,
-        "used.usd": 0.5
+        "used.seconds": 60
       }
     },
     {
@@ -76,7 +74,6 @@
           "changeVersion": null,
           "timedOut": false,
           "seconds": 60,
-          "usd": 0.5,
           "output": {
             "summary": "Close an issue that GitHub closed at the same moment.",
             "changes": [

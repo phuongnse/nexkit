@@ -29,8 +29,7 @@
       "expect": {
         "pending.0.budget": {
           "tokens": null,
-          "seconds": 900,
-          "usd": null
+          "seconds": 900
         }
       }
     },
@@ -60,8 +59,7 @@
       "expect": {
         "pending.2.budget": {
           "tokens": null,
-          "seconds": null,
-          "usd": null
+          "seconds": null
         }
       }
     },
@@ -149,8 +147,7 @@
       "expect": {
         "pending.3.budget": {
           "tokens": 20000,
-          "seconds": 600,
-          "usd": null
+          "seconds": 600
         },
         "policies": {
           "planApproval": "person",

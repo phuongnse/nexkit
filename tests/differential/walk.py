@@ -583,7 +583,7 @@ class Walker:
         # when the stage sets it.
         for run in (a for a in actions if a["kind"] == "runAgent"):
             limits = given["budgets"].get(run["stage"]) or {}
-            wanted = {"tokens": limits.get("tokens"), "seconds": limits.get("seconds"), "usd": None}
+            wanted = {"tokens": limits.get("tokens"), "seconds": limits.get("seconds")}
             if limits.get("modelCalls") is not None:
                 wanted["modelCalls"] = limits["modelCalls"]
             if run["budget"] != wanted:

@@ -115,10 +115,10 @@ empty value means the same as leaving it out, such as `questions`, `blocker`,
 `outside_plan`, `reviewer_notes`, `protected_paths` or `no_change`, takes that empty value
 instead. Otherwise NexKit asks the same session once for its result alone, with what was
 wrong, and leaves the working tree as the agent left it, so an implement or fix round
-keeps its change. That request gets at most 10 minutes of the time the stage has left, and
-of `max_budget_usd` what the first run left; the log and `result-again/` in the agent's
-artifact show it. A result that fits then goes on as usual. When the session gives none
-either, runs out of that time or budget, or the runtime cannot continue a session, the
+keeps its change. That request gets at most 10 minutes of the time the stage has left; the
+log and `result-again/` in the agent's artifact show it. A result that fits then goes on as
+usual. When the session gives none either, runs out of that time, or the runtime cannot
+continue a session, the
 stage stops as after a transient error, never as work that ran out of time: NexKit runs the
 command again by itself after the waits of `retry.wait_minutes`, and a stop after the last
 waits for a person (see [Failure handling](failure-handling.md#failure-handling)). Claude Code keeps each session for this, under an id NexKit

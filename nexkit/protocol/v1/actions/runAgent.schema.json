@@ -90,12 +90,6 @@
             "null"
           ]
         },
-        "usd": {
-          "type": [
-            "number",
-            "null"
-          ]
-        },
         "modelCalls": {
           "type": [
             "integer",
@@ -105,8 +99,7 @@
       },
       "required": [
         "tokens",
-        "seconds",
-        "usd"
+        "seconds"
       ],
       "$comment": "What the run may spend. `modelCalls` is there only when the stage's `budgets` policy sets it."
     },

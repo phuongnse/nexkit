@@ -690,7 +690,7 @@
       "additionalProperties": false
     },
     "used": {
-      "$comment": "What the item's agents spent: tokens, seconds and US dollars.",
+      "$comment": "What the item's agents spent: tokens and seconds.",
       "type": "object",
       "properties": {
         "tokens": {
@@ -698,9 +698,6 @@
         },
         "seconds": {
           "type": "integer"
-        },
-        "usd": {
-          "type": "number"
         },
         "since": {
           "anyOf": [
@@ -716,7 +713,6 @@
       "required": [
         "tokens",
         "seconds",
-        "usd",
         "since"
       ],
       "additionalProperties": false

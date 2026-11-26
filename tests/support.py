@@ -160,7 +160,7 @@ PROFILES = {
         "when": "Touches security or storage.",
         "stages": {
             "plan": {"model": "fable", "timeout_minutes": 40},
-            "implement": {"model": "opus", "max_budget_usd": 20},
+            "implement": {"model": "opus"},
             "review": {"model": "fable", "effort": "max"},
         },
     },

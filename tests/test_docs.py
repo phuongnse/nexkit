@@ -101,7 +101,7 @@ PERMISSION_NAMES = {
 KEYS_HEADER = "| Key | Default | Meaning |"
 TRIGGERS_HEADER = "| Trigger | Starts NexKit for |"
 WORKFLOW_TEMPLATE = ROOT / "nexkit/templates/workflow.yml"
-RUNTIMES_HEADER = "| Runtime | Providers | `effort` | `max_budget_usd` |"
+RUNTIMES_HEADER = "| Runtime | Providers | `effort` |"
 LIMITS = re.compile(r"((?:`[\w-]+`(?:, | and )?)+) reports? usage limits")
 DECISIONS = DOCS / "decisions"
 DECISIONS_INDEX = DOCS / "decisions.md"
@@ -734,11 +734,6 @@ class ConfigurationTests(unittest.TestCase):
                     re.findall(r"`([^`]+)`", cells[2]),
                     list(runtime.efforts),
                     f"the effort levels of {name} in docs/configuration.md differ from the code",
-                )
-                self.assertEqual(
-                    cells[3],
-                    "yes" if runtime.supports_budget else "no",
-                    f"the max_budget_usd of {name} in docs/configuration.md differs from the code",
                 )
 
     def test_the_page_names_each_runtime_that_reports_usage_limits(self):

@@ -2,6 +2,7 @@
 (docs/engine.md#the-state-document): written only as the next revision of the one read, and
 never past GitHub's comment size."""
 
+import base64
 import copy
 import json
 import re
@@ -18,6 +19,7 @@ from nexkit.protocol.size import (
     MOST,
     STATE_LIMIT,
     dump,
+    encoded,
     fit,
     size,
 )
@@ -577,6 +579,16 @@ class SizeTest(unittest.TestCase):
         comment = {"id": 1, "body": body, "user": {"login": BOT_LOGIN}}
         self.assertEqual(item_state.find([comment])[1], state)
 
+    def test_a_state_comment_stored_with_used_usd_is_read_without_it(self):
+        state = {**blank("42"), "revision": 1}
+        old = copy.deepcopy(state)
+        old["used"]["usd"] = 2.37
+        self.assertNotEqual(protocol.check(old, "state.schema.json"), [])
+        data = base64.b64encode(encoded(old)).decode()
+        body = f"### NexKit state\n\n{item_state.PREFIX}{data} -->"
+        comment = {"id": 1, "body": body, "user": {"login": BOT_LOGIN}}
+        self.assertEqual(item_state.find([comment])[1], state)
+
     def test_the_largest_state_the_schema_allows_is_shortened_to_fit(self):
         state = largest()
         self.assertEqual(protocol.check(state, "state.schema.json"), [])
@@ -702,7 +714,6 @@ class SizeTest(unittest.TestCase):
             "changeVersion": None,
             "timedOut": False,
             "seconds": None,
-            "usd": None,
         }
         finished = event(
             "actionFinished",

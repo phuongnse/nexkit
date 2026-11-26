@@ -34,8 +34,7 @@
         "effort": null,
         "budget": {
           "tokens": null,
-          "seconds": null,
-          "usd": null
+          "seconds": null
         },
         "session": null,
         "resume": false
@@ -63,7 +62,6 @@
         "output": 0
       },
       "seconds": 0,
-      "usd": 0,
       "since": null
     },
     "asked": [],
@@ -106,8 +104,7 @@
       "effort": null,
       "budget": {
         "tokens": null,
-        "seconds": null,
-        "usd": null
+        "seconds": null
       },
       "session": null,
       "resume": false

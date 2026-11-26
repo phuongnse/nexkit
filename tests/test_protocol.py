@@ -108,6 +108,31 @@ class ProtocolTest(unittest.TestCase):
         self.assertIn("schemaVersion", schema["required"])
         self.assertNotIn("protocol", schema["properties"])
 
+    def test_no_schema_or_example_has_a_usd_field(self):
+        def walk(value, where):
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    self.assertNotEqual(key, "usd", f"{where} has a usd key")
+                    walk(item, f"{where}/{key}")
+            elif isinstance(value, list):
+                self.assertNotIn("usd", value, f"{where} names usd")
+                for index, item in enumerate(value):
+                    walk(item, f"{where}[{index}]")
+
+        paths = sorted(protocol.ROOT.rglob("*.json"))
+        self.assertTrue(paths)
+        for path in paths:
+            walk(json.loads(path.read_text(encoding="utf-8")), str(path.relative_to(protocol.ROOT)))
+
+    def test_a_state_document_with_used_usd_is_read_without_it(self):
+        state = example("state/planning.json")
+        old = {**state, "used": {**state["used"], "usd": 1.5}}
+        self.assertIn("usd", " ".join(protocol.check(old, "state.schema.json")))
+        self.assertEqual(protocol.upgrade(old), state)
+        self.assertIn("usd", old["used"])  # the document given is left as it was
+        for value in (state, None, [], "x", {"used": None}, {"used": []}):
+            self.assertEqual(protocol.upgrade(value), value)
+
     def test_a_sample_state_of_every_state_fits(self):
         states = protocol.load("common.schema.json")["$defs"]["state"]["enum"]
         samples = sorted(path.stem for path in (EXAMPLES / "state").glob("*.json"))

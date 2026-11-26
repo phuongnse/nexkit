@@ -207,7 +207,7 @@ and running `nexkit status` would run whatever code it points at.
 }
 ```
 
-Agents, models, time and cost limits can be set per stage, and per profile: a triage step
+Agents, models and time limits can be set per stage, and per profile: a triage step
 reads each issue and picks a profile, so hard issues get stronger models than easy ones.
 Caches that your CI saves on the default branch can be restored before `setup`. See the
 [configuration reference](docs/configuration.md).

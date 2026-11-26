@@ -323,6 +323,27 @@ class ProgramTest(unittest.TestCase):
         self.assertIn("request.event.depth must be at least 0", answer["error"])
 
 
+class OldDocumentTest(unittest.TestCase):
+    def test_a_state_stored_with_used_usd_is_read_without_it(self):
+        state = json.loads((EXAMPLES / "state" / "planning.json").read_text())
+        state["used"]["usd"] = 2.37
+        event = json.loads((EXAMPLES / "events" / "commented.json").read_text())
+        event["item"] = state["item"]
+        answer = engine.answer({**request(state=state, event=event), "call": "step"})
+        self.assertNotIn("error", answer, answer)
+        self.assertNotIn("usd", answer["state"]["used"])
+        self.assertEqual(answer["state"]["used"]["seconds"], state["used"]["seconds"])
+        self.assertEqual(state["used"]["usd"], 2.37)  # the request is left as it was
+
+    def test_a_state_with_another_field_in_used_is_still_refused(self):
+        state = json.loads((EXAMPLES / "state" / "planning.json").read_text())
+        state["used"]["eur"] = 1
+        event = json.loads((EXAMPLES / "events" / "commented.json").read_text())
+        event["item"] = state["item"]
+        answer = engine.answer({**request(state=state, event=event), "call": "step"})
+        self.assertIn("request.state.used", answer.get("error", ""), answer)
+
+
 class RetryTimeTest(unittest.TestCase):
     def test_a_wait_is_added_to_the_time_of_the_event(self):
         for at, minutes, found in (

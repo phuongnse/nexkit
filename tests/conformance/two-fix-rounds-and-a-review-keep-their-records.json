@@ -130,7 +130,6 @@
           "changeVersion": null,
           "timedOut": false,
           "seconds": null,
-          "usd": null,
           "output": {
             "status": "done",
             "summary": "Kept the header and fixed the title.",
@@ -229,7 +228,6 @@
           "changeVersion": null,
           "timedOut": false,
           "seconds": null,
-          "usd": null,
           "output": {
             "verdict": "request_changes",
             "summary": "The change does what the plan says.",
@@ -291,7 +289,6 @@
           "changeVersion": null,
           "timedOut": false,
           "seconds": null,
-          "usd": null,
           "output": {
             "status": "done",
             "summary": "Read the stale fake issue again.",
@@ -390,7 +387,6 @@
           "changeVersion": null,
           "timedOut": false,
           "seconds": null,
-          "usd": null,
           "output": {
             "verdict": "approve",
             "summary": "The change does what the plan says.",

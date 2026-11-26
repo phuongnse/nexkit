@@ -192,9 +192,9 @@ run after the last wait of `retry.wait_minutes` stops the same way (see [A run k
 stopping on a transient error](#a-run-kept-stopping-on-a-transient-error)): run the command
 again, and if it keeps happening with one model, use a stronger one for that stage.
 
-**The agent timed out or stopped on its budget.** The issue is probably too large. Without
-autopilot, ask for a new plan and use its suggested split; or raise `timeout_minutes` or
-`max_budget_usd` for the `implement` stage. With fallback agents, each agent's run gets `timeout_minutes`,
+**The agent timed out.** The issue is probably too large. Without
+autopilot, ask for a new plan and use its suggested split; or raise `timeout_minutes` for
+the `implement` stage. With fallback agents, each agent's run gets `timeout_minutes`,
 within one stage deadline for all of them.
 With autopilot on, an implement or fix agent that ran out of time leads to one new plan that
 asks for a split; a second time waits for you, and so does a part of an issue that already

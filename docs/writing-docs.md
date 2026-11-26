@@ -252,7 +252,9 @@ when a list of what the code defines misses an entry. These rules close each of 
    section of [Delivery](delivery.md); that the label table of
    [Delivery](delivery.md#labels-and-milestones) lists each label the code creates and, besides the
    labels of a kind, no other; that AGENTS.md keeps within its word limits; that the job and
-   module tables of the architecture page match the workflows and `nexkit/`; that the job table of
+   module tables of the architecture page match the workflows and `nexkit/`, and that its job
+   diagram shows each job of `pipeline.yml` and the order each job's `needs:` set; that the job
+   table of [how it works](how-it-works.md#one-run-ten-jobs) matches the jobs of `pipeline.yml`, the
    [how it works](how-it-works.md#one-run-ten-jobs) matches the jobs of `pipeline.yml`, the
    permissions its rows name, and the number in its heading; that the plan and review layouts of
    [stages](stages.md) list the sections the code writes, and that each value the pages repeat

@@ -652,8 +652,21 @@ def no_change_finding(agent):
 def _no_change(gh, cfg, decision, agent):
     """An implement round that found no change is needed, where the issue or its plan says
     to stop then: close the issue as completed, with the agent's finding."""
+    from .host import Refused, no_change_found, refused_reason
+
     issue = decision["issue"]
     finding = no_change_finding(agent)
+    try:
+        # The issue closes only as the engine ends the item, on the agent's own finding.
+        no_change_found(cfg, decision, filled(((agent or {}).get("output") or {}).get("no_change")))
+    except Refused as exc:
+        message = f"No change is needed, but NexKit did not close #{issue}: the engine refused"
+        return {
+            "outcome": "close_failed",
+            "summary": f"{message} to decide.\n\n{finding}",
+            "attention": refused_reason(exc),
+            "agents": agents_ran(agent),
+        }
     try:
         gh.close_issue(issue, "completed")
     except GitHubError as exc:
@@ -678,9 +691,22 @@ def _no_change(gh, cfg, decision, agent):
 def _already_on_base(gh, cfg, decision, agent):
     """A fix round that found, before its agent, that the base branch already holds the
     pull request's change: close it and its issue (see `maintain.close_on_base`)."""
+    from .host import Refused, on_base_found, refused_reason
+
     target = {**decision, "merge_base": agent.get("merge_base") or decision["base"]}
-    outcome, text, commit = close_on_base(gh, cfg, target, agent.get("on_base"))
-    reason = needs_person(outcome, cfg)
+    try:
+        # The pull request and its issue close only as the engine ends the item.
+        on_base_found(cfg, decision)
+    except Refused as exc:
+        outcome, commit, reason = "on_base_failed", agent.get("on_base"), refused_reason(exc)
+        by = f", brought by {commit}" if commit else ""
+        text = (
+            f"`{decision['base']}` already holds the change of this pull request{by}, but "
+            "NexKit's engine refused to decide, so NexKit did not close it."
+        )
+    else:
+        outcome, text, commit = close_on_base(gh, cfg, target, agent.get("on_base"))
+        reason = needs_person(outcome, cfg)
     fields = {"on_base": commit} if commit else {}
     _stop_round(gh, decision, agent, outcome, text, reason, **fields)
     return {"outcome": outcome, "summary": text, "attention": reason}

@@ -93,6 +93,8 @@ COUNTING = ("fixing", "checking", "reviewing")
 # waits before the host's tick tries it again.
 CHECKS_END = 6 * 3600
 CHECKS_RETRY = 3600
+# The reasons a change in `ready` waits for its accept, which a person's approval may start.
+ACCEPT_WAITS = ("accept", "acceptRefused", "reopened")
 # How many event ids the state keeps, to take each event once.
 RECENT = 20
 # A host's policies when it leaves one out: NexKit 6's on GitHub without autopilot, as
@@ -1142,11 +1144,14 @@ class Step:
 
     def on_changeApproved(self, event):
         attention = self.s["attention"] or {}
-        if (
-            self.state != "ready"
-            or event["changeId"] != (self.s["change"] or {}).get("id")
-            or event["changeVersion"] != self.version
-            or attention.get("reason") not in ("unverifiableCriterion", "personChecklistItem")
+        reason = attention.get("reason")
+        if self.state != "ready" or event["changeId"] != (self.s["change"] or {}).get("id"):
+            return False
+        if reason in ACCEPT_WAITS:
+            return self.approved_accept(event, reason)
+        if event["changeVersion"] != self.version or reason not in (
+            "unverifiableCriterion",
+            "personChecklistItem",
         ):
             return False
         self.s["rounds"]["criteria"] = [
@@ -1155,6 +1160,23 @@ class Step:
         self.s["rounds"]["checklist"] = [
             "met" if answer == "not_met" else answer for answer in self.s["rounds"]["checklist"]
         ]
+        self.ready()
+        return True
+
+    def approved_accept(self, event, reason):
+        """A person's approval of a change that waits for its accept: under `autoWhenPassed` it
+        is accepted, and under `person` the approval changes nothing, since that person accepts
+        it themselves. After a refused accept or a reopened pull request, an approval of any
+        version of the change starts it, as NexKit 6 tries a merge again on the head that passed;
+        only an approval of the change's own version accepts a change that waits for its accept.
+        A conflict that the host observed is the conflict policy's, never an approval's."""
+        if (
+            self.review_only
+            or self.p["accept"] != "autoWhenPassed"
+            or (reason == "accept" and event["changeVersion"] != self.version)
+            or (self.observed() or {}).get("conflicts")
+        ):
+            return False
         self.ready()
         return True
 

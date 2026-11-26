@@ -135,6 +135,14 @@ waits for a person, where NexKit 6 started a counted round anyway
 (`tests/differential/known.py`). Every start that autopilot makes follows an answer of the
 engine (`tests/test_autopilot.py`).
 
+It decides what a writer's approval of a NexKit pull request does too (`approved`, called by
+`maintain.send_approval` and `maintain.merge_approved`): the host builds the document of the
+latest round's outcome, `ready` with attention `acceptRefused`, `reopened`, `personChecklistItem`
+or `accept`, sends the approval as a `changeApproved`, and merges, accepts the checklist items a
+person decides or starts nothing as the engine answers. A hold, an implement round that still
+runs, a pull request with no round and a round whose outcome takes no approval stay the host's.
+An engine that refuses to answer leaves GitHub as it was.
+
 It decides which of the issues that may start do, and in what order, too (`sweep`, called by
 `autopilot.preview`): the start steps without a pull request go to the engine's `sweep` call, with
 the issues in progress as `running`, each issue's labels, the index of its milestone, its wave and
@@ -2122,6 +2130,45 @@ def accept_answer(
     if "needPerson" in kinds:
         return "person", state
     raise Refused(f"The engine answers {sorted(kinds)} after a merge, which the host cannot do.")
+
+
+def approved(cfg, issue, pr, run, commit, actor):
+    """What a writer's approval of the NexKit pull request `pr` of `issue` does, as the engine
+    decides it (`maintain.send_approval`, `maintain.merge_approved`): `run` is the marker of
+    the pull request's latest round, which passed, and `commit` the commit that the approval
+    names, or None. The document is the one the import builds for that round: `ready` with
+    attention `acceptRefused` after a merge GitHub refused, `reopened` after a pull request
+    reopened, `personChecklistItem` while items that a person decides are not met, and `accept`
+    for a round that passed and left its accept to a person. Returns `merge`, when the engine
+    accepts the change; `accept`, when it takes the approval as a person's decision of the
+    checklist items and leaves the accept to them; or `none`, when it changes nothing, as for
+    an approval of another version of a change that waits for its accept, or with `merge.auto`
+    off. Raises `Refused`."""
+    decide = bool(run.get("decide"))
+    doc = _pull_doc(cfg, issue, pr, run.get("head"), "ready", 0)
+    if decide:
+        reason = "personChecklistItem"
+        doc["rounds"]["checklist"] = ["not_met"]
+    elif run.get("outcome") == "merge_refused":
+        reason = "acceptRefused"
+    elif run.get("outcome") == autopilot.PULL_CLOSED:
+        reason = "reopened"
+    else:
+        reason = "accept"
+    doc["attention"] = {"reason": reason, "text": first_state.SAYS[reason], "ref": None}
+    version = str(commit or doc["change"]["version"])
+    fields = {"by": _person(actor or "someone", "writer"), "changeId": str(pr)}
+    fields["changeVersion"] = version
+    event = _event("changeApproved", issue, None, f"approval-{pr}-{version}", **fields)
+    answer = step(doc, event, policies(cfg))
+    kinds = {action["kind"] for action in answer["actions"]}
+    if not answer["changed"]:
+        return "none"
+    if "accept" in kinds:
+        return "merge"
+    if decide and (answer["state"]["attention"] or {}).get("reason") == "accept":
+        return "accept"
+    raise Refused(f"The engine answers {sorted(kinds)} to an approval, which the host cannot do.")
 
 
 def checks_waited(cfg, issue, pr, head, since, now, behind=False):

@@ -1608,6 +1608,47 @@ def engine_state():
     return host._pull_doc(None, 5, 6, "c" * 40, "accepting", 0)
 
 
+class ApprovedTest(TestCase):
+    """A writer's approval is the engine's to answer: `host.approved` gives a merge, an
+    acceptance of the items a person decides, or nothing, from the round's outcome and
+    `merge.auto`."""
+
+    HEAD = "c" * 40
+    OTHER = "d" * 40
+
+    def answer(self, outcome, auto, commit=None, decide=False):
+        cfg = make_config(merge={"auto": auto})
+        run = {"outcome": outcome, "head": self.HEAD, "status": "success"}
+        if decide:
+            run["decide"] = [1]
+        return host.approved(cfg, 5, 6, run, commit, "olivia")
+
+    def test_an_approval_after_a_refusal_or_a_reopen_merges_only_with_merge_auto(self):
+        for outcome in ("merge_refused", autopilot.PULL_CLOSED):
+            for commit in (None, self.HEAD, self.OTHER):
+                with self.subTest(outcome=outcome, commit=commit):
+                    self.assertEqual(self.answer(outcome, True, commit), "merge")
+                    self.assertEqual(self.answer(outcome, False, commit), "none")
+
+    def test_an_approval_of_a_ready_round_merges_only_on_its_head_and_with_merge_auto(self):
+        self.assertEqual(self.answer("ready", True), "merge")
+        self.assertEqual(self.answer("ready", True, self.HEAD), "merge")
+        self.assertEqual(self.answer("ready", True, self.OTHER), "none")
+        self.assertEqual(self.answer("ready", False, self.HEAD), "none")
+
+    def test_an_approval_of_the_items_a_person_decides_accepts_them_on_the_head_only(self):
+        self.assertEqual(self.answer("ready", True, self.HEAD, decide=True), "merge")
+        self.assertEqual(self.answer("ready", False, self.HEAD, decide=True), "accept")
+        self.assertEqual(self.answer("ready", False, None, decide=True), "accept")
+        self.assertEqual(self.answer("ready", False, self.OTHER, decide=True), "none")
+        self.assertEqual(self.answer("ready", True, self.OTHER, decide=True), "none")
+
+    def test_an_engine_that_refuses_gives_no_answer(self):
+        with mock.patch.object(engine, "answer", return_value={"error": "no"}):
+            with self.assertRaises(host.Refused):
+                self.answer("merge_refused", True)
+
+
 class ChecksWaitedTest(ReportCase):
     """A sweep's tick of a merge that waits for required checks: the six hours are the
     engine's."""

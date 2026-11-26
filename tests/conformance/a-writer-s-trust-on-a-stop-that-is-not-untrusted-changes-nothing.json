@@ -1,0 +1,22 @@
+{
+  "policies": {},
+  "state": {
+    "example": "failed",
+    "set": {}
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "requested",
+        "what": "trust",
+        "by": {
+          "id": "olivia",
+          "role": "writer"
+        }
+      },
+      "state": "failed",
+      "changed": false,
+      "actions": []
+    }
+  ]
+}

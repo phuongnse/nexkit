@@ -48,7 +48,7 @@
     "change": null,
     "observed": null,
     "attention": {
-      "reason": "failed",
+      "reason": "untrusted",
       "text": "An untrusted edit stopped the round",
       "ref": null
     },
@@ -109,7 +109,24 @@
     {
       "event": {
         "kind": "requested",
-        "what": "retry"
+        "what": "trust",
+        "by": {
+          "id": "rita",
+          "role": "reader"
+        }
+      },
+      "state": "failed",
+      "changed": false,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "trust",
+        "by": {
+          "id": "olivia",
+          "role": "writer"
+        }
       },
       "state": "planning",
       "changed": true,

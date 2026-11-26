@@ -458,8 +458,11 @@ release.
   for such an edit right after it read the text, so its agent never acts on it: the round ends
   as `agent_untrusted` before setup and any agent, and gives its automatic round back. A merge
   looks too, and ends as `merge_untrusted`. Commenting the command again starts the same work:
-  a plan, the fix round, or `/nexkit review` before the merge. A round that a person started
-  with a command goes on, since that person answers for the text.
+  a plan, the fix round, or `/nexkit review` before the merge. The engine decides that start.
+  When the stopped round was a fix round and no automatic fix round is left under
+  `fix.max_auto_rounds`, the comment starts nothing: the pull request waits for a person, who
+  comments `/nexkit fix`. A round that a person started with a command goes on, since that
+  person answers for the text.
 - Parts that autopilot creates from a split of the issue inherit the trust, and lose it with
   the issue. An issue that is a part but was not opened by NexKit's App inherits nothing, so
   it needs the comment itself.

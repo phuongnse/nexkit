@@ -1468,11 +1468,7 @@ def _pull_step(gh, cfg, issue, pull, rounds, record, start, comments, pull_comme
         if not _vouched_again(gh, issue, comment):
             return _step(issue, "waits", latest.get("attention") or UNTRUSTED_REASON)
         # A round that stopped gave its automatic round back; a merge needs a new review.
-        again = {"command": "fix", "count": True}
-        if latest["outcome"] == UNTRUSTED_MERGE:
-            again = {"command": "review"}
-        fields = {**start, "target": pull, "auto": "true", **again}
-        return _step(issue, "start", "a writer vouched for it again", **fields)
+        return _vouched(gh, cfg, issue, comment, latest, record, start, pull)
     if latest.get("outcome") == HELD:
         return _released(gh, cfg, issue, pull, comment, latest, pull_comments, start, now)
     if latest.get("outcome") == "merge_waiting":
@@ -1675,6 +1671,18 @@ def _after_go(gh, cfg, issue, comment, last, record, start, comments):
 
     try:
         return after_go(gh, cfg, issue, comment, last, record, start, comments)
+    except Refused as error:
+        return _step(issue, "waits", refused_reason(error))
+
+
+def _vouched(gh, cfg, issue, comment, run, record, start, pull=None):
+    """The step after a writer vouched for an issue again once an untrusted edit stopped its
+    round, which the engine decides (`host.vouched`). An issue whose next step the engine
+    refuses to decide waits for a person, alone."""
+    from .host import Refused, refused_reason, vouched
+
+    try:
+        return vouched(gh, cfg, issue, comment, run, record, start, pull)
     except Refused as error:
         return _step(issue, "waits", refused_reason(error))
 
@@ -1913,7 +1921,7 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
         return _step(issue, "waits", blocked[0], person=blocked[1])
     if last and last.get("outcome") == UNTRUSTED_ROUND:
         if _vouched_again(gh, issue, found[-1][0]):
-            return _step(issue, "start", "a writer vouched for it again", command="plan", **start)
+            return _vouched(gh, cfg, issue, *found[-1], record, start)
         return _step(issue, "waits", last.get("attention") or UNTRUSTED_REASON)
     if last is None or plan is None:
         return _first_plan(cfg, issue, record, start)

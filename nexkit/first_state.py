@@ -87,6 +87,9 @@ SAYS = {
     "blocked": "The agent was blocked.",
     "failed": "The last run failed.",
     "roundFailed": "The last round failed on an error.",
+    "untrusted": (
+        "An edit by someone without write access stopped it, and a writer vouches for it again."
+    ),
     "reopened": "The pull request was closed and opened again.",
     "outage": "A run ended without a report, and NexKit started it again as often as it does.",
     "paused": "The agent hit its usage limit, and NexKit does not resume this run.",
@@ -394,16 +397,15 @@ class Item:
             return self.be("go again", "awaitingApproval", "approval", run, ref=ref)
         if outcome == "agent_blocked":
             return self.after_blocked(comment, run)
-        if (
-            run.get("status") == FAILURE
-            and outcome not in (autopilot.UNTRUSTED_ROUND, "issue_closed")
-            and not run.get("timed_out")
-        ):
+        if outcome == autopilot.UNTRUSTED_ROUND:
+            # An untrusted edit's stop is `untrusted`: a comment does not plan it again, as in
+            # NexKit 6, and a writer's vouch after it starts the next command.
+            return self.be("failed", "failed", "untrusted", run)
+        if run.get("status") == FAILURE and outcome != "issue_closed" and not run.get("timed_out"):
             # A round that failed on an error: NexKit 6 plans again after a comment.
             return self.be("failed", "failed", "roundFailed", run)
-        # An untrusted edit's stop, a time-out and an issue that closed with its round are
-        # `failed`, so that a comment does not plan them again under `afterFailure`: NexKit 6
-        # waits for a writer to vouch, or for a person.
+        # A time-out and an issue that closed with its round are `failed`, so that a comment
+        # does not plan them again under `afterFailure`: NexKit 6 waits for a person.
         return self.be("failed", "failed", "failed", run)
 
     def after_blocked(self, comment, run):
@@ -511,7 +513,7 @@ class Item:
             "merge_refused": "acceptRefused",
             "conflicting": "acceptRefused",
             PULL_CLOSED: "reopened",
-            UNTRUSTED_MERGE: "blocked",
+            UNTRUSTED_MERGE: "untrusted",
         }
         if outcome in named:
             return self.be("needs a person", "ready", named[outcome], latest)
@@ -519,7 +521,9 @@ class Item:
             stage = "implement" if latest.get("action") == "implement" else "fix"
             return self.asks(comment, latest, stage)
         if status == FAILURE:
-            blocked = outcome in ("agent_blocked", UNTRUSTED_ROUND)
+            if outcome == UNTRUSTED_ROUND:
+                return self.be("failed", "failed", "untrusted", latest)
+            blocked = outcome == "agent_blocked"
             return self.be("failed", "failed", "blocked" if blocked else "failed", latest)
         return self.ready(latest)
 

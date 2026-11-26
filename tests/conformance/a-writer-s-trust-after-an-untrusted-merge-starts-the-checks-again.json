@@ -1,0 +1,30 @@
+{
+  "policies": {},
+  "state": {
+    "example": "ready",
+    "set": {
+      "attention": {
+        "reason": "untrusted",
+        "text": "An untrusted edit stopped the round",
+        "ref": null
+      }
+    }
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "requested",
+        "what": "trust",
+        "by": {
+          "id": "olivia",
+          "role": "writer"
+        }
+      },
+      "state": "checking",
+      "changed": true,
+      "actions": [
+        "runChecks"
+      ]
+    }
+  ]
+}

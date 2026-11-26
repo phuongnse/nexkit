@@ -1,0 +1,45 @@
+{
+  "policies": {
+    "fixRounds": 1
+  },
+  "state": {
+    "example": "failed",
+    "set": {
+      "attention": {
+        "reason": "untrusted",
+        "text": "An untrusted edit stopped the round",
+        "ref": null
+      },
+      "rounds": {
+        "started": 1,
+        "counted": 1,
+        "conflicts": 0,
+        "signatures": [],
+        "findings": [],
+        "criteria": [],
+        "checklist": []
+      }
+    }
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "requested",
+        "what": "trust",
+        "by": {
+          "id": "olivia",
+          "role": "writer"
+        }
+      },
+      "state": "ready",
+      "changed": true,
+      "actions": [
+        "needPerson"
+      ],
+      "expect": {
+        "attention.reason": "roundsUsedUp",
+        "rounds.counted": 1
+      }
+    }
+  ]
+}

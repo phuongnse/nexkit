@@ -349,7 +349,7 @@ count as its own words say, such as "4 issues are in progress".
 
 `tests/conformance/` holds cases: a state, events in order, and the actions and state each must
 give. They come from the decisions that `tests/test_scenarios.py` plays today. Its scenarios that
-are about GitHub alone, such as vouching, Dependabot, shards, branch updates and carried reviews,
+are about GitHub alone, such as Dependabot, shards, branch updates and carried reviews,
 stay as tests of the GitHub host.
 
 `tests/conformance/sweeps/` holds the cases of the `sweep` call: the items, the running count, the
@@ -556,13 +556,21 @@ host runs it through its own adapter. A new rule of the engine comes with a case
    again. A `/nexkit go` that failed on an error, with no pull request, is the engine's too: the
    host sends it as an agent error, and the engine ends it with attention `roundFailed` and
    plans it again in the same way. A time-out and a failed plan wait for a person after a
-   comment. Autopilot's start of the first plan of a new issue is the engine's
+   comment. What follows a writer's vouch after an untrusted edit is the engine's too
+   (`host.vouched`, called by `autopilot._vouched`): the host marks the item `untrusted`, as the
+   import does, in `failed` for a stopped round and in `ready` for a stopped merge, sends the
+   writer's newer `/nexkit trust` as a `requested` `trust`, and starts what the engine answers,
+   with NexKit 6's fields and reason, "a writer vouched for it again": a plan, an automatic fix
+   round that counts, or the checks and review. One difference from NexKit 6 is known
+   (`tests/differential/known.py`): where no automatic fix round is left, the engine hands a
+   vouch on a pull request to a person (`roundsUsedUp`), and NexKit 6 would start a counted
+   round past `fix.max_auto_rounds`. Autopilot's start of the first plan of a new issue is the engine's
    too (`host.first_plan`): the host builds the document that the import builds for an issue with
    no plan, `new` and waiting to start, sends a `requested` start with no person, and dispatches
    `/nexkit plan` only when the engine answers with a plan run. Otherwise the issue waits for a
    person. NexKit 6's checks of a hold, trust, blockers and waves come first, so the engine is
-   never asked for a held or blocked issue, and the other starts that autopilot makes stay
-   NexKit 6's. Which of the issues that may start do, and in what order, is the engine's too
+   never asked for a held or blocked issue. Every start that autopilot makes now follows an
+   answer of the engine, which `tests/test_autopilot.py` checks by reading `autopilot.py`. Which of the issues that may start do, and in what order, is the engine's too
    (`host.sweep`, called by `autopilot.preview`): the host sends the start steps without a pull
    request as a `sweep` call, with the busy count as `running`, the index of each issue's
    milestone, its wave and whether pull requests wait for it as a bug issue about the default

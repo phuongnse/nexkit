@@ -124,8 +124,16 @@ It decides the start of the first plan of a new issue too (`first_plan`, called 
 `autopilot._first_plan`): the host builds the document that the import builds for an issue with
 no plan, `new` and waiting to start, sends a `requested` start with no person, and dispatches
 `/nexkit plan` only when the engine answers with a plan run. NexKit 6's checks of a hold, trust,
-blockers and waves come first, so the engine is never asked for a held or blocked issue, and
-the other starts that autopilot makes stay its own.
+blockers and waves come first, so the engine is never asked for a held or blocked issue.
+
+It decides what follows a writer's vouch after an untrusted edit stopped a round or a merge
+(`vouched`, called by `autopilot._vouched`): the host builds the document that the import
+builds, `failed` with attention `untrusted` or, for a merge, `ready`, sends the writer's newer
+`/nexkit trust` as a `requested` `trust`, and starts a plan, an automatic fix round that counts,
+or the checks and review, as the engine answers. A pull request with no automatic fix round left
+waits for a person, where NexKit 6 started a counted round anyway
+(`tests/differential/known.py`). Every start that autopilot makes follows an answer of the
+engine (`tests/test_autopilot.py`).
 
 It decides which of the issues that may start do, and in what order, too (`sweep`, called by
 `autopilot.preview`): the start steps without a pull request go to the engine's `sweep` call, with
@@ -850,6 +858,62 @@ def first_plan(cfg, issue, record, start):
     if any(a["kind"] == "runAgent" and a["stage"] == "plan" for a in actions):
         return autopilot._step(issue, "start", "no plan yet", command="plan", **start)
     raise Refused("The engine starts no plan for a new issue.")
+
+
+VOUCHED = "a writer vouched for it again"
+
+
+def vouched(gh, cfg, issue, comment, run, record, start, pull=None):
+    """The step after a writer vouched for `issue` again once an untrusted edit stopped the
+    round whose run comment `comment` holds the marker `run` (`autopilot._vouched_again`), as
+    the engine decides it: the item is `failed` with attention `untrusted` for a round that
+    stopped, or `ready` for a merge that did (`merge_untrusted`), with its pull request `pull`
+    as the change, and the writer's newer vouch (`autopilot.vouch`) is a `requested` `trust`
+    with role `writer`. A plan, an automatic fix round that counts, or the checks and review
+    start only when the engine answers with them; a pull request with no automatic round left
+    waits for a person. Raises `Refused`."""
+    number = issue["number"]
+    found = autopilot.vouch(gh, issue)
+    if found is None or found["id"] <= comment["id"]:
+        raise Refused("No writer vouched for the issue after the round that stopped.")
+    said = str(run.get("attention") or "").strip()
+    attention = {
+        "reason": "untrusted",
+        "text": first_state.clip(said, "reason") if said else first_state.SAYS["untrusted"],
+        "ref": None,
+    }
+    if pull is None:
+        doc = _plan_doc(issue, record, gh.comments(number))
+        doc["state"] = "failed"
+        if doc["plan"]:
+            doc["plan"]["approved"] = True
+    else:
+        _, kept = autopilot.read_state(gh.comments(pull))
+        merge = run.get("outcome") == autopilot.UNTRUSTED_MERGE
+        auto_fixes = (kept or {}).get("auto_fixes", 0)
+        name = "ready" if merge else "failed"
+        doc = _pull_doc(None, number, pull, run.get("head"), name, auto_fixes)
+    doc["attention"] = attention
+    login = (found.get("user") or {}).get("login") or ""
+    fields = {"what": "trust", "by": _person(login, "writer"), "note": "", "plan": None}
+    at, name = found.get("created_at"), event_id("comment", found)
+    event = _event("requested", number, at, name, **fields)
+    actions = step(doc, event, policies(cfg))["actions"]
+    kinds = {action["kind"]: action for action in actions}
+    agent = kinds.get("runAgent")
+    if agent and agent["stage"] == "plan" and pull is None:
+        return autopilot._step(issue, "start", VOUCHED, command="plan", **start)
+    if agent and agent["stage"] == "fix" and pull is not None:
+        fields = {**start, "target": pull, "auto": "true", "command": "fix", "count": True}
+        return autopilot._step(issue, "start", VOUCHED, **fields)
+    if "runChecks" in kinds and pull is not None:
+        fields = {**start, "target": pull, "auto": "true", "command": "review"}
+        return autopilot._step(issue, "start", VOUCHED, **fields)
+    if (kinds.get("needPerson") or {}).get("reason") == "roundsUsedUp" and pull is not None:
+        do = f"comment `/nexkit fix` on pull request #{pull} for what still fails"
+        why = f"{VOUCHED}, but it has no automatic fix rounds left"
+        return autopilot._step(issue, "waits", autopilot.person(do, why))
+    raise Refused("The engine starts nothing after a writer vouched for the item again.")
 
 
 def sweep(cfg, where, starts, issues, running, awaited):

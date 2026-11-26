@@ -42,12 +42,17 @@ merges it on the head its checks and review passed, with the guards of every mer
 approval of that head accepts the checklist items a person decides and turns
 `nexkit/review` green there, also with `merge.auto` off, which then leaves the merge to the
 person;
-a head that moved gets `/nexkit review`. The run has a concurrency group of its own,
-`nexkit-approved-<pr>`, so it never replaces or waits behind a command (see [One run at a
-time](how-it-works.md#one-run-at-a-time)), and an approval while a round runs, or of a pull request whose round ended otherwise, starts
-nothing. Nor does one of a pull request that a person merged or closed first, as an owner
-who approves and merges in the same minute does: its round comment stays as it was, and
-nobody is mentioned. With autopilot, each sweep also sends a `step` run that merges a
+a head that moved since the checks gets `/nexkit review`. The approval's own run has a
+concurrency group of its own, `nexkit-approved-<pr>`, so it never replaces or waits behind a
+command. It writes nothing: it sends a `step` run for the pull request's issue, which joins
+the issue's group `nexkit-<item>` (see [One run at a
+time](how-it-works.md#one-run-at-a-time)), and that run reads the approving review back from
+GitHub and merges there, behind the rounds and commands already queued for the issue. A
+commit newer than the approved one, such as one a round pushed meanwhile, merges nothing and
+starts no review: approve the new head. An approval while a round runs, or of a pull request
+whose round ended otherwise, sends no step and starts nothing. A pull request that a person
+merged or closed before the step ran, as an owner who approves and merges in the same minute
+does, is left as it is: its round comment stays as it was, and nobody is mentioned. With autopilot, each sweep also sends a `step` run that merges a
 `merge_refused` pull request that GitHub reports as mergeable (see [Automatic merge](merges-and-waits.md#automatic-merge)).
 
 **Resolving conflicts** (`conflicts.auto_resolve`). When the base branch moves, NexKit

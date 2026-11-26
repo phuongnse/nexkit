@@ -156,8 +156,12 @@ RETRY_KIND = re.compile(r"retry(?::(\d{1,2}))?")
 CARRY = "carry"
 # Also the `command` of the dispatch that starts an autopilot sweep.
 AUTOPILOT = "autopilot"
-# The `command` of the dispatch that carries out one issue's autopilot step.
+# The `command` of the dispatch that carries out one issue's step, sent by a sweep or an approval.
 STEP = "step"
+# The note of a `step` that carries out a writer's approval, and how route reads it: the
+# pull request and the id of the approving review, which the step reads back from GitHub.
+APPROVAL = "approval {} {}"
+APPROVAL_PATTERN = re.compile(r"approval (\d+) (\d+)")
 # The note of a sweep that waits for a workflow run to end first, and how route reads it.
 AFTER_RUN = "after run {}"
 AFTER_RUN_PATTERN = re.compile(r"after run (\d+)")
@@ -247,7 +251,9 @@ def route(gh, event_name, event, inputs=None):
         if review["user"].get("type") == "Bot" or not gh.can_write(actor):
             return _none(f"Review by @{actor} cannot start anything")
         if state == "approved":
-            return _approved(event["pull_request"], actor, review.get("commit_id"))
+            return _approved(
+                event["pull_request"], actor, review.get("commit_id"), review.get("id")
+            )
         decision = _decide(
             gh, "fix", event["pull_request"]["number"], True, review.get("body") or "", auto=False
         )
@@ -313,6 +319,10 @@ def route(gh, event_name, event, inputs=None):
         if not number.isdigit():
             return _none("Dispatch input 'number' must be an issue or PR number")
         if command == STEP:
+            approval = APPROVAL_PATTERN.fullmatch(str(inputs.get("note") or "").strip())
+            if approval:
+                # A writer's approval, carried out in the issue's queue.
+                return _approval_step(gh, int(number), int(approval[1]), int(approval[2]))
             # One issue's step, in the issue's queue (`autopilot.step`).
             return {"action": "maintain", "task": "step", "issue": int(number)}
         issue = gh.issue(int(number))
@@ -349,22 +359,79 @@ def route(gh, event_name, event, inputs=None):
     return _none(f"Event '{event_name}' is not handled")
 
 
-def _approved(pull, actor, commit=None):
-    """A writer's approval of the commit `commit` of a NexKit pull request: the `maintain`
-    job merges it when its latest round could not, and accepts the checklist items a
-    person decides (see `maintain.merge_approved`). It starts no agent, and runs in a
-    concurrency group of its own, so it never replaces a command that waits."""
+def _approved(pull, actor, commit=None, review=None):
+    """A writer's approval of the commit `commit` of a NexKit pull request, in the review
+    `review`: the `maintain` job sends a `step` dispatch for its issue (see
+    `maintain.send_approval`), where `_approval_step` routes the merge. It writes nothing
+    and starts no agent, and runs in a concurrency group of its own, so it never replaces a
+    command that waits and is no second writer of the item's state."""
     issue = issue_from_branch((pull.get("head") or {}).get("ref"))
     repo = ((pull.get("head") or {}).get("repo") or {}).get("full_name")
     base = (pull.get("base") or {}).get("repo") or {}
     if issue is None or (base.get("full_name") and repo != base["full_name"]):
         return _none("Only an approval of a NexKit pull request starts a merge")
+    if not isinstance(review, int) or isinstance(review, bool):
+        return _none("An approval without a review id starts nothing")
     return {
         "action": "maintain",
-        "task": "approved",
+        "task": "approval",
         "pr": pull["number"],
         "issue": issue,
         "actor": actor,
+        "commit": commit,
+        "review": review,
+    }
+
+
+def moved_head(pr, commit, head):
+    """The line for an approval of `commit` of pull request `pr`, whose head is `head` now."""
+    return (
+        f"#{pr}: the approval is of `{commit[:7]}`, but its head is now `{head[:7]}`; "
+        "it merges nothing."
+    )
+
+
+def _approval_step(gh, issue, pr, review_id):
+    """The `step` dispatch of a writer's approval, which runs in the issue's queue: read the
+    approving review back from GitHub, and check again that a writer approved a NexKit pull
+    request of this issue. The dispatch's text is two numbers; the approved commit comes from
+    the review. The `maintain` job merges it (see `maintain.merge_approved`), unless the pull
+    request's head is another commit by now."""
+    try:
+        pull = gh.pull(pr)
+        found = [r for r in gh.reviews(pr) if r.get("id") == review_id]
+    except GitHubError as exc:
+        return _none(f"Could not read #{pr}'s approval: {exc}")
+    head = pull.get("head") or {}
+    if issue_from_branch(head.get("ref")) != issue or (
+        (head.get("repo") or {}).get("full_name") != gh.repository
+    ):
+        return _none(f"#{pr} is not a NexKit pull request of #{issue}")
+    if not found:
+        return _none(f"#{pr} has no review {review_id}")
+    review = found[0]
+    user = review.get("user") or {}
+    login = user.get("login")
+    if str(review.get("state")).upper() != "APPROVED":
+        return _none(f"Review {review_id} of #{pr} is not an approval")
+    if not login or user.get("type") == "Bot" or by_bot(review):
+        return _none(f"A review by {login or 'a bot'} cannot start a merge")
+    try:
+        writes = gh.can_write(login)
+    except GitHubError as exc:
+        return _none(f"Could not read the role of @{login}: {exc}")
+    if not writes:
+        return _none(f"Review by @{login} cannot start anything")
+    commit, now = review.get("commit_id"), head.get("sha")
+    if commit and now and commit != now:
+        # A round ahead of this step may have pushed a commit that the person never saw.
+        return _none(moved_head(pr, commit, now))
+    return {
+        "action": "maintain",
+        "task": "approved",
+        "pr": pr,
+        "issue": issue,
+        "actor": login,
         "commit": commit,
     }
 

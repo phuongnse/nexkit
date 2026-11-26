@@ -618,7 +618,7 @@ NexKit for these events:
 | Trigger | Starts NexKit for |
 |---|---|
 | `issue_comment` | A comment that starts with `/nexkit`, on an issue or a pull request. |
-| `pull_request_review` | A writer's *Request changes* review starts a fix round, and an approval merges a pull request that GitHub refused to merge, both only on a `nexkit/` branch. See [Automatic merge](merges-and-waits.md#automatic-merge). |
+| `pull_request_review` | A writer's *Request changes* review starts a fix round, and an approval merges a pull request that GitHub refused to merge, by a `step` run in the issue's queue, both only on a `nexkit/` branch. See [Automatic merge](merges-and-waits.md#automatic-merge). |
 | `issues` | A closed issue (for `close_parent_issues` and `autopilot`), and an opened, reopened, milestoned, labelled or unlabelled issue (for `autopilot`). The `null` scope needs no milestone events, and only `autopilot.priority` and `autopilot.labels` need label events. |
 | `milestone` | A closed milestone (for `autopilot`, when the next one comes into scope). |
 | `push` | A push to the default branch (for `conflicts.auto_resolve`). |

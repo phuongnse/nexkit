@@ -565,11 +565,12 @@ class RouteTests(unittest.TestCase):
                 {"action": "maintain", "task": "autopilot", "event": action},
             )
 
-    def test_an_approval_of_a_nexkit_pull_request_starts_a_merge(self):
+    def test_an_approval_of_a_nexkit_pull_request_sends_its_step(self):
         pull = self.gh.add_pull(9, 5)
         event = {
             "action": "submitted",
             "review": {
+                "id": 77,
                 "state": "approved",
                 "body": "",
                 "user": {"login": "olivia"},
@@ -581,11 +582,12 @@ class RouteTests(unittest.TestCase):
             route(self.gh, "pull_request_review", event),
             {
                 "action": "maintain",
-                "task": "approved",
+                "task": "approval",
                 "pr": 9,
                 "issue": 5,
                 "actor": "olivia",
                 "commit": "a" * 40,
+                "review": 77,
             },
         )
         # Not from a person with write access, a bot, or on a pull request NexKit did not open.
@@ -597,8 +599,64 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(route(self.gh, "pull_request_review", event)["action"], "none")
         event["pull_request"]["head"] = {"ref": "nexkit/issue-5", "repo": {"full_name": "x/app"}}
         self.assertEqual(route(self.gh, "pull_request_review", event)["action"], "none")
-        event["review"]["state"] = "commented"
+        event["pull_request"] = {**pull, "base": {"ref": "main", "repo": {"full_name": "acme/app"}}}
+        del event["review"]["id"]
         self.assertEqual(route(self.gh, "pull_request_review", event)["action"], "none")
+        event["review"].update(id=77, state="commented")
+        self.assertEqual(route(self.gh, "pull_request_review", event)["action"], "none")
+
+    def test_a_step_with_an_approval_note_becomes_the_merge_of_that_approval(self):
+        pull = self.gh.add_pull(9, 5)
+        self.gh.roles["olivia"] = "write"
+        review = {
+            "id": 77,
+            "state": "APPROVED",
+            "user": {"login": "olivia"},
+            "commit_id": "a" * 40,
+        }
+        self.gh.pr_reviews[9] = [{"id": 1, "state": "COMMENTED"}, review]
+
+        def step(note="approval 9 77", number="5"):
+            inputs = {"command": "step", "number": number, "note": note, "auto": "false"}
+            return route(self.gh, "workflow_dispatch", {}, inputs)
+
+        self.assertEqual(
+            step(),
+            {
+                "action": "maintain",
+                "task": "approved",
+                "pr": 9,
+                "issue": 5,
+                "actor": "olivia",
+                "commit": "a" * 40,
+            },
+        )
+        # A step with no approval note is a sweep's step.
+        self.assertEqual(step(""), {"action": "maintain", "task": "step", "issue": 5})
+        # A missing review, a review that is not an approval, a person without write access,
+        # a bot, and a pull request of another issue give nothing.
+        self.assertEqual(step("approval 9 78")["action"], "none")
+        self.gh.pr_reviews[9][1] = {**review, "state": "CHANGES_REQUESTED"}
+        self.assertEqual(step()["action"], "none")
+        self.gh.pr_reviews[9][1] = {**review, "state": "approved"}
+        self.assertEqual(step()["action"], "maintain")
+        self.gh.pr_reviews[9][1] = {**review, "user": {"login": "bob"}}
+        self.assertEqual(step()["action"], "none")
+        self.gh.pr_reviews[9][1] = {**review, "user": {"login": "olivia", "type": "Bot"}}
+        self.assertEqual(step()["action"], "none")
+        self.gh.pr_reviews[9][1] = review
+        self.assertEqual(step(number="6")["action"], "none")
+        # A pull request whose head is not the approved commit any more merges nothing.
+        pull["head"]["sha"] = "b" * 40
+        moved = step()
+        self.assertEqual(moved["action"], "none")
+        self.assertIn("its head is now `bbbbbbb`", moved["reason"])
+        pull["head"]["sha"] = "a" * 40
+        pull["head"]["repo"] = {"full_name": "x/app"}
+        self.assertEqual(step()["action"], "none")
+        # A note that is not the pattern is no approval.
+        pull["head"]["repo"] = {"full_name": "acme/app"}
+        self.assertEqual(step("approval 9")["task"], "step")
 
     def test_dispatch(self):
         self.gh.add_pull(9, 5)

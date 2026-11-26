@@ -228,6 +228,16 @@ class RefusedMergeReportTests(ReportCase):
 APPROVED = {"action": "maintain", "task": "approved", "pr": 6, "issue": 5, "actor": "olivia"}
 
 
+APPROVAL = {
+    "action": "maintain",
+    "task": "approval",
+    "pr": 6,
+    "issue": 5,
+    "actor": "olivia",
+    "review": 77,
+}
+
+
 class ApprovedMergeTests(ReportCase):
     """A writer's approval, or GitHub's `clean`, merges a pull request it refused."""
 
@@ -247,6 +257,64 @@ class ApprovedMergeTests(ReportCase):
 
     def latest(self):
         return self.gh.run_comments(6)[-1]["run"]
+
+    def send(self, cfg=None, **fields):
+        """The run of an approval, which only sends a `step` into the issue's queue."""
+        approval = {**APPROVAL, **fields}
+        return maintain(self.gh, approval, cfg or self.cfg, workflow="nexkit.yml", ref="main")
+
+    def world(self):
+        """Everything on GitHub that an approval run must leave as it is."""
+        gh = self.gh
+        return (
+            {n: list(c) for n, c in gh.issue_comments.items()},
+            list(gh.statuses),
+            {n: i.get("labels") for n, i in gh.issues.items()},
+            list(gh.merged),
+            {n: i["state"] for n, i in gh.issues.items()},
+            {n: p["state"] for n, p in gh.pulls.items()},
+        )
+
+    def test_an_approval_run_writes_nothing_and_sends_one_step_for_the_issue(self):
+        before = self.world()
+        self.assertEqual(self.send(), ["#6: sent @olivia's approval to #5's queue."])
+        self.assertEqual(self.world(), before)
+        [step] = self.gh.dispatches
+        self.assertEqual(
+            step["inputs"],
+            {"command": "step", "number": "5", "note": "approval 6 77", "auto": "false"},
+        )
+
+    def test_an_approval_run_sends_nothing_that_would_do_nothing(self):
+        # A round on its way, another outcome, another commit than the head of a ready
+        # round, and a head that moved.
+        row = {"round": 2, "trigger": "fix", "url": "u", "status": "success", "head": HEAD}
+        self.gh.round_comment(6, 3, HEAD, "failed", outcome="needs_human")
+        self.assertIn("its latest round is `needs_human`", self.send()[0])
+        self.gh.comment(6, render_run({**row, "outcome": "ready"}, "Ready."))
+        self.assertIn("it starts nothing", self.send(commit="f" * 40)[0])
+        self.gh.comment(6, render_run({**row, "round": 4, "status": "running"}, "Running."))
+        self.assertIn("its latest round is `running`", self.send()[0])
+        self.assertEqual(self.gh.dispatches, [])
+        self.gh.round_comment(6, 5, HEAD, "passed", outcome="merge_refused")
+        self.assertEqual(self.send(commit=HEAD), ["#6: sent @olivia's approval to #5's queue."])
+
+    def test_an_approval_run_whose_dispatch_fails_only_says_so(self):
+        with mock.patch.object(self.gh, "dispatch", side_effect=GitHubError(500, "down")):
+            [line] = self.send()
+        self.assertIn("Could not send @olivia's approval of #6 to #5's queue", line)
+        self.assertEqual(self.gh.merged, [])
+
+    def test_an_approval_of_a_commit_that_is_no_longer_the_head_sends_no_step(self):
+        self.gh.pulls[6]["head"]["sha"] = "e" * 40
+        self.assertEqual(
+            self.send(commit=HEAD),
+            [
+                f"#6: the approval is of `{HEAD[:7]}`, but its head is now `eeeeeee`; "
+                "it merges nothing."
+            ],
+        )
+        self.assertEqual((self.gh.merged, self.gh.dispatches), ([], []))
 
     def test_an_approval_merges_the_pull_request_on_the_head_that_passed(self):
         self.assertEqual(self.approve(), ["#6: merged."])

@@ -249,7 +249,9 @@ when a list of what the code defines misses an entry. These rules close each of 
    page under `docs/`, of the README, of [AGENTS.md](../AGENTS.md), of the plugin's skills under
    `skills/` and of the maintenance skills under `.claude/skills/` resolve; that each link to how it
    works and the pages split from it resolves; that each task of the `nexkit-maintain` skill links a
-   section of [Delivery](delivery.md); that AGENTS.md keeps within its word limits; that the job and
+   section of [Delivery](delivery.md); that the label table of
+   [Delivery](delivery.md#labels-and-milestones) lists each label the code creates and, besides the
+   labels of a kind, no other; that AGENTS.md keeps within its word limits; that the job and
    module tables of the architecture page match the workflows and `nexkit/`; that the job table of
    [how it works](how-it-works.md#one-run-ten-jobs) matches the jobs of `pipeline.yml`, the
    permissions its rows name, and the number in its heading; that the plan and review layouts of

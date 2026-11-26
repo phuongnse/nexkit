@@ -9,7 +9,8 @@ and the outcome table of how it works lists each outcome the code defines and no
 tables and the complete configuration of the configuration reference list each key the code
 defines and no other, with the defaults and ranges the code has. The runtime table of that page
 lists each runtime the code defines and no other, with its providers, effort levels and budget
-support, and which runtimes report usage limits. The plan and review layouts of stages match the
+support, and which runtimes report usage limits. The table of the App's permissions matches the
+permissions and levels of the App manifest. The plan and review layouts of stages match the
 sections the code writes, and the values the pages repeat match their constants.
 The decisions index matches the decision files, and each decision is linked, as
 docs/writing-docs.md#how-the-docs-stay-correct says."""
@@ -21,7 +22,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from nexkit import autopilot, checks, config, context, github, publish, report, runtimes, state
+from nexkit import app, autopilot, checks, config, context, github, publish, report, runtimes, state
 from nexkit.engine import prompt, textutil
 from tests.test_cli import jobs_of, permissions_of
 
@@ -37,6 +38,18 @@ STAGES = DOCS / "stages.md"
 SECURITY = DOCS / "security.md"
 OUTCOMES_HEADER = "| Outcome | Meaning |"
 CONFIG_PAGE = DOCS / "configuration.md"
+PERMISSIONS_HEADER = "| Permission | Level | For |"
+# GitHub's names on an App's settings page, by the manifest's keys in nexkit/app.py.
+PERMISSION_NAMES = {
+    "Actions": "actions",
+    "Checks": "checks",
+    "Contents": "contents",
+    "Issues": "issues",
+    "Pull requests": "pull_requests",
+    "Commit statuses": "statuses",
+    "Workflows": "workflows",
+    "Dependabot alerts": "vulnerability_alerts",
+}
 KEYS_HEADER = "| Key | Default | Meaning |"
 RUNTIMES_HEADER = "| Runtime | Providers | `effort` | `max_budget_usd` |"
 LIMITS = re.compile(r"((?:`[\w-]+`(?:, | and )?)+) reports? usage limits")
@@ -300,6 +313,46 @@ class OutcomesTests(unittest.TestCase):
                     name,
                     code,
                     f"docs/how-it-works.md lists {name}, which the code does not define",
+                )
+
+
+class AppPermissionsTests(unittest.TestCase):
+    def test_the_permissions_table_lists_each_permission_the_app_asks_for_at_its_level(self):
+        rows = table(CONFIG_PAGE, PERMISSIONS_HEADER)
+        self.assertTrue(rows, "docs/configuration.md has no table of the App's permissions")
+        listed = {}
+        for row in rows:
+            with self.subTest(row=row[0]):
+                self.assertIn(
+                    row[0],
+                    PERMISSION_NAMES,
+                    f"docs/configuration.md lists {row[0]}; add it to PERMISSION_NAMES in "
+                    "tests/test_docs.py",
+                )
+                key = PERMISSION_NAMES[row[0]]
+                listed[key] = row[1]
+                self.assertEqual(
+                    "autopilot.dependabot" in row[2],
+                    key in app.ALERTS_PERMISSION,
+                    f"docs/configuration.md and nexkit/app.py disagree on autopilot.dependabot "
+                    f"for {key}",
+                )
+        code = {**app.PERMISSIONS, **app.ALERTS_PERMISSION}
+        for key in sorted(code):
+            with self.subTest(permission=key):
+                self.assertIn(key, listed, f"docs/configuration.md has no row for permission {key}")
+                self.assertEqual(
+                    listed[key],
+                    code[key],
+                    f"docs/configuration.md gives {key} as {listed[key]}, "
+                    f"but nexkit/app.py asks for {code[key]}",
+                )
+        for key in sorted(listed):
+            with self.subTest(row=key):
+                self.assertIn(
+                    key,
+                    code,
+                    f"docs/configuration.md lists {key}, which nexkit/app.py does not ask for",
                 )
 
 

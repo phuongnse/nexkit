@@ -25,4 +25,5 @@ FAMILIES = {
     "ended": "#393",
     "failure": "#415",
     "lost": "#399",
+    "replan": "#413",
 }

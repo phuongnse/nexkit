@@ -326,8 +326,9 @@ MUTANTS = {
     },
     # A change that became empty ends the item as accepted, not as `noChange`, so the host
     # closes no pull request on its base branch (#393).
-    # A split of an item with a change leaves it open, with no action that withdraws it. Only
-    # the walker sees it: the host sends no `supersede` plan to the engine yet.
+    # A split of an item with a change leaves it open, with no action that withdraws it. The
+    # host refuses it, so on GitHub the issue waits for a person, where NexKit 6 splits it and
+    # closes its pull request (#413).
     "split-keeps-the-change": {
         "path": MACHINE,
         "old": """            self.do(
@@ -336,8 +337,17 @@ MUTANTS = {
                 reason="The parts of the split carry the work.",
             )""",
         "new": """            pass""",
-        "seen": ("walker",),
-        "families": ("stop",),
+        "seen": ("harness", "walker"),
+        "families": ("replan",),
+    },
+    # The plan that a round that ran out of time asked for is sent without `supersede`, so a
+    # too-large one waits for a person, where NexKit 6 splits the issue (#413).
+    "replan-without-supersede": {
+        "path": HOST,
+        "old": """            doc["asked"].append("supersede")""",
+        "new": """            pass""",
+        "seen": ("harness",),
+        "families": ("replan",),
     },
     "an-emptied-change-is-accepted": {
         "path": MACHINE,

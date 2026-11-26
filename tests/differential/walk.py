@@ -880,7 +880,7 @@ class Walker:
                 flag("usage-limit", "a run again after a tick counted as started", info)
         self.required_checks(state, event, answer, done, given, flag, info)
         self.refusals(state, event, answer, done, flag, info)
-        self.start(state, event, new, actions, flag, info)
+        self.start(state, event, pol, answer, flag, info)
         self.accept_conflict(state, event, answer, done, given, flag, info)
         self.accept_behind(state, event, answer, done, given, flag, info)
         # automatic: a round that its checks or its review judged keeps its count, so only a
@@ -908,11 +908,20 @@ class Walker:
         if state["hold"] and new["hold"] and any(a["kind"] == "replaceChange" for a in actions):
             flag("hold", "a change made again under a hold", info)
 
-    def start(self, state, event, new, actions, flag, info):
+    def reconciled(self, state, pol):
+        """What the reconcile after any event answers `state` under `pol`: the answer to an
+        event that asks nothing, a `textChanged`."""
+        event = self.tc.event_of({"kind": "textChanged"}, state, "r")
+        request = {"protocol": 1, "call": "step", "state": state, "event": event, "policies": pol}
+        return self.engine.answer(json.loads(json.dumps(request)))
+
+    def start(self, state, event, pol, answer, flag, info):
         """A `requested` start starts work only on an item that waits to start with no hold and
-        no blocker wait, and plans a free `new` item once."""
+        no blocker wait, and plans a free `new` item once. A start that may not start may answer
+        work only as the reconcile after any event does."""
         if state is None or event["kind"] != "requested" or event["what"] != "start":
             return
+        new, actions = answer["state"], answer["actions"]
         waits = {wait["for"] for wait in state["waits"]}
         free = (
             state["itemKind"] == "change"
@@ -921,11 +930,19 @@ class Walker:
             and not state["hold"]
         )
         started = [a for a in actions if a["kind"] in self.tc.WORK]
-        # A conflict round that the request leads to is the engine's own, as for `lost`.
-        if new["rounds"]["conflicts"] > state["rounds"]["conflicts"]:
-            started = []
         if started and not free:
-            flag("start", "a start works on an item that may not start", info)
+            # A conflict round that the request leads to is the reconcile's, as for `lost`: it
+            # counts only if an event that asks nothing leads to the same work and state.
+            same = False
+            if new["rounds"]["conflicts"] > state["rounds"]["conflicts"]:
+                other = self.reconciled(state, pol)
+                if "state" in other:
+                    work = lambda found: sorted(  # noqa: E731
+                        (a["kind"], a.get("stage")) for a in found if a["kind"] in self.tc.WORK
+                    )
+                    same = work(other["actions"]) == work(actions) and other["state"] == new
+            if not same:
+                flag("start", "a start works on an item that may not start", info)
         if free and state["state"] == "new":
             plans = [a for a in started if a["kind"] == "runAgent" and a["stage"] == "plan"]
             if len(plans) != 1 or new["state"] != "planning":

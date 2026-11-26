@@ -457,6 +457,21 @@ MUTANTS = {
         "seen": ("harness",),
         "families": ("replan",),
     },
+    # A start resumes a blocked item's work when its change is observed conflicting. A conflict
+    # round alone is what a start may begin on an item that may not start, and only as the
+    # reconcile after any event does, so only the walker sees it: no host sends a start for a
+    # blocked item.
+    "start-resumes-a-blocked-item-on-a-conflict": {
+        "path": MACHINE,
+        "old": """or not self.waiting("start") or self.waiting("blocker"):
+                return False""",
+        "new": """or not self.waiting("start"):
+                return False
+            if self.waiting("blocker") and not (self.observed() or {}).get("conflicts"):
+                return False""",
+        "seen": ("walker",),
+        "families": ("sweep",),
+    },
     "an-emptied-change-is-accepted": {
         "path": MACHINE,
         "old": """        elif observed["empty"]:

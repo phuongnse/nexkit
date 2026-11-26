@@ -1,5 +1,14 @@
 # Changelog
 
+## 6.13.1
+
+- The release publishes the engine's image (#526). The release of 6.13.0 checked out one
+  commit, so its check that the release's commit is on `main` failed, and
+  `ghcr.io/phuongnse/nexkit-engine:6.13.0` was never published. The release's checkout
+  now fetches `main`'s history, and `ghcr.io/phuongnse/nexkit-engine:6.13.1` is the first
+  image of the engine. Nothing else changes from 6.13.0: from 6.12.2 or earlier, take the
+  upgrade steps of 6.13.0 too, which add the workflow's `item` job.
+
 ## 6.13.0
 
 An issue's commands and the rounds on its pull request wait in one queue, and autopilot writes

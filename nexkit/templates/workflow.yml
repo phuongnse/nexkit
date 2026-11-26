@@ -29,7 +29,7 @@ on:
   workflow_dispatch:
     inputs:
       command:
-        description: plan, go, fix, review, or autopilot for a sweep
+        description: plan, go, fix, review, step for one issue's autopilot step, or autopilot for a sweep
         required: true
         type: string
       number:

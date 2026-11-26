@@ -1,5 +1,6 @@
 import base64
 import contextlib
+import copy
 import io
 import json
 import os
@@ -30,6 +31,8 @@ GENERIC_ANNOTATION = {
     "title": "",
     "message": "Process completed with exit code 1.",
 }
+
+NOW = datetime(2026, 11, 26, 12, 0, tzinfo=UTC)
 
 
 def pilot(**settings):
@@ -4722,3 +4725,166 @@ class SecondReviewTests(AutopilotCase):
         self.gh.labeled_issues = lambda label: [self.gh.issues[6]]
         found = autopilot.scope(self.gh, pilot(priority=["bug"]))["issues"]
         self.assertEqual([i["number"] for i in found], [5])
+
+
+class StepDispatchTests(AutopilotCase):
+    """A `step` dispatch carries out one issue's step as a sweep does."""
+
+    HEAD = "c" * 40
+
+    def setUp(self):
+        super().setUp()
+        self.cfg = make_config(autopilot={"enabled": True}, notify=["olivia"])
+        clock = type("Clock", (datetime,), {"now": classmethod(lambda cls, tz=None: NOW)})
+        patch = mock.patch.object(autopilot, "datetime", clock)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def step(self, gh, number, command="step"):
+        inputs = {"command": command, "number": str(number), "note": "", "auto": "autopilot"}
+        decision = route(gh, "workflow_dispatch", {}, inputs)
+        return maintain(gh, decision, self.cfg, workflow="nexkit.yml", ref="main")
+
+    def effects(self, gh):
+        return {
+            "comments": {n: [c["body"] for c in gh.comments(n)] for n in sorted(gh.issues)},
+            "issues": {n: (i["state"], i.get("state_reason")) for n, i in gh.issues.items()},
+            "dispatches": [d["inputs"] for d in gh.dispatches],
+            "merged": list(gh.merged),
+        }
+
+    def same_as_a_sweep(self, number):
+        """Run `step` on the fake and a sweep on a copy of it, and compare what they do."""
+        sweep_gh = copy.deepcopy(self.gh)
+        before = self.effects(self.gh)
+        autopilot.sweep(sweep_gh, self.cfg, "nexkit.yml", "main")
+        self.step(self.gh, number)
+        self.assertNotEqual(self.effects(self.gh), before)
+        return self.effects(self.gh), self.effects(sweep_gh)
+
+    def merge_waiting(self):
+        self.issue(5)
+        self.posted()
+        self.run_comment(5, "go", outcome="ready")
+        self.gh.add_pull(10, 5, head_sha=self.HEAD)
+        run = {
+            "round": 1,
+            "trigger": "implement (autopilot)",
+            "status": "success",
+            "outcome": "merge_waiting",
+            "head": self.HEAD,
+            "waiting_since": autopilot.iso(NOW),
+        }
+        self.gh.comment(10, render_run(run))
+
+    def posted(self, **output):
+        from nexkit.publish import render_plan
+
+        self.run_comment(5, "plan", outcome="planned")
+        return self.gh.comment(5, render_plan(plan_output(**output)))
+
+    def test_a_start_is_what_a_sweep_does(self):
+        self.issue(5)
+        mine, sweep = self.same_as_a_sweep(5)
+        self.assertEqual(mine, sweep)
+        self.assertEqual(self.started(), [("plan", 5)])
+
+    def test_a_split_is_what_a_sweep_does_and_starts_one_sweep(self):
+        self.issue(5)
+        parts = [
+            {"title": "First part", "body": "Do A.", "depends_on": []},
+            {"title": "Second part", "body": "Do B.", "depends_on": [1]},
+        ]
+        self.posted(too_large=True, split=parts)
+        sweep_gh = copy.deepcopy(self.gh)
+        autopilot.sweep(sweep_gh, self.cfg, "nexkit.yml", "main")
+        lines = self.step(self.gh, 5)
+        self.assertIn("Split #5 into #6, #7.", lines)
+        self.assertEqual(sorted(self.gh.issues), [5, 6, 7])
+        self.assertEqual(self.gh.parents, {6: 5, 7: 5})
+        mine, sweep = self.effects(self.gh), self.effects(sweep_gh)
+        self.assertEqual(mine["comments"][5], sweep["comments"][5])
+        for number in (6, 7):
+            self.assertEqual(self.gh.issues[number]["title"], sweep_gh.issues[number]["title"])
+            self.assertEqual(self.gh.issues[number]["body"], sweep_gh.issues[number]["body"])
+        # The parts start in the sweep that follows, not in this run.
+        [dispatch] = self.gh.dispatches
+        self.assertEqual(dispatch["inputs"], {**autopilot.SWEEP, "note": ""})
+        self.assertEqual(self.started(), [])
+
+    def test_a_close_is_what_a_sweep_does(self):
+        self.issue(5)
+        self.posted(no_change="main has the fix already.")
+        mine, sweep = self.same_as_a_sweep(5)
+        self.assertEqual(mine, sweep)
+        self.assertEqual(self.gh.issues[5]["state"], "closed")
+
+    def test_a_merge_is_what_a_sweep_does(self):
+        self.merge_waiting()
+        mine, sweep = self.same_as_a_sweep(5)
+        self.assertEqual(mine, sweep)
+        self.assertEqual(self.gh.merged, [(10, self.HEAD, "squash")])
+        self.assertEqual(self.gh.issues[5]["state"], "closed")
+
+    def test_a_mention_is_what_a_sweep_does_and_is_made_once(self):
+        self.issue(5)
+        self.posted(questions=["Which port?"])
+        mine, sweep = self.same_as_a_sweep(5)
+        self.assertEqual(mine, sweep)
+        self.assertTrue(self.gh.comments_matching(5, "@olivia a person is needed"))
+        self.step(self.gh, 5)
+        self.assertEqual(len(self.gh.comments_matching(5, "@olivia a person is needed")), 1)
+
+    def nothing_changes(self, number):
+        before = copy.deepcopy(self.gh)
+        lines = self.step(self.gh, number)
+        self.assertEqual(self.effects(self.gh), self.effects(before))
+        self.assertEqual(self.gh.statuses, before.statuses)
+        self.assertEqual(self.gh.updates, before.updates)
+        self.assertEqual(len(lines), 1)
+        self.assertIn("nothing to do", lines[0])
+
+    def test_an_active_step_changes_nothing(self):
+        self.issue(5)
+        self.run_comment(5, "plan", status="running")
+        self.assertEqual(autopilot.preview(self.gh, self.cfg)[1][0]["state"], "active")
+        self.nothing_changes(5)
+
+    def test_a_held_issue_changes_nothing(self):
+        self.issue(5, labels=["hold"])
+        cfg = make_config(autopilot={"enabled": True, "labels": {"hold": {"hold": True}}})
+        self.cfg = cfg
+        self.assertEqual(autopilot.preview(self.gh, cfg)[1][0]["state"], "held")
+        self.nothing_changes(5)
+
+    def test_an_issue_that_waits_for_another_changes_nothing(self):
+        self.issue(3)
+        self.issue(5)
+        self.gh.blockers[5] = [3]
+        self.nothing_changes(5)
+
+    def test_a_closed_issue_changes_nothing(self):
+        self.issue(5, state="closed", reason="completed")
+        self.nothing_changes(5)
+
+    def test_an_issue_out_of_scope_changes_nothing(self):
+        self.gh.add_milestone(1)
+        self.gh.add_milestone(2)
+        self.issue(6)
+        self.issue(5, milestone=2)
+        self.nothing_changes(5)
+
+    def test_a_pull_request_changes_nothing(self):
+        self.issue(5)
+        self.run_comment(5, "plan", status="running")
+        self.gh.add_pull(10, 5)
+        self.nothing_changes(10)
+
+    def test_a_number_that_is_not_digits_is_no_action(self):
+        inputs = {"command": "step", "number": "x", "note": "", "auto": "autopilot"}
+        decision = route(self.gh, "workflow_dispatch", {}, inputs)
+        self.assertEqual(decision["action"], "none")
+
+    def test_the_task_runs_only_with_autopilot(self):
+        self.assertFalse(maintain_module.enabled("step", make_config()))
+        self.assertTrue(maintain_module.enabled("step", self.cfg))

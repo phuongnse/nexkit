@@ -57,6 +57,8 @@ TASKS = {
     # The run that looks at every issue in scope (nexkit/autopilot.py) and at every pull
     # request that conflicts with its base branch.
     "sweep": ("autopilot.enabled", "conflicts.auto_resolve"),
+    # One issue's autopilot step, in the issue's queue (`autopilot.step`).
+    "step": ("autopilot.enabled",),
     # A run of another workflow finished, such as one of merge.after_workflows or
     # autopilot.watch_workflows.
     "ci": ("autopilot.enabled",),
@@ -1167,6 +1169,8 @@ def maintain(gh, decision, cfg, *, workflow="", ref="", alerts=None):
             )
         lines += delete_stale_branches(gh)
         return lines or ["Nothing to start."]
+    if task == "step":
+        return autopilot.step(gh, cfg, decision["issue"], workflow, ref)
     if task == "ci":
         return autopilot.after_ci_run(gh, cfg, decision, workflow, ref)
     if task == "on_base":

@@ -2602,6 +2602,9 @@ class WorkItemGroupTests(unittest.TestCase):
         inputs = {"command": command, "number": str(number), "note": "", "auto": "false"}
         return self.group_of("workflow_dispatch", {"inputs": inputs})
 
+    def test_a_step_dispatch_joins_its_issues_group(self):
+        self.assertEqual(self.dispatch(5, "step"), "nexkit-5")
+
     def test_an_issue_and_its_pull_request_share_one_group(self):
         self.assertEqual(self.comment(5), "nexkit-5")
         self.assertEqual(self.comment(5, "/nexkit plan"), "nexkit-5")

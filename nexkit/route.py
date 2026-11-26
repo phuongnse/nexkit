@@ -156,6 +156,8 @@ RETRY_KIND = re.compile(r"retry(?::(\d{1,2}))?")
 CARRY = "carry"
 # Also the `command` of the dispatch that starts an autopilot sweep.
 AUTOPILOT = "autopilot"
+# The `command` of the dispatch that carries out one issue's autopilot step.
+STEP = "step"
 # The note of a sweep that waits for a workflow run to end first, and how route reads it.
 AFTER_RUN = "after run {}"
 AFTER_RUN_PATTERN = re.compile(r"after run (\d+)")
@@ -310,6 +312,9 @@ def route(gh, event_name, event, inputs=None):
             return decision
         if not number.isdigit():
             return _none("Dispatch input 'number' must be an issue or PR number")
+        if command == STEP:
+            # One issue's step, in the issue's queue (`autopilot.step`).
+            return {"action": "maintain", "task": "step", "issue": int(number)}
         issue = gh.issue(int(number))
         on_pull = "pull_request" in issue
         kinds = auto_kinds(inputs.get("auto"))

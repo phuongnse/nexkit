@@ -357,6 +357,54 @@ class ApprovedMergeTests(ReportCase):
         self.assertEqual((run["decided_by"], "decide" in run), ("olivia", False))
         self.assertIn("merge it", run["attention"])
 
+    def test_an_approval_does_nothing_when_the_engine_refuses_to_answer(self):
+        refusing = mock.patch("nexkit.engine.answer", return_value={"error": "refused"})
+        for merge_auto in (True, False):
+            with self.subTest(merge_auto=merge_auto):
+                cfg = self.decided(merge_auto=merge_auto)
+                before, merged = self.world(), list(self.gh.merged)
+                with refusing:
+                    [line] = self.approve(cfg)
+                    [sent] = self.send(cfg)
+                self.assertIn("NexKit could not decide what the approval does", line)
+                self.assertIn("refused", line)
+                self.assertIn("NexKit could not decide what the approval does", sent)
+                # No merge, no status, no comment edited and no dispatch.
+                self.assertEqual((self.world(), self.gh.merged), (before, merged))
+                self.assertEqual(self.gh.dispatches, [])
+                self.assertEqual(self.review_status(), "failure")
+
+    def test_an_approval_after_a_refused_merge_does_nothing_when_the_engine_refuses(self):
+        before = self.world()
+        with mock.patch("nexkit.engine.answer", return_value={"error": "refused"}):
+            [line] = self.approve()
+            [sent] = self.send()
+        self.assertIn("NexKit could not decide what the approval does", line + sent)
+        self.assertEqual((self.world(), self.gh.merged, self.gh.dispatches), (before, [], []))
+
+    def test_an_approval_with_merge_auto_off_after_a_refused_merge_starts_nothing(self):
+        cfg = make_config(merge={"auto": False}, notify=["owner"])
+        self.assertEqual(
+            self.send(cfg),
+            ["#6: nothing waits for an approval here, so it starts nothing."],
+        )
+        self.assertEqual(self.approve(cfg), self.send(cfg))
+        self.assertEqual((self.gh.merged, self.gh.dispatches), ([], []))
+
+    def test_an_approval_under_a_hold_still_accepts_the_items_with_merge_auto_off(self):
+        self.decided(merge_auto=False)
+        held = make_config(
+            merge={"auto": False},
+            autopilot={"enabled": True, "labels": {"on-hold": {"hold": True}}},
+            review={"checklist": [{"text": "Rule 1", "person": True}]},
+        )
+        self.gh.issues[5]["labels"] = [{"name": "on-hold"}]
+        self.gh.add_milestone(1)
+        self.gh.issues[5]["milestone"] = {"number": 1}
+        lines = self.approve(held)
+        self.assertEqual(lines, ["#6: @olivia accepted the checklist items a person decides."])
+        self.assertEqual(self.review_status(), "success")
+
     def test_an_approval_after_the_head_moved_reviews_the_new_head(self):
         self.gh.pulls[6]["head"]["sha"] = "e" * 40
         self.gh.merge_error = GitHubError(409, "Head branch was modified.")

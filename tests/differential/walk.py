@@ -89,6 +89,9 @@ INVARIANTS = {
     "no hold, stop and the branch is updated when the conflict policy is not `person` and "
     "`conflictRounds` has an update left: one `updateChange`, the item staying in `checking`; "
     "otherwise a step in `checking` asks for no update",
+    "approvals": "a person's approval of the change accepts it only under `autoWhenPassed`: "
+    "under `person`, `changeApproved` never issues an `accept` and changes nothing of a change "
+    "that waits for its accept",
     "refusals": "a refused accept that no one retries, a moved head, a refusal after the base "
     "branch kept moving or one only a person clears, waits for a person in `ready`; one that "
     "was not accepted fails the item",
@@ -398,6 +401,15 @@ class Walker:
 
         if state["state"] == "fixing" and not state["hold"] and rng.random() < 0.15:
             kind = "held"
+        # A change that waits for its accept gets a person's approval, now and then of another
+        # version.
+        if state["state"] == "ready" and (state["attention"] or {}).get("reason") in (
+            "accept",
+            "acceptRefused",
+            "reopened",
+        ):
+            if rng.random() < 0.3:
+                return {"kind": "changeApproved", **rng.choice([{}, {"changeVersion": "v0"}])}
         if state["rounds"].get("due") and rng.random() < 0.3:
             kind = rng.choice(["released", "blockerClosed", "requested", "push", "held"])
         open_parts = [part for part in state["parts"] if part["state"] is None]
@@ -976,6 +988,7 @@ class Walker:
                 flag("usage-limit", "a run again after a tick counted as started", info)
         self.required_checks(state, event, answer, done, given, flag, info)
         self.refusals(state, event, answer, done, flag, info)
+        self.approvals(state, event, answer, given, flag, info)
         self.start(state, event, pol, answer, flag, info)
         self.trust(state, event, pol, answer, given, flag, info)
         self.accept_conflict(state, event, answer, done, given, flag, info)
@@ -1230,7 +1243,10 @@ class Walker:
         if updates and state["state"] == "checking" and event["kind"] != "actionFinished":
             if len(updates) != 1 or not left(state) or new["state"] != "checking":
                 flag("behind-checks", "a step in checks asked for an update it may not", info)
-            elif not any(a["kind"] == "cancel" for a in answer["actions"]):
+            elif any(a["kind"] == "runChecks" for a in state["pending"]) and not any(
+                a["kind"] == "cancel" for a in answer["actions"]
+            ):
+                # Checks that were lost, and wait for a hold to end, have no run to cancel.
                 flag("behind-checks", "an update in checks left their run going", info)
 
     def required_checks(self, state, event, answer, done, given, flag, info):
@@ -1286,6 +1302,21 @@ class Walker:
         elif not waited and calm and not state["attention"] and len(state["waits"]) == 1:
             if not any(a["kind"] == "accept" for a in actions) and new["state"] == "accepting":
                 flag("required-checks", "a tick within six hours tries no accept again", info)
+
+    def approvals(self, state, event, answer, given, flag, info):
+        """The invariant of an approval: `changeApproved` never issues an `accept` under
+        `person`, and changes nothing of a change that waits for its accept."""
+        if state is None or event["kind"] != "changeApproved" or given["accept"] != "person":
+            return
+        if any(action["kind"] == "accept" for action in answer["actions"]):
+            flag("approvals", "an approval under `person` starts an accept", info)
+        waits = (state["attention"] or {}).get("reason") in ("accept", "acceptRefused", "reopened")
+        # A conflict, a merge or an emptied change that the host observed is the conflict
+        # policy's to act on, whatever event comes.
+        seen = state["observed"] or {}
+        calm = not (seen.get("conflicts") or seen.get("merged") or seen.get("empty"))
+        if waits and calm and state["state"] == "ready" and answer["changed"]:
+            flag("approvals", "an approval under `person` changes a change that waits", info)
 
     def refusals(self, state, event, answer, done, flag, info):
         """The invariant of the refusals that wait for a person: with a calm observation, an

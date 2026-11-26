@@ -37,13 +37,13 @@ job holds, and the plugin are described in [Architecture](docs/architecture.md).
   [State](docs/how-it-works.md#state) and [D1](docs/decisions/d1-state-lives-only-on-github.md).
 - Agent errors and `blocked` results never retry automatically. Only check failures and review
   findings do, up to `fix.max_auto_rounds`; a transient error before publishing runs again after its
-  waits. See [Failure handling](docs/how-it-works.md#failure-handling) and
+  waits. See [Failure handling](docs/failure-handling.md#failure-handling) and
   [D6](docs/decisions/d6-agent-errors-never-retry.md).
 - Every issue in autopilot's scope is carried on by a run that exists, or waits for a person. A
   command starts again only after a change, or when GitHub never ran it. A new automatic rule needs
-  a scenario in `tests/test_scenarios.py`. See [Autopilot](docs/how-it-works.md#autopilot).
+  a scenario in `tests/test_scenarios.py`. See [Autopilot](docs/work-without-a-command.md#autopilot).
 - Automatic actions check their needs before they spend agent time, and budgets count only rounds
-  that ran to their end or published. See [Autopilot](docs/how-it-works.md#autopilot).
+  that ran to their end or published. See [Autopilot](docs/work-without-a-command.md#autopilot).
 - Prompts judge code behaviour, never what an agent cannot change, such as PR text or workflows. A
   person's pull request may change workflows, but `/nexkit review` there never pushes, starts a
   round or merges. See [Reviewing your own pull
@@ -60,7 +60,7 @@ job holds, and the plugin are described in [Architecture](docs/architecture.md).
   [D9](docs/decisions/d9-pins-live-in-one-place.md).
 - Everything specific to a CLI or provider lives in `runtimes/` behind `Runtime` and `Provider`; no
   other code branches on runtime names. Settings that identify an account or resource are secret
-  fields. See [Agents](docs/how-it-works.md#agents) and
+  fields. See [Agents](docs/agents-and-profiles.md#agents) and
   [D7](docs/decisions/d7-one-tested-runtime-claude-code.md).
 - NexKit reads only the secrets the configuration names, and a job that runs an agent never indexes
   `secrets` itself, since that puts every secret on its runner. Agent secret names may not start

@@ -14,7 +14,7 @@ it runs against the real CLI, so every extra runtime adds to the checks that eac
   `Provider`.
 - No other code branches on a runtime's name.
 
-The detail is in [Agents](../how-it-works.md#agents) and
+The detail is in [Agents](../agents-and-profiles.md#agents) and
 [The smoke test](../testing.md#the-smoke-test).
 
 ## Consequences

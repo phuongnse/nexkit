@@ -11,7 +11,7 @@ read only the sections you need. What goes in which doc, and how the docs stay t
 | --- | --- | --- |
 | Understand NexKit | The [README](../README.md) | [How it works](how-it-works.md) and the [roadmap](roadmap.md) |
 | Set NexKit up on a repository | [Set up a repository](../README.md#set-up-a-repository) in the README, or the `setup` skill | The [configuration reference](configuration.md), [The GitHub App](configuration.md#the-github-app) first |
-| Find why a run stopped or waits | [Troubleshooting](troubleshooting.md) | [Failure handling](how-it-works.md#failure-handling) in how it works |
+| Find why a run stopped or waits | [Troubleshooting](troubleshooting.md) | [When a run fails](failure-handling.md#failure-handling) |
 | Work on NexKit | [AGENTS.md](../AGENTS.md) | [Architecture](architecture.md), [security](security.md), [Delivery](delivery.md), [testing](testing.md), [writing the docs](writing-docs.md), [the engine](engine.md) and the [roadmap](roadmap.md) |
 
 ## Using NexKit
@@ -20,7 +20,11 @@ Read by people who set NexKit up on a repository and work with it there.
 
 | Doc | What it holds | Read it when |
 | --- | --- | --- |
-| [How it works](how-it-works.md) | Who does what, the jobs of a run, stages, state, failure handling and what you decide about security | You want to know what NexKit does on your repository, and why |
+| [How it works](how-it-works.md) | Who does what, the jobs of a run, what you see during a run, logs and artifacts, state and what you decide about security | You want to know what NexKit does on your repository, and why |
+| [Plan, implement, fix and review](stages.md) | The stages of a run: the plan, the implementation and fix rounds, the review, and the merge and close | You want to know what a stage does, what it reads and what it publishes |
+| [Work NexKit starts by itself](work-without-a-command.md) | The events that start a run without a command, autopilot and usage limits | You want to know why NexKit started a run, or what autopilot does next |
+| [Agents and profiles](agents-and-profiles.md) | The agents that run each stage and the profiles that choose them | You choose agents, or want to know which agent a stage uses |
+| [When a run fails](failure-handling.md) | What NexKit does for each failure and which failures it retries | You want to know whether NexKit retries a failure, and when |
 | [Configuration reference](configuration.md) | Every setting of `.nexkit/config.json`, its default and what it does; the GitHub App; upgrading | You change a setting, or upgrade NexKit |
 | [Troubleshooting](troubleshooting.md) | What each stop and wait means, and what to do | A run failed, stopped or waits for a person |
 | [Security](security.md) | What NexKit trusts, and for each input it does not, what an attacker could reach, the rule that contains it and the tests that check it | You decide how far to trust an input, or change a job, a token or a secret |

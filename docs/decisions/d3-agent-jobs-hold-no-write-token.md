@@ -16,7 +16,7 @@ GitHub directly.
   start with `GITHUB_` or `NEXKIT_` are never read.
 
 The rules are in [Tokens and secrets](../architecture.md#tokens-and-secrets) and
-[How secrets reach an agent](../how-it-works.md#agents).
+[How secrets reach an agent](../agents-and-profiles.md#agents).
 
 ## Consequences
 

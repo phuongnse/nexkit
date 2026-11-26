@@ -15,7 +15,7 @@ agent that cannot fix a problem with its inputs will not fix it by trying again.
 - A transient error before publishing runs again after the waits of `retry.wait_minutes`. The stop
   came from outside the work, so a repeat can succeed.
 
-The detail is in [Failure handling](../how-it-works.md#failure-handling).
+The detail is in [Failure handling](../failure-handling.md#failure-handling).
 
 ## Consequences
 

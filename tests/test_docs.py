@@ -1,9 +1,10 @@
 """The docs' map lists every doc, with the decisions listed through their index. The links of the
 map, of the docs standard, of the architecture page, of the security page, of the decisions, of the
-maintenance skills and of AGENTS.md resolve. Each task of the nexkit-maintain skill links a section
-of the delivery page. AGENTS.md keeps within its word limits, and the architecture page's job and
-module tables match the workflows and nexkit/. The decisions index matches the decision files, and
-each decision is linked. Each test the security page names exists, as
+maintenance skills and of AGENTS.md resolve, and every link to how it works and the pages split
+from it resolves. Each task of the nexkit-maintain skill links a section of the delivery page.
+AGENTS.md keeps within its word limits, and the architecture page's job and module tables match the
+workflows and nexkit/. The decisions index matches the decision files, and each decision is linked.
+Each test the security page names exists, as
 docs/writing-docs.md#how-the-docs-stay-correct says."""
 
 import re
@@ -22,6 +23,13 @@ ARCH = DOCS / "architecture.md"
 SECURITY = DOCS / "security.md"
 DECISIONS = DOCS / "decisions"
 DECISIONS_INDEX = DOCS / "decisions.md"
+HOW_IT_WORKS = (
+    "how-it-works.md",
+    "stages.md",
+    "work-without-a-command.md",
+    "agents-and-profiles.md",
+    "failure-handling.md",
+)
 TEST_FILE = re.compile(r"tests/[\w/]+\.py")
 TEST_NAME = re.compile(r"`(test_\w+)`")
 WORKFLOWS = ("pipeline.yml", "pipeline-agent.yml", "pipeline-review.yml")
@@ -96,6 +104,25 @@ class DocsMapTests(unittest.TestCase):
                 if anchor and file.suffix == ".md":
                     self.assertIn(
                         anchor, anchors(file), f"{page.name} links #{anchor} of {file.name}"
+                    )
+
+    def test_each_link_to_how_it_works_and_its_pages_resolves(self):
+        pages = {(DOCS / name).resolve() for name in HOW_IT_WORKS}
+        sources = [
+            *DOCS.rglob("*.md"),
+            *(ROOT / "skills").rglob("*.md"),
+            *(ROOT / ".claude" / "skills").rglob("*.md"),
+            ROOT / "README.md",
+            AGENTS,
+        ]
+        for source in sources:
+            for file, anchor in links(source):
+                if file not in pages:
+                    continue
+                self.assertTrue(file.exists(), f"{source.name} links {file}, which does not exist")
+                if anchor:
+                    self.assertIn(
+                        anchor, anchors(file), f"{source.name} links #{anchor} of {file.name}"
                     )
 
 

@@ -38,10 +38,12 @@ in which a round can be stopped are CHECK_JOBS, and those in which it never is a
 pipeline.yml outside it. The README's table of supported versions is compared with the pins in
 nexkit/__init__.py, and each ubuntu-NN.NN in the README with the pinned runner. The local commands
 table of the README lists each command the CLI defines for people and no other, and each option a
-row names exists. The configuration example of the README is what `nexkit init` writes for the
-README's own setup command. No doc, the README, AGENTS.md or a skill repeats a pinned version: each
-pin that D9 governs, or a lint tool's version from scripts/lint.sh. The decisions index matches the
-decision files, and each decision is linked, as docs/writing-docs.md#how-the-docs-stay-correct says.
+row names exists. Each option that a `nexkit NAME` code span or command line of the README names
+exists for that command. The configuration example of the README is what `nexkit init` writes for
+the README's own setup command. No doc, the README, AGENTS.md or a skill repeats a pinned version:
+each pin that D9 governs, or a lint tool's version from scripts/lint.sh. The decisions index matches
+the decision files, and each decision is linked, as docs/writing-docs.md#how-the-docs-stay-correct
+says.
 The list of files where a release sets the version, on the delivery page, names each file of the
 package, the plugin, pyproject.toml and the README that holds the version, and no other.
 The table of CI issue titles on the autopilot page shows the titles `ci_title` and `red_title`
@@ -622,6 +624,27 @@ class ReadmeTests(unittest.TestCase):
                         commands[name],
                         f"README.md's row of nexkit {name} names {option}, which it lacks",
                     )
+
+    def test_each_nexkit_option_the_readme_names_exists(self):
+        commands = people_commands()
+        text = README.read_text()
+        # A code span such as `nexkit init --app-id ID`, and a line of a code block.
+        spans = re.findall(r"`nexkit ([\w-]+)([^`]*)`", text) + re.findall(
+            r"^nexkit ([\w-]+)(.*)$", text, re.M
+        )
+        checked = []
+        for name, rest in spans:
+            if name not in commands:  # a placeholder such as `nexkit COMMAND --help`
+                continue
+            for option in sorted(set(re.findall(r"--[\w-]+", rest))):
+                checked.append((name, option))
+                with self.subTest(command=name, option=option):
+                    self.assertIn(
+                        option,
+                        commands[name],
+                        f"README.md names nexkit {name} {option}, which it lacks",
+                    )
+        self.assertTrue(checked, "README.md names no option of a nexkit command")
 
 
 class OutcomesTests(unittest.TestCase):

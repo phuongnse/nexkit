@@ -117,8 +117,11 @@ The workflow must be on the default branch, because GitHub only runs comment-tri
 workflows from there.
 
 NexKit acts on GitHub as a GitHub App of your own: one App per owner, for all their
-repositories. For another repository, install the same App on it, set its two secrets and
-run `nexkit init`; see [The GitHub App](docs/configuration.md#the-github-app).
+repositories. Plain `nexkit init` creates a new App, so don't run it in another repository.
+Install the same App there, then run `nexkit init --app-id ID --app-private-key FILE` with a
+new private key of the App: it checks the installation and sets both secrets. An organization
+that holds the two secrets once runs `nexkit init --app-slug SLUG` instead. See
+[The GitHub App](docs/configuration.md#the-github-app).
 
 ## Use it
 

@@ -154,7 +154,7 @@ class ProtocolTest(unittest.TestCase):
         checked = set()
         for path in sorted(EXAMPLES.glob("*/*.json")):
             folder = path.parent.name
-            if folder in ("state", "policies"):
+            if folder in ("state", "policies", "conformance"):
                 name = f"{folder}.schema.json"
             else:
                 name = f"{folder}/{path.stem}.schema.json"

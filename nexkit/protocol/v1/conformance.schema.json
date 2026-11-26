@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/conformance.schema.json",
+  "$comment": "The conformance suite as one file, which `scripts/conformance.py build` writes and `check` plays (docs/engine.md#conformance). Each request is whole and each answer is the exact text the engine gives, with its trailing newline. A step that the suite expects the engine to refuse breaks its call's schema on purpose, so `request` is not tied to one.",
+  "type": "object",
+  "properties": {
+    "protocol": {
+      "type": "object",
+      "properties": {
+        "major": {
+          "const": 1
+        },
+        "minor": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "major",
+        "minor"
+      ]
+    },
+    "nexkit": {
+      "type": "string"
+    },
+    "cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "requests": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "call": {
+                  "enum": [
+                    "step",
+                    "sweep"
+                  ]
+                },
+                "request": {
+                  "type": "object"
+                },
+                "answer": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "call",
+                "request",
+                "answer"
+              ]
+            }
+          }
+        },
+        "required": [
+          "name",
+          "requests"
+        ]
+      }
+    }
+  },
+  "required": [
+    "protocol",
+    "nexkit",
+    "cases"
+  ]
+}

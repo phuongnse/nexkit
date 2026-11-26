@@ -8,7 +8,8 @@ at a time, and its `prompt` call, which writes each stage's prompt as NexKit 6 d
 calls yet; the
 GitHub host's state comment and its import of NexKit 6's open work, which nothing calls yet; and
 the decisions that follow a plan, a blocked `/nexkit go` and a round on a pull request, its
-review, diagnosis and conflict rounds, the end of a round's wait and which rounds count, which
+review, diagnosis and conflict rounds, the end of a round's wait and which rounds count, and the
+start of a new issue's first plan, which
 NexKit 6's autopilot, `route`, `report` and `maintain` take from `step` (see
 [getting there](#getting-there)). The rest of this page is not built yet, and NexKit 6 runs as
 [How it works](how-it-works.md) says._
@@ -882,7 +883,13 @@ adapter. A new rule of the engine comes with a case.
    that stopped as blocked with neither is the engine's too: it waits for a person, and with
    autopilot, under `afterFailure`, a comment or the close of an issue that blocks it plans it
    again. Only a `/nexkit go` that ended in an agent error stays NexKit 6's
-   (`autopilot._since_stop`). Every existing test
+   (`autopilot._since_stop`). Autopilot's start of the first plan of a new issue is the engine's
+   too (`host.first_plan`): the host builds the document that the import builds for an issue with
+   no plan, `new` and waiting to start, sends a `requested` start with no person, and dispatches
+   `/nexkit plan` only when the engine answers with a plan run. Otherwise the issue waits for a
+   person. NexKit 6's checks of a hold, trust, blockers and waves come first, so the engine is
+   never asked for a held or blocked issue, and the other starts that autopilot makes stay
+   NexKit 6's. Every existing test
    passes after each step, and the engine's part of `tests/test_scenarios.py` becomes the
    conformance suite as it goes.
 2. NexKit 7 is released when the GitHub host runs only through the engine. Repositories on

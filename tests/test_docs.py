@@ -1,8 +1,8 @@
 """The docs' map lists every doc, the links of the map, of the docs standard, of the architecture
-page, of AGENTS.md and of the maintenance skills resolve, each task of the nexkit-maintain skill
-links a section of the delivery page, AGENTS.md keeps within its word limits, and the architecture
-page's job and module tables match the workflows and nexkit/, as
-docs/writing-docs.md#how-the-docs-stay-correct says."""
+page, of the security page, of AGENTS.md and of the maintenance skills resolve, each task of the
+nexkit-maintain skill links a section of the delivery page, AGENTS.md keeps within its word limits,
+the architecture page's job and module tables match the workflows and nexkit/, and each test the
+security page names exists, as docs/writing-docs.md#how-the-docs-stay-correct says."""
 
 import re
 import unittest
@@ -17,6 +17,9 @@ HEADING = re.compile(r"^#{1,6} (.+?)\s*$", re.M)
 FENCE = re.compile(r"^```.*?^```", re.M | re.S)
 AGENTS = ROOT / "AGENTS.md"
 ARCH = DOCS / "architecture.md"
+SECURITY = DOCS / "security.md"
+TEST_FILE = re.compile(r"tests/[\w/]+\.py")
+TEST_NAME = re.compile(r"`(test_\w+)`")
 WORKFLOWS = ("pipeline.yml", "pipeline-agent.yml", "pipeline-review.yml")
 JOBS_HEADER = "| Workflow | Job | Job token | App token | Secrets |"
 MODULES_HEADER = "| Module | Purpose |"
@@ -70,13 +73,46 @@ class DocsMapTests(unittest.TestCase):
                 self.assertIn(doc.resolve(), listed, f"docs/README.md has no row for {doc.name}")
 
     def test_the_links_of_the_map_the_docs_standard_and_agents_md_resolve(self):
-        for page in (DOCS / "README.md", DOCS / "writing-docs.md", AGENTS, ARCH):
+        for page in (DOCS / "README.md", DOCS / "writing-docs.md", AGENTS, ARCH, SECURITY):
             for file, anchor in links(page):
                 self.assertTrue(file.exists(), f"{page.name} links {file}, which does not exist")
                 if anchor and file.suffix == ".md":
                     self.assertIn(
                         anchor, anchors(file), f"{page.name} links #{anchor} of {file.name}"
                     )
+
+
+class SecurityTests(unittest.TestCase):
+    def test_each_test_the_page_names_exists_in_the_file_it_names(self):
+        named = 0
+        for line in FENCE.sub("", SECURITY.read_text()).splitlines():
+            names = TEST_NAME.findall(line)
+            if not names:
+                continue
+            named += len(names)
+            files = TEST_FILE.findall(line)
+            self.assertTrue(files, f"docs/security.md names a test and no file: {line[:80]!r}")
+            sources = []
+            for file in files:
+                self.assertTrue((ROOT / file).is_file(), f"docs/security.md names {file}")
+                sources.append((ROOT / file).read_text())
+            for name in names:
+                self.assertTrue(
+                    any(f"def {name}(" in source for source in sources),
+                    f"docs/security.md names {name}, which {', '.join(files)} does not define",
+                )
+        self.assertTrue(named, "docs/security.md names no test")
+
+    def test_each_untrusted_input_names_a_rule_and_a_test(self):
+        rows = table(SECURITY, "| Input |")
+        self.assertTrue(rows, "docs/security.md has no table of untrusted inputs")
+        found = anchors(SECURITY)
+        for input, _reached, rule, tests in rows:
+            self.assertTrue(
+                any(a in found for a in re.findall(r"\]\(#([^)]+)\)", rule)),
+                f"the rule of {input} links no section of docs/security.md",
+            )
+            self.assertTrue(TEST_NAME.search(tests), f"{input} names no test")
 
 
 class AgentsTests(unittest.TestCase):

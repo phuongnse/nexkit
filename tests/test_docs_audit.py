@@ -185,8 +185,12 @@ class ChecksTests(unittest.TestCase):
         )
 
     def test_a_planned_marker_of_a_closed_issue_is_built(self):
-        markers = audit.planned_markers(audit.tracked_all())
-        self.assertIn(("docs/writing-docs.md", 212, 360), markers)
+        with tempfile.TemporaryDirectory() as tmp:
+            page = Path(tmp) / "docs" / "writing-docs.md"
+            page.parent.mkdir()
+            page.write_text("# A page\n\n| Row | _(planned, #360)_ |\n")
+            markers = audit.planned_markers(["docs/writing-docs.md", "src/a.py"], root=Path(tmp))
+        self.assertEqual(markers, [("docs/writing-docs.md", 3, 360)])
         [found] = audit.marker_findings([("docs/a.md", 4, 7), ("docs/b.md", 2, 8)], {7})
         self.assertEqual((found["page"], found["line"], found["kind"]), ("docs/a.md", 4, "built"))
         self.assertIn("#7, which is closed", found["statement"])
@@ -359,7 +363,12 @@ class MainTests(unittest.TestCase):
             )
             out = io.StringIO()
             env = {"GH": str(gh), "GITHUB_REPOSITORY": "phuongnse/nexkit"}
-            with mock.patch.dict("os.environ", env), contextlib.redirect_stdout(out):
+            markers = [("docs/writing-docs.md", 21, 359), ("docs/writing-docs.md", 212, 360)]
+            with (
+                mock.patch.dict("os.environ", env),
+                mock.patch.object(audit, "planned_markers", return_value=markers),
+                contextlib.redirect_stdout(out),
+            ):
                 self.assertEqual(audit.main(["x", "plan", str(findings), str(homes), "77"]), 0)
         planned = json.loads(out.getvalue())
         titles = [i["title"] for i in planned["issues"]]

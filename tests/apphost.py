@@ -21,6 +21,7 @@ import json
 import subprocess
 import sys
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -41,6 +42,8 @@ WORK = (
 )
 PERSON = {"id": "octocat", "role": "decides"}
 CLOCK = "2026-11-23T15:00:00Z"
+TIME = "%Y-%m-%dT%H:%M:%SZ"
+STEPS = 500  # the most events one run sends, so that a scenario cannot loop
 # The application's policies (docs/engine-hosts.md#what-a-host-decides): a person approves the
 # plan, the review follows only passing checks, the engine accepts what passed, and a request
 # has a token and time budget.
@@ -131,8 +134,9 @@ class ScriptedRunner:
     """A runner of the kind model with tools, played from a script. `scripts` maps (item,
     stage) to the entries its runs take in turn: `@<fixture>` names an agent result of
     `tests/conformance/fixtures.json`, a dict with a `fixture` and `tokens` overrides the tokens
-    the run spends, and `hold` keeps the run open with no result. It fails when a script runs dry,
-    so that a scenario cannot loop."""
+    the run spends, `{"limit": <reset time>}` stops at a usage limit, `transient` and `timeout`
+    stop with a transient error and a timeout, and `hold` keeps the run open with no result. It
+    fails when a script runs dry, so that a scenario cannot loop."""
 
     def __init__(self, scripts):
         self.scripts = {key: list(entries) for key, entries in scripts.items()}
@@ -145,6 +149,13 @@ class ScriptedRunner:
         entry = entries.pop(0)
         if entry == HOLD:
             return Held()
+        if entry == "transient":
+            return {**AGENT, "output": None, "transient": True, "error": "Overloaded."}
+        if entry == "timeout":
+            return {**AGENT, "output": None, "timedOut": True}
+        if isinstance(entry, dict) and "limit" in entry:
+            limit = {"message": "The account's usage limit.", "reset": entry["limit"]}
+            return {**AGENT, "output": None, "limit": limit}
         if isinstance(entry, str):
             entry = {"fixture": entry.removeprefix("@")}
         tokens = entry.get("tokens", USUAL_TOKENS)
@@ -162,6 +173,10 @@ class Row:
     state: dict | None = None
     draft: dict | None = None
     closed: bool = False
+    parent: str | None = None
+    depth: int = 0
+    needs: list = field(default_factory=list)  # the ids of the parts this one waits for
+    started: bool = False
     running: dict = field(default_factory=dict)
     queue: collections.deque = field(default_factory=collections.deque)
 
@@ -169,8 +184,9 @@ class Row:
 class Host:
     """The application: its rows, its validation scripts and its person's helpers."""
 
-    def __init__(self, engine, runner, checks=()):
+    def __init__(self, engine, runner, checks=(), policies=None):
         self.engine = engine
+        self.policies = {**POLICIES, **(policies or {})}
         self.runner = runner
         self.validation = list(checks)  # whether each run of the checks passes, in turn
         self.rows = {}
@@ -181,16 +197,27 @@ class Host:
         self.order = []  # ("agent", stage) and ("checks", passed), as they ran across both lists
         self.states = []  # (item, state) after each step, for the tests to read
         self.counter = 0
+        self.now = datetime.strptime(CLOCK, TIME)  # the host's clock
+        self.timers = {}  # wait action id -> (item, action)
+        self.ticks = []  # (item, wait, time) of each tick sent
+        self.withdrawn = []  # the ids of the drafts withdrawn
+        self.replaced = {}  # item -> how many drafts were made again
 
     # The engine's step, and what follows from it.
 
     def send(self, item, event):
         row = self.rows[item]
         self.counter += 1
-        event = {"protocol": 1, "id": f"{item}:e{self.counter}", "item": item, "at": CLOCK, **event}
+        event = {
+            "protocol": 1,
+            "id": f"{item}:e{self.counter}",
+            "item": item,
+            "at": self.now.strftime(TIME),
+            **event,
+        }
         old = row.state
         answer = self.engine.call(
-            "step", {"state": old, "event": event, "policies": copy.deepcopy(POLICIES)}
+            "step", {"state": old, "event": event, "policies": copy.deepcopy(self.policies)}
         )
         state = answer["state"]
         if answer["changed"]:
@@ -218,7 +245,7 @@ class Host:
         kind = action["kind"]
         handler = getattr(self, f"do_{kind}", None)
         if handler is None:
-            raise AssertionError(f"not carried out in part 1: {kind}")
+            raise AssertionError(f"no handler for {kind}")
         result = handler(row, action)
         if result is not None:
             self.finish(row, action, result)
@@ -235,11 +262,26 @@ class Host:
 
     def run(self):
         """Send the queued events, one at a time for a request, oldest first, until none is left."""
-        while True:
+        for _ in range(STEPS):
             row = next((row for row in self.rows.values() if row.queue), None)
-            if row is None:
+            if row is None and not self.timers:
                 return
+            if row is None:
+                self.tick()
+                continue
             self.send(row.id, row.queue.popleft())
+        raise AssertionError(f"more than {STEPS} events")
+
+    def tick(self):
+        """Nothing else is queued: the clock moves to the earliest wait, which ends with a tick
+        and then its `actionFinished`."""
+        wait_id = min(self.timers, key=lambda key: self.timers[key][1]["until"])
+        item, action = self.timers.pop(wait_id)
+        until = datetime.strptime(action["until"], TIME)
+        self.now = max(self.now, until)
+        self.ticks.append((item, action["wait"], self.now.strftime(TIME)))
+        self.rows[item].queue.append({"kind": "tick", "wait": action["wait"]})
+        self.finish(self.rows[item], action, {})
 
     # The actions.
 
@@ -270,7 +312,7 @@ class Host:
                 "state": state,
                 "stage": stage,
                 "inputs": inputs,
-                "policies": copy.deepcopy(POLICIES),
+                "policies": copy.deepcopy(self.policies),
                 "texts": None,
             },
         )
@@ -290,8 +332,10 @@ class Host:
         if not self.validation:
             raise AssertionError("no validation left")
         ok = self.validation.pop(0)
-        self.checks_log.append((row.id, ok))
         self.order.append(("checks", ok))
+        if ok in ("behind", "conflict"):
+            return self.observe(row, action, ok)
+        self.checks_log.append((row.id, ok))
         check = {
             "name": "validate",
             "passed": ok,
@@ -301,28 +345,101 @@ class Host:
         }
         return {"checks": [check]}
 
-    def do_publish(self, row, action):
-        revision = (row.draft["revision"] if row.draft else 0) + 1
-        row.draft = {"id": f"d-{row.id}", "revision": revision}
-        change = {"id": row.draft["id"], "version": f"r{revision}"}
+    def observe(self, row, action, what):
+        """The release moved while the checks ran: the run stays open, and the host observes the
+        draft. The engine's `cancel` then ends the run."""
+        draft = row.draft
+        draft["behind" if what == "behind" else "conflicts"] = True
+        row.running[action["id"]] = Held()
+        event = self.observation(draft)
+        event["kind"] = "changeObserved"
+        row.queue.append(event)
+
+    def observation(self, draft):
         observed = {
-            "changeId": change["id"],
-            "version": change["version"],
-            "conflicts": False,
+            "changeId": draft["id"],
+            "version": f"r{draft['revision']}",
+            "conflicts": draft["conflicts"],
             "merged": False,
             "empty": False,
         }
-        return {"change": change, "refused": None, "observed": observed}
+        if draft["behind"]:
+            observed["behind"] = True
+        return observed
+
+    def do_publish(self, row, action):
+        if row.draft:
+            row.draft["revision"] += 1
+            row.draft["conflicts"] = row.draft["behind"] = False
+        else:
+            row.draft = {"id": f"d-{row.id}", "revision": 1, "conflicts": False, "behind": False}
+        return self.changed(row)
+
+    def changed(self, row):
+        draft = row.draft
+        change = {"id": draft["id"], "version": f"r{draft['revision']}"}
+        return {"change": change, "refused": None, "observed": self.observation(draft)}
+
+    def do_updateChange(self, row, action):
+        """A new revision on the latest release."""
+        row.draft["revision"] += 1
+        row.draft["behind"] = False
+        return self.changed(row)
+
+    def do_replaceChange(self, row, action):
+        """A new draft: the change is made again."""
+        number = self.replaced[row.id] = self.replaced.get(row.id, 0) + 1
+        draft = {"id": f"d-{row.id}-{number}", "revision": 1, "conflicts": False, "behind": False}
+        row.draft = draft
+        result = self.changed(row)
+        del result["refused"]
+        return result
+
+    def do_withdrawChange(self, row, action):
+        self.withdrawn.append(action["changeId"])
+        row.draft = None
+        return {}
+
+    def do_wait(self, row, action):
+        self.timers[action["id"]] = (row.id, action)
 
     def do_accept(self, row, action):
         return {"accepted": True, "refusal": None, "text": ""}
 
     def do_cancel(self, row, action):
         row.running.pop(action["action"], None)
+        self.timers.pop(action["action"], None)
         return {"tokens": None, "seconds": None}
+
+    def do_createParts(self, row, action):
+        """New requests that start when created, each held back until the parts it needs ended."""
+        child = {part["key"]: f"{row.id}.{part['key']}" for part in action["parts"]}
+        for part in action["parts"]:
+            needs = [child[key] for key in part["needs"]]
+            body = f"The text {part['body']['ref']}."
+            self.create(child[part["key"]], part["title"], body, row, needs, part["body"])
+        for part in action["parts"]:
+            self.start(child[part["key"]])
+        return {"parts": [{"key": key, "item": item} for key, item in child.items()]}
+
+    def start(self, item):
+        """A part starts once each part it needs has closed, whatever its end."""
+        row = self.rows[item]
+        if row.started or any(not self.rows[need].closed for need in row.needs):
+            return
+        row.started = True
+        row.queue.append(
+            {"kind": "requested", "what": "start", "by": None, "note": "", "plan": None}
+        )
 
     def do_close(self, row, action):
         row.closed = True
+        parent = row.parent and self.rows[row.parent]
+        if parent:
+            parent.queue.append({"kind": "partEnded", "part": row.id, "state": row.state["state"]})
+            for sibling in self.rows.values():
+                if sibling.parent == row.parent:
+                    self.start(sibling.id)
         return {}
 
     def do_needPerson(self, row, action):
@@ -333,19 +450,26 @@ class Host:
 
     # The person, who sends the request and decides on it.
 
+    def create(self, item, title, body, parent=None, needs=(), text=None):
+        """A new request, as a person sends it or as a part of another request."""
+        depth = parent.depth + 1 if parent else 0
+        self.rows[item] = Row(item, title, body, parent=parent and parent.id, depth=depth)
+        self.rows[item].needs = list(needs)
+        event = {
+            "kind": "created",
+            "itemKind": "change",
+            "title": title,
+            "text": text or {"name": "body", "ref": item},
+            "actors": {"plan": "engine", "change": "engine", "review": "engine"},
+            "plan": None,
+            "change": None,
+        }
+        if depth:
+            event["depth"] = depth
+        self.rows[item].queue.append(event)
+
     def submit(self, item, title, body):
-        self.rows[item] = Row(item, title, body)
-        self.rows[item].queue.append(
-            {
-                "kind": "created",
-                "itemKind": "change",
-                "title": title,
-                "text": {"name": "body", "ref": item},
-                "actors": {"plan": "engine", "change": "engine", "review": "engine"},
-                "plan": None,
-                "change": None,
-            }
-        )
+        self.create(item, title, body)
         self.rows[item].queue.append(
             {"kind": "requested", "what": "plan", "by": PERSON, "note": "", "plan": None}
         )

@@ -369,7 +369,9 @@ round waits to be issued (`rounds.due`) only in `fixing`. A state keeps a round'
 while they wait for answers: in `awaitingApproval`, with attention naming them. Across the cases,
 every transition of the [states table](engine-states.md#states) is played, no case makes one that
 that table does not name for its policies and for whether the item had a change, and an item is
-dropped from every state that is not final. The engine passes the suite in this repository, and each
+dropped from every state that is not final. The cases also play everything the protocol's schemas
+define, which the suite reads from them: every value of each policy, every kind of event and every
+kind of action. The engine passes the suite in this repository, and each
 host runs it through its own adapter. A new rule of the engine comes with a case.
 
 The cases are short forms that only the test runner reads. `python3 scripts/conformance.py build OUT`

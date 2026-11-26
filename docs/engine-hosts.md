@@ -134,7 +134,9 @@ available, leaves the accept to a person.
 
 [`tests/apphost.py`](../tests/apphost.py) is the example of an application host. It reaches the
 engine only over HTTP, stores each request's state in a row and carries out only pending actions.
-[`tests/test_apphost.py`](../tests/test_apphost.py) plays it against `nexkit-engine serve`.
+[`tests/test_apphost.py`](../tests/test_apphost.py) plays it against `nexkit-engine serve`. The host keeps
+a clock that sends `tick` when a wait's time comes, makes parts that start when created, and carries
+out every action kind, which a test checks.
 
 What exists only because of GitHub stays in the GitHub host: the GitHub App, statuses, branch
 clean-up, watching CI and flaky runs, Dependabot, artifacts, carrying a review over a base merge,

@@ -27,6 +27,8 @@ The refusals of `unaffected_by` that the checks page lists name each refusal of 
 other, and the code refuses each one. The plan and review layouts of stages match the sections
 the code writes, and the values the pages repeat match their constants. The words that the agents
 and profiles and the failure handling pages list as marking a failing line match FAILURE_LINE.
+The retry delays that the failure handling page gives for `publish` and for every other GitHub API
+call match `publish.WAITS` and `github.GitHub.waits`, with their counts of tries.
 The tools that the access table of agents and profiles gives the plan and review stages match
 READ_ONLY_TOOLS. The README's table of
 supported versions is compared with the pins in nexkit/__init__.py, and each ubuntu-NN.NN in the
@@ -1516,6 +1518,39 @@ def restart_delays():
     return ", ".join(str(m) for m in minutes[:-1]) + f" and {minutes[-1]} minutes"
 
 
+def retry_delays():
+    """The retry delays of the failure handling row that starts with PUBLISH_ROW, as
+    (publish's delays, its word for tries in all, the other calls' word for tries more, their
+    delays). Change tests/test_docs.py together with that row when its wording changes."""
+    rows = [row for row in table(FAILURE_PAGE, FAILURE_HEADER) if row[0].startswith(PUBLISH_ROW)]
+    assert len(rows) == 1, (
+        f"docs/failure-handling.md needs one row that starts with {PUBLISH_ROW!r}; "
+        "change tests/test_docs.py with that row"
+    )
+    cell = " ".join(rows[0][1].split())
+    publish_match = PUBLISH_DELAYS.search(cell)
+    assert publish_match, (
+        "the publish row of docs/failure-handling.md must say 'Tries again after N, N and N "
+        "seconds, WORD tries in all'; change tests/test_docs.py with the row"
+    )
+    other_match = OTHER_DELAYS.search(cell)
+    assert other_match, (
+        "the publish row of docs/failure-handling.md must say 'every other GitHub API call ... "
+        "tries WORD more ... after N and N seconds'; change tests/test_docs.py with the row"
+    )
+    return (
+        numbers(publish_match.group(1)),
+        publish_match.group(2),
+        other_match.group(1),
+        numbers(other_match.group(2)),
+    )
+
+
+def numbers(text):
+    """The numbers in `text`, as ints."""
+    return [int(n) for n in re.findall(r"\d+", text)]
+
+
 def full_plan():
     """A plan that fills every field its layout shows, as a re-plan that split its issue."""
     return {
@@ -1596,6 +1631,15 @@ FAILURE_WORDS = re.compile(r"contains? (`[^`]+`(?:(?:, | or )`[^`]+`)*), in any 
 # The page and the row of its access table that give the tools of the plan and review stages.
 ACCESS_PAGE = DOCS / "agents-and-profiles.md"
 READ_ACCESS_ROW = "| plan, review |"
+# The row of failure handling that gives the retry delays of `publish` and of every other GitHub API
+# call. Its first cell starts with PUBLISH_ROW; its second cell is the one the regexes read.
+FAILURE_PAGE = DOCS / "failure-handling.md"
+FAILURE_HEADER = "| What happened | NexKit does |"
+PUBLISH_ROW = "GitHub answers `publish`"
+PUBLISH_DELAYS = re.compile(r"Tries again after ([\d, and]+?) seconds, (\w+) tries in all")
+OTHER_DELAYS = re.compile(
+    r"[Ee]very other GitHub API call .*?tries (\w+) more .*?after ([\d, and]+?) seconds"
+)
 
 
 class LayoutTests(unittest.TestCase):
@@ -1669,6 +1713,60 @@ class FailureWordsTests(unittest.TestCase):
             for word in sorted(set(listed) - set(code)):
                 with self.subTest(page=name, word=word):
                     self.fail(f"docs/{name} lists {word!r}, which FAILURE_LINE does not match")
+
+
+class RetryDelayTests(unittest.TestCase):
+    def test_the_failure_table_lists_the_retry_delays_the_code_has(self):
+        publish_delays, _, _, other_delays = retry_delays()
+        waits = (
+            ("publish", publish_delays, list(publish.WAITS), "publish.WAITS"),
+            (
+                "every other GitHub API call",
+                other_delays,
+                list(github.GitHub.waits),
+                "github.GitHub.waits",
+            ),
+        )
+        for calls, listed, code, name in waits:
+            for delay in sorted(set(listed) | set(code)):
+                with self.subTest(calls=calls, delay=delay):
+                    self.assertIn(
+                        delay,
+                        code,
+                        f"docs/failure-handling.md says {calls} waits {delay} seconds, "
+                        f"which {name} lacks",
+                    )
+                    self.assertIn(
+                        delay,
+                        listed,
+                        f"{name} waits {delay} seconds, which docs/failure-handling.md "
+                        f"does not say for {calls}",
+                    )
+            self.assertEqual(
+                listed,
+                code,
+                f"docs/failure-handling.md lists the waits of {calls} as {listed}; "
+                f"{name} has {code}, in order",
+            )
+
+    def test_the_failure_table_counts_the_tries_the_code_makes(self):
+        _, publish_tries, other_tries, _ = retry_delays()
+        # The waits are the tries after the first one, so a call makes one try more than its waits.
+        publish_expected = NUMBERS[len(publish.WAITS) + 1]
+        self.assertEqual(
+            publish_tries,
+            publish_expected,
+            f"docs/failure-handling.md says publish makes {publish_tries!r} tries in all; "
+            f"publish.WAITS allows {publish_expected!r}",
+        )
+        count = len(github.GitHub.waits)
+        other_expected = {1: "once", 2: "twice"}.get(count, f"{NUMBERS[count]} times")
+        self.assertEqual(
+            other_tries,
+            other_expected,
+            f"docs/failure-handling.md says other GitHub API calls try {other_tries!r} more; "
+            f"github.GitHub.waits allows {other_expected!r}",
+        )
 
 
 class ReadOnlyToolsTests(unittest.TestCase):

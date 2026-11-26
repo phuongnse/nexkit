@@ -36,7 +36,7 @@
       "$ref": "#/$defs/inputs"
     },
     "policies": {
-      "$comment": "The host's policies, as every call has them, and two that only the prompts read so far: `checklist`, the items the plan and the review answer, and `profiles`, the profiles triage chooses from, each name with an object whose `when` is a string. A plan needs `budgets.implement.seconds` as an integer, the implement stage's time, which its prompt names; the engine refuses a plan without it, and a profile without a string `when`.",
+      "$comment": "The host's policies, as every call has them, and two that only the prompts read: `checklist`, the items the plan and the review answer, and `profiles`, the profiles triage chooses from, each name with an object whose `when` is a string. A plan needs `budgets.implement.seconds` as an integer, the implement stage's time, which its prompt names; the engine refuses a plan without it, and a profile without a string `when`.",
       "$ref": "../policies.schema.json",
       "properties": {
         "checklist": {

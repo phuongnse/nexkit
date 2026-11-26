@@ -203,6 +203,7 @@ from .state import (
     closing_option,
     latest_plan,
     plan_data,
+    plan_profile,
     plan_record,
     planned_parts,
     questions,
@@ -250,10 +251,38 @@ class Refused(Exception):
     carries out."""
 
 
-def policies(cfg):
+def item_profile(cfg, comments):
+    """The profile that the item's runs use: the latest plan's, or `default_profile` when no plan
+    names one, and None when there are no profiles or the name is no longer in them. It mirrors
+    `route.with_profile`."""
+    if not cfg["profiles"]:
+        return None
+    plan = latest_plan(comments)
+    record = plan_profile(plan) if plan else None
+    name = (record["profile"] if record else None) or cfg["default_profile"]
+    return name if name in cfg["profiles"] else None
+
+
+def policies(cfg, profile=None):
     """The engine's policies for the GitHub host's configuration
-    (docs/engine-hosts.md#what-a-host-decides)."""
+    (docs/engine-hosts.md#what-a-host-decides). `profile` is the profile that the item's runs
+    use (`item_profile`): its stage settings give the budgets and agents of every stage but
+    triage, which no profile changes."""
     taken = autopilot.takes(cfg)
+    variant = configuration.with_profile(cfg, profile) if profile in cfg["profiles"] else cfg
+    stages = [
+        stage
+        for stage in ("triage", "plan", "implement", "fix", "review")
+        if stage == "fix" or stage in cfg["stages"]
+    ]
+
+    def agents(stage):
+        if stage == "plan" and cfg["profiles"]:
+            # Triage chooses the profile inside the plan job, so the runner chooses these.
+            return {"agent": None, "model": None, "effort": None}
+        settings = configuration.stage(cfg if stage == "triage" else variant, stage)
+        return {key: settings[key] for key in ("agent", "model", "effort")}
+
     return {
         "planApproval": "autoWhenClean" if taken else "person",
         "reviewAfterFailingChecks": "always",
@@ -271,10 +300,13 @@ def policies(cfg):
         "lostWaits": [int(wait.total_seconds() // 60) for wait in autopilot.AGAIN] if taken else [],
         # Triage has a time only when there are profiles to choose from.
         "budgets": {
-            stage: {"seconds": configuration.stage_minutes(cfg, stage) * 60}
-            for stage in ("triage", "plan", "implement", "fix", "review")
-            if stage == "fix" or stage in cfg["stages"]
+            stage: {
+                "seconds": configuration.stage_minutes(cfg if stage == "triage" else variant, stage)
+                * 60
+            }
+            for stage in stages
         },
+        "agents": {stage: agents(stage) for stage in stages},
     }
 
 
@@ -635,7 +667,7 @@ def take(gh, cfg, number, tries=item_state.TRIES, sleep=time.sleep):
     pull = _pull(doc)
     sources = [one for one in _sources(gh, number, pull, comments) if _newer(one, cursor, comment)]
     holds = {name for name, does in autopilot.autopilot_labels(cfg).items() if does.get("hold")}
-    found_policies = policies(cfg)
+    found_policies = policies(cfg, item_profile(cfg, comments))
     taken = []
     for one in sources:
         event = _taken_event(gh, number, pull, comments, holds, one)

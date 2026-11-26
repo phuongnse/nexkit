@@ -1,0 +1,72 @@
+{
+  "policies": {},
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "plan"
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:plan"
+      },
+      "state": "awaitingApproval",
+      "changed": true,
+      "actions": [
+        "show",
+        "needPerson"
+      ]
+    },
+    {
+      "event": {
+        "kind": "planApproved"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "runAgent"
+      ],
+      "expect": {
+        "pending.2.agent": null,
+        "pending.2.model": null,
+        "pending.2.effort": null,
+        "policies": {
+          "planApproval": "person",
+          "reviewAfterFailingChecks": "always",
+          "accept": "person",
+          "fixRounds": 2,
+          "whenRoundsRunOut": "person",
+          "conflicts": "person",
+          "conflictRounds": 3,
+          "splits": false,
+          "answers": "never",
+          "afterFailure": "person",
+          "splitParts": 10,
+          "splitDepth": 3,
+          "retryWaits": [
+            15,
+            30,
+            60
+          ]
+        }
+      }
+    }
+  ]
+}

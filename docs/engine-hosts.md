@@ -13,12 +13,20 @@ A runner runs one agent session for one stage. Its contract is part of the proto
 gives it the stage, the version of the change it starts from, the stage's access, the prompt that
 `prompt` writes from the inputs it names, the name of the stage's result schema, the agent, the
 model and effort, the budget in tokens, time and model calls, a session id to ask the same session
-again, and for a fix round the checks it looks into first (`diagnose`). Until the protocol holds the
-checklist and agents policies, the host adds to that schema what they add: a checklist field, and
-the names of triage's profiles. Its result gives the stage's result, the tokens as input, cached and
-output, the seconds it spent, a usage limit with its reset, whether the stop was
+again, and for a fix round the checks it looks into first (`diagnose`). The agent, model and effort
+are the stage's values in the `agents` policy, each null when the host gives none. The host adds to
+the stage's result schema what the `prompt` call's `checklist` and `profiles` add: a checklist
+field, and the names of triage's profiles. Its result gives the stage's result, the tokens as input,
+cached and output, the seconds it spent, a usage limit with its reset, whether the stop was
 transient, whether it ran out of time, whether no result fit the schema, and the version of the
 change it produced.
+
+An agent's fallbacks stay the runner's: it runs them in turn within the one action. GitHub's agent
+job builds the same action from its configuration with `agent.action_for`, and `run_action` refuses
+an action that names another agent, model or effort. The engine's `runAgent` names those values
+because the GitHub host fills the `agents` policy from the configuration, with the profile of the
+item's latest plan. For the plan stage it gives null when there are profiles, since triage chooses
+the profile in the plan job.
 
 Each stage has its access, which the runner enforces: none for triage, read for plan and review,
 write for implement and fix. A limit on what work costs belongs to one of three places, each where
@@ -62,20 +70,23 @@ shapes, and a host shows them in its own words.
 ## What a host decides
 
 A host gives the engine its policies in its configuration. Each has a default, and the
-protocol's `policies.schema.json` names it, as the first column does below. The policies with no
-name there, start, usage limits, agents and the
-checklist, are not in the protocol yet: they come into it as the
-engine takes over the decisions that read them, and until then the host applies them itself. The
-`prompt` call already reads two of them beside the host's policies, as its schema names them:
-`checklist`, the items the plan and the review answer; and `profiles`, the profiles triage chooses
-from. Its plan prompt also names the implement stage's time from `budgets`. The `sweep` call
-reads two more beside them, as its schema names them: `maxParallel`, the most items that run at
-once, and `priority`, the labels that go first. Neither is in `policies.schema.json`, so no state
-document keeps them.
+protocol's `policies.schema.json` names it, as the first column does below. Four settings are not
+policies of the engine, and each has its place:
+
+- **Start** is the host's. It sends `requested` when a person or its sweep starts an item, and calls
+  `sweep` only when it starts items by itself. GitHub starts on a request, and by sweep with
+  autopilot.
+- **Checklist and profiles** are the `prompt` call's policies. `checklist` is the items the plan and
+  the review answer, and `profiles` the profiles triage chooses from. The plan prompt also names the
+  implement stage's time from `budgets`. GitHub's `review.checklist` gives the checklist.
+- **`maxParallel` and `priority`** are the `sweep` call's policies: the most items that run at
+  once, and the labels that go first. Neither is in `policies.schema.json`, so no state document
+  keeps them.
+- **Usage limits** are in the `runAgent` result's `limit` with its `reset`, which is null when the
+  host does not resume, and in the `sweep` call's `limited`. GitHub's `usage_limit.*` gives them.
 
 | Policy | Values | GitHub | An application, for example |
 | --- | --- | --- | --- |
-| Start | `onRequest`, `bySweep` | `onRequest`; `bySweep` with autopilot | `onRequest`: a request starts when it is sent |
 | Plan approval (`planApproval`) | `person`, `autoWhenClean` | `person`; `autoWhenClean` with autopilot | `person`, always |
 | Answers (`answers`) | `never`, `recommended`; the engine answers only with `autoWhenClean` | `never`; `recommended` with `autopilot.answer` | `never` |
 | Review after failing checks (`reviewAfterFailingChecks`) | `always`, `onlyAfterPassing` | `always`: one fix round takes the failures and the findings | `onlyAfterPassing` |
@@ -86,12 +97,10 @@ document keeps them.
 | Budgets (`budgets`) | Tokens, seconds and model calls per stage; tokens and seconds per item | Each stage's `stages.*.timeout_minutes` as its seconds | Tokens and time per request, model calls per stage |
 | Retries (`retryWaits`) | Waits in minutes after a transient stop, at most 10, each 0–330 | `retry.wait_minutes` | The lease of a claimed request |
 | Lost work (`lostWaits`) | Waits in minutes before lost agent work or checks start again, at most 10, each 0–330; a person after the last, or after one more start when its agent ran | None; at once, then 30, 60 and 120 minutes with autopilot | None |
-| Usage limits | Resume after the reset, and how long to wait: the host gives the reset, or none when it does not resume | `usage_limit.*` | Resume after the reset |
-| Agents | Agents, models and efforts per stage, fallbacks, profiles and triage | `agents`, `stages`, `profiles` | The model the request names |
+| Agents (`agents`) | Agent, model and effort per stage, each a string or null; fallbacks stay the runner's | `agent`, `model`, `effort` and `stages`, with the profile triage chose; plan null when there are profiles | The model the request names |
 | Splits (`splits`, `splitParts`, `splitDepth`) | Off or on, with the most parts, 1–10, and the depth, 1–10; the re-plan for fewer parts, no parts or repeated titles happens only with `autoWhenClean`, and a person's approval of a split that these rules refuse goes on as one change | Off; on with autopilot, at most 10 parts, 3 levels | On: the person approves the split |
 | A parent's end (`parentEnd`) | `whenPartAccepted`, `person`: whether the parent ends once every part ended and one was completed, or a person decides (`splitIncomplete`); a host that leaves it out gets `whenPartAccepted` | `whenPartAccepted` with `close_parent_issues`, else `person`: the engine's default differs from GitHub's, where `close_parent_issues` is off by default | `whenPartAccepted`: the parent ends when its parts end |
 | After a failure (`afterFailure`) | `person`, `replan`: whether an item that failed because its round was blocked with nothing to answer, or because its implement round failed on an error, with no change, is planned again after a person's comment or the end of an item that blocks it | `person`; `replan` with autopilot | `person` |
-| Checklist | Items the plan and the review answer, some for a person | `review.checklist` | The application's own checklist |
 
 **Someone else may do a stage.** `created` says who does each stage: the engine's runners, a
 person, or an outside app that writes the plan and the change through the host. An item made

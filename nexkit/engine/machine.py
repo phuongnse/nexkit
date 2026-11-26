@@ -117,12 +117,14 @@ DEFAULTS = {
     "retryWaits": [15, 30, 60],
     "lostWaits": [],
     "budgets": {},
+    "agents": {},
     "parentEnd": "whenPartAccepted",
 }
 # The policies read as the host gives them at each step, even in a round that keeps the others
 # as it started with them: NexKit 6 reads autopilot's waits at each sweep, and the state keeps
-# none of them. A run's budget is read the same way, so a lowered budget applies to the next run.
-NOW = ("lostWaits", "budgets")
+# none of them. A run's budget, agent, model and effort are read the same way, so a lowered budget
+# or another model applies to the next run.
+NOW = ("lostWaits", "budgets", "agents")
 # The policies a round keeps. A round never reads a parent's end: only a split parent does, and a
 # parent is never in a round.
 KEPT = tuple(name for name in DEFAULTS if name != "parentEnd" and name not in NOW)
@@ -448,6 +450,7 @@ class Step:
                     budget[key] = left
         if limits.get("modelCalls") is not None:
             budget["modelCalls"] = limits["modelCalls"]
+        chosen = self.p["agents"].get(stage) or {}
         self.do(
             "runAgent",
             stage=stage,
@@ -455,9 +458,9 @@ class Step:
             access=ACCESS[stage],
             inputs=INPUTS[stage],
             result=f"results/{stage}.schema.json",
-            agent=None,
-            model=None,
-            effort=None,
+            agent=chosen.get("agent"),
+            model=chosen.get("model"),
+            effort=chosen.get("effort"),
             budget=budget,
             session=None,
             resume=False,

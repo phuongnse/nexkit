@@ -90,8 +90,9 @@ LOCAL_COMMANDS_HEADER = "| Command | What it does |"
 COMMAND = re.compile(r"`nexkit ([\w-]+)`")
 CONFIG_PAGE = DOCS / "configuration.md"
 CHECKS_PAGE = DOCS / "checks.md"
-# A check's field, as the bullets under "## Checks" of the checks page name it.
-CHECK_FIELD = re.compile(r"^- `([a-z_]+)`:", re.M)
+# A field, as the bullets of a field list name it: a check's on the checks page, a cache entry's
+# in the configuration reference.
+FIELD = re.compile(r"^- `([a-z_]+)`:", re.M)
 PERMISSIONS_HEADER = "| Permission | Level | For |"
 # GitHub's names on an App's settings page, by the manifest's keys in nexkit/app.py.
 PERMISSION_NAMES = {
@@ -802,6 +803,17 @@ class ConfigurationTests(unittest.TestCase):
             with self.subTest(key=key):
                 self.fail(f"docs/configuration.md lists {key}, which STAGE_KEYS does not define")
 
+    def test_the_cache_field_list_names_each_cache_key_the_code_defines_and_no_other(self):
+        section = CONFIG_PAGE.read_text().split("\n## Caches\n", 1)[1].split("\n## ", 1)[0]
+        listed = set(FIELD.findall(section))
+        self.assertTrue(listed, "docs/configuration.md has no list of a cache entry's fields")
+        for key in sorted(config.CACHE_KEYS - listed):
+            with self.subTest(key=key):
+                self.fail(f"docs/configuration.md does not list the cache field {key}")
+        for key in sorted(listed - config.CACHE_KEYS):
+            with self.subTest(key=key):
+                self.fail(f"docs/configuration.md lists {key}, which CACHE_KEYS does not define")
+
     def test_each_key_row_gives_the_code_default_and_range(self):
         seen = recorded_ranges()
         rows = key_rows()
@@ -983,7 +995,7 @@ class UnaffectedByTests(unittest.TestCase):
 class ChecksPageTests(unittest.TestCase):
     def test_the_field_list_names_each_check_key_the_code_defines_and_no_other(self):
         section = CHECKS_PAGE.read_text().split("\n## Checks\n", 1)[1].split("\n### ", 1)[0]
-        listed = set(CHECK_FIELD.findall(section))
+        listed = set(FIELD.findall(section))
         self.assertTrue(listed, "docs/checks.md has no list of a check's fields")
         for key in sorted(config.CHECK_KEYS - listed):
             with self.subTest(key=key):

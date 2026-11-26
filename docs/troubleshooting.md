@@ -33,8 +33,8 @@ repository's code only when you name it. If you trust it, set
 NexKit 1.8, a plain comment can cancel a waiting command. Move the `concurrency` block in
 `.github/workflows/nexkit.yml` into the `nexkit` job, as `nexkit init` writes it.
 
-**`nexkit doctor`: "has no 'item' job for the concurrency group".** In workflows installed
-before NexKit 6.4, a command on an issue and a round on its pull request wait in two
+**`nexkit doctor`: "has no 'item' job for the concurrency group".** In a workflow without
+the `item` job, a command on an issue and a round on its pull request wait in two
 queues, so they can run at once. Copy the `item` job and the `nexkit` job's `needs: item`
 and concurrency group from the workflow `nexkit init` writes into
 `.github/workflows/nexkit.yml`, with all three refs at one tag. Do this only once the

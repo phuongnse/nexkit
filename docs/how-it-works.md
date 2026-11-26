@@ -180,7 +180,7 @@ event: the issue's number for the issue, its NexKit pull request and a dispatch 
 either, and the pull request's own number for a person's pull request, or one from a fork,
 which cannot join an issue's queue by naming its branch like NexKit's. The `nexkit` job
 puts its run in the group `nexkit-<item>`. If GitHub's API fails while `item` reads a pull
-request, the item is the number itself, as before.
+request, the item is the number itself.
 
 Only commands, *Request changes* reviews, dispatches and the short run for a closed issue
 wait in this queue; other comments do not. GitHub keeps one waiting run, so a command

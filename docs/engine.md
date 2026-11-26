@@ -458,164 +458,34 @@ host runs it through its own adapter. A new rule of the engine comes with a case
 
 ## Getting there
 
-1. The engine grows inside NexKit 6: decisions move behind the protocol one by one, and the
-   GitHub host calls them. While NexKit 6's code still moves an item between the decisions that
-   the engine holds, the GitHub host builds the item's document for each of them from NexKit 6's
-   markers, as its import reads them, sends the event that GitHub shows, and carries out the
-   answer with NexKit 6's code and in its words. So far these are the decisions that follow a
-   plan, a split after a round that ran out of time on its pull request included, whose
-   `withdrawChange` the host carries out by closing the pull request as superseded. They are also the
-   decisions that follow a `/nexkit go` that stopped as blocked with questions or with paths
-   only a person changes, a writer's command that answers its questions with the option that
-   only closes the issue, the reason a plan waits for without autopilot, what follows the
-   checks and the review of a round on a pull request (`report`), what follows a fix round
-   that stopped as blocked with questions or protected paths and a round that ran out of time,
-   the end of a fix round's or a merge's wait for a hold or for the base branch's failure
-   (`autopilot`'s sweep), which rounds count after a round that NexKit stopped (`report`,
-   `maintain`), what follows required checks that fail at the merge (`report`), and the wait
-   for required checks that have not passed yet, with its end after a time (`report` and the
-   sweep's `autopilot`). `host.accept_answer` sends a merge's answer to `step` as an `accept`
-   result and carries out what the engine answers. So far it sends a merge refused for required
-   checks that have not passed yet, a merge refused because the head moved, which first sends
-   the new head as an observation, so that the engine checks it, the last refusal after the
-   base branch kept moving, the guards that stop a merge before it is tried (an issue closed,
-   edited after a vouch or unreadable), and GitHub's other refusals that only a person clears.
-   A merge refused for a conflict is sent too, with the conflict rounds used: under
-   `conflicts.auto_resolve` the engine answers a conflict round while `conflicts.max_rounds`
-   has one left, and otherwise a person. A pull request that GitHub reports as `dirty` only at
-   the end of the refusal is sent as a conflict without `conflicts.auto_resolve` and as
-   `needsPerson` with it. A merge refused because the branch is behind its base is sent as
-   `behind`, with the updates used: under `conflicts.auto_resolve` the engine answers an update
-   while `conflicts.max_rounds` has one left, which the host carries out
-   (`maintain.update_branch`) and starts the review that carries the approval over, and
-   otherwise a person; an update that GitHub refuses goes back to the engine, which hands it to
-   a person. A merge that waited more than six hours for required checks, and whose branch
-   GitHub reports as behind its base, keeps being tried under `conflicts.auto_resolve`: the
-   engine makes that exception, and so does a merge that waits with no recorded start of its
-   wait: the sweep asks `host.checks_waited` for it too, and merges when the engine answers a
-   merge. A merge that GitHub refused is tried again by the sweep only when the engine answers
-   with an accept (`host.refusal_cleared`): the host sends the head as an observation, with
-   `acceptable` when `mergeable_state` is `clean`, `unstable` or `has_hooks`, and NexKit 6's
-   `refused_clean` marker as `refusedAcceptable`, so that each head is tried once. The import
-   sets `refusedAcceptable` from that marker. The merge's observations reach the engine too
-   (`host.change_seen`): a pull request that a person merged first ends the item as `accepted`, a
-   change that the base branch already holds ends it as `noChange`, and a commit that a person
-   pushes while the merge waits is checked. An implement round that finds no change is needed
-   sends its result (`host.no_change_found`), and a fix round that finds, before its agent runs,
-   that its base branch already holds the change sends an empty change (`host.on_base_found`).
-   Each closes only when the engine ends the item as `noChange`; an engine that refuses closes
-   nothing, and the round ends as `close_failed` or `on_base_failed` and waits for a person.
-   Every parent's end goes through
-   `host.part_ended`, which sends the parent its part's end: after NexKit's own merge, after a
-   person closes the part, after a round that finds no change is needed, after a pull request
-   whose base branch already holds its change, and in autopilot's sweep, at every level up the
-   tree and for a parent of any number of sub-issues. The sweep's assessment of a parent whose
-   parts all closed asks `host.part_ended` with the part that closed last, as the close does,
-   and closes the parent or leaves it for a person only as the engine answers. The parent closes only when the engine
-   answers `close`: it does so under `parentEnd` `whenPartAccepted`, which the GitHub host gives
-   with `close_parent_issues`. When the engine answers that a person decides, NexKit leaves
-   NexKit 6's note on the parent. A parent of more sub-issues than a state document holds sends
-   a reduced list of the part, an open sub-issue, a completed one and a dropped one, which keeps
-   the two facts the rule reads. `report`
-   sends every round's checks and review to `step`: a review that paused at a usage limit,
-   with the reset when NexKit 6 resumes it, a review that stopped on a transient error, a review
-   that failed, a person's own pull request
-   as an item that is only reviewed, and a round whose commit conflicts with its base branch,
-   whose conflict round a hold keeps back until the sweep sends the hold's end
-   (`autopilot._conflicts_released`). The engine finds the checks that failed the same way
-   before and after a fix round, which the state comment keeps, and `route` asks it which of
-   them the fix round it starts diagnoses. The engine decides the runs again after a
-   transient stop, under `retryWaits`, and lets a paused run go on under a hold as NexKit 6 does.
-   `report` sends it a plan, implement or fix stage whose agent stopped at a usage limit or on a
-   transient error, and one whose publish stopped on a transient error, as a transient stop of
-   the stage's agent. It sends a review that stopped on a transient error too. The tick of each
-   due resume comes from `maintain.resume_one`, which the `step` that `maintain.resume_paused`
-   sends into the item's group runs. The host carries out the run, the wait or the
-   person. Which reset the host gives stays the host's. After a plan, a stopped round and a review, `report` also sends the tokens,
-   seconds and session that the runner's `run.json` gives. It checks the file against the
-   protocol first. The rest of the result stays NexKit 6's, so the engine decides as before, and
-   a file that is missing or does not fit sends none. It also decides what follows a command that
-   autopilot started and lost, when its run never started, ended without a report, or handed the work on to a run that never
-   started (`autopilot._again`, called by `_reportless` and `_handed_on`): `lost_again` sends
-   `actionLost` at the time of the last start, with autopilot's count of losses, and the host
-   carries out the start, the wait or the person. What counts as lost and the six-hour window of
-   the count stay the host's. A person's own lost command waits for that person. After a blocked `/nexkit go` or fix round whose recommended
-   answer only closes the issue, `report` mentions the person, as for any other wait, and the
-   sweep does not mention them again; NexKit 6 said autopilot carries on and left the mention
-   to the sweep, and this differs from it on purpose. It decides what follows a move of the base branch
-   under an open NexKit pull request too (`host.base_moved`, called by
-   `maintain.resolve_conflicts` on a push to the base branch, on the schedule and after NexKit's
-   merge, by `maintain.stop_superseded`, and by `report._conflicts_after` after an implement
-   round): the host sends a `changeObserved` with the conflict, and with `behind` when the base
-   branch's rules want pull requests up to date and the head lacks its tip, together with the
-   conflict rounds and the updates used, and carries out the answer: a conflict round, an
-   update, a stop of the round's checks, or a wait for a person. A round that runs only its
-   checks is in `checking` with those checks pending, and any other pull request is in `ready`.
-   A hold on the issue is read first, as in NexKit 6, and so are NexKit 6's other reasons not to
-   start a round: one tried on this base commit, one that runs, is paused or is queued, and an
-   implement round that still runs. A conflict round or update that fails to start after the
-   stop, which NexKit 6 records as `stop_failed`, stays the host's. The merge itself
-   (`report.merge_pull`) stays NexKit 6's but for the refusals above: those for required
-   checks that fail or have not passed yet, a head that moved, a base branch that kept moving,
-   a reason only a person clears, a conflict and a branch behind its base, a change that a
-   person merged, one that became empty, a commit pushed while the merge waits, and the end of
-   every parent. The facts only GitHub knows stay NexKit 6's, such as parts that were never
-   filed as sub-issues. The import ends a merge that waited more than six hours by
-   itself, even when its branch is behind, since it reads no `mergeable_state`. A
-   person's push during the wait for the base branch's failure is not sent yet: NexKit 6's
-   sweep does not read the head then either. A `/nexkit go`
-   that stopped as blocked with neither is the engine's too: it waits for a person, and with
-   autopilot, under `afterFailure`, a comment or the close of an issue that blocks it plans it
-   again. A `/nexkit go` that failed on an error, with no pull request, is the engine's too: the
-   host sends it as an agent error, and the engine ends it with attention `roundFailed` and
-   plans it again in the same way. A time-out and a failed plan wait for a person after a
-   comment. What follows a writer's vouch after an untrusted edit is the engine's too
-   (`host.vouched`, called by `autopilot._vouched`): the host marks the item `untrusted`, as the
-   import does, in `failed` for a stopped round and in `ready` for a stopped merge, sends the
-   writer's newer `/nexkit trust` as a `requested` `trust`, and starts what the engine answers,
-   with NexKit 6's fields and reason, "a writer vouched for it again": a plan, an automatic fix
-   round that counts, or the checks and review. One difference from NexKit 6 is known
-   (`tests/differential/known.py`): where no automatic fix round is left, the engine hands a
-   vouch on a pull request to a person (`roundsUsedUp`), and NexKit 6 would start a counted
-   round past `fix.max_auto_rounds`. Autopilot's start of the first plan of a new issue is the engine's
-   too (`host.first_plan`): the host builds the document that the import builds for an issue with
-   no plan, `new` and waiting to start, sends a `requested` start with no person, and dispatches
-   `/nexkit plan` only when the engine answers with a plan run. Otherwise the issue waits for a
-   person. NexKit 6's checks of a hold, trust, blockers and waves come first, so the engine is
-   never asked for a held or blocked issue. Every start, merge and close that autopilot makes now
-   follows an answer of the engine, which `tests/test_autopilot.py` checks by reading
-   `autopilot.py`. A writer's approval of a NexKit pull request goes to the engine too (`host.approved`, called by
-   `maintain.send_approval` and `maintain.merge_approved`): the host sends it as a `changeApproved`
-   to the document of the latest round's outcome, and the engine answers a merge, an acceptance of
-   the checklist items a person decides, or nothing. Under `merge.auto`, an approval after a
-   merge that GitHub refused, or of a pull request that was reopened, merges it, whatever commit
-   it names, and an approval of a `ready` round does on that round's head; with `merge.auto` off,
-   it accepts only the items a person decides. An engine that refuses to answer leaves GitHub
-   as it was, and the approval's run only logs why. A hold, an implement round that still runs,
-   a pull request with no round and a round whose outcome takes no approval stay the host's. A
-   head that moved after the round is reviewed by the merge's existing engine path. Which of the issues that may start do, and in what order, is the
-   engine's too (`host.sweep`, called by `autopilot.preview`): the host sends the start steps without a pull
-   request as a `sweep` call, with the busy count as `running`, the index of each issue's
-   milestone, its wave and whether pull requests wait for it as a bug issue about the default
-   branch, and says each answer in NexKit 6's words. It names no account at a usage limit, so
-   that rule shows only in the conformance cases. A person's command starts its stage
-   only as the engine answers it too (`host.command`, called by `route`): a `/nexkit` comment,
-   a *Request changes* review and each dispatch of a command that NexKit sends, such as an
-   automatic fix round, a conflict round, a resume or a carried review. `route` builds a small
-   document from the facts that NexKit 6's `route` read, whether the issue or pull request is
-   open, the latest plan, an open pull request for `/nexkit go`, and whether the base branch
-   already holds the change, sends the command as a `requested` event (a review as
-   `changesRequested`) and starts the stage that the engine answers: a plan, an implement or a
-   fix round, or the checks and review. A closed issue or pull request, an open pull request
-   for `/nexkit go` and a change that the base branch holds are the engine's to refuse or end,
-   and `route` says each in NexKit 6's words; a change that the engine ends as `noChange` is
-   closed by the `maintain` job. An engine that refuses, or answers another stage, starts
-   nothing, and the person gets a reply that says so, which NexKit 6 never gave. A fork, a
-   person's pull request, which takes no `/nexkit fix`, an unknown command and an implement
-   round that still runs stay host checks, since they read facts only GitHub shows. Every
-   existing test
-   passes after each step, and the engine's part of `tests/test_scenarios.py` becomes the
-   conformance suite as it goes.
+1. The engine grew inside NexKit 6: decisions moved behind the protocol one by one, and every
+   decision of the loop is now its own. The GitHub host builds each item's document from NexKit
+   6's markers, as its import reads them, sends the event that GitHub shows, and carries out the
+   answer in NexKit 6's words, comments and statuses. A start, a merge, a branch update, a close,
+   a cancel or a rerun follows an answer of the engine. `tests/test_answers.py` keeps it so: it
+   reads every module outside `nexkit/engine/` and fails on a write that no call of the engine
+   comes before. The writes that serve no item are named in it with their reasons: the sweep's own
+   dispatch, the workflows on the base branch after a merge, the default branch's CI reruns and
+   the wait dispatch. So are the writes that carry out an answer that an earlier job took from the
+   engine. The detail of each move is in the docstring of `nexkit/host.py`.
+
+   What the host observes stays with it, since only GitHub shows it. The engine decides from
+   these facts, and the host gives them as they are:
+
+   - Which reset a usage limit gives, and what counts as a lost run, with the six-hour window of
+     autopilot's count of tries.
+   - A pull request's `mergeable_state`: `acceptable` for `clean`, `unstable` or `has_hooks`,
+     `behind` and `dirty`.
+   - A hold label, a fork, a writer's vouch, a person's own pull request and an unknown command.
+   - Parts that were never filed as sub-issues, and an implement round that still runs.
+
+   Three differences from NexKit 6 are known on purpose. A vouch on a pull request with no
+   automatic fix round left waits for a person, where NexKit 6 started a counted round. A person
+   whose command the engine refuses gets a reply, which NexKit 6 never gave. After a blocked
+   `/nexkit go` whose recommended answer only closes the issue, the report mentions the person
+   and the sweep does not mention them again. The other differences are in
+   `tests/differential/known.py`. Every existing test passes after each step, and the engine's
+   part of `tests/test_scenarios.py` became the conformance suite.
 2. NexKit 7 is released when the GitHub host runs only through the engine. Repositories on
    NexKit 6 move to it with the usual upgrade steps, and the GitHub host imports their open work.
 3. An application can then be a host, with its adapter in its own language and, when it keeps

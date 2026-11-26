@@ -1,13 +1,12 @@
 """The GitHub host's calls of the engine's `step` (docs/engine.md#getting-there).
 
-Decisions move into the engine a group at a time, and until the GitHub host runs only through
-it, NexKit 6's code moves an item between the decisions that the engine holds. The host keeps no
-state document for them: for each one, it builds the item's document from NexKit 6's markers, as
-the import reads them (`first_state`), sends the event that GitHub shows, and carries out the
-answer with NexKit 6's code, in NexKit 6's words. After a plan, a stopped round and a review,
+Every decision that moves an item is the engine's. The host keeps no state document for them: for
+each one, it builds the item's document from NexKit 6's markers, as the import reads them
+(`first_state`), sends the event that GitHub shows, and carries out the answer with NexKit 6's
+code, in NexKit 6's words. After a plan, a stopped round and a review,
 `report` also sends what the runner's `run.json` says the agent spent (`spent`).
 
-So far the engine decides what follows a plan: its approval by autopilot, the answers to its
+The engine decides what follows a plan: its approval by autopilot, the answers to its
 questions, once in a row, a writer's answer that only closes the issue, a plan that finds no
 change or needs a hand-made change, splits and their rules, a new plan after a collaborator's
 comment, and what a plan waits for without autopilot. That includes the plan that autopilot asked
@@ -140,7 +139,7 @@ builds, `failed` with attention `untrusted` or, for a merge, `ready`, sends the 
 or the checks and review, as the engine answers. A pull request with no automatic fix round left
 waits for a person, where NexKit 6 started a counted round anyway
 (`tests/differential/known.py`). Every start that autopilot makes follows an answer of the
-engine (`tests/test_autopilot.py`).
+engine (`tests/test_autopilot.py` and `tests/test_answers.py`).
 
 It decides what a writer's approval of a NexKit pull request does too (`approved`, called by
 `maintain.send_approval` and `maintain.merge_approved`): the host builds the document of the
@@ -172,10 +171,14 @@ nothing, and the person gets a reply. A fork, a person's pull request, which tak
 An item whose document or event the engine refuses waits for a person, and no other item is
 held up by it.
 
-Taking an item's events (`take`) is a building block that the live pipeline does not call yet: a
-run in an item's group answers every comment, review and hold-label change of the item after the
+Every run in an item's group first takes the item's events (`take`, called by `cli._take` from
+`nexkit route`): it answers every comment, review and hold-label change of the item after the
 cursor in its state comment, oldest first, so that a command whose run a newer one replaced is
 still answered, and a run whose writes keep losing fails and leaves its event for the next run.
+
+No module outside `nexkit/engine/` writes on GitHub without an answer of the engine before it:
+`tests/test_answers.py` reads their code and fails on a dispatch, a merge, a branch update, a close,
+a cancel or a rerun that none comes before.
 """
 
 from __future__ import annotations
@@ -226,7 +229,7 @@ SPENT = ("tokens", "seconds", "session")
 
 def spent(ran):
     """`AGENT` with what the runner's result `ran` (`run.json`) spent, when it fits the protocol;
-    otherwise `AGENT`. The rest stays NexKit 6's, so the engine decides as before."""
+    otherwise `AGENT`. The rest of the result is sent as it was."""
     if not isinstance(ran, dict) or protocol.check(
         ran, "actions/runAgent.result.schema.json", "run.json"
     ):

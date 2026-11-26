@@ -82,8 +82,8 @@ starts after the base branch moved stays NexKit 6's.
 It decides when a plan, implement or fix stage runs again after its agent stopped at a usage
 limit or on a transient error (`stage_limited`, `stage_transient`, called by `report`), and when
 a paused or waiting run starts at its time (`resumes`, called by `maintain.resume_paused`), a hold
-on the issue included. A reset stays the host's to give, and a transient stop of publish stays
-its own retry.
+on the issue included. A transient stop of publish goes as a transient stop of the stage's agent.
+A reset stays the host's to give.
 
 It decides what follows a command that autopilot started and lost, whose run GitHub never
 started, or that ended without a report, or that handed the work on to a run that never started
@@ -103,8 +103,8 @@ autopilot's sweep), and the parent ends only when every part ended and one was c
 never filed as sub-issues, stay with `maintain.close_parent`.
 
 Every round's checks and review reach it (`round_ended`): a review that paused at a usage
-limit, a review that failed, and a person's own pull request, which is only reviewed; a
-review that runs again after a transient error is the host's own retry. It finds the checks
+limit, a review that stopped on a transient error, a review that failed, and a person's own pull
+request, which is only reviewed. It finds the checks
 that failed the same way before and after a fix round, which the state comment keeps, and
 names those that the fix round `route` starts diagnoses (`diagnosis`). A round whose commit
 conflicts with its base branch starts the round that resolves it, within
@@ -1414,8 +1414,8 @@ def after_round(
 
 # What `report` does after a round's review that is not a verdict on a NexKit pull request,
 # by what the engine answers: a person's own pull request reviewed, a review paused at a
-# usage limit or failed, or one that the host runs again after a transient error.
-REVIEW_ENDS = ("person_reviewed", "paused", "review_failed", "again")
+# usage limit or failed.
+REVIEW_ENDS = ("person_reviewed", "paused", "review_failed")
 
 
 def round_ended(
@@ -1431,15 +1431,18 @@ def round_ended(
     wait=None,
     label=None,
     ran=None,
+    now=None,
 ):
     """What follows the checks and the review of the round of `decision` on the pull request
     `pr`, which ended on `head`, as the engine decides it: (end, repeated). `review` is
     (`done`, the review NexKit acts on), (`paused`, the time the host runs it again after
-    its usage limit resets, or None when it does not), (`failed`, why), or (`again`, None)
-    for a review that the host runs again after a transient error, as its own retries do,
-    which the engine does not see end. `before` are the checks of the round before, as the
+    its usage limit resets, or None when it does not), (`failed`, why), or (`transient`, the
+    error) for a review that stopped on a transient error at `now`, which the engine runs
+    again, makes wait or leaves to a person as `stage_transient` does, counting from the
+    decision's runs again. `before` are the checks of the round before, as the
     state comment recorded them (`checks.recorded`). The end is one of `ROUND_ENDS` after a
-    verdict on a NexKit pull request, else one of `REVIEW_ENDS`; `repeated` names the checks
+    verdict on a NexKit pull request, `stage_transient`'s answer after a transient stop,
+    else one of `REVIEW_ENDS`; `repeated` names the checks
     that failed the same way before and after a fix round, for the next automatic fix round
     to diagnose. Raises `Refused`."""
     number = decision["issue"]
@@ -1463,6 +1466,11 @@ def round_ended(
         doc["rounds"]["fixed"] = head
     run = {"id": first_state.RUN_ID, "next": None, "kind": "runChecks", "changeVersion": head}
     doc["pending"] = [run]
+    kind, given = review
+    retry = int(decision.get("retry") or 0)
+    if kind == "transient" and retry > 0:
+        # The runs again of the round's command, which a review handed on keeps counting.
+        doc["again"] = {"transient": min(retry, MOST_AGAIN)}
     results = {"checks": _checks(checks), "baseFailure": str(wait["bug"]) if wait else None}
     event = _event(
         "actionFinished",
@@ -1477,9 +1485,6 @@ def round_ended(
     review_run = [a for a in answer["actions"] if a["kind"] == "runAgent"]
     if not review_run or review_run[0]["stage"] != "review":
         raise Refused("The engine runs no review after a round's checks.")
-    kind, given = review
-    if kind == "again":
-        return "again", _repeated(answer)
     if kind == "done":
         result = {**spent(ran), "output": _review_output(given)}
     elif kind == "paused":
@@ -1489,18 +1494,22 @@ def round_ended(
             "output": None,
             "limit": {"message": message, "reset": _time(given)},
         }
+    elif kind == "transient":
+        result = {**spent(ran), "output": None, "transient": True, "error": str(given)}
     else:
         result = {**spent(ran), "output": None, "error": str(given or "The review failed.")}
     event = _event(
         "actionFinished",
         number,
-        None,
+        usage.iso(now) if kind == "transient" and now else None,
         f"round-review-{pr}-{head}",
         action=review_run[0]["id"],
         changeVersion=head,
         result=result,
     )
     answer = step(answer["state"], event, found)
+    if kind == "transient":
+        return _transient_answer(answer["state"], answer["actions"], "review"), _repeated(answer)
     if kind == "done" and not person:
         return _round_end(answer, recheck), _repeated(answer)
     return _review_end(answer, kind, person), _repeated(answer)
@@ -2096,7 +2105,8 @@ def stage_limited(cfg, decision, reset, label=None):
 
 def stage_transient(cfg, decision, now, error, label=None):
     """What follows the transient stop of the agent of `decision`, a plan, implement or fix
-    stage, at `now` (`report._retry`), as the engine decides it: `("now", count)` to run it
+    stage, or of its publish, which goes as the same stop, at `now` (`report._retry`), as the
+    engine decides it: `("now", count)` to run it
     again at once, `("later", until, count)` after the next wait of `retry.wait_minutes`, or
     `("failed",)` for a person after the last. `count` is the number of the run again. Raises
     `Refused`."""
@@ -2108,9 +2118,16 @@ def stage_transient(cfg, decision, now, error, label=None):
     events = _hold_events(number, label)
     events.append(_event("actionFinished", number, usage.iso(now), _run_event_id(), **fields))
     state, actions = _answers(doc, events, policies(cfg))
+    return _transient_answer(state, actions, decision["action"])
+
+
+def _transient_answer(state, actions, stage):
+    """What the engine answers after the transient stop of `stage`'s agent, from the `state`
+    and `actions` it gave: `("now", count)`, `("later", until, count)` or `("failed",)` as
+    `stage_transient` says. Raises `Refused`."""
     kinds = {action["kind"]: action for action in actions}
     count = (state.get("again") or {}).get("transient")
-    if (kinds.get("runAgent") or {}).get("stage") == decision["action"] and count:
+    if (kinds.get("runAgent") or {}).get("stage") == stage and count:
         return "now", count
     if "wait" in kinds and count:
         return "later", kinds["wait"]["until"], count

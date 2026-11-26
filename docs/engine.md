@@ -105,8 +105,8 @@ of the protocol it speaks (see [versions](#versions)):
 All three read no network, no clock and no files but the engine's own prompt templates: the time is
 a field of each event. They hold no secret and never see one. The policies of the host come with
 every call, as the host's configuration reads at that moment, and the state keeps the ones that a
-running round started with, but `lostWaits` and `budgets`, which apply as the host gives them at
-each step.
+running round started with, but `lostWaits`, `budgets` and `agents`, which apply as the host gives
+them at each step.
 
 The states of a work item, and the events and actions that move it between them, are in [states,
 events and actions](engine-states.md). The runners, the policies a host decides and the hosts are in
@@ -150,8 +150,8 @@ events and actions](engine-states.md). The runners, the policies a host decides 
   read, and the files with their texts, which the host writes before the agent runs. A host
   that writes them first checks that each path is inside its `texts` folder, and writes none
   when one is not.
-- **Policies.** Beside the host's policies, the call reads two that the protocol does not hold
-  yet, as its schema names them: `checklist`, the items the plan and the review answer; and
+- **Policies.** Beside the host's policies, the call reads two of its own, as its schema names
+  them: `checklist`, the items the plan and the review answer; and
   `profiles`, the profiles triage chooses from, each with its `when` as a string. A plan needs
   `budgets.implement.seconds` as an integer, from the protocol's `budgets` policy, and the engine
   refuses one without it.
@@ -401,12 +401,22 @@ adapter's tests and the answers as what its adapter carries out.
   own. The engine moves an older state document to the current schema when it reads one, and
   refuses one that is newer than it knows, so an engine rolled back never guesses. Before 1.0, a
   document of schema version 1 that still holds `used.usd` is read without it.
+  `tests/golden/state/v<N>/` keeps a document of each state for each schema version, from 1, and
+  a test steps each one with a `tick`: the engine must read it and answer at the current version.
 - **Major and minor.** Every message carries the protocol's major version, `"protocol": 1`.
   Version 1 may change freely until NexKit 7.0 ships; at that release it is 1.0. From then on,
   each additive change raises the minor version, and every field it adds carries
   `"x-since": "1.<minor>"` in its schema; a new value of a field is a new major version, below.
   `protocol.MINOR` in `nexkit/protocol/` is the one place the minor version lives, and `load`
   leaves `x-since` out, as it does `$comment`.
+- **A test holds each released minor version.** `scripts/protocol_freeze.py` writes the schemas to
+  `tests/golden/protocol/`: in the release pull request of 7.0, and in each release that raises
+  the minor version. Whenever that folder holds a copy, a test compares the tree with it. It
+  allows a new optional property whose `x-since` is above the copy's minor version, and a changed
+  `$comment`. It refuses every other change, a changed `description` or `default` included: a
+  removed or renamed property, a new required one, a changed type, enum, `const` or limit, and a
+  new or removed schema file, such as an event or action kind. `state.schema.json` instead needs a
+  new state schema version. The script refuses to replace a copy that the tree breaks.
 - **A host asks which version it talks to.** The `describe` call carries the major version the
   host speaks, and answers the protocol's major and minor version, the engine's own version and
   the calls it answers; an engine that does not serve that major version answers an error. A host

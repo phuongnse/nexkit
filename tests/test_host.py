@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest import TestCase, mock
 
 from nexkit import agent, autopilot, engine, host, item_state
+from nexkit import config as configuration
 from nexkit import report as reports
 from nexkit.checks import recorded
 from nexkit.github import GitHubError
@@ -22,6 +23,7 @@ from nexkit.state import (
     answers_marker,
     empty_state,
     plan_data_record,
+    profile_record,
     questions,
     read_state,
     render_run,
@@ -467,6 +469,23 @@ class TakeTest(TestCase):
         self.assertEqual(self.state()["state"], "planning")
         self.assertEqual(self.cursor(), (LATER, f"comment-{asked['id']}"))
 
+    def test_the_stored_run_names_the_model_of_the_plan_s_profile(self):
+        cfg = profile_config()
+        self.gh.add_issue(43)
+        ready = Path(host.protocol.ROOT, "examples", "state", "ready.json")
+        state = {**json.loads(ready.read_text()), "item": "43"}
+        self.assertTrue(item_state.write(self.gh, 43, state, (None, None)))
+        record = profile_record({"profile": "hard", "chosen_by": "triage"})
+        self.gh.comment(43, f"{PLAN_MARKER}\n{record}\n## Plan\n\nAdd it.")
+        self.gh.human_comment(43, "/nexkit fix", at=LATER)
+        [(_, actions)] = host.take(self.gh, cfg, 43)
+        self.assertEqual([a["kind"] for a in actions], ["runAgent"])
+        pending = item_state.read(self.gh, 43)[1]["pending"]
+        [stored] = [a for a in pending if a["kind"] == "runAgent"]
+        expected = agent.action_for("fix", configuration.with_profile(cfg, "hard"))
+        self.assertEqual((stored["agent"], stored["model"]), (expected["agent"], "opus"))
+        self.assertNotEqual(stored["model"], agent.action_for("implement", cfg)["model"])
+
     def test_taking_again_after_the_events_were_taken_changes_nothing(self):
         self.gh.human_comment(42, "/nexkit plan", at=LATER)
         self.gh.human_comment(42, "Thanks", login="bob", at=LATER)
@@ -879,6 +898,13 @@ class PoliciesTest(HostCase):
                     "fix": {"seconds": 45 * 60},
                     "review": {"seconds": 20 * 60},
                 },
+                "agents": {
+                    stage: {
+                        key: agent.action_for(stage, pilot())[key]
+                        for key in ("agent", "model", "effort")
+                    }
+                    for stage in ("plan", "implement", "fix", "review")
+                },
             },
         )
         found = host.policies(self.cfg | {"autopilot": {**self.cfg["autopilot"], "enabled": False}})
@@ -903,6 +929,101 @@ class PoliciesTest(HostCase):
         self.assertEqual(found["fix"], found["implement"])
         for stage, budget in found.items():
             self.assertEqual(budget, {"seconds": agent.action_for(stage, cfg)["budget"]["seconds"]})
+
+    def stage_runs(self, found_policies):
+        """The `runAgent` that the engine answers for each stage it runs, by stage: a plan from
+        a new item, an implement round from its go, a fix round from a ready change, and a
+        review after the checks passed."""
+        runs = {}
+        passed = {"name": "test", "passed": True, "skipped": False}
+        checks = {"checks": [{**passed, "signature": None, "knownBaseFailure": False}]}
+        starts = (
+            ("plan", "new", {"kind": "requested", "what": "plan"}),
+            ("implement", "new", {"kind": "requested", "what": "go"}),
+            ("fix", "ready", {"kind": "requested", "what": "fix"}),
+            ("review", "checking", {"kind": "actionFinished", "action": "runChecks"}),
+        )
+        for stage, state, event in starts:
+            example = host.protocol.ROOT / "examples" / "state" / f"{state}.json"
+            doc = json.loads(example.read_text())
+            event = {
+                "protocol": 1,
+                "id": "e1",
+                "item": "42",
+                "at": "2026-11-23T15:01:11Z",
+                "by": {"id": "alice", "role": "writer"},
+                "note": "",
+                "plan": None,
+                **event,
+            }
+            if event["kind"] == "actionFinished":
+                pending = next(one for one in doc["pending"] if one["kind"] == event["action"])
+                event |= {"action": pending["id"], "changeVersion": None, "result": checks}
+                event["changeVersion"] = pending.get("changeVersion")
+            found = host.step(doc, event, found_policies)
+            [runs[stage]] = [one for one in found["actions"] if one["kind"] == "runAgent"]
+            self.assertEqual(runs[stage]["stage"], stage)
+        return runs
+
+    def assertNames(self, run, expected):
+        found = {key: run[key] for key in ("agent", "model", "effort")}
+        self.assertEqual(found, {key: expected[key] for key in found})
+
+    def test_each_stage_s_agent_is_what_its_runner_runs(self):
+        cfg = make_config()
+        found = host.policies(cfg)
+        for stage, run in self.stage_runs(found).items():
+            with self.subTest(stage=stage):
+                self.assertNames(run, agent.action_for(stage, cfg))
+                self.assertNames(run, found["agents"][stage])
+        self.assertNotIn("triage", found["agents"], "no profiles, no triage stage")
+
+    def test_with_a_profile_each_stage_names_what_the_profile_s_runner_runs(self):
+        cfg = profile_config()
+        triage = {key: agent.action_for("triage", cfg)[key] for key in ("agent", "model", "effort")}
+        for name in cfg["profiles"]:
+            with self.subTest(profile=name):
+                found = host.policies(cfg, name)
+                self.assertEqual(found["agents"]["triage"], triage, "no profile changes triage")
+                self.assertEqual(
+                    found["agents"]["plan"], {"agent": None, "model": None, "effort": None}
+                )
+                variant = configuration.with_profile(cfg, name)
+                runs = self.stage_runs(found)
+                self.assertNames(runs["plan"], {"agent": None, "model": None, "effort": None})
+                for stage in ("implement", "fix", "review"):
+                    self.assertNames(runs[stage], agent.action_for(stage, variant))
+        # The profiles differ, so the test tells them apart.
+        models = {
+            host.policies(cfg, name)["agents"]["implement"]["model"] for name in cfg["profiles"]
+        }
+        self.assertEqual(len(models), 2)
+        # A name that is no profile leaves the configuration as it is.
+        self.assertEqual(host.policies(cfg, "gone")["agents"], host.policies(cfg)["agents"])
+
+    def test_a_profile_s_time_is_the_runner_s_time(self):
+        cfg = profile_config()
+        found = host.policies(cfg, "hard")["budgets"]
+        variant = configuration.with_profile(cfg, "hard")
+        for stage in ("implement", "fix", "review"):
+            expected = agent.action_for(stage, variant)["budget"]["seconds"]
+            self.assertEqual(found[stage], {"seconds": expected})
+
+    def test_the_item_s_profile_is_its_latest_plan_s_or_the_default(self):
+        cfg = profile_config()
+        self.assertIsNone(host.item_profile(make_config(), []))
+        self.assertEqual(host.item_profile(cfg, []), "standard")
+
+        def plan(name):
+            record = profile_record({"profile": name, "chosen_by": "triage"})
+            return {
+                "id": 1,
+                "user": {"login": BOT_LOGIN, "type": "Bot"},
+                "body": f"{PLAN_MARKER}\n{record}\n## Plan\n\nAdd it.",
+            }
+
+        self.assertEqual(host.item_profile(cfg, [plan("hard")]), "hard")
+        self.assertIsNone(host.item_profile(cfg, [plan("gone")]))
 
     def test_lost_work_starts_again_only_with_autopilot(self):
         off = self.cfg | {"autopilot": {**self.cfg["autopilot"], "enabled": False}}

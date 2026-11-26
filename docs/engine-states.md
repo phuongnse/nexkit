@@ -246,6 +246,14 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   whose accept was refused while an observation said it was acceptable (`refusedAcceptable`) is
   not tried again, so each version is tried once. The engine drops `refusedAcceptable` with the
   version.
+- **A person's approval of a change that waits for its accept** (`changeApproved` in `ready`
+  with attention `accept`, `acceptRefused` or `reopened`) accepts it under the `autoWhenPassed`
+  accept policy and changes nothing under `person`, where that person accepts it themselves. An
+  approval after `acceptRefused` or `reopened` is of any version of the change, as NexKit 6 tries
+  a refused merge again on the head that passed. One for `accept` is of the change's version,
+  and another version changes nothing. It changes nothing while the latest observation says the
+  change conflicts, which is the conflict policy's, and for an item that is only reviewed. It
+  goes to `accepting` with an `accept`, which a hold keeps back.
 - **An agent that runs out of time** in an implement or fix stage: with splits on, as autopilot
   has them, the item asks once for a plan that splits it, and the state records that it asked;
   otherwise, the second time, and for an item at `splitDepth` levels of parts, which is not

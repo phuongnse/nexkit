@@ -740,6 +740,26 @@ MUTANTS = {
         "seen": ("walker",),
         "families": ("give",),
     },
+    # A person's approval accepts a change under any accept policy, not only `autoWhenPassed`,
+    # where NexKit 6 merges only with `merge.auto` (#569).
+    "approval-accepts-under-person": {
+        "path": MACHINE,
+        "old": """            or self.p["accept"] != "autoWhenPassed"
+""",
+        "new": "",
+        "seen": ("harness", "walker"),
+        "families": ("approvals",),
+    },
+    # An approval of another version accepts a change that waits for its accept, where NexKit 6
+    # merges a ready round only on the head that passed (#569).
+    "approval-of-another-version-accepts": {
+        "path": MACHINE,
+        "old": """            or (reason == "accept" and event["changeVersion"] != self.version)
+""",
+        "new": "",
+        "seen": ("harness",),
+        "families": ("approvals",),
+    },
     # A person's fix or review request is refused on a ready item, so no command starts a
     # round on a NexKit pull request, where NexKit 6 starts it (#568).
     "request-refused-on-a-ready-item": {

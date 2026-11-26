@@ -579,8 +579,17 @@ host runs it through its own adapter. A new rule of the engine comes with a case
    person. NexKit 6's checks of a hold, trust, blockers and waves come first, so the engine is
    never asked for a held or blocked issue. Every start, merge and close that autopilot makes now
    follows an answer of the engine, which `tests/test_autopilot.py` checks by reading
-   `autopilot.py`. Which of the issues that may start do, and in what order, is the engine's too
-   (`host.sweep`, called by `autopilot.preview`): the host sends the start steps without a pull
+   `autopilot.py`. A writer's approval of a NexKit pull request goes to the engine too (`host.approved`, called by
+   `maintain.send_approval` and `maintain.merge_approved`): the host sends it as a `changeApproved`
+   to the document of the latest round's outcome, and the engine answers a merge, an acceptance of
+   the checklist items a person decides, or nothing. Under `merge.auto`, an approval after a
+   merge that GitHub refused, or of a pull request that was reopened, merges it, whatever commit
+   it names, and an approval of a `ready` round does on that round's head; with `merge.auto` off,
+   it accepts only the items a person decides. An engine that refuses to answer leaves GitHub
+   as it was, and the approval's run only logs why. A hold, an implement round that still runs,
+   a pull request with no round and a round whose outcome takes no approval stay the host's. A
+   head that moved after the round is reviewed by the merge's existing engine path. Which of the issues that may start do, and in what order, is the
+   engine's too (`host.sweep`, called by `autopilot.preview`): the host sends the start steps without a pull
    request as a `sweep` call, with the busy count as `running`, the index of each issue's
    milestone, its wave and whether pull requests wait for it as a bug issue about the default
    branch, and says each answer in NexKit 6's words. It names no account at a usage limit, so

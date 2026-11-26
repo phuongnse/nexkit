@@ -259,7 +259,10 @@ when a list of what the code defines misses an entry. These rules close each of 
    [stages](stages.md) list the sections the code writes, and that each value the pages repeat
    matches its constant, and that the words [agents and profiles](agents-and-profiles.md) and
    [failure handling](failure-handling.md#failure-handling) list as marking a failing line are those
-   of `FAILURE_LINE`; that the tools [agents and profiles](agents-and-profiles.md#agents) give the
+   of `FAILURE_LINE`; that the retry delays [failure handling](failure-handling.md#failure-handling)
+   give for `publish` and for every other GitHub API call are those of `publish.WAITS` and
+   `github.GitHub.waits`, with their counts of tries; that the tools
+   [agents and profiles](agents-and-profiles.md#agents) give the
    plan and review stages are those of `READ_ONLY_TOOLS`; that no doc, the README, AGENTS.md or a
    skill repeats a pinned version: each pin that [D9](decisions/d9-pins-live-in-one-place.md)
    governs, or a lint tool's version from `scripts/lint.sh`; that each test the security page

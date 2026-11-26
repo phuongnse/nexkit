@@ -3,9 +3,10 @@ plugin's skills matches skills/. The links of every page under docs/, of the REA
 of the plugin's skills and of the maintenance skills resolve, every link to how it works and the
 pages split from it resolves, each task of the nexkit-maintain skill links a section of the delivery
 page, AGENTS.md keeps within its word limits, the architecture page's job and module tables match
-the workflows and nexkit/, and each test the security page names exists. The decisions index matches
-the decision files, and each decision is linked, as docs/writing-docs.md#how-the-docs-stay-correct
-says."""
+the workflows and nexkit/, the how-it-works page's job table matches the jobs of pipeline.yml, the
+permissions its rows name and the number in its heading, and each test the security page names
+exists. The decisions index matches the decision files, and each decision is linked, as
+docs/writing-docs.md#how-the-docs-stay-correct says."""
 
 import re
 import unittest
@@ -20,6 +21,7 @@ HEADING = re.compile(r"^#{1,6} (.+?)\s*$", re.M)
 FENCE = re.compile(r"^```.*?^```", re.M | re.S)
 AGENTS = ROOT / "AGENTS.md"
 ARCH = DOCS / "architecture.md"
+HOW_IT_WORKS_PAGE = DOCS / "how-it-works.md"
 SECURITY = DOCS / "security.md"
 DECISIONS = DOCS / "decisions"
 DECISIONS_INDEX = DOCS / "decisions.md"
@@ -35,6 +37,31 @@ TEST_NAME = re.compile(r"`(test_\w+)`")
 WORKFLOWS = ("pipeline.yml", "pipeline-agent.yml", "pipeline-review.yml")
 JOBS_HEADER = "| Workflow | Job | Job token | App token | Secrets |"
 MODULES_HEADER = "| Module | Purpose |"
+RUN_JOBS_HEADER = "| Job | Runs for | Does |"
+RUN_HEADING = re.compile(r"^## One run, (\w+) jobs$", re.M)
+NUMBERS = (
+    "zero",
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "ten",
+    "eleven",
+    "twelve",
+    "thirteen",
+    "fourteen",
+    "fifteen",
+    "sixteen",
+    "seventeen",
+    "eighteen",
+    "nineteen",
+    "twenty",
+)
 DECISIONS_HEADER = "| Decision | Title | Status |"
 WORD = re.compile(r"\S*\w\S*")
 RULES = re.compile(r"^## Rules\n(.*?)(?=^## |\Z)", re.M | re.S)
@@ -276,6 +303,39 @@ class ArchitectureTests(unittest.TestCase):
                 any(f"`{name}`" in cell for cell in firsts),
                 f"docs/architecture.md has no row for nexkit/{name}",
             )
+
+
+class HowItWorksTests(unittest.TestCase):
+    def test_the_run_table_has_a_row_for_each_job_of_the_pipeline(self):
+        rows = {row[0]: row for row in table(HOW_IT_WORKS_PAGE, RUN_JOBS_HEADER)}
+        self.assertTrue(rows, "docs/how-it-works.md has no job table")
+        jobs = jobs_of((ROOT / ".github/workflows/pipeline.yml").read_text())
+        for name, job in sorted(jobs.items()):
+            self.assertIn(
+                f"`{name}`", rows, f"docs/how-it-works.md has no row for pipeline.yml job {name}"
+            )
+            named = dict(re.findall(r"`([\w-]+): (read|write)`", rows[f"`{name}`"][2]))
+            for permission, level in named.items():
+                self.assertEqual(
+                    level,
+                    permissions_of(job).get(permission),
+                    f"the row of {name} in docs/how-it-works.md differs from its workflow "
+                    f"on {permission}",
+                )
+        for key in rows:
+            self.assertIn(
+                key.strip("`"),
+                jobs,
+                f"docs/how-it-works.md has a row for {key}, which pipeline.yml does not define",
+            )
+        match = RUN_HEADING.search(HOW_IT_WORKS_PAGE.read_text())
+        self.assertIsNotNone(match, "docs/how-it-works.md has no heading 'One run, <number> jobs'")
+        self.assertEqual(
+            match.group(1),
+            NUMBERS[len(jobs)],
+            f"the heading of docs/how-it-works.md says {match.group(1)} jobs; "
+            f"pipeline.yml has {len(jobs)}",
+        )
 
 
 def decision(path):

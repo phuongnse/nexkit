@@ -14,7 +14,7 @@ Each kind of content has one home. Write a fact in its home and link to it from 
 | --- | --- |
 | What NexKit is, what it adds around an agent, how to install it | The [README](../README.md) |
 | How NexKit behaves on a repository: commands, jobs, stages, state, failure handling | [How it works](how-it-works.md) and the pages it links: [stages](stages.md), [work without a command](work-without-a-command.md), [agents and profiles](agents-and-profiles.md) and [failure handling](failure-handling.md) |
-| Every setting, its default and what it does | The [configuration reference](configuration.md) |
+| Every setting, its default and what it does | The [configuration reference](configuration.md) and its pages for [checks](checks.md), [autopilot](autopilot.md) and [merges and waits](merges-and-waits.md) |
 | Why a run stopped or waits, and what to do | [Troubleshooting](troubleshooting.md) |
 | The engine, its protocol and its hosts | [The engine](engine.md) |
 | How NexKit is built: modules, workflows and jobs, tokens and secrets | [Architecture](architecture.md) |
@@ -81,7 +81,8 @@ It never holds progress, dates, names or issue numbers.
 A reference page describes how NexKit behaves, as it is, and the agreed work that is not built yet.
 [How it works](how-it-works.md) and the pages split from it ([stages](stages.md), [work without a
 command](work-without-a-command.md), [agents and profiles](agents-and-profiles.md) and [failure
-handling](failure-handling.md)), the [configuration reference](configuration.md),
+handling](failure-handling.md)), the [configuration reference](configuration.md) and the pages split
+from it ([checks](checks.md), [autopilot](autopilot.md) and [merges and waits](merges-and-waits.md)),
 [troubleshooting](troubleshooting.md), [the engine](engine.md) and [security](security.md) are
 reference pages.
 
@@ -228,9 +229,9 @@ when a list of what the code defines misses an entry. These rules close each of 
    at its new home. The [docs audit skill](../.claude/skills/nexkit-docs-audit/SKILL.md) says how a
    page is read and what each issue holds.
 9. **Checks catch what a machine can.** `tests/test_docs.py` checks that [the map](README.md) lists
-   every doc, that the links of the map, of this page, of the architecture page, of the security
-   page, of [AGENTS.md](../AGENTS.md) and of the maintenance skills under `.claude/skills/`
-   resolve, that each link to how it works and the pages split from it resolves, that each task of
+   every doc, that the links of every page under `docs/`, of the README, of
+   [AGENTS.md](../AGENTS.md), of the plugin's skills under `skills/` and of the maintenance skills
+   under `.claude/skills/` resolve, that each link to how it works and the pages split from it resolves, that each task of
    the `nexkit-maintain` skill links a section of
    [Delivery](delivery.md), that AGENTS.md keeps within its word limits, that the job and module
    tables of the architecture page match the workflows and `nexkit/`, and that each test the

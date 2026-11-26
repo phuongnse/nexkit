@@ -46,7 +46,7 @@ approval while a round runs, or of a pull request whose round ended otherwise, s
 nothing. Nor does one of a pull request that a person merged or closed first, as an owner
 who approves and merges in the same minute does: its round comment stays as it was, and
 nobody is mentioned. With autopilot, each sweep also merges a `merge_refused` pull request that GitHub
-reports as mergeable (see [Automatic merge](configuration.md#automatic-merge)).
+reports as mergeable (see [Automatic merge](merges-and-waits.md#automatic-merge)).
 
 **Resolving conflicts** (`conflicts.auto_resolve`). When the base branch moves, NexKit
 checks its open pull requests into it. GitHub's own mergeability check decides, so no
@@ -127,19 +127,19 @@ finished, and the round's marker records each check that passed there on the hea
 stopped, as its comment says. A job that checked another commit, or whose artifact cannot
 be read, adds nothing. Each of those checks gets that commit in the next rounds'
 `NEXKIT_CHECK_VERIFIED_SHA`, so it can skip work its paths do not need (see [Skipping work
-that a change cannot affect](configuration.md#skipping-work-that-a-change-cannot-affect));
+that a change cannot affect](checks.md#skipping-work-that-a-change-cannot-affect));
 it still runs, and decides by itself.
 
 ### Autopilot
 
-With `autopilot.enabled` (see [Autopilot](configuration.md#autopilot)), NexKit posts no
+With `autopilot.enabled` (see [Autopilot](autopilot.md#autopilot)), NexKit posts no
 commands on its own behalf; it starts them the way it starts automatic rounds, with a
 dispatch of the workflow. A *sweep* decides which:
 
 1. It finds the scope: the open issues of the earliest open milestone, oldest first, or
    with `autopilot.scope: null` every open issue, by milestone in the same order and then
    the issues without one, each group oldest first. Issues for CI failures, then for
-   [Dependabot advisories](configuration.md#dependabot-advisories), then for flaky runs go
+   [Dependabot advisories](autopilot.md#dependabot-advisories), then for flaky runs go
    before all others. An issue for an advisory has no milestone and is in either scope.
 2. For each issue, it reads the markers of NexKit's run comments on the issue and its pull
    request, the latest plan, the issue's *blocked by* relationships and whether it
@@ -350,7 +350,7 @@ the `null` scope, since it may have replaced a sweep that waited.
   out, and the links of the run, its attempts and its jobs lead to all of it. A round on
   the issue downloads the evidence of
   the runs its marker records (see
-  [Evidence from CI runs](configuration.md#evidence-from-ci-runs)). Each report holds a marker with its commit, so a
+  [Evidence from CI runs](checks.md#evidence-from-ci-runs)). Each report holds a marker with its commit, so a
   commit is reported once, and a newer failing commit adds a comment to the open issue.
   When a later attempt of a reported run passes, for example after a person ran it again,
   autopilot says which attempt passed in a comment on that issue. Each report also records
@@ -376,10 +376,10 @@ the `null` scope, since it may have replaced a sweep that waited.
   is `bug`,
   in scope, titled by the failure in plain words, for example 'Test "pages through more
   than twenty orders" in OrderHistory.test.tsx fails at times on main' (see [the title
-  forms](configuration.md#autopilot)), starts with its own marker that names the workflow and a key for
+  forms](autopilot.md#autopilot)), starts with its own marker that names the workflow and a key for
   the failure, labelled `nexkit:flaky`, and is planned right after the `bug` issues for a
   failing default branch, labelled `nexkit:ci` (see *Labels* under
-  [Autopilot](configuration.md#autopilot)).
+  [Autopilot](autopilot.md#autopilot)).
   Each record names the commit, the run, and the job, file and line, and message where
   the failure showed in each failed attempt. A later record of the same failure is a
   comment on its issue while that is open; once closed, a new issue opens that links it.
@@ -397,7 +397,7 @@ the `null` scope, since it may have replaced a sweep that waited.
   sweep within minutes through the `workflow_run` trigger, when the run is one a sweep
   acts on: it failed or was run again, or it passed while a `bug` issue about its
   workflow is open. That goes for the runs NexKit starts too (see [When a
-  finished run is noticed](configuration.md#autopilot)). Without the trigger, the end of the
+  finished run is noticed](autopilot.md#autopilot)). Without the trigger, the end of the
   next NexKit run checks the newest finished run of each workflow the same way, also a run
   that started the next round itself; the hourly schedule catches the rest.
 - **What autopilot reads.** The plan comment ends with a hidden record of its questions and

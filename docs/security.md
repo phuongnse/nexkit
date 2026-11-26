@@ -132,9 +132,9 @@ only as marked, untrusted text, and what they do can never start work.
   `autopilot.trusted_workflows` is trusted only when GitHub's record of the run its marker names
   confirms it: the listed file, the default branch, an event a writer or a schedule controls, and a
   run that was running when the issue was opened (see [Issues from a
-  workflow](configuration.md#issues-from-a-workflow)).
+  workflow](autopilot.md#issues-from-a-workflow)).
 - **A writer vouches for any other issue.** [`/nexkit
-  trust`](configuration.md#vouching-for-an-issue) is a comment that autopilot reads itself, so
+  trust`](autopilot.md#vouching-for-an-issue) is a comment that autopilot reads itself, so
   nothing an agent wrote into a comment of NexKit's can stand in for it.
 - **An edit by anyone else ends the trust.** The issue's author may still edit such an issue, so an
   edit by anyone else after it ends the trust. Each round NexKit starts looks for one right after

@@ -1,5 +1,5 @@
-"""The docs' map lists every doc, the links of the map, of the docs standard, of the architecture
-page, of the security page, of AGENTS.md and of the maintenance skills resolve, every link to how it
+"""The docs' map lists every doc, the links of every page under docs/, of the README, of AGENTS.md,
+of the plugin's skills and of the maintenance skills resolve, every link to how it
 works and the pages split from it resolves, each task of the nexkit-maintain skill links a section
 of the delivery page, AGENTS.md keeps within its word limits, the architecture page's job and
 module tables match the workflows and nexkit/, and each test the security page names exists, as
@@ -80,14 +80,19 @@ class DocsMapTests(unittest.TestCase):
             if doc.name != "README.md":
                 self.assertIn(doc.resolve(), listed, f"docs/README.md has no row for {doc.name}")
 
-    def test_the_links_of_the_map_the_docs_standard_and_agents_md_resolve(self):
-        for page in (DOCS / "README.md", DOCS / "writing-docs.md", AGENTS, ARCH, SECURITY):
+    def test_the_links_of_the_docs_the_readme_agents_md_and_the_skills_resolve(self):
+        pages = [
+            *sorted(DOCS.rglob("*.md")),
+            ROOT / "README.md",
+            AGENTS,
+            *sorted((ROOT / "skills").rglob("*.md")),
+        ]
+        for page in pages:
+            where = page.relative_to(ROOT)
             for file, anchor in links(page):
-                self.assertTrue(file.exists(), f"{page.name} links {file}, which does not exist")
+                self.assertTrue(file.exists(), f"{where} links {file}, which does not exist")
                 if anchor and file.suffix == ".md":
-                    self.assertIn(
-                        anchor, anchors(file), f"{page.name} links #{anchor} of {file.name}"
-                    )
+                    self.assertIn(anchor, anchors(file), f"{where} links #{anchor} of {file.name}")
 
     def test_each_link_to_how_it_works_and_its_pages_resolves(self):
         pages = {(DOCS / name).resolve() for name in HOW_IT_WORKS}

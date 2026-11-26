@@ -3,7 +3,7 @@
 This page says how NexKit itself is tested: which check covers what, when each one runs, and what a
 change that moves a decision of NexKit 6 into the engine must prove. It is for whoever works on
 NexKit. The commands are in [AGENTS.md](../AGENTS.md#verify), and how a repository that uses NexKit
-runs its own checks is in [the configuration reference](configuration.md).
+runs its own checks is in [the checks page](checks.md).
 
 ## Which check covers what
 
@@ -21,7 +21,7 @@ rounds on this repository run the commands that `checks` in `.nexkit/config.json
 | Differential check | `tests/differential/`, run by `tests/differential/check.sh` | The engine against NexKit 6, with random walks of the engine and its mutants, as [its README](../tests/differential/README.md) says |
 | Lint | `scripts/lint.sh` | ruff on the Python code, and actionlint on the workflows |
 | Plugin | `claude plugin validate --strict .` | The plugin's manifest and skills |
-| Docs | `tests/test_docs.py` | The map lists every doc, and the links of the map, of the docs standard, of the security page and of AGENTS.md resolve, and each test the security page names exists. AGENTS.md stays within 800 words, and each of its rules within 60, as [writing the docs](writing-docs.md#how-the-docs-stay-correct) says. It also compares the job table of [the architecture page](architecture.md) with the three pipeline workflows, and its module table with `nexkit/` |
+| Docs | `tests/test_docs.py` | The map lists every doc, and the links of every page under `docs/`, of the README, of AGENTS.md and of the plugin's skills resolve, and each test the security page names exists. AGENTS.md stays within 800 words, and each of its rules within 60, as [writing the docs](writing-docs.md#how-the-docs-stay-correct) says. It also compares the job table of [the architecture page](architecture.md) with the three pipeline workflows, and its module table with `nexkit/` |
 | The engine's image | `release.yml` | The image builds from the pinned base and answers over HTTP as `nexkit-engine` answers on standard input. `update-image.yml` proposes a new base, and its pull request needs this check |
 | Code scanning | `codeql.yml` | CodeQL on the Python code and the workflows |
 | Smoke test | `scripts/smoke.py` | Real Claude Code at its pin, as [the smoke test](#the-smoke-test) says |

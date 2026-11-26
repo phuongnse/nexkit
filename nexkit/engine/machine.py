@@ -69,12 +69,21 @@ INPUTS = {
 # The actions that carry an item on (docs/engine.md#conformance). Each belongs to the state
 # that asked for it, so the engine cancels the ones that run when the item leaves that state.
 # The others stay pending until the host reports them done, whatever the state.
-WORK = ("runAgent", "runChecks", "publish", "accept", "createParts", "replaceChange", "wait")
+WORK = (
+    "runAgent",
+    "runChecks",
+    "publish",
+    "accept",
+    "createParts",
+    "replaceChange",
+    "updateChange",
+    "wait",
+)
 # The actions that the host carries out again under a new id when it lost them: they only
 # tell, show or end, so doing one again changes nothing that one done already changed.
 AGAIN = ("close", "cancel", "needPerson", "show", "wait", "withdrawChange")
 # What a review-only item never gets: it is only checked and reviewed.
-WRITES = ("publish", "replaceChange", "accept", "createParts", "withdrawChange")
+WRITES = ("publish", "replaceChange", "updateChange", "accept", "createParts", "withdrawChange")
 # The states of a round, which keep the policies that the round started with.
 ROUND = ("working", "fixing", "checking", "reviewing")
 # The waits that a tick ends: those for a time.
@@ -314,6 +323,18 @@ class Step:
         began, now = _seconds(since["at"]), _seconds(self.at)
         return began is not None and now is not None and now - began > CHECKS_END
 
+    def behind_exempt(self):
+        """Whether the six hours of a wait for required checks do not end the merge: this
+        version is observed behind its base, and the conflict policy updates it
+        (`autopilot._merge_step` keeps trying it, since an update brings checks that pass)."""
+        observed = self.s["observed"]
+        return bool(
+            observed
+            and observed.get("behind")
+            and observed["version"] == self.version
+            and self.p["conflicts"] != "person"
+        )
+
     def wait(self, kind, on=None, until=None):
         self.waits += 1
         wait = {"id": self.number("w", self.waits), "for": kind, "until": until, "on": on}
@@ -551,8 +572,10 @@ class Step:
         return self.s["observed"]
 
     def coming(self):
-        """Whether a publish or a replace is on its way, which sets the change."""
-        return any(a["kind"] in ("publish", "replaceChange") for a in self.s["pending"])
+        """Whether a publish, a replace or an update is on its way, which sets the change."""
+        return any(
+            a["kind"] in ("publish", "replaceChange", "updateChange") for a in self.s["pending"]
+        )
 
     def reconcile(self, whole=True):
         """Bring the item in line with the latest observation of its change; doing so again
@@ -597,9 +620,10 @@ class Step:
         return True
 
     def took_change(self, result):
-        """A publish or a replace set the change. It changed the change outside the order of
-        the item's events, so the observation its result carries, read when the host handled
-        the result, replaces the latest one; `step` reconciles with it after the handler."""
+        """A publish, a replace or an update set the change. It changed the change outside the
+        order of the item's events, so the observation its result carries, read when the host
+        handled the result, replaces the latest one; `step` reconciles with it after the
+        handler."""
         observed = result["observed"]
         if observed and observed["changeId"] != result["change"]["id"]:
             raise EngineError(
@@ -607,7 +631,7 @@ class Step:
                 f"{observed['changeId']!r}; the host reports the action lost instead."
             )
         self.s["change"] = result["change"]
-        self.s["observed"] = {key: observed[key] for key in OBSERVED} if observed else None
+        self.s["observed"] = observation(observed) if observed else None
 
     def at_once(self):
         """Whether a conflict acts now: where nothing runs that it must wait for, and in checks
@@ -1079,7 +1103,7 @@ class Step:
         wait = waits[0]
         self.s["waits"].remove(wait)
         checks = wait["for"] == "requiredChecks" and self.state == "accepting"
-        if checks and self.checks_waited():
+        if checks and self.checks_waited() and not self.behind_exempt():
             # Required checks that neither pass nor fail are a person's to look into, and the
             # merge is not tried again (`autopilot._merge_step`).
             self.move("ready")
@@ -1100,7 +1124,7 @@ class Step:
         return True
 
     def on_changeObserved(self, event):
-        observed = {key: event[key] for key in OBSERVED}
+        observed = observation(event)
         change = self.s["change"]
         # Only the item's change: one a publish or a replace sets comes with its result.
         if not change or observed["changeId"] != change["id"] or observed == self.s["observed"]:
@@ -1224,7 +1248,8 @@ class Step:
     def restarts(self, action):
         """Whether lost work starts again: an agent run or checks that the engine started by
         itself, in the state that runs them. A person's work waits for a person, and a lost
-        publish, replace, accept or parts creation fails, as it writes (`autopilot._reportless`)."""
+        publish, replace, update, accept or parts creation fails, as it writes
+        (`autopilot._reportless`)."""
         if action.get("by") == "person":
             return False
         if action["kind"] == "runAgent":
@@ -1697,6 +1722,21 @@ class Step:
             rounds["baseFailure"] = result.get("baseFailure") or None
             rounds.pop("recheck", None)
             self.next_fix()
+        elif result["refusal"] == "behind":
+            # The branch is behind its base: an update brings it up to date without an agent,
+            # while `conflictRounds` has one left, counted apart from conflict rounds
+            # (`report._update_branch`). Under `person`, or with none left, a person decides.
+            limit = self.p["conflictRounds"]
+            if self.p["conflicts"] == "person":
+                self.move("ready")
+                self.need("acceptRefused", result["text"] or "The accept was refused.")
+            elif self.s["rounds"].get("updates", 0) < limit:
+                self.do("updateChange", changeVersion=self.version)
+            else:
+                self.move("ready")
+                self.need(
+                    "acceptRefused", f"Its {limit} automatic updates of the branch are used up."
+                )
         elif result["refusal"] == "notAccepted":
             self.move("failed")
             self.need("failed", result["text"] or "The accept failed.")
@@ -1717,6 +1757,20 @@ class Step:
         self.took_change(result)
         self.run("implement")
 
+    def finished_updateChange(self, result, action):
+        if result["change"] is None:
+            self.move("ready")
+            self.need(
+                "acceptRefused", result["refused"] or "The change could not be brought up to date."
+            )
+            return
+        self.took_change(result)
+        rounds = self.s["rounds"]
+        rounds["updates"] = rounds.get("updates", 0) + 1
+        # The observation may name a later version: take it before the checks, as for a publish.
+        if not self.reconcile():
+            self.check()
+
     def finished_createParts(self, result, action):
         ended = {part["item"]: part["state"] for part in self.s["parts"]}
         self.s["parts"] = [
@@ -1729,6 +1783,15 @@ class Step:
     def finished_cancel(self, result, action):
         # The cancelled action's late result changes nothing, so its spending comes here.
         self.spend(result)
+
+
+def observation(fields):
+    """The observation that `fields`, an event or a result's, hold as the state keeps it:
+    `behind` only when it is true."""
+    found = {key: fields[key] for key in OBSERVED}
+    if fields.get("behind"):
+        found["behind"] = True
+    return found
 
 
 def _seconds(text):

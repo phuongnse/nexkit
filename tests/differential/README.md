@@ -49,6 +49,7 @@ other difference grouped by where it differs, with an example, and exits 1 when 
 | `failure` | #415 | a `/nexkit go` that stopped as blocked with nothing to answer, then a comment or a blocker's close, with autopilot on or off |
 | `new` | #438 | the first plan of a new issue, with a hold label, a blocker, a lower wave, a failed plan or `/nexkit go`, an author outside the repository, `max_parallel` with another issue busy, and a parent |
 | `conflicted` | #423 | a merge refused for a conflict, or found conflicting at the end of the refusal, under both `conflicts.auto_resolve` values: the round's own merge, a sweep, a writer's approval, with conflict rounds used, a round on its way and `mergeable` unknown |
+| `behind` | #424 | a merge refused because the branch is behind its base, under both `conflicts.auto_resolve` values: the round's own merge, a sweep that waited 0 hours, 1 hour or past six, a writer's approval, with updates used, `conflicts.max_rounds` 1 or 3, an update or a review's dispatch that GitHub refuses, and required checks pending or passed |
 
 A family is a module with `scenarios()`, which yields each scenario as plain JSON in a fixed
 order whatever tree plays it, and `run(sc)`, which plays one and returns what it recorded. A time

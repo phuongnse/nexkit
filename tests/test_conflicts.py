@@ -1111,12 +1111,19 @@ class MergeRefusalTests(ReportCase):
             step_ = autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {5: 6}, now=later)
         self.assertEqual((step_["state"], step_["person"]), ("waits", True))
         self.assertIn("refused to decide", step_["reason"])
-        # A branch behind its base that `conflicts.auto_resolve` updates asks the engine nothing.
+        # A branch behind its base is sent as observed so, and the engine keeps its merge going
+        # when `conflicts.auto_resolve` updates it, past the six hours.
         self.gh.pulls[6]["mergeable_state"] = "behind"
-        with mock.patch.object(host, "step", side_effect=host.Refused("no")) as step:
+        with mock.patch.object(host, "step", wraps=host.step) as step:
             step_ = autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {5: 6}, now=later)
         self.assertEqual(step_["state"], "merge")
-        step.assert_not_called()
+        [(state, event, _)] = [call.args for call in step.call_args_list]
+        self.assertEqual((event["kind"], state["observed"]["behind"]), ("tick", True))
+        # Without it, a person looks into the checks, as for any other branch.
+        with mock.patch.dict(self.cfg["conflicts"], {"auto_resolve": False}):
+            step_ = autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {5: 6}, now=later)
+        self.assertEqual((step_["state"], step_["person"]), ("waits", True))
+        self.assertIn("have not passed for six hours", step_["reason"])
 
     def test_a_new_commit_on_a_merge_waiting_pull_request_is_reviewed(self):
         from nexkit import autopilot
@@ -1352,8 +1359,9 @@ class MergeRefusalTests(ReportCase):
 
 
 class MergeConflictEngineTests(ReportCase):
-    """A merge refused for a conflict is the engine's to decide (`host.accept_answer`): the
-    host sends the refusal with the conflict rounds used and carries out the answer."""
+    """A merge refused for a conflict, or because the branch is behind its base, is the
+    engine's to decide (`host.accept_answer`): the host sends the refusal with the conflict
+    rounds or the updates used, and carries out the answer."""
 
     def setUp(self):
         super().setUp()
@@ -1426,10 +1434,83 @@ class MergeConflictEngineTests(ReportCase):
         self.assertIn(f"**What unblocks it:** {autopilot.person(do, why)}.", outcome["summary"])
         self.assertFalse(rounds_started(self.gh))
 
+    def updated_round(self, n):
+        return render_run(
+            {
+                "round": 10 + n,
+                "trigger": "review",
+                "updated_branch": True,
+                "status": "success",
+                "url": f"https://x/runs/{n}",
+            }
+        )
+
+    def sent_all(self, cfg, **mutate):
+        """Every result that the engine received for the merge, in order, and the outcome."""
+        self.gh.pulls[6].update(mutate)
+        with mock.patch.object(host, "step", wraps=host.step) as step:
+            outcome = self.run_report(cfg=cfg)
+        sent = [
+            (call.args[0], call.args[1])
+            for call in step.call_args_list
+            if call.args[1]["kind"] == "actionFinished"
+            and {"refusal", "refused"} & set(call.args[1]["result"])
+        ]
+        return sent, outcome
+
+    def test_a_branch_behind_its_base_goes_to_the_engine_and_is_updated(self):
+        [(doc, event)], outcome = self.sent_all(self.config(), mergeable_state="behind")
+        self.assertEqual(event["result"]["refusal"], "behind")
+        self.assertNotIn("updates", doc["rounds"])
+        self.assertEqual(doc["rounds"]["conflicts"], 0)
+        self.assertEqual(outcome["outcome"], "branch_updated")
+        self.assertIn("It is behind `main`", outcome["summary"])
+        self.assertEqual(self.gh.updated, [(6, HEAD)])
+        self.assertTrue(self.gh.run_comments(6)[-1]["run"]["updated_branch"])
+
+    def test_the_updates_used_go_to_the_engine_apart_from_the_conflict_rounds(self):
+        self.gh.comment(6, self.updated_round(1))
+        [(doc, event)], outcome = self.sent_all(self.config(max_rounds=2), mergeable_state="behind")
+        self.assertEqual((doc["rounds"]["updates"], doc["rounds"]["conflicts"]), (1, 0))
+        self.assertEqual(outcome["outcome"], "branch_updated")
+        self.assertEqual(len(self.gh.updated), 1)
+
+    def test_a_branch_behind_with_its_updates_used_up_waits_for_a_person(self):
+        self.gh.comment(6, self.updated_round(1))
+        [(doc, event)], outcome = self.sent_all(self.config(max_rounds=1), mergeable_state="behind")
+        self.assertEqual((event["result"]["refusal"], doc["rounds"]["updates"]), ("behind", 1))
+        self.assertEqual(outcome["outcome"], "merge_refused")
+        used = "Its 1 automatic updates of the branch from `main` are used up."
+        self.assertIn(used, outcome["summary"])
+        self.assertEqual((self.gh.updated, rounds_started(self.gh)), ([], []))
+
+    def test_an_update_that_github_refuses_goes_back_to_the_engine_and_waits_for_a_person(self):
+        error = GitHubError(422, "Merge conflict")
+        with mock.patch.object(self.gh, "update_branch", side_effect=error):
+            [(_, first), (doc, second)], outcome = self.sent_all(
+                self.config(), mergeable_state="behind"
+            )
+        self.assertEqual(first["result"]["refusal"], "behind")
+        self.assertEqual(second["result"]["change"], None)
+        self.assertIn("could not update the branch", second["result"]["refused"])
+        self.assertEqual([action["kind"] for action in doc["pending"]], ["updateChange"])
+        self.assertEqual(outcome["outcome"], "merge_refused")
+        self.assertIn("NexKit could not update the branch: ", outcome["summary"])
+        self.assertFalse(rounds_started(self.gh))
+
+    def test_a_branch_behind_without_auto_resolve_is_a_person_s(self):
+        [(doc, event)], outcome = self.sent_all(self.config(False), mergeable_state="behind")
+        self.assertEqual(event["result"]["refusal"], "behind")
+        self.assertEqual(outcome["outcome"], "merge_refused")
+        do, why = _not_up_to_date("behind", "main")
+        self.assertIn(f"**What unblocks it:** {autopilot.person(do, why)}.", outcome["summary"])
+        self.assertEqual((self.gh.updated, rounds_started(self.gh)), ([], []))
+
     def test_an_answer_the_host_cannot_carry_out_waits_for_a_person_and_says_why(self):
         for kwargs in (
             {"mergeable": False},
             {"mergeable": None, "mergeable_state": "dirty"},
+            {"mergeable_state": "behind"},
         ):
             with self.subTest(**kwargs):
                 self.gh.pulls[6].update(kwargs)

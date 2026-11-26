@@ -171,6 +171,51 @@ MUTANTS = {
         "seen": ("harness", "walker"),
         "families": ("conflicted",),
     },
+    # An update is counted with the conflict rounds, not apart from them (#424). The host sends
+    # no update's result to the engine when it succeeds, so only the walker sees it.
+    "updates-counted-as-conflict-rounds": {
+        "path": MACHINE,
+        "old": """        rounds["updates"] = rounds.get("updates", 0) + 1
+""",
+        "new": """        rounds["conflicts"] += 1
+""",
+        "seen": ("walker",),
+        "families": ("behind",),
+    },
+    # A branch behind its base ends the six hours of a merge that waits for required checks,
+    # where NexKit 6 keeps trying it under `conflicts.auto_resolve` (#424).
+    "behind-exception-to-the-six-hours-dropped": {
+        "path": MACHINE,
+        "old": """if checks and self.checks_waited() and not self.behind_exempt():""",
+        "new": """if checks and self.checks_waited():""",
+        "seen": ("harness", "walker"),
+        "families": ("behind", "waits"),
+    },
+    # Under `person`, a branch behind its base is updated, where NexKit 6 leaves it to a
+    # person (#424).
+    "person-updates-a-branch-behind": {
+        "path": MACHINE,
+        "old": """            if self.p["conflicts"] == "person":
+                self.move("ready")
+                self.need("acceptRefused", result["text"] or "The accept was refused.")
+            elif self.s["rounds"].get("updates", 0) < limit:""",
+        "new": """            if self.s["rounds"].get("updates", 0) < limit:""",
+        "seen": ("harness", "walker"),
+        "families": ("behind",),
+    },
+    # The updates used never reach the engine at a merge, so it asks for an update past
+    # `conflicts.max_rounds` (#424).
+    "accept-answer-ignores-updates": {
+        "path": HOST,
+        "old": """    doc["rounds"]["conflicts"] = max(int(conflicts or 0), 0)
+    if int(updates or 0) > 0:
+        doc["rounds"]["updates"] = int(updates)
+""",
+        "new": """    doc["rounds"]["conflicts"] = max(int(conflicts or 0), 0)
+""",
+        "seen": ("harness",),
+        "families": ("behind",),
+    },
     # A judged round's next fix round starts even under a hold (#341).
     "hold-ignored-on-fix": {
         "path": MACHINE,

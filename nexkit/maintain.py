@@ -719,19 +719,21 @@ def start_conflict_round(
     return f"Started an automatic round on #{number} to merge `{base}`."
 
 
-def _updates_used(comments):
+def updates_used(comments):
+    """How many updates of the branch from its base the round comments in `comments` record."""
     return len([run for _, run in run_comments(comments) if run.get("updated_branch")])
 
 
-def update_branch(gh, target, row, limit, workflow, ref, before_review=None):
+def update_branch(gh, target, row, limit, workflow, ref, before_review=None, left=None):
     """Bring the branch of pull request `target["pr"]`, at `target["head"]`, up to date
     with its base branch on GitHub, and start `/nexkit review` on the new commit, which
     carries an earlier approval over when the pull request's own change is the same. At
     most `limit` updates per pull request (`conflicts.max_rounds`): `row`, the round that
-    asks, records this one. `before_review` runs once the branch is updated. Returns None,
-    or why nothing started."""
+    asks, records this one. `before_review` runs once the branch is updated. With `left`,
+    whether an update is left is the engine's answer (`host.accept_answer`), not counted
+    here. Returns None, or why nothing started."""
     pr, head, base = target["pr"], target["head"], target["base"]
-    if _updates_used(gh.comments(pr)) >= limit:
+    if (updates_used(gh.comments(pr)) >= limit) if left is None else not left:
         return f"Its {limit} automatic updates of the branch from `{base}` are used up."
     try:
         gh.update_branch(pr, head)
@@ -882,7 +884,7 @@ def stop_superseded(gh, pull, base, conflicting, strict, workflow, ref, max_roun
         and conflict_rounds_used([r for r in rounds if r.get("conflicts")]) >= max_rounds
     ):
         return ""
-    if not conflicting and _updates_used(comments) >= max_rounds:
+    if not conflicting and updates_used(comments) >= max_rounds:
         return ""
     # Before the stop, so only check jobs that finished count.
     passed = passed_before_stop(gh, run_id, head)

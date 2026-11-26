@@ -1129,6 +1129,48 @@ class AcceptAnswerTest(ReportCase):
                 self.assertEqual(state["attention"]["reason"], "acceptRefused")
                 self.assertNotIn("checksSince", state)
 
+    def test_a_branch_behind_its_base_follows_the_conflict_policy(self):
+        resolve = make_config(merge={"auto": True}, conflicts={"auto_resolve": True})
+        person = make_config(merge={"auto": True}, conflicts={"auto_resolve": False})
+        end, state = self.answer("behind", resolve)
+        self.assertEqual((end, state["state"]), ("update", "accepting"))
+        self.assertEqual([action["kind"] for action in state["pending"]], ["updateChange"])
+        self.assertEqual(state["pending"][0]["changeVersion"], self.HEAD)
+        end, state = self.answer("behind", person)
+        self.assertEqual((end, state["attention"]["reason"]), ("person", "acceptRefused"))
+        self.assertEqual(state["attention"]["text"], "Refused.")
+
+    def test_updates_count_apart_from_conflict_rounds_against_the_limit(self):
+        conflicts = {"auto_resolve": True, "max_rounds": 2}
+        resolve = make_config(merge={"auto": True}, conflicts=conflicts)
+        for used in (0, 1, 2, 3):
+            with self.subTest(used=used):
+                with mock.patch.object(host, "step", wraps=host.step) as step:
+                    end, state = self.answer("behind", resolve, updates=used, conflicts=0)
+                rounds = step.call_args.args[0]["rounds"]
+                self.assertEqual(rounds.get("updates", 0), used)
+                self.assertEqual(rounds["conflicts"], 0)
+                if used < 2:
+                    self.assertEqual(end, "update")
+                else:
+                    reason = state["attention"]["reason"]
+                    self.assertEqual((end, reason), ("person", "acceptRefused"))
+        # Conflict rounds used up leave the updates their own count.
+        self.assertEqual(self.answer("behind", resolve, conflicts=2)[0], "update")
+
+    def test_an_update_that_failed_is_a_person_s(self):
+        resolve = make_config(merge={"auto": True}, conflicts={"auto_resolve": True})
+        with mock.patch.object(host, "step", wraps=host.step) as step:
+            end = host.update_failed(resolve, 5, 6, self.HEAD, 0, "It failed.", 1)
+        self.assertEqual(end, "person")
+        state, event = step.call_args.args[:2]
+        self.assertEqual(state["rounds"]["updates"], 1)
+        failed = {"change": None, "refused": "It failed.", "observed": None}
+        self.assertEqual(event["result"], failed)
+        with mock.patch.object(host, "step", side_effect=host.Refused("no")):
+            with self.assertRaises(host.Refused):
+                host.update_failed(resolve, 5, 6, self.HEAD, 0, "It failed.")
+
     def test_a_merge_that_was_not_accepted_fails_the_item(self):
         end, state = self.answer("notAccepted")
         self.assertEqual((end, state["state"]), ("person", "failed"))
@@ -1200,6 +1242,21 @@ class ChecksWaitedTest(ReportCase):
         self.assertEqual(self.waited(timedelta(hours=1)), "merge")
         self.assertEqual(self.waited(timedelta(hours=6)), "merge")
         self.assertEqual(self.waited(timedelta(hours=6, seconds=1)), "waits")
+
+    def test_a_branch_behind_its_base_keeps_its_merge_when_conflicts_are_resolved(self):
+        since = datetime(2026, 11, 23, 15, 0, 0, tzinfo=UTC)
+        late = since + timedelta(hours=7)
+        for resolve, expected in ((True, "merge"), (False, "waits")):
+            with self.subTest(resolve=resolve):
+                conflicts = {"auto_resolve": resolve}
+                cfg = make_config(merge={"auto": True}, conflicts=conflicts)
+                with mock.patch.object(host, "step", wraps=host.step) as step:
+                    end = host.checks_waited(cfg, 5, 6, "c" * 40, since, late, behind=True)
+                self.assertEqual(end, expected)
+                self.assertTrue(step.call_args.args[0]["observed"]["behind"])
+        with mock.patch.object(host, "step", wraps=host.step) as step:
+            host.checks_waited(cfg, 5, 6, "c" * 40, since, late)
+        self.assertNotIn("behind", step.call_args.args[0]["observed"])
 
     def test_a_tick_the_engine_refuses_is_refused(self):
         with mock.patch.object(host, "step", side_effect=host.Refused("no")):

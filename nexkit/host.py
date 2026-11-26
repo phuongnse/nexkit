@@ -59,7 +59,18 @@ It decides what follows a merge that GitHub refused for a conflict (`report._ref
 answers a conflict round while `conflicts.max_rounds` has one left, or a person. The host starts
 the round with `start_conflict_round(left=...)`, which keeps NexKit 6's other reasons not to
 start one. A pull request found `dirty` only at the end goes as a `conflict` without
-`conflicts.auto_resolve` and as `needsPerson` with it. A branch behind its base stays NexKit 6's.
+`conflicts.auto_resolve` and as `needsPerson` with it.
+
+It decides what follows a merge that GitHub refused because the branch is behind its base
+(`report._update_branch`, `report._refused`): `accept_answer` sends it as a `behind` result with
+the updates used, which `conflicts.max_rounds` limits apart from conflict rounds, and the engine
+answers an update while one is left under `conflicts.auto_resolve`, and a person otherwise. The
+host carries out the update with `maintain.update_branch(left=...)`, which starts the review that
+carries the approval over, and sends an update that GitHub refused back (`update_failed`), which
+the engine hands to a person. A sweep's merge that waits for required checks past six hours
+sends the observation that its branch is behind (`checks_waited`), and the engine keeps trying
+the merge while `conflicts.auto_resolve` is on. The update that `maintain.stop_superseded`
+starts after the base branch moved stays NexKit 6's.
 
 It decides when a plan, implement or fix stage runs again after its agent stopped at a usage
 limit or on a transient error (`stage_limited`, `stage_transient`, called by `report`), and when
@@ -1582,19 +1593,33 @@ def required_failed(cfg, issue, pr, head, auto_fixes, wait):
 
 
 def accept_answer(
-    cfg, issue, pr, head, auto_fixes, result, before=(), since=None, at=None, conflicts=0
+    cfg,
+    issue,
+    pr,
+    head,
+    auto_fixes,
+    result,
+    before=(),
+    since=None,
+    at=None,
+    conflicts=0,
+    updates=0,
 ):
     """What follows the answer of GitHub's merge of the NexKit pull request `pr`, as the engine
     decides it (`report._refused`): the accept's `result`, as `accepted` or with its refusal
     kind, sent after the events `before`, which tell the engine what the host read, such as a
     head that moved. `since`, when given, is when required checks first had not passed on
     `head`, as NexKit 6's `waiting_since` says, and `at` the time of the events. `conflicts`
-    is the conflict rounds used, which `conflicts.max_rounds` limits. Returns
-    `(end, state)`, `end` being `accepted`, `waiting` while the required checks are awaited,
-    `fix` or `redo` for the round that follows, `base_failure` while a failure the base branch
-    has is awaited, or `person`, whose reason `state["attention"]` names. Raises `Refused`."""
+    is the conflict rounds used, which `conflicts.max_rounds` limits, and `updates` the updates of
+    the branch from its base, which it limits apart from them. Returns `(end, state)`, `end`
+    being `accepted`, `waiting` while the required checks are awaited, `fix` or `redo` for the
+    round that follows, `update` for the update of a branch that is behind its base,
+    `base_failure` while a failure the base branch has is awaited, or `person`, whose reason
+    `state["attention"]` names. Raises `Refused`."""
     doc = _pull_doc(cfg, issue, pr, head, "accepting", auto_fixes)
     doc["rounds"]["conflicts"] = max(int(conflicts or 0), 0)
+    if int(updates or 0) > 0:
+        doc["rounds"]["updates"] = int(updates)
     version = doc["change"]["version"]
     action = {"id": first_state.RUN_ID, "next": None, "kind": "accept"}
     doc["pending"] = [{**action, "changeVersion": version, "by": "engine"}]
@@ -1609,6 +1634,8 @@ def accept_answer(
     stage = (kinds.get("runAgent") or {}).get("stage")
     if state["state"] == "accepted":
         return "accepted", state
+    if "updateChange" in kinds:
+        return "update", state
     if state["state"] == "accepting" and "requiredChecks" in waits:
         return "waiting", state
     if stage == "fix":
@@ -1622,13 +1649,16 @@ def accept_answer(
     raise Refused(f"The engine answers {sorted(kinds)} after a merge, which the host cannot do.")
 
 
-def checks_waited(cfg, issue, pr, head, since, now):
+def checks_waited(cfg, issue, pr, head, since, now, behind=False):
     """What follows a sweep's tick of the merge of the NexKit pull request `pr` that waits for
     required checks since `since` on `head`, as the engine decides it
     (`autopilot._merge_step`): `merge`, to try it again, or `waits` for a person once the
-    checks have not passed for more than six hours. Raises `Refused`."""
+    checks have not passed for more than six hours. A `behind` branch keeps being tried
+    under `conflicts.auto_resolve`, as the engine decides. Raises `Refused`."""
     doc = _pull_doc(cfg, issue, pr, head, "accepting", 0)
     version = doc["change"]["version"]
+    if behind:
+        doc["observed"]["behind"] = True
     doc["checksSince"] = {"version": version, "at": usage.iso(since)}
     doc["waits"] = [{"id": "w1.1", "for": "requiredChecks", "until": usage.iso(now), "on": None}]
     event = _event("tick", issue, usage.iso(now), f"merge-{pr}-{version}", wait="w1.1")
@@ -1639,6 +1669,27 @@ def checks_waited(cfg, issue, pr, head, since, now):
     if (kinds.get("needPerson") or {}).get("reason") == "acceptRefused":
         return "waits"
     raise Refused(f"The engine answers {sorted(kinds)} after a merge's wait, which it cannot do.")
+
+
+def update_failed(cfg, issue, pr, head, auto_fixes, why, updates=0):
+    """What follows an update of the NexKit pull request `pr`'s branch, which the engine asked
+    for and GitHub refused, as it decides it (`report._update_branch`): `why` is GitHub's
+    answer, `updates` the updates used before it. The engine hands the merge to a person: this
+    returns `person`. Raises `Refused`."""
+    doc = _pull_doc(cfg, issue, pr, head, "accepting", auto_fixes)
+    if int(updates or 0) > 0:
+        doc["rounds"]["updates"] = int(updates)
+    version = doc["change"]["version"]
+    action = {"id": first_state.RUN_ID, "next": None, "kind": "updateChange"}
+    doc["pending"] = [{**action, "changeVersion": version}]
+    result = {"change": None, "refused": str(why), "observed": None}
+    fields = {"action": first_state.RUN_ID, "changeVersion": version, "result": result}
+    event = _event("actionFinished", issue, None, f"update-{pr}-{version}", **fields)
+    _, actions = _answers(doc, [event], policies(cfg))
+    reasons = {action["kind"]: action for action in actions}
+    if (reasons.get("needPerson") or {}).get("reason") == "acceptRefused":
+        return "person"
+    raise Refused(f"The engine answers {sorted(reasons)} after a failed update.")
 
 
 def change_seen(cfg, issue, pr, head, auto_fixes, seen, waiting=False):

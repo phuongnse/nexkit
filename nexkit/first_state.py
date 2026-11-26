@@ -677,6 +677,10 @@ class Item:
         rounds["started"] = max(started, 1)
         rounds["counted"] = _count(record.get("auto_fixes"))
         rounds["conflicts"] = conflict_rounds_used(rows)
+        # The updates of the branch from its base, counted apart from conflict rounds.
+        updates = len([row for row in rows if row.get("updated_branch")])
+        if updates:
+            rounds["updates"] = updates
         feedback = record.get("feedback") or {}
         feedback = feedback if isinstance(feedback, dict) else {}
         rounds["signatures"] = [

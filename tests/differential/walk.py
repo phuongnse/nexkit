@@ -73,7 +73,12 @@ INVARIANTS = {
     "in `ready` with `acceptRefused`",
     "required-checks": "a start of the wait for required checks lives only in `accepting`, on "
     "the change's version; a refusal for them that have not passed leaves one wait, a tick and "
-    "the first start of that version; a tick more than six hours after it needs a person",
+    "the first start of that version; a tick more than six hours after it needs a person, "
+    "unless the version is observed behind its base and the conflict policy is not `person`",
+    "accept-behind": "a merge refused as behind its base asks for an update only when the "
+    "conflict policy is not `person` and `conflictRounds` has an update left, which counts apart "
+    "from conflict rounds when it succeeds; otherwise, and for an update that failed, it needs a "
+    "person, in `ready` with `acceptRefused`",
 }
 
 # Broken invariants that a known issue covers: (invariant, a text the problem starts with).
@@ -290,6 +295,17 @@ class Walker:
             seen = {"changeId": cid, "version": version, "merged": False, "empty": False}
             seen["conflicts"] = rng.random() < 0.3
             return {"change": {"id": cid, "version": version}, "refused": None, "observed": seen}
+        if kind == "updateChange":
+            cid = (state["change"] or {}).get("id") or "308"
+            if rng.random() < 0.25:
+                return {"change": None, "refused": rng.choice(["x", None]), "observed": None}
+            version = f"v{rng.randint(5, 99)}"
+            seen = {"changeId": cid, "version": version, "merged": False, "empty": False}
+            seen["conflicts"] = rng.random() < 0.1
+            if rng.random() < 0.2:
+                seen["behind"] = True
+            found = {"change": {"id": cid, "version": version}, "refused": None}
+            return {**found, "observed": seen if rng.random() < 0.9 else None}
         pool = self.results.get(kind)
         if not pool:
             return None
@@ -348,6 +364,9 @@ class Walker:
             return {"kind": "partEnded", "part": rng.choice(open_parts)["item"], "state": end}
         checks = [wait for wait in state["waits"] if wait["for"] == "requiredChecks"]
         if checks and rng.random() < 0.6:
+            if state["change"] and rng.random() < 0.25:
+                # The merge waits on a branch that is behind its base, or no longer is.
+                return {"kind": "changeObserved", "conflicts": False, "behind": rng.random() < 0.8}
             return self.tick(rng, state, checks[0])
         if state["waits"] and rng.random() < 0.25:
             wait = rng.choice(state["waits"])
@@ -406,11 +425,17 @@ class Walker:
             if not state["change"]:
                 return None
             version = f"v{rng.randint(100, 999)}"
-            return {"kind": "changeObserved", "version": version, "conflicts": rng.random() < 0.2}
+            found = {"kind": "changeObserved", "version": version, "conflicts": rng.random() < 0.2}
+            if rng.random() < 0.3:
+                found["behind"] = True
+            return found
         if kind == "conflict":
             if not state["change"]:
                 return None
-            return {"kind": "changeObserved", "conflicts": rng.random() < 0.7}
+            found = {"kind": "changeObserved", "conflicts": rng.random() < 0.7}
+            if rng.random() < 0.3:
+                found["behind"] = rng.random() < 0.8
+            return found
         pool = self.shorts.get(kind)
         return copy.deepcopy(rng.choice(pool)) if pool else None
 
@@ -553,8 +578,9 @@ class Walker:
             )
             if not running and not (kept or waits & {"baseFailure", "start", "time", "usageLimit"}):
                 flag("carried", "fixing with nothing to run", info)
-        if new["state"] == "accepting" and not any(a["kind"] == "accept" for a in new["pending"]):
-            if not (kept or new["waits"]):
+        if new["state"] == "accepting":
+            accepts = [a for a in new["pending"] if a["kind"] in ("accept", "updateChange")]
+            if not (accepts or kept or new["waits"]):
                 flag("carried", "accepting with no accept", info)
         # transition
         if state is not None and new["state"] != state["state"]:
@@ -678,6 +704,10 @@ class Walker:
             mine = {**self.defaults, **(state["policies"] or {})}["conflictRounds"]
             if rounds["conflicts"] > max({**self.defaults, **pol}["conflictRounds"], mine):
                 flag("counts", "conflict rounds past conflictRounds", info)
+        if rounds.get("updates", 0) > old.get("updates", 0):
+            mine = {**self.defaults, **(state["policies"] or {})}["conflictRounds"]
+            if rounds["updates"] > max({**self.defaults, **pol}["conflictRounds"], mine):
+                flag("counts", "updates past conflictRounds", info)
         # hold
         if state["hold"] and new["hold"] and rounds["counted"] > old["counted"]:
             flag("hold", "an automatic fix round counted under a hold", info)
@@ -841,9 +871,10 @@ class Walker:
             # The reconcile after any event may start a conflict round.
             if not old.get("due") and rounds["conflicts"] == old["conflicts"]:
                 flag("usage-limit", "a run again after a tick counted as started", info)
-        self.required_checks(state, event, answer, done, flag, info)
+        self.required_checks(state, event, answer, done, given, flag, info)
         self.start(state, event, new, actions, flag, info)
         self.accept_conflict(state, event, answer, done, given, flag, info)
+        self.accept_behind(state, event, answer, done, given, flag, info)
         # automatic: a round that its checks or its review judged keeps its count, so only a
         # fix round issued in the same step is automatic after it.
         judged = done is not None and done["kind"] == "runChecks"
@@ -882,6 +913,9 @@ class Walker:
             and not state["hold"]
         )
         started = [a for a in actions if a["kind"] in self.tc.WORK]
+        # A conflict round that the request leads to is the engine's own, as for `lost`.
+        if new["rounds"]["conflicts"] > state["rounds"]["conflicts"]:
+            started = []
         if started and not free:
             flag("start", "a start works on an item that may not start", info)
         if free and state["state"] == "new":
@@ -918,7 +952,61 @@ class Walker:
         elif want == "ready" and attention.get("reason") != "acceptRefused":
             flag("accept-conflict", "a conflict at the merge left to a person says not why", info)
 
-    def required_checks(self, state, event, answer, done, flag, info):
+    def accept_behind(self, state, event, answer, done, given, flag, info):
+        """The invariants of a merge that was refused as behind its base, and of the update
+        that it asks for."""
+        if state is None or not answer["changed"] or not done or state["state"] != "accepting":
+            return
+        new = answer["state"]
+        attention = new["attention"] or {}
+        result = event.get("result") or {}
+        if done["kind"] == "updateChange":
+            seen = state["observed"]
+            if result["change"] is None:
+                moved = bool(seen) and (
+                    seen["version"] != state["change"]["version"]
+                    or seen["conflicts"]
+                    or seen["merged"]
+                    or seen["empty"]
+                )
+                if moved:
+                    # What the observation says meanwhile acts at once, whatever the update did.
+                    return
+                if new["state"] != "ready" or attention.get("reason") != "acceptRefused":
+                    flag("accept-behind", "an update that failed does not need a person", info)
+                elif new["rounds"].get("updates") != state["rounds"].get("updates"):
+                    flag("accept-behind", "an update that failed counted", info)
+                return
+            grew = new["rounds"].get("updates", 0) - state["rounds"].get("updates", 0)
+            # An update whose change conflicts follows the conflict policy, as any new version.
+            conflicts = (result["observed"] or {}).get("conflicts")
+            same = new["rounds"]["conflicts"] == state["rounds"]["conflicts"]
+            if grew != 1 or not (same or conflicts):
+                flag("accept-behind", "an update did not count apart from conflict rounds", info)
+            return
+        if done["kind"] != "accept" or result.get("accepted") or result.get("refusal") != "behind":
+            return
+        # What would move an item out of `accepting` by itself is not this rule's.
+        seen = state["observed"]
+        calm = bool(seen) and not (seen["conflicts"] or seen["merged"] or seen["empty"])
+        calm = calm and seen["version"] == state["change"]["version"] and not state["hold"]
+        if not calm or event.get("changeVersion") != state["change"]["version"]:
+            return
+        left = state["rounds"].get("updates", 0) < given["conflictRounds"]
+        updates = given["conflicts"] != "person" and left
+        asked = [a for a in answer["actions"] if a["kind"] == "updateChange"]
+        if updates and (len(asked) != 1 or new["state"] != "accepting"):
+            flag("accept-behind", "a branch behind with an update left is not updated", info)
+        elif not updates and (asked or new["state"] != "ready"):
+            flag("accept-behind", "a branch behind with no update to ask for is updated", info)
+        elif not updates and attention.get("reason") != "acceptRefused":
+            flag("accept-behind", "a branch behind left to a person says not why", info)
+        elif asked and asked[0].get("changeVersion") != state["change"]["version"]:
+            flag("accept-behind", "an update names another version than the change's", info)
+        if new["rounds"]["conflicts"] != state["rounds"]["conflicts"]:
+            flag("accept-behind", "a branch behind counted a conflict round", info)
+
+    def required_checks(self, state, event, answer, done, given, flag, info):
         """The invariants of the wait for required checks and its six hours."""
         new, actions = answer["state"], answer["actions"]
         since = new.get("checksSince")
@@ -956,7 +1044,15 @@ class Walker:
         late = datetime.strptime(event["at"], TIME) - datetime.strptime(first["at"], TIME)
         waited = first["version"] == state["change"]["version"] and late.total_seconds() > SIX_HOURS
         attention = new["attention"] or {}
-        if waited and (new["state"] != "ready" or attention.get("reason") != "acceptRefused"):
+        # A branch behind its base keeps its merge, unless a person decides what is behind.
+        behind = bool(seen and seen.get("behind") and seen["version"] == state["change"]["version"])
+        if waited and behind and given["conflicts"] != "person":
+            if "six hours" in attention.get("text", ""):
+                flag("required-checks", "a branch behind its base ended with the six hours", info)
+            if calm and not state["attention"] and new["state"] == "accepting":
+                if not any(a["kind"] == "accept" for a in actions):
+                    flag("required-checks", "a branch behind past six hours tries no accept", info)
+        elif waited and (new["state"] != "ready" or attention.get("reason") != "acceptRefused"):
             flag("required-checks", "a tick six hours after the start needs no person", info)
         elif not waited and new["state"] == "ready" and "six hours" in attention.get("text", ""):
             flag("required-checks", "the six hours ended early", info)

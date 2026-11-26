@@ -28,6 +28,7 @@ from .maintain import (
     start_conflict_round,
     start_waiting,
     update_branch,
+    updates_used,
 )
 from .protocol.size import MOST
 from .route import auto_input, on_base
@@ -1582,7 +1583,7 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch):
     if auto_resolve and state == "behind":
         # Checks that passed on a head behind its base count as "expected" when branch
         # protection wants it up to date: they never pass without an update.
-        return _update_branch(gh, target, row, message, limit, workflow, default_branch)
+        return _update_branch(gh, cfg, target, row, message, limit, workflow, default_branch)
     unreported = not complete and state in ("blocked", "behind") and CHECKS_PENDING.search(str(exc))
     if pending or unreported:
         if not _swept(gh, cfg, target["issue"]):
@@ -1652,8 +1653,19 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch):
         except Refused as error:
             do, why = refused_parts(error)
     elif state == "behind":
-        # Only without `conflicts.auto_resolve` does a refusal for this get here.
-        do, why = _not_up_to_date("behind", base)
+        # Only without `conflicts.auto_resolve` does a refusal for this get here, and a person
+        # decides it (`host.accept_answer`).
+        from .host import Refused, accept_answer, refused_parts
+
+        result = {"accepted": False, "refusal": "behind", "text": f"It is behind `{base}`."}
+        auto_fixes = (target.get("state") or {}).get("auto_fixes", 0)
+        try:
+            end, _ = accept_answer(cfg, target["issue"], pr, head, auto_fixes, result)
+            if end != "person":
+                raise Refused(f"The engine answers {end!r} to a branch that is behind.")
+            do, why = _not_up_to_date("behind", base)
+        except Refused as error:
+            do, why = refused_parts(error)
     else:
         do, why = refusal.explain_safely(gh, target, exc)
     target["found"] = {"refused": (do, why)}
@@ -1856,9 +1868,13 @@ def _swept(gh, cfg, number):
         return False
 
 
-def _update_branch(gh, target, row, message, limit, workflow, default_branch):
+def _update_branch(gh, cfg, target, row, message, limit, workflow, default_branch):
     """Bring a branch that branch protection wants up to date with its base branch, and
-    check and review the new commit, within `conflicts.max_rounds` per pull request."""
+    check and review the new commit, within `conflicts.max_rounds` per pull request. Whether
+    an update is left, or a person decides, is the engine's (`host.accept_answer`), and so is
+    what follows an update that GitHub refused (`host.update_failed`)."""
+    from .host import Refused, accept_answer, refused_parts, update_failed
+
     pr, base = target["pr"], target["base"]
 
     def save():
@@ -1868,7 +1884,32 @@ def _update_branch(gh, target, row, message, limit, workflow, default_branch):
             progress.save_state(gh, pr, target.get("state_comment"), target["state"])
             target["state_comment"] = read_state(gh.comments(pr))[0]
 
-    why = update_branch(gh, target, row, limit, workflow, default_branch, before_review=save)
+    result = {"accepted": False, "refusal": "behind", "text": f"It is behind `{base}`."}
+    auto_fixes = (target.get("state") or {}).get("auto_fixes", 0)
+    used = updates_used(gh.comments(pr))
+    try:
+        end, _ = accept_answer(
+            cfg, target["issue"], pr, target["head"], auto_fixes, result, updates=used
+        )
+        if end not in ("update", "person"):
+            raise Refused(f"The engine answers {end!r} to a branch that is behind.")
+    except Refused as error:
+        do, why = refused_parts(error)
+        target["found"] = {"refused": (do, why)}
+        return "merge_refused", f"{message}\n\n**What unblocks it:** {autopilot.person(do, why)}."
+    updating = end == "update"
+    why = update_branch(
+        gh, target, row, limit, workflow, default_branch, before_review=save, left=updating
+    )
+    if why and updating:
+        # An update that GitHub refused goes back to the engine, which hands it to a person.
+        try:
+            update_failed(cfg, target["issue"], pr, target["head"], auto_fixes, why, used)
+        except Refused as error:
+            do, why = refused_parts(error)
+            target["found"] = {"refused": (do, why)}
+            unblocks = autopilot.person(do, why)
+            return "merge_refused", f"{message}\n\n**What unblocks it:** {unblocks}."
     if why:
         target["found"] = {
             "refused": (

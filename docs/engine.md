@@ -291,7 +291,7 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
 | `reviewing` | A second agent session, with no memory of the first, reviews the change | `ready`, `accepting`, `fixing` |
 | `fixing` | An agent works on the failures and findings, in the same change, or its round waits to start | `checking`, `awaitingApproval`, `planning`, `working`, `ready`, `failed` |
 | `ready` | The change passed, or a person decides what is left | `accepting`, `fixing`, `checking` |
-| `accepting` | The host accepts the change | `accepted`, `ready`, `fixing`, `working`, `failed` |
+| `accepting` | The host accepts the change | `accepted`, `ready`, `fixing`, `working`, `checking`, `failed` |
 | `accepted` | The change is in | `new`, when a person reopens it |
 | `split` | The work is carried by its parts | `accepted`, `dropped` |
 | `noChange` | Nothing needs to change, and the item says why | `new`, when a person reopens it |
@@ -456,7 +456,17 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   `CHECKS_END` after that start goes to `ready` with `acceptRefused` instead of trying the accept
   again, so checks that never end are looked into by a person, as NexKit 6's autopilot does. The
   time is the tick's own: the engine reads no clock, and a refusal that comes in never ends the
-  wait.
+  wait. A branch that is behind its base keeps being tried past `CHECKS_END` while the conflict
+  policy is not `person`: an update brings checks that can pass. The engine knows it from the
+  latest observation, which says `behind` of the current version.
+- **An accept refused because the change is behind its base** (`behind`) is brought up to date
+  without an agent while an update is left: under any conflict policy but `person`, and while
+  `rounds.updates` is below `conflictRounds`, the engine answers `updateChange` and the item stays
+  in `accepting`. The update is the same change at a new version, so a successful result counts
+  one update, sets the change with the observation it carries, and goes to `checking`, as a
+  publish does. Updates count apart from conflict rounds, and `conflictRounds` limits each. Under
+  `person`, with no update left, or when the update fails, the item goes to `ready` with
+  `acceptRefused`. An observation that arrives while an update is on its way is no person's push.
 - **An agent that runs out of time** in an implement or fix stage: with splits on, as autopilot
   has them, the item asks once for a plan that splits it, and the state records that it asked;
   otherwise, the second time, and for an item at `splitDepth` levels of parts, which is not
@@ -528,7 +538,7 @@ Three things sit beside the state, never in place of it:
 | `planApproved`, `answered`, `changesRequested`, `changeApproved`, `dropRequested` | A person decides: the plan, its questions, the change, a person-only checklist item or criterion on the change's version, or the end |
 | `actionFinished` | An action ended, with its id, the change version and its result |
 | `actionLost` | An action the host started never reported, with any tokens it is known to have used |
-| `changeObserved` | The host read the change: its version, and whether it conflicts, was merged or became empty |
+| `changeObserved` | The host read the change: its version, and whether it conflicts, was merged, became empty or, when it says so, is behind its base |
 | `stopped` | The host stops the item, with the outcome |
 | `held`, `released` | A hold was set or taken off |
 | `blockerClosed`, `partEnded` | Work that this item waits for ended |
@@ -542,6 +552,7 @@ Three things sit beside the state, never in place of it:
 | `runAgent` | Runs a runner for a stage, see [runners](#runners); for a fix round, the checks it diagnoses first | The stage's result, tokens, a usage limit with its reset, a transient stop |
 | `publish` | Makes the agent's work the change: a commit and a pull request, or a draft | The change's id and version, or why it could not |
 | `replaceChange` | Drops the change and starts a new one from what is current | The new change |
+| `updateChange` | Brings the change up to date with the branch it was made on, without an agent: the same change at a new version | The change's id and new version, or why it could not |
 | `runChecks` | Runs its checks on a version of the change | Each result, its failure signature, and whether the failure matches a known failure of the base; the item about that failure when every failing check matches it |
 | `accept` | Accepts the change: a merge, or an accept of a draft | `accepted`, or refused with a kind: `transient`, `waitingForChecks`, `checkFailed`, `behind`, `headMoved`, `conflict`, `notAccepted` or `needsPerson`; for `checkFailed`, the item about a failure the base branch has when every check that failed fails as it does there |
 | `createParts` | Makes the parts of a split, each blocked by the earlier parts it needs | The parts' ids |
@@ -680,6 +691,7 @@ count as its own words say, such as "4 issues are in progress".
 | Observed conflict | `mergeable` is false (`mergeable_state` is `dirty`). While `mergeable` is null, as just after a push, the host reads again before it sends; a merged pull request keeps it null, and its observation says `conflicts` false | The draft no longer applies to the latest release of what it changes |
 | Observed merge | The pull request's `merged`, which needs no `mergeable` | The draft was published outside the engine |
 | Observed as empty | No file differs between the base and the head | The draft changes nothing any more |
+| Observed as behind | `mergeable_state` is `behind`; left out of an observation when it is not | The draft was made on an older release than the latest |
 | Observes on | `pull_request` synchronize, closed and reopened; a push to the base, for each open change; each sweep | A change of the draft or of the release; its worker, from time to time |
 | A change closed unmerged | Not an observation: the host tells a person, who drops the item or asks for the work again | The draft was discarded: the same |
 | One event at a time | Planned in [#332](https://github.com/phuongnse/nexkit/issues/332): every run that writes an item's state shares one concurrency group keyed by the item, which a routing job derives and passes on; the sweep sends one event into each item's group rather than writing states itself. A run that waits may be replaced by a newer one, so a run takes the item's events from their sources (comments, reviews, labels) and each already has a stable id from its source, such as the comment's id (see [Events and actions arrive more than once](#events-and-actions-arrive-more-than-once)). The run is then the state comment's only writer, which stands for the compare-and-set. The sweep's one event per item is a criterion of #332. Today NexKit groups runs by issue, by pull request, and in separate autopilot and `approved-N` review groups (`nexkit/templates/workflow.yml`), and the sweep writes many items in one run | The request's row, locked while its event is handled |
@@ -687,7 +699,9 @@ count as its own words say, such as "4 issues are in progress".
 What exists only because of GitHub stays in the GitHub host: the GitHub App, statuses, branch
 clean-up, watching CI and flaky runs, Dependabot, artifacts, carrying a review over a base merge,
 and up-to-date rules. Each reaches the engine as an event or a result: a failure the base branch
-has is a `runChecks` result, and a branch behind its base is an `accept` refused as `behind`.
+has is a `runChecks` result, and a branch behind its base is an `accept` refused as `behind`,
+which the engine answers with an `updateChange` that the host carries out by merging the base
+into the branch.
 
 The state comment's own write checks the revision too, as a backstop to the one concurrency
 group per item: the GitHub host writes a state only as the next revision of the one its caller
@@ -714,7 +728,7 @@ A case may start from an example state of the protocol. After every call, the su
 answer against the protocol, that the same request gives the same answer, and the outbox: every
 action of the answer is pending, and an action leaves `pending` only with its result, its cancel
 or its loss. It also checks NexKit's rule: every item that is not final has an action that works
-on it (`runAgent`, `runChecks`, `publish`, `accept`, `createParts`, `replaceChange` or `wait`), a
+on it (`runAgent`, `runChecks`, `publish`, `accept`, `createParts`, `replaceChange`, `updateChange` or `wait`), a
 wait, a hold or attention. The rule that a round counts only when its agent ran to its end or
 published joins these checks with the engine's rules of rounds, and so does the rule that a fix
 round waits to be issued (`rounds.due`) only in `fixing`. A state keeps a round's questions only
@@ -829,7 +843,14 @@ adapter. A new rule of the engine comes with a case.
    used: under `conflicts.auto_resolve` the engine answers a conflict round while
    `conflicts.max_rounds` has one left, and otherwise a person. A pull request that GitHub
    reports as `dirty` only at the end of the refusal is sent too, as a conflict without
-   `conflicts.auto_resolve` and as `needsPerson` with it. The merge's observations reach the engine too
+   `conflicts.auto_resolve` and as `needsPerson` with it. A merge refused because the branch is
+   behind its base is sent as `behind`, with the updates used: under `conflicts.auto_resolve` the
+   engine answers an update while `conflicts.max_rounds` has one left, which the host carries out
+   (`maintain.update_branch`) and starts the review that carries the approval over, and otherwise
+   a person; an update that GitHub refuses goes back to the engine, which hands it to a person.
+   A merge that waited more than six hours for required checks, and whose branch GitHub reports as
+   behind its base, keeps being tried under `conflicts.auto_resolve`: the engine makes that
+   exception. The merge's observations reach the engine too
    (`host.change_seen`): a pull request that a person merged first ends the item as `accepted`, a
    change that the base branch already holds ends it as `noChange`, and a commit that a person
    pushes while the merge waits is checked. After NexKit's own merge, `host.part_ended` sends the
@@ -863,8 +884,10 @@ adapter. A new rule of the engine comes with a case.
    after an implement round or on a push to the base branch (`maintain`), stays NexKit 6's,
    as does the merge itself (`report.merge_pull`) but for required checks that fail or have not
    passed yet, a conflict, a change that a person merged, one that became empty, a commit pushed while the
-   merge waits, and the end of the direct parent. The parents above it, and a parent's end
-   outside the merge, stay NexKit 6's, and so does a branch behind its base at the merge. A
+   merge waits, a branch behind its base, and the end of the direct parent. The parents above it,
+   and a parent's end outside the merge, stay NexKit 6's, and so does the update of a branch after
+   the base branch moved (`maintain.stop_superseded`). The import ends a merge that waited more
+   than six hours by itself, even when its branch is behind, since it reads no `mergeable_state`. A
    person's push during the wait for the base branch's failure is not sent yet: NexKit 6's
    sweep does not read the head then either. A `/nexkit go`
    that stopped as blocked with neither is the engine's too: it waits for a person, and with

@@ -36,7 +36,16 @@ EXAMPLES = protocol.ROOT / "examples"
 FIXTURES = json.loads((CASES / "fixtures.json").read_text())
 FINAL = ("accepted", "noChange", "dropped")
 # The actions that carry an item on: the others only tell, show or end.
-WORK = ("runAgent", "runChecks", "publish", "accept", "createParts", "replaceChange", "wait")
+WORK = (
+    "runAgent",
+    "runChecks",
+    "publish",
+    "accept",
+    "createParts",
+    "replaceChange",
+    "updateChange",
+    "wait",
+)
 PERSON = {"id": "octocat", "role": "decides"}
 ACTION_ID = re.compile(r"^a\d+\.\d+$")
 DEFAULTS = {
@@ -109,7 +118,7 @@ def event_of(short, state, number):
     if kind == "actionFinished":
         event["result"] = result_of(event["result"])
         kinds = {item["id"]: item["kind"] for item in (state or {}).get("pending", [])}
-        if kinds.get(event["action"]) in ("publish", "replaceChange"):
+        if kinds.get(event["action"]) in ("publish", "replaceChange", "updateChange"):
             # The host reads the change it set when it handles the result: unless the case says
             # otherwise, as the result gives it.
             change = event["result"].get("change")

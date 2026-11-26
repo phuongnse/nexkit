@@ -31,9 +31,7 @@
         "discussion",
         "notes",
         "plan",
-        "rounds",
         "checks",
-        "findings",
         "diff"
       ],
       "result": "results/fix.schema.json",

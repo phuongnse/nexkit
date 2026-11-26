@@ -1,0 +1,43 @@
+{
+  "policies": {
+    "budgets": {
+      "item": {
+        "seconds": 3600
+      }
+    }
+  },
+  "state": {
+    "example": "ready",
+    "set": {
+      "used": {
+        "tokens": {
+          "input": 0,
+          "cached": 0,
+          "output": 0
+        },
+        "seconds": 640,
+        "since": "2026-11-23T10:01:11Z"
+      }
+    }
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "changesRequested",
+        "at": "2026-11-23T15:01:11Z"
+      },
+      "state": "fixing",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ],
+      "expect": {
+        "used.since": "2026-11-23T15:01:11Z",
+        "pending.0.budget": {
+          "tokens": null,
+          "seconds": 3600
+        }
+      }
+    }
+  ]
+}

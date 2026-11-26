@@ -191,6 +191,10 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   the same stage runs again, as the same round, which counts nothing again and diagnoses
   again if it did. A limit with no reset, as when the host does not resume such runs, waits
   for a person in `failed`.
+- **An item whose own budget runs out** (`budgets.item`) goes to `failed` and keeps its change.
+  It is checked where an implement, fix or review run would start, and where such a run stops
+  without a usable result. Its attention text says whether its tokens or its time ran out. A fix
+  round that the stop prevents counts nothing.
 - **An agent that stops on a transient error**, without a usage limit, runs the same stage again
   after each wait of `retryWaits` in turn, as the same round, which counts nothing again and
   diagnoses again if it did. A wait of 0 runs it again in the same step. After the last wait,
@@ -255,7 +259,7 @@ Three things sit beside the state, never in place of it:
   (`acceptRefused`, about the change version for a conflict, and for required checks that did not
   pass in time), fix rounds used up
   (`roundsUsedUp`), a split that is not complete (`splitIncomplete`), a round that was blocked
-  (`blocked`), a step that failed (`failed`), an implement round with no change that failed on an error
+  (`blocked`), a step that failed or an item whose token or time budget ran out (`failed`), an implement round with no change that failed on an error
   (`roundFailed`), a final item opened again (`reopened`), or an
   action the host lost (`outage`).
 - **Hold:** nothing new starts by itself: the sweep's start waits, while a person's own request

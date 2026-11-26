@@ -1,0 +1,86 @@
+{
+  "policies": {
+    "retryWaits": [
+      0
+    ],
+    "budgets": {
+      "implement": {
+        "seconds": 2700
+      },
+      "item": {
+        "seconds": 3600
+      }
+    }
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "plan"
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:plan"
+      },
+      "state": "awaitingApproval",
+      "changed": true,
+      "actions": [
+        "show",
+        "needPerson"
+      ]
+    },
+    {
+      "event": {
+        "kind": "planApproved",
+        "at": "2026-11-23T15:01:11Z"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "runAgent"
+      ],
+      "expect": {
+        "pending.2.budget": {
+          "tokens": null,
+          "seconds": 2700
+        }
+      }
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@transient",
+        "at": "2026-11-23T15:51:11Z"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ],
+      "expect": {
+        "pending.2.budget": {
+          "tokens": null,
+          "seconds": 600
+        }
+      }
+    }
+  ]
+}

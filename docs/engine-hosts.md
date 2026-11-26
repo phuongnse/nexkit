@@ -27,7 +27,11 @@ its facts are:
 - **The runner** decides a limit on one session, since only it sees each model call as it
   happens. Its result says that the run stopped at it. GitHub's `stages.*.timeout_minutes` is one.
 - **The engine** decides a limit on one item across its stages and rounds, since stopping an item
-  is a move between states. An item's own budget is not in the protocol yet.
+  is a move between states. The `budgets.item` policy gives an item's tokens and seconds. Its
+  tokens count every run as input plus output, review included. Its time counts from the start of
+  its change after a plan's approval, a request for changes, or a person's fix or retry. Each
+  implement, fix or review run's budget is its stage's, lowered to what the item has left, and the
+  item goes to `failed` once either runs out. The GitHub host gives no item budget.
 - **The host** decides a limit on many items or an account, such as a quota or who pays for a
   key. It refuses to start work, or sends a `stopped` event.
 
@@ -79,7 +83,7 @@ document keeps them.
 | Fix rounds (`fixRounds`) | 0–10, and which rounds count | 2: rounds a person asked for, resumed, retried and stopped rounds do not count | 3; a request for changes and a retry start the count again |
 | When fix rounds run out (`whenRoundsRunOut`) | `person`, `failed` | `person` | `person`: the draft is ready with its open findings |
 | Conflicts (`conflicts`, `conflictRounds`) | `person`, `resolve`, `redo`, by who accepted; the most rounds that resolve or redo, 1–10 | `person`; `resolve` with `conflicts.auto_resolve`, at most `conflicts.max_rounds` | The agent's accept: `redo` on a new draft. A person's accept: the person asks to make it again |
-| Budgets (`budgets`) | Tokens, seconds and model calls per stage; an item's own budget is not in the protocol yet | Each stage's `stages.*.timeout_minutes` as its seconds | Tokens and time per request, model calls per stage |
+| Budgets (`budgets`) | Tokens, seconds and model calls per stage; tokens and seconds per item | Each stage's `stages.*.timeout_minutes` as its seconds | Tokens and time per request, model calls per stage |
 | Retries (`retryWaits`) | Waits in minutes after a transient stop, at most 10, each 0–330 | `retry.wait_minutes` | The lease of a claimed request |
 | Lost work (`lostWaits`) | Waits in minutes before lost agent work or checks start again, at most 10, each 0–330; a person after the last, or after one more start when its agent ran | None; at once, then 30, 60 and 120 minutes with autopilot | None |
 | Usage limits | Resume after the reset, and how long to wait: the host gives the reset, or none when it does not resume | `usage_limit.*` | Resume after the reset |

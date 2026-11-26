@@ -91,6 +91,12 @@ INVARIANTS = {
     "was not accepted fails the item",
 }
 
+# What each agent run spends in a walk: the item's own budget counts it.
+BUDGET_TEXTS = (
+    "The work item spent its token budget.",
+    "The work item's time budget ran out.",
+)
+SPENT = {"input": 100, "cached": 0, "output": 50}
 # Broken invariants that a known issue covers: (invariant, a text the problem starts with).
 KNOWN = {
     ("transition", "('dropped', 'accepted')"): "#348",
@@ -192,6 +198,11 @@ class Walker:
                     {"plan": {"seconds": None}, "implement": {"modelCalls": None, "tokens": 50000}},
                 ]
             )
+        if own.random() < 0.4:
+            item = own.choice(
+                [{"tokens": 300}, {"seconds": 1800}, {"tokens": 2000, "seconds": 7200}]
+            )
+            found["budgets"] = {**found.get("budgets", {}), "item": item}
         return found
 
     def plan_output(self, rng):
@@ -407,6 +418,9 @@ class Walker:
                 result = self.finish(rng, state, action)
                 if result is None:
                     return None
+                if action["kind"] == "runAgent" and result.get("tokens") is None:
+                    # Fixed, so that the walks play as they did without it.
+                    result = {**result, "tokens": dict(SPENT)}
                 found = {"kind": "actionFinished", "action": action["id"], "result": result}
                 if action["kind"] == "accept":
                     # Refusals come at different times, so that the first one's is told apart.
@@ -547,6 +561,19 @@ class Walker:
         if starts:
             flag("lost", "a lost run starts again before its wait", info)
 
+    @staticmethod
+    def item_left(item, used, at):
+        """What is left of an item's own budget as `(tokens, seconds)`, each None with no limit:
+        tokens count input and output, and time counts from `used.since`."""
+        tokens = seconds = None
+        if item.get("tokens"):
+            tokens = item["tokens"] - used["tokens"]["input"] - used["tokens"]["output"]
+        if item.get("seconds") and used["since"]:
+            began = datetime.fromisoformat(used["since"].replace("Z", "+00:00"))
+            now = datetime.fromisoformat(at.replace("Z", "+00:00"))
+            seconds = item["seconds"] - int((now - began).total_seconds())
+        return tokens, seconds
+
     def flag(self, invariant, problem, info):
         for (name, start), issue in KNOWN.items():
             if name == invariant and problem.startswith(start):
@@ -581,13 +608,27 @@ class Walker:
         given = {**self.defaults, **pol}
         # Each run's budget is its stage's, as the host gives it now, with `modelCalls` only
         # when the stage sets it.
+        # An implement, fix or review run's is capped by what the item has left, and none starts
+        # once the item's own budget is spent (`used` is what the step left).
+        left = self.item_left(given["budgets"].get("item") or {}, new["used"], event["at"])
+        spent = left[0] is not None and left[0] <= 0 or left[1] is not None and left[1] <= 0
         for run in (a for a in actions if a["kind"] == "runAgent"):
             limits = given["budgets"].get(run["stage"]) or {}
             wanted = {"tokens": limits.get("tokens"), "seconds": limits.get("seconds")}
+            if run["stage"] != "plan":
+                for key, value in zip(("tokens", "seconds"), left, strict=True):
+                    if value is not None and (wanted[key] is None or value < wanted[key]):
+                        wanted[key] = value
+                if spent:
+                    flag("budget", f"a {run['stage']} run starts on a spent budget", info)
             if limits.get("modelCalls") is not None:
                 wanted["modelCalls"] = limits["modelCalls"]
             if run["budget"] != wanted:
                 flag("budget", f"a {run['stage']} run's budget is not its stage's", info)
+        text = (new["attention"] or {}).get("text")
+        by_budget = text in BUDGET_TEXTS and new["attention"] != (state or {}).get("attention")
+        if by_budget and not spent:
+            flag("budget", "an item fails for its budget while it has some left", info)
         # outbox
         try:
             memory["open"] = self.suite.check_outbox(memory["open"], event, answer, "walk")
@@ -813,6 +854,8 @@ class Walker:
         done = None
         if finished and answer["changed"]:
             done = next((a for a in state["pending"] if a["id"] == event["action"]), None)
+        # A run that stopped once the item's budget was spent fails the item for it.
+        budget_stop = bool(by_budget and done and done["kind"] == "runAgent")
         if done and done["kind"] == "runChecks":
             failing = {}
             for found in event["result"]["checks"]:
@@ -838,7 +881,7 @@ class Walker:
         again = (state.get("again") or {}).get("transient", 0)
         after = (new.get("again") or {}).get("transient", 0)
         stopped = bool(done and done["kind"] == "runAgent" and result.get("transient"))
-        stopped = stopped and not result.get("limit")
+        stopped = stopped and not result.get("limit") and not budget_stop
         if stopped:
             wanted = {**self.defaults, **eff}["retryWaits"]
             self.retry_check(done, wanted, again, after, state, new, event, actions, info)
@@ -876,7 +919,8 @@ class Walker:
             if not own and any(("by" in a) != (event["by"] is not None) for a in marked):
                 flag("lost", "a request's work is marked other than by who asked", info)
         # usage-limit
-        if done and done["kind"] == "runAgent" and (event["result"] or {}).get("limit"):
+        agent_run = done and done["kind"] == "runAgent"
+        if agent_run and (event["result"] or {}).get("limit") and not budget_stop:
             reset = event["result"]["limit"]["reset"]
             if reset:
                 if not any(w["for"] == "usageLimit" and w["until"] == reset for w in new["waits"]):

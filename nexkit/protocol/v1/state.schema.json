@@ -43,7 +43,7 @@
       ]
     },
     "observed": {
-      "$comment": "The latest observation of the item's change, from changeObserved or from the result of a publish or replace, or null. The engine reconciles the item with it after each event that changes the state (docs/engine.md#states).",
+      "$comment": "The latest observation of the item's change, from changeObserved or from the result of a publish or replace, or null. The engine reconciles the item with it after each event that changes the state (docs/engine-states.md#states).",
       "anyOf": [
         {
           "type": "object",
@@ -116,7 +116,7 @@
       "type": "boolean"
     },
     "checksSince": {
-      "$comment": "When the first accept on `version` was refused because required checks had not passed, while the item stays in `accepting`: the wait for them ends six hours after it (docs/engine.md#states). A start recorded for another version counts as missing, and the engine drops it when the item leaves `accepting`.",
+      "$comment": "When the first accept on `version` was refused because required checks had not passed, while the item stays in `accepting`: the wait for them ends six hours after it (docs/engine-states.md#states). A start recorded for another version counts as missing, and the engine drops it when the item leaves `accepting`.",
       "type": "object",
       "properties": {
         "version": {

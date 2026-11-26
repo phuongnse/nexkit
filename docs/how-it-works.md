@@ -181,7 +181,7 @@ Only commands, *Request changes* reviews, dispatches and the short run for a clo
 wait in this queue; other comments do not. GitHub keeps one waiting run, so a command
 posted while another waits replaces it, also one on the issue that waits behind a round of
 its pull request. A command that never got 👀 did not run; post it again. How the engine's
-host will take such a command from its comment instead is in [Hosts](engine.md#hosts).
+host will take such a command from its comment instead is in [Hosts](engine-hosts.md#hosts).
 
 Four kinds of run keep a group of their own, so they never replace a command that waits:
 sweeps and the issue and milestone events that bring issues into scope share
@@ -307,7 +307,7 @@ implement and review, only when every run in it has a count; otherwise the cell 
 
 | Artifact | Contains |
 |---|---|
-| `nexkit-agent`, `nexkit-review` | `prompt.md` (the exact prompt), `context.json`, `texts/` (each whole text the prompt [shortened or left out](agents-and-profiles.md#agents), and the whole kept output of each failing check it shows), `result.json`, `run.json` (the [runner's](engine.md#runners) result, built from the redacted `result.json`), `changes.patch` (implement and fix), and with `transcript` on: `transcript.jsonl` (the CLI's event stream, including thinking) and `transcript.md` (the conversation in order: the agent's text, the CLI's notices, tool calls and results shortened as in the log, without thinking). A plan with profiles adds `triage/` with the triage call's `prompt.md` and transcripts; its result is in the plan's `result.json`, and the runner's in `triage/run.json`. A fallback agent's transcripts are in `agent-<name>/` (for triage, `triage/agent-<name>/`). |
+| `nexkit-agent`, `nexkit-review` | `prompt.md` (the exact prompt), `context.json`, `texts/` (each whole text the prompt [shortened or left out](agents-and-profiles.md#agents), and the whole kept output of each failing check it shows), `result.json`, `run.json` (the [runner's](engine-hosts.md#runners) result, built from the redacted `result.json`), `changes.patch` (implement and fix), and with `transcript` on: `transcript.jsonl` (the CLI's event stream, including thinking) and `transcript.md` (the conversation in order: the agent's text, the CLI's notices, tool calls and results shortened as in the log, without thinking). A plan with profiles adds `triage/` with the triage call's `prompt.md` and transcripts; its result is in the plan's `result.json`, and the runner's in `triage/run.json`. A fallback agent's transcripts are in `agent-<name>/` (for triage, `triage/agent-<name>/`). |
 | `nexkit-checks` | `checks.json`: each check's command, exit code, the last 12,000 characters of its output (`output`) and the first 20 lines before them that report a failure (`failure_lines`, when there are any). `results/<check>/`: the files that each failing check names in [`results`](checks.md#result-files-of-failing-checks), text files redacted, at most 50 MB per round; with [`parallel_checks`](checks.md#parallel-checks), at most the larger of each job's even share of 50 MB and 25 MB per job. The next fix round's `agent` job downloads this artifact. With [`parallel_checks`](checks.md#parallel-checks), each check job uploads its own part as `nexkit-checks-<job>`, with `checked.json`, the commit it checked, and `combine` joins them into this one. |
 
 Each stage that runs uploads its artifact, even when it fails. `report` downloads only the

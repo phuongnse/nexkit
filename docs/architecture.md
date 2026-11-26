@@ -181,7 +181,7 @@ against them.
 A runner runs one agent session for one stage. For agent CLIs such as Claude Code, the runner is
 `agent.run_action` in `nexkit/agent.py`.
 
-[The parts](engine.md#the-parts) lists each part and where it lives. [Hosts](engine.md#hosts)
+[The parts](engine.md#the-parts) lists each part and where it lives. [Hosts](engine-hosts.md#hosts)
 compares the GitHub host with the other hosts that the design names.
 
 The reasons for splitting the engine from its hosts are in

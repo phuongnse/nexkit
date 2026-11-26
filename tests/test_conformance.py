@@ -31,7 +31,7 @@ from nexkit.engine import cli
 
 HERE = Path(__file__).resolve().parent
 CASES = HERE / "conformance"
-DOC = HERE.parent / "docs" / "engine.md"
+DOC = HERE.parent / "docs" / "engine-states.md"
 EXAMPLES = protocol.ROOT / "examples"
 FIXTURES = json.loads((CASES / "fixtures.json").read_text())
 FINAL = ("accepted", "noChange", "dropped")
@@ -87,7 +87,7 @@ RESULTS = {
     "@error": {**AGENT, "output": None, "error": "The agent stopped."},
     "@transient": {**AGENT, "output": None, "transient": True, "error": "Overloaded."},
 }
-# The states a conflict leads to under each conflict policy (docs/engine.md#states).
+# The states a conflict leads to under each conflict policy (docs/engine-states.md#states).
 CONFLICTS = {"person": ("ready",), "resolve": ("fixing", "ready"), "redo": ("working", "ready")}
 
 

@@ -149,7 +149,7 @@ to find those that failed the same way, which the next automatic fix round diagn
 300 failing results of the checks before the round, which 15 checks of 20 shards each reach.
 A check whose failing result comes after those is not compared, so it never makes the next
 automatic fix round a diagnosis round. NexKit keeps at most 150 checks that repeated, and a
-diagnosis round looks into the first ten of them. The engine's [state](engine.md#states)
+diagnosis round looks into the first ten of them. The engine's [state](engine-states.md#states)
 holds no more than these bounds.
 
 Each job sets up the repository again, so parallel jobs use more runner minutes than one,

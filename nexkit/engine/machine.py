@@ -1,4 +1,4 @@
-"""The states of a work item and what moves it between them, as docs/engine.md#states says.
+"""The states of a work item and what moves it between them, as docs/engine-states.md#states says.
 
 `step` takes one state document, one event and the host's policies, and answers the new state
 and the actions the host carries out. It is pure: it reads no network, no clock and no file.
@@ -96,7 +96,8 @@ CHECKS_RETRY = 3600
 # How many event ids the state keeps, to take each event once.
 RECENT = 20
 # A host's policies when it leaves one out: NexKit 6's on GitHub without autopilot, as
-# `policies.schema.json` gives each as its default (docs/engine.md#what-a-host-decides), except
+# `policies.schema.json` gives each as its default
+# (docs/engine-hosts.md#what-a-host-decides), except
 # `parentEnd`, which keeps the engine's rule: GitHub's `close_parent_issues` is off by default.
 DEFAULTS = {
     "planApproval": "person",
@@ -438,7 +439,7 @@ class Step:
     def close(self, outcome, finding=None):
         if self.review_only:
             # A person's own pull request stays theirs, merged, emptied or dropped: the engine
-            # never closes it (docs/engine.md#states).
+            # never closes it (docs/engine-states.md#states).
             return
         self.do("close", outcome=outcome, finding=finding)
 
@@ -567,7 +568,7 @@ class Step:
 
     def conflicted(self):
         """Apply the conflict policy when the item would go on to its checks or be ready and the
-        latest observation says this version of the change conflicts (docs/engine.md#states).
+        latest observation says this version of the change conflicts (docs/engine-states.md#states).
         Whether it did."""
         observed = self.observed()
         if self.review_only or not observed or not observed["conflicts"]:
@@ -589,15 +590,15 @@ class Step:
 
     def reconcile(self, whole=True):
         """Bring the item in line with the latest observation of its change; doing so again
-        changes nothing (docs/engine.md#states). Not `whole`, only a merge or an emptied change
-        acts. Whether it did anything."""
+        changes nothing (docs/engine-states.md#states). Not `whole`, only a merge or an emptied
+        change acts. Whether it did anything."""
         observed = self.observed()
         if self.final() or self.coming() or not observed:
             return False
         # A failed item waits for a person whatever is observed, and so does one in `new`, but a
         # review-only item that waits to start: a newer version waits for the request that takes
         # it on. A split parent waits for its parts whatever is pushed to its change, as the
-        # autopilot reads a parent's parts before its pull request (docs/engine.md#states).
+        # autopilot reads a parent's parts before its pull request (docs/engine-states.md#states).
         starting = self.review_only and self.waiting("start")
         whole = whole and self.state not in ("failed", "split")
         whole = whole and (self.state != "new" or starting)
@@ -657,7 +658,7 @@ class Step:
 
     def conflict_round_left(self):
         """Whether `conflictRounds` allows another round that makes the change again or resolves
-        its conflict (docs/engine.md#states)."""
+        its conflict (docs/engine-states.md#states)."""
         return self.s["rounds"]["conflicts"] < self.p["conflictRounds"]
 
     def on_conflict_found(self):
@@ -728,8 +729,8 @@ class Step:
     def resume(self, hold=True):
         """Start the work of the item's state again once nothing holds it back, as after a
         wait for a time, a usage limit, required checks or the base branch, or a hold
-        (docs/engine.md#states), which holds it back only while `hold` is true. It is the same
-        round, so it counts nothing again. Checks and an accept follow what the latest
+        (docs/engine-states.md#states), which holds it back only while `hold` is true. It is
+        the same round, so it counts nothing again. Checks and an accept follow what the latest
         observation of the change says first: `check` before its checks, and the reconcile
         after the step for an accept."""
         if self.held_back(hold=hold):
@@ -790,7 +791,7 @@ class Step:
         if observed and observed["version"] != self.version:
             # Only a failed or reopened item keeps a version observed meanwhile, for the request
             # that takes it on: the work it asks for starts on that version
-            # (docs/engine.md#states). A refused request changes nothing, as `step` keeps the
+            # (docs/engine-states.md#states). A refused request changes nothing, as `step` keeps the
             # state it got unless reconciling acts, which a merge or an emptied change alone do.
             self.s["change"] = {**self.s["change"], "version": observed["version"]}
         self.take_place(event)
@@ -2041,7 +2042,7 @@ def step(state, event, policies, check):
     else:
         changed = handler(event)
         # Even after an event that changed nothing else, so that a repeated observation
-        # catches up (docs/engine.md#states).
+        # catches up (docs/engine-states.md#states).
         changed = work.reconcile() or changed
     if not changed:
         return before, [], False
@@ -2061,7 +2062,7 @@ def step(state, event, policies, check):
 
 def _never_writes(actions):
     """A review-only item is never planned, changed, fixed, accepted or closed
-    (docs/engine.md#states)."""
+    (docs/engine-states.md#states)."""
     for action in actions:
         if action["kind"] in (*WRITES, "close") or action.get("stage", "review") != "review":
             raise EngineError(f"A review-only item never gets {action['kind']}.")

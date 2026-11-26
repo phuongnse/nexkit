@@ -1,0 +1,54 @@
+{
+  "policies": {
+    "budgets": {
+      "item": {
+        "tokens": 1000
+      }
+    }
+  },
+  "state": {
+    "example": "fixing"
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": {
+          "tokens": {
+            "input": 900,
+            "cached": 0,
+            "output": 200
+          },
+          "limit": null,
+          "transient": true,
+          "noResult": false,
+          "error": "Overloaded.",
+          "session": null,
+          "changeVersion": null,
+          "timedOut": false,
+          "seconds": null,
+          "output": null
+        }
+      },
+      "state": "failed",
+      "changed": true,
+      "actions": [
+        "needPerson"
+      ],
+      "expect": {
+        "attention.reason": "failed",
+        "attention.text": "The work item spent its token budget.",
+        "change": {
+          "id": "308",
+          "version": "5a54e2b"
+        },
+        "used.tokens": {
+          "input": 900,
+          "cached": 0,
+          "output": 200
+        }
+      }
+    }
+  ]
+}

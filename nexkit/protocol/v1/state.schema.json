@@ -690,7 +690,7 @@
       "additionalProperties": false
     },
     "used": {
-      "$comment": "What the item's agents spent: tokens and seconds.",
+      "$comment": "What the item's agents spent: tokens and seconds. `since` is when the item's time began for `budgets.item`: the start of its change after a plan's approval, a request for changes, or a person's fix or retry.",
       "type": "object",
       "properties": {
         "tokens": {

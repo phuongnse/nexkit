@@ -1,0 +1,65 @@
+{
+  "policies": {
+    "budgets": {
+      "fix": {
+        "tokens": 5000
+      },
+      "item": {
+        "tokens": 3000
+      }
+    }
+  },
+  "state": {
+    "example": "fixing",
+    "set": {
+      "policies": {
+        "planApproval": "person",
+        "reviewAfterFailingChecks": "always",
+        "accept": "person",
+        "fixRounds": 2,
+        "whenRoundsRunOut": "person",
+        "conflicts": "person",
+        "conflictRounds": 3,
+        "splits": false,
+        "retryWaits": [
+          0
+        ]
+      }
+    }
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": {
+          "tokens": {
+            "input": 600,
+            "cached": 0,
+            "output": 100
+          },
+          "limit": null,
+          "transient": true,
+          "noResult": false,
+          "error": "Overloaded.",
+          "session": null,
+          "changeVersion": null,
+          "timedOut": false,
+          "seconds": null,
+          "output": null
+        }
+      },
+      "state": "fixing",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ],
+      "expect": {
+        "pending.0.budget": {
+          "tokens": 2300,
+          "seconds": null
+        }
+      }
+    }
+  ]
+}

@@ -257,7 +257,9 @@ when a list of what the code defines misses an entry. These rules close each of 
    matches its constant; that each test the security page names exists; that the outcome table of
    [how it works](how-it-works.md) lists each outcome the code defines and no other; that the key
    tables and the complete configuration of the [configuration reference](configuration.md) list
-   each key the code defines and no other, with its default and range; that the table of the App's
+   each key the code defines and no other, with its default and range; that the runtime table of
+   the configuration reference lists each runtime the code defines, with its providers, effort
+   levels and budget support, and which runtimes report usage limits; that the table of the App's
    permissions in [configuration](configuration.md#the-github-app) matches the permissions and
    levels `nexkit/app.py` asks for; that the trigger table of [the workflow
    file](configuration.md#workflow-file) lists each trigger of the workflow template and no

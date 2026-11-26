@@ -33,8 +33,9 @@ job holds, and the plugin are described in [Architecture](docs/architecture.md).
   writes them. See [Agent output](docs/security.md#agent-output) and
   [Comments and markers](docs/security.md#comments-and-markers) and
   [D4](docs/decisions/d4-outside-text-is-untrusted.md).
-- State lives only on GitHub: comments, pull requests and statuses. See
-  [State](docs/how-it-works.md#state) and [D1](docs/decisions/d1-state-lives-only-on-github.md).
+- State lives only on GitHub: comments, pull requests, statuses and the Actions artifacts of
+  NexKit's own runs. See [State](docs/how-it-works.md#state) and
+  [D1](docs/decisions/d1-state-lives-only-on-github.md).
 - Agent errors and `blocked` results never retry automatically. Only check failures and review
   findings do, up to `fix.max_auto_rounds`; a transient error before publishing runs again after its
   waits. See [Failure handling](docs/failure-handling.md#failure-handling) and

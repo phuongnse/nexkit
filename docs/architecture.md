@@ -131,7 +131,8 @@ The reasons for the rule that the agent's session never holds a write token are 
 
 NexKit keeps no state outside GitHub. A run can start again, or start beside another run, so the state
 of each work item must sit where every run reads it. All of it is on GitHub: in comments on the
-issue and the pull request, and in commit statuses. [How it works](how-it-works.md#state) says what
+issue and the pull request, in commit statuses, and in the Actions artifacts of NexKit's own runs,
+which can expire. [How it works](how-it-works.md#state) says what
 each comment holds, and [the state document](engine.md#the-state-document) describes the state the
 engine decides from.
 

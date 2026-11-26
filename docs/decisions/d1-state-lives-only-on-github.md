@@ -10,8 +10,11 @@ of its own to hold that state.
 
 ## Decision
 
-- All NexKit state lives on GitHub: in comments on the issue or pull request, and in commit
-  statuses.
+- All NexKit state lives on GitHub: in comments on the issue or pull request, in commit
+  statuses, and in the Actions artifacts of NexKit's own runs.
+- An artifact can expire. A later run that reads one treats it as optional, and carries on
+  without the detail it held. How long artifacts are kept is in
+  [How it works: Logs, summary and artifacts](../how-it-works.md#logs-summary-and-artifacts).
 - Nothing outside GitHub holds state that a later run needs.
 - A write of a state that several runs share must come from the state that its writer read, so a
   stale copy cannot replace a newer one. These are the pipeline's state comment, autopilot's
@@ -24,6 +27,7 @@ The detail is in [How it works: State](../how-it-works.md#state) and
 
 - A run can be retried or can overlap another run without losing track of an item, and a person
   can read the state on GitHub.
+- An expired artifact costs only detail in a later prompt, never an item's place in the pipeline.
 - No server, database or self-hosted runner is needed, so setup stays small.
 - GitHub has no compare-and-set for comments. A write by someone else between a read and an edit
   can be overwritten. Reading one of those three shared comments again just before each edit

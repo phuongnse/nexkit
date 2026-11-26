@@ -384,9 +384,13 @@ have no write token and no credentials besides the agents'.
 All state is on GitHub: the plan comment (with profiles, a hidden record of its profile on
 the line after its marker) and one NexKit comment per run on the issue, the
 pull request, its commit statuses, one NexKit comment per round and one NexKit state
-comment on the pull request. Run comments only show runs. The state comment, edited in
-place, says how many automatic fix rounds were used and holds a hidden JSON record of the
-latest feedback (with the run that holds its checks' result files, and the checks that
+comment on the pull request. Two kinds of Actions artifact hold more state, and either can
+expire: the `nexkit-checks` artifact of the run that the state comment names, which a fix round
+downloads for its result files, and, with `parallel_checks`, the `nexkit-checks-<job>`
+artifacts of a stopped round, which a later run reads for the checks that passed. A run that
+finds one expired leaves that detail out and carries on. Run comments only show runs. The state
+comment, edited in place, says how many automatic fix rounds were used and holds a hidden JSON
+record of the latest feedback (with the run that holds its checks' result files, and the checks that
 failed the same way before and after the last fix round), that count, the `bug` issue the
 pull request waits for while it does, the last completed
 review (its commit and up to 30 of its findings: past 30, the blocking ones first, then the
@@ -405,7 +409,7 @@ fix rounds. Each failing check's failure signature is recorded first, so a short
 output still compares as before, and the fix prompt says that NexKit kept less of the
 output. With autopilot, each issue
 it worked on has one record comment, edited in place, that names the command it started
-last. Nothing else is stored, so there is nothing to migrate or repair.
+last. Apart from those artifacts, nothing else is stored, so there is nothing to migrate or repair.
 
 A writer edits the state comment, and autopilot's record comment, only while the comment still
 holds what the writer read: it reads the comment again just before the edit

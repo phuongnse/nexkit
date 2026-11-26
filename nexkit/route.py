@@ -233,8 +233,9 @@ def _none(reason, reply_to=None):
     return {"action": "none", "reason": reason, "reply_to": reply_to}
 
 
-def route(gh, event_name, event, inputs=None):
-    """Decide the action. The result is a JSON-serialisable dict.
+def route(gh, event_name, event, inputs=None, cfg=None):
+    """Decide the action. The result is a JSON-serialisable dict. `cfg` is the configuration,
+    when it loaded; a person's command goes to the engine with it (`_decide`).
 
     Every action needs a trusted actor: a user with write access, or a dispatch, which
     GitHub already restricts to writers and to this repository's own workflows.
@@ -256,7 +257,18 @@ def route(gh, event_name, event, inputs=None):
         if command == TRUST and not on_pull:
             decision = _trust(event["issue"], note)
         else:
-            decision = _one_round(gh, _decide(gh, command, number, on_pull, note, auto=False))
+            decision = _decide(
+                gh,
+                command,
+                number,
+                on_pull,
+                note,
+                auto=False,
+                cfg=cfg,
+                by=actor,
+                source_id=event["comment"]["id"],
+            )
+            decision = _one_round(gh, decision)
             decision = _closing(gh, decision, event["comment"])
         decision.update(actor=actor, comment_id=event["comment"]["id"])
         return decision
@@ -274,7 +286,15 @@ def route(gh, event_name, event, inputs=None):
                 event["pull_request"], actor, review.get("commit_id"), review.get("id")
             )
         decision = _decide(
-            gh, "fix", event["pull_request"]["number"], True, review.get("body") or "", auto=False
+            gh,
+            "fix",
+            event["pull_request"]["number"],
+            True,
+            review.get("body") or "",
+            auto=False,
+            cfg=cfg,
+            by=actor,
+            review_id=review.get("id"),
         )
         decision = _one_round(gh, decision)
         decision["actor"] = actor
@@ -360,8 +380,19 @@ def route(gh, event_name, event, inputs=None):
         auto = bool(kinds & {"true", "conflicts"})
         note = inputs.get("note") or ""
         conflicts = "conflicts" in kinds
-        decision = _decide(gh, command, int(number), on_pull, note, auto=auto, conflicts=conflicts)
-        decision["actor"] = event.get("sender", {}).get("login")
+        sender = event.get("sender", {}).get("login")
+        decision = _decide(
+            gh,
+            command,
+            int(number),
+            on_pull,
+            note,
+            auto=auto,
+            conflicts=conflicts,
+            cfg=cfg,
+            by=sender,
+        )
+        decision["actor"] = sender
         if decision["action"] not in ("none", "maintain"):
             decision.update(
                 {kind: True for kind in ("conflicts", "resumed", AUTOPILOT) if kind in kinds}
@@ -559,7 +590,29 @@ def head_config_error(gh, number, base, head):
     return ""
 
 
-def _decide(gh, command, number, on_pull, note, *, auto, conflicts=False):
+def _decide(
+    gh,
+    command,
+    number,
+    on_pull,
+    note,
+    *,
+    auto,
+    conflicts=False,
+    cfg=None,
+    by=None,
+    source_id=None,
+    review_id=None,
+):
+    """The decision for a person's command, or NexKit's own dispatch of one. A command starts
+    its stage only as the engine answers it (`host.command`); what stays here are the facts
+    that only GitHub shows: an unknown command, a fork, a person's pull request, which takes
+    no `/nexkit fix`, and the pull request's and the issue's state, which the engine is told.
+    `cfg` is the configuration, or None when it did not load: the answer of a request does
+    not depend on it."""
+    from . import host
+
+    given = {"cfg": cfg, "by": by, "note": note, "source_id": source_id}
     if on_pull:
         if command not in PR_COMMANDS:
             return _none(f"`/nexkit {command}` is not a pull request command. {USAGE}", number)
@@ -579,16 +632,30 @@ def _decide(gh, command, number, on_pull, note, *, auto, conflicts=False):
                 "any change here. `/nexkit review` checks and reviews this one.",
                 number,
             )
-        if pull["state"] != "open":
-            return _none("The pull request is closed", number)
-        merged = on_base(gh, pull["base"]["ref"], pull["head"]["sha"])
-        if merged and person:
-            return _none(
-                f"This pull request changes no file against `{pull['base']['ref']}`, so there "
-                "is nothing to review.",
-                number,
+        item = number if person else issue
+        closed = pull["state"] != "open"
+        merged = None if closed else on_base(gh, pull["base"]["ref"], pull["head"]["sha"])
+        change = {"id": str(number), "version": pull["head"]["sha"]}
+        try:
+            answer = host.command(
+                item=item,
+                what=command,
+                closed=closed,
+                change=None if closed else change,
+                review_only=person,
+                empty=bool(merged),
+                review_id=review_id,
+                **given,
             )
-        if merged:
+        except host.Refused as exc:
+            return _none(host.refused_reason(exc), number)
+        if answer == "noChange":
+            if person:
+                return _none(
+                    f"This pull request changes no file against `{pull['base']['ref']}`, so "
+                    "there is nothing to review.",
+                    number,
+                )
             # Its base branch already holds its change: no round, review or merge would
             # change anything, so the `maintain` job closes it and its issue.
             return {
@@ -600,10 +667,14 @@ def _decide(gh, command, number, on_pull, note, *, auto, conflicts=False):
                 "head": pull["head"]["sha"],
                 "merge_base": merged,
             }
+        if answer != PR_COMMANDS[command]:
+            if closed:
+                return _none("The pull request is closed", number)
+            return _none(_refusal(host, command), number)
         decision = {
             "action": PR_COMMANDS[command],
             # GitHub keeps a pull request's text and comments as an issue's.
-            "issue": number if person else issue,
+            "issue": item,
             "pr": number,
             "target": number,
             "branch": pull["head"]["ref"],
@@ -632,13 +703,11 @@ def _decide(gh, command, number, on_pull, note, *, auto, conflicts=False):
             # Checks that failed the same way before and after the last fix round: an
             # automatic round looks for their cause first, as the engine runs it; a person's
             # round and a conflict round, which merges the base branch, do not.
-            from .host import Refused, diagnosis
-
             try:
-                found = diagnosis(
+                found = host.diagnosis(
                     decision["issue"], number, pull["head"]["sha"], auto and not conflicts, repeated
                 )
-            except Refused:
+            except host.Refused:
                 found = []
             if found:
                 decision["diagnose"] = found
@@ -647,12 +716,25 @@ def _decide(gh, command, number, on_pull, note, *, auto, conflicts=False):
     if command not in ISSUE_COMMANDS:
         return _none(f"`/nexkit {command}` is not an issue command. {USAGE}", number)
     issue = gh.issue(number)
-    if issue["state"] != "open":
-        return _none("The issue is closed", number)
+    closed = issue["state"] != "open"
     branch = branch_for(number)
     action = ISSUE_COMMANDS[command]
-    if action == "implement":
+    change = plan = None
+    existing = []
+    if not closed and action == "implement":
         existing = gh.open_pulls(branch)
+        if existing:
+            change = {"id": str(existing[0]["number"]), "version": existing[0]["head"]["sha"]}
+        plan = latest_plan(gh.comments(number))
+    try:
+        answer = host.command(
+            item=number, what=command, closed=closed, change=change, plan=plan, **given
+        )
+    except host.Refused as exc:
+        return _none(host.refused_reason(exc), number)
+    if answer != action:
+        if closed:
+            return _none("The issue is closed", number)
         if existing:
             pr = existing[0]["number"]
             return _none(
@@ -660,6 +742,7 @@ def _decide(gh, command, number, on_pull, note, *, auto, conflicts=False):
                 "or close it to start over.",
                 number,
             )
+        return _none(_refusal(host, command), number)
     return {
         "action": action,
         "issue": number,
@@ -671,6 +754,11 @@ def _decide(gh, command, number, on_pull, note, *, auto, conflicts=False):
         "note": note,
         "auto": False,
     }
+
+
+def _refusal(host, command):
+    """The reply to a command that the engine refuses for a reason NexKit 6 never gave."""
+    return host.refused_reason(f"it starts nothing for `/nexkit {command}`")
 
 
 def with_profile(gh, decision, cfg):

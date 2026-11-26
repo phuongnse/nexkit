@@ -2808,7 +2808,7 @@ class WorkItemGroupTests(unittest.TestCase):
             calls.append(("take", number))
             return []
 
-        def routed(gh, event_name, event, inputs=None):
+        def routed(gh, event_name, event, inputs=None, cfg=None):
             calls.append(("route", None))
             return {"action": "none", "reason": "test"}
 

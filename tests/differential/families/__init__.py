@@ -34,4 +34,5 @@ FAMILIES = {
     "moved": "#530",
     "parents": "#531",
     "vouch": "#538",
+    "command": "#568",
 }

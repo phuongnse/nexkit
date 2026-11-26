@@ -122,7 +122,7 @@ def changed_by(comment):
 def bot_record(comment):
     """Whether `comment` counts as NexKit's own record: the App wrote it and no one else
     ever changed it, even if the App edited it again afterwards. Its markers count only
-    then (see *Security notes* in docs/how-it-works.md)."""
+    then (see docs/security.md#comments-and-markers)."""
     return by_bot(comment) and not changed_by(comment)
 
 

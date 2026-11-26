@@ -15,9 +15,12 @@ section lists each trigger of the workflow template and no other. The table of t
 permissions matches the permissions and levels of the App manifest. The plan and review layouts of
 stages match the sections the code writes, and the values the pages repeat match their constants.
 The README's table of supported versions is compared with the pins in nexkit/__init__.py, and each
-ubuntu-NN.NN in the README with the pinned runner. The decisions index matches the decision files,
-and each decision is linked, as docs/writing-docs.md#how-the-docs-stay-correct says."""
+ubuntu-NN.NN in the README with the pinned runner. The local commands table of the README lists
+each command the CLI defines for people and no other, and each option a row names exists. The
+decisions index matches the decision files, and each decision is linked, as
+docs/writing-docs.md#how-the-docs-stay-correct says."""
 
+import argparse
 import copy
 import json
 import re
@@ -30,6 +33,7 @@ from nexkit import (
     app,
     autopilot,
     checks,
+    cli,
     config,
     context,
     github,
@@ -60,6 +64,8 @@ OUTCOMES_HEADER = "| Outcome | Meaning |"
 COMMANDS_HEADER = "| Where | Comment | What happens |"
 # The README's *Where* cells, by the place where route.decide reads the command.
 PLACES = {"Issue": "issue", "NexKit PR": "pull request", "Your PR": "pull request"}
+LOCAL_COMMANDS_HEADER = "| Command | What it does |"
+COMMAND = re.compile(r"`nexkit ([\w-]+)`")
 CONFIG_PAGE = DOCS / "configuration.md"
 PERMISSIONS_HEADER = "| Permission | Level | For |"
 # GitHub's names on an App's settings page, by the manifest's keys in nexkit/app.py.
@@ -288,7 +294,7 @@ class AgentsTests(unittest.TestCase):
             )
 
 
-class ReadmeTests(unittest.TestCase):
+class ReadmeVersionsTests(unittest.TestCase):
     def test_the_supported_versions_table_gives_the_pins_of_the_code(self):
         python = ".".join(map(str, nexkit.PYTHON))
         # The versions each row's Supported and Tested cells name; Claude Code links its pin.
@@ -354,6 +360,53 @@ def rows_from(lines, start):
         if not re.fullmatch(r"[|\s:-]+", line):  # the row of dashes under the header
             rows.append([cell.strip() for cell in line.strip().strip("|").split("|")])
     return rows
+
+
+def people_commands():
+    """The subcommands of nexkit/cli.py whose help is not marked (pipeline), with their options."""
+    sub = next(a for a in cli.build_parser()._actions if isinstance(a, argparse._SubParsersAction))
+    helps = {action.dest: action.help or "" for action in sub._choices_actions}
+    return {
+        name: {option for action in parser._actions for option in action.option_strings}
+        for name, parser in sub.choices.items()
+        if not helps[name].startswith("(pipeline)")
+    }
+
+
+class ReadmeTests(unittest.TestCase):
+    def test_the_local_commands_table_lists_each_command_for_people_and_no_other(self):
+        rows = table(README, LOCAL_COMMANDS_HEADER)
+        self.assertTrue(rows, "README.md has no table of local commands")
+        commands = people_commands()
+        listed = {}
+        for row in rows:
+            match = COMMAND.fullmatch(row[0])
+            self.assertIsNotNone(
+                match,
+                f"README.md has the cell {row[0]}; each cell names only `nexkit NAME`, "
+                "and `nexkit COMMAND --help` lists the options",
+            )
+            listed[match.group(1)] = row
+        for name in sorted(commands):
+            with self.subTest(command=name):
+                self.assertIn(name, listed, f"README.md has no row for nexkit {name}")
+        for name in sorted(listed):
+            with self.subTest(row=name):
+                self.assertIn(
+                    name,
+                    commands,
+                    f"README.md lists nexkit {name}, which the CLI does not define for people",
+                )
+        for name, row in sorted(listed.items()):
+            if name not in commands:
+                continue
+            for option in sorted(set(re.findall(r"--[\w-]+", " ".join(row)))):
+                with self.subTest(command=name, option=option):
+                    self.assertIn(
+                        option,
+                        commands[name],
+                        f"README.md's row of nexkit {name} names {option}, which it lacks",
+                    )
 
 
 class OutcomesTests(unittest.TestCase):

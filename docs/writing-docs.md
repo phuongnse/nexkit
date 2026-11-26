@@ -267,6 +267,8 @@ when a list of what the code defines misses an entry. These rules close each of 
    file](configuration.md#workflow-file) lists each trigger of the workflow template and no
    other; that the README's [table of supported versions](../README.md#supported-versions) is
    compared with the pins in `nexkit/__init__.py`, and each `ubuntu-NN.NN` in the README with the
-   pinned runner; and that the index matches the decision files, each of which follows the template
-   and is linked from a rule or a page. A docs check is added only once the whole tree passes
-   it: there are no lists of exceptions.
+   pinned runner; that the local commands table of [the README](../README.md#local-commands)
+   lists each command the CLI defines for people and no other, and that each option a row names
+   exists; and that the index matches the decision files, each of which follows the template and
+   is linked from a rule or a page. A docs check is added only once the whole tree passes it:
+   there are no lists of exceptions.

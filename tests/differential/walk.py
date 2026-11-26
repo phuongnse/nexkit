@@ -96,6 +96,8 @@ KNOWN = {
 TITLE = "Cache the results"
 # The share of walks that start from the example of an item that accepts.
 ACCEPTING = 0.2
+# The share of those that an import left waiting to start, which no event of a walk makes.
+HELD = 0.2
 # The share that start from the example of a new item that waits to start, as the import builds
 # it, and for a blocker too, which a walk from a created item reaches only by its own events.
 NEW = 0.1
@@ -908,10 +910,13 @@ class Walker:
         if state["hold"] and new["hold"] and any(a["kind"] == "replaceChange" for a in actions):
             flag("hold", "a change made again under a hold", info)
 
-    def reconciled(self, state, pol):
+    def reconciled(self, state, pol, like):
         """What the reconcile after any event answers `state` under `pol`: the answer to an
-        event that asks nothing, a `textChanged`."""
-        event = self.tc.event_of({"kind": "textChanged"}, state, "r")
+        event that asks nothing, a `textChanged`, with the id and time of the event `like`."""
+        short = {"kind": "textChanged", "by": self.tc.PERSON}
+        short["text"] = {"name": "body", "ref": "42"}
+        event = self.tc.event_of(short, state, "r")
+        event["id"], event["at"] = like["id"], like["at"]
         request = {"protocol": 1, "call": "step", "state": state, "event": event, "policies": pol}
         return self.engine.answer(json.loads(json.dumps(request)))
 
@@ -935,12 +940,16 @@ class Walker:
             # counts only if an event that asks nothing leads to the same work and state.
             same = False
             if new["rounds"]["conflicts"] > state["rounds"]["conflicts"]:
-                other = self.reconciled(state, pol)
+                other = self.reconciled(state, pol, event)
                 if "state" in other:
                     work = lambda found: sorted(  # noqa: E731
                         (a["kind"], a.get("stage")) for a in found if a["kind"] in self.tc.WORK
                     )
-                    same = work(other["actions"]) == work(actions) and other["state"] == new
+                    # What the request sets by itself is not the reconcile's.
+                    own = ("recentEvents", "title", "depth", "asked")
+                    rest = lambda doc: {k: v for k, v in doc.items() if k not in own}  # noqa: E731
+                    same = work(other["actions"]) == work(actions)
+                    same = same and rest(other["state"]) == rest(new)
             if not same:
                 flag("start", "a start works on an item that may not start", info)
         if free and state["state"] == "new":
@@ -1228,6 +1237,15 @@ class Walker:
             # new item seldom reaches: its accept, refusals and ticks come at once.
             path = self.tc.EXAMPLES / "state" / "accepting.json"
             state = json.loads(path.read_text())
+            if rng.random() < HELD:
+                # An import leaves a round that a hold or a blocker kept back waiting to
+                # start, on a change that may conflict.
+                state["waits"] = [{"id": "w1.1", "for": "start", "until": None, "on": None}]
+                state["pending"] = []
+                if rng.random() < 0.7:
+                    blocker = {"id": "w1.2", "for": "blocker", "until": None, "on": "7"}
+                    state["waits"].append(blocker)
+                state["observed"] = {**state["observed"], "conflicts": rng.random() < 0.7}
             memory["open"] = {action["id"]: action for action in state["pending"]}
         self.last_checks = None
         for number in range(1, steps + 1):

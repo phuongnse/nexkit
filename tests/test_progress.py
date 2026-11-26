@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
-from nexkit import progress
+from nexkit import item_state, progress
 from nexkit.github import GitHub, GitHubError
 from nexkit.maintain import (
     WAIT_INPUTS,
@@ -127,6 +127,56 @@ class ProgressTests(unittest.TestCase):
 
     def run_as(self, run_id):
         return mock.patch.dict(os.environ, {"GITHUB_RUN_ID": str(run_id)})
+
+    def stored_state(self, **fields):
+        self.gh.comment(6, render_state({**empty_state(5), **fields}))
+        return read_state(self.gh.comments(6))
+
+    def test_a_state_write_keeps_what_another_write_stored_since_it_read(self):
+        comment_id, state = self.stored_state(auto_fixes=1)
+        read = json.loads(json.dumps(state))
+        state["auto_fixes"] = 2
+        state["feedback"] = {"head": HEAD, "required": []}
+        real = self.gh.issue_comment
+        moved = []
+
+        def newer(number):
+            if not moved:
+                moved.append(number)
+                stored = read_state(self.gh.comments(6))[1]
+                stored.update(auto_fixes=2, ci_wait={"bug": 3})
+                self.gh.update_comment(number, render_state(stored))
+            return real(number)
+
+        with mock.patch.object(self.gh, "issue_comment", side_effect=newer):
+            saved_id, written = progress.save_state(self.gh, 6, comment_id, state, read)
+        stored = read_state(self.gh.comments(6))[1]
+        self.assertEqual(saved_id, comment_id)
+        self.assertEqual(written, stored)
+        self.assertEqual(stored["auto_fixes"], 3)
+        self.assertEqual(stored["ci_wait"], {"bug": 3})
+        self.assertEqual(stored["feedback"], {"head": HEAD, "required": []})
+
+    def test_a_state_that_moves_before_every_try_is_not_overwritten(self):
+        comment_id, state = self.stored_state()
+        read = json.loads(json.dumps(state))
+        state["auto_fixes"] = 1
+        real = self.gh.issue_comment
+        calls = []
+
+        def newer(number):
+            calls.append(number)
+            stored = read_state(self.gh.comments(6))[1]
+            stored["auto_fixes"] = len(calls) * 10
+            self.gh.update_comment(number, render_state(stored))
+            return real(number)
+
+        with mock.patch.object(self.gh, "issue_comment", side_effect=newer):
+            with self.assertRaises(progress.StateMoved) as raised:
+                progress.save_state(self.gh, 6, comment_id, state, read)
+        self.assertEqual(raised.exception.status, 409)
+        self.assertEqual(len(calls), item_state.TRIES)
+        self.assertEqual(read_state(self.gh.comments(6))[1]["auto_fixes"], len(calls) * 10)
 
     def test_issue_command_gets_its_own_comment(self):
         d = decision("plan")

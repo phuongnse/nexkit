@@ -24,10 +24,11 @@ import re
 import string
 from datetime import UTC, datetime, timedelta
 
+from . import item_state
 from .checks import same_test, test_name
 from .config import SEVERITIES, after_workflow_names, autopilot_labels, watched_workflows
 from .github import DOWNLOAD_LIMIT, LOG_CUT, TRUSTED_ASSOCIATIONS, GitHubError, alerts_off
-from .progress import STATUS_CONTEXTS, save_state
+from .progress import STATUS_CONTEXTS, StateMoved, save_state
 from .redact import Redactor
 from .route import AFTER_RUN, RUN_ID, TRUST, issue_from_branch, parse_command, retry_kind
 from .state import (
@@ -2115,19 +2116,26 @@ def mention(gh, cfg, step):
 
 def _save_record(gh, step, record, text, now=None):
     """Edit the issue's record comment, or post it. Flags such as `split_asked` stay."""
-    comment, previous = find_record(gh.comments(step["number"]))
-    record = {
-        **{key: previous[key] for key in STICKY if key in previous},
-        **step.get("remember", {}),
-        **record,
-        "basis": step["basis"],
-        "at": iso(now or datetime.now(UTC)),
-    }
-    body = f"{text}\n\n{record_marker(record)}"
-    if comment:
-        gh.update_comment(comment["id"], body)
-    else:
-        gh.comment(step["number"], body)
+    for _ in range(item_state.TRIES):
+        comment, previous = find_record(gh.comments(step["number"]))
+        stored = {
+            **{key: previous[key] for key in STICKY if key in previous},
+            **step.get("remember", {}),
+            **record,
+            "basis": step["basis"],
+            "at": iso(now or datetime.now(UTC)),
+        }
+        body = f"{text}\n\n{record_marker(stored)}"
+        if not comment:
+            gh.comment(step["number"], body)
+            return
+        # Read again just before the edit: a flag that another write stored since stays.
+        if find_record([gh.issue_comment(comment["id"])])[1] == previous:
+            gh.update_comment(comment["id"], body)
+            return
+    raise StateMoved(
+        f"Other writes to the record of #{step['number']} came first {item_state.TRIES} times."
+    )
 
 
 def post_answers(gh, number, found, replan=False):
@@ -3652,8 +3660,8 @@ def _count_round(gh, pull):
     before = json.loads(json.dumps(state))
     state["auto_fixes"] = (state.get("auto_fixes") or 0) + 1
     state.pop("ci_wait", None)
-    save_state(gh, pull, comment_id, state)
-    return lambda: save_state(gh, pull, comment_id, before)
+    saved = save_state(gh, pull, comment_id, state, before)
+    return lambda: save_state(gh, pull, saved[0], before, saved[1])
 
 
 def carry_out(gh, cfg, step, workflow, ref):

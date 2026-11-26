@@ -243,7 +243,8 @@ when a list of what the code defines misses an entry. These rules close each of 
    at its new home. The [docs audit skill](../.claude/skills/nexkit-docs-audit/SKILL.md) says how a
    page is read and what each issue holds.
 9. **Checks catch what a machine can.** `tests/test_docs.py` checks that [the map](README.md) lists
-   every doc, with the decisions listed through [the index](decisions.md); that the links of every
+   every doc, with the decisions listed through [the index](decisions.md), and that its list of the
+   plugin's skills matches the skills under `skills/`; that the links of every
    page under `docs/`, of the README, of [AGENTS.md](../AGENTS.md), of the plugin's skills under
    `skills/` and of the maintenance skills under `.claude/skills/` resolve; that each link to how it
    works and the pages split from it resolves; that each task of the `nexkit-maintain` skill links a

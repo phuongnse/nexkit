@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import TestCase, mock
 
-from nexkit import autopilot, engine, host, item_state
+from nexkit import agent, autopilot, engine, host, item_state
 from nexkit import report as reports
 from nexkit.checks import recorded
 from nexkit.github import GitHubError
@@ -27,7 +27,7 @@ from nexkit.state import (
     render_run,
     render_state,
 )
-from tests.support import BOT_LOGIN, FakeGitHub, make_config, play_resume
+from tests.support import BOT_LOGIN, FakeGitHub, make_config, play_resume, profile_config
 from tests.test_autopilot import AutopilotCase, pilot, plan_output
 from tests.test_item_state import CREATED
 from tests.test_item_state import step as engine_step
@@ -869,6 +869,12 @@ class PoliciesTest(HostCase):
                 "splitDepth": 3,
                 "retryWaits": [15, 30, 60],
                 "lostWaits": [0, 30, 60, 120],
+                "budgets": {
+                    "plan": {"seconds": 15 * 60},
+                    "implement": {"seconds": 45 * 60},
+                    "fix": {"seconds": 45 * 60},
+                    "review": {"seconds": 20 * 60},
+                },
             },
         )
         found = host.policies(self.cfg | {"autopilot": {**self.cfg["autopilot"], "enabled": False}})
@@ -882,6 +888,17 @@ class PoliciesTest(HostCase):
         found = host.policies(cfg)
         found = [found[name] for name in ("accept", "fixRounds", "conflicts", "conflictRounds")]
         self.assertEqual(found, ["autoWhenPassed", 5, "resolve", 4])
+
+    def test_each_stage_s_seconds_are_what_the_runner_gets(self):
+        cfg = profile_config(stages={"implement": {"timeout_minutes": 50}})
+        found = host.policies(cfg)["budgets"]
+        self.assertEqual(
+            set(found), {"triage", "plan", "implement", "fix", "review"}, "no `item` key"
+        )
+        self.assertEqual(found["implement"], {"seconds": 3000})
+        self.assertEqual(found["fix"], found["implement"])
+        for stage, budget in found.items():
+            self.assertEqual(budget, {"seconds": agent.action_for(stage, cfg)["budget"]["seconds"]})
 
     def test_lost_work_starts_again_only_with_autopilot(self):
         off = self.cfg | {"autopilot": {**self.cfg["autopilot"], "enabled": False}}

@@ -180,6 +180,18 @@ class Walker:
         }.items():
             if rng.random() < 0.85:
                 found[name] = rng.choice(values)
+        # Drawn from a generator of its own, which takes nothing from `rng`, so that the walks
+        # that this policy joined play as they did without it.
+        own = random.Random(hash(rng.getstate()))
+        if own.random() < 0.85:
+            found["budgets"] = own.choice(
+                [
+                    {},
+                    {"implement": {"seconds": 2700}},
+                    {"fix": {"tokens": 1000, "modelCalls": 5}, "review": {"seconds": 600}},
+                    {"plan": {"seconds": None}, "implement": {"modelCalls": None, "tokens": 50000}},
+                ]
+            )
         return found
 
     def plan_output(self, rng):
@@ -567,6 +579,15 @@ class Walker:
                 if state["rounds"].get("due") and waited:
                     eff = pol
         given = {**self.defaults, **pol}
+        # Each run's budget is its stage's, as the host gives it now, with `modelCalls` only
+        # when the stage sets it.
+        for run in (a for a in actions if a["kind"] == "runAgent"):
+            limits = given["budgets"].get(run["stage"]) or {}
+            wanted = {"tokens": limits.get("tokens"), "seconds": limits.get("seconds")}
+            if limits.get("modelCalls") is not None:
+                wanted["modelCalls"] = limits["modelCalls"]
+            if run["budget"] != wanted:
+                flag("budget", f"a {run['stage']} run's budget is not its stage's", info)
         # outbox
         try:
             memory["open"] = self.suite.check_outbox(memory["open"], event, answer, "walk")

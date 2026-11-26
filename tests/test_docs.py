@@ -14,9 +14,10 @@ budget support, and which runtimes report usage limits. The trigger table of its
 section lists each trigger of the workflow template and no other. The table of the App's
 permissions matches the permissions and levels of the App manifest. The plan and review layouts of
 stages match the sections the code writes, and the values the pages repeat match their constants.
-The local commands table of the README lists each command the CLI defines for people and no
-other, and each option a row names exists.
-The decisions index matches the decision files, and each decision is linked, as
+The README's table of supported versions is compared with the pins in nexkit/__init__.py, and each
+ubuntu-NN.NN in the README with the pinned runner. The local commands table of the README lists
+each command the CLI defines for people and no other, and each option a row names exists. The
+decisions index matches the decision files, and each decision is linked, as
 docs/writing-docs.md#how-the-docs-stay-correct says."""
 
 import argparse
@@ -27,6 +28,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import nexkit
 from nexkit import (
     app,
     autopilot,
@@ -51,6 +53,9 @@ HEADING = re.compile(r"^#{1,6} (.+?)\s*$", re.M)
 FENCE = re.compile(r"^```.*?^```", re.M | re.S)
 AGENTS = ROOT / "AGENTS.md"
 README = ROOT / "README.md"
+VERSIONS_HEADER = "| Dependency | Supported | Tested |"
+# A runner such as ubuntu-24.04, or a version such as 3.12, 2.1.323 or 3.12 or newer.
+VERSION = re.compile(r"ubuntu-\d+\.\d+|\d+\.\d+(?:\.\d+)?(?: or newer)?")
 ARCH = DOCS / "architecture.md"
 HOW_IT_WORKS_PAGE = DOCS / "how-it-works.md"
 STAGES = DOCS / "stages.md"
@@ -287,6 +292,46 @@ class AgentsTests(unittest.TestCase):
                 any(target.startswith("docs/") and "#" in target for target in targets),
                 f"a rule of AGENTS.md links no doc section: {rule[:60]!r}",
             )
+
+
+class ReadmeVersionsTests(unittest.TestCase):
+    def test_the_supported_versions_table_gives_the_pins_of_the_code(self):
+        python = ".".join(map(str, nexkit.PYTHON))
+        # The versions each row's Supported and Tested cells name; Claude Code links its pin.
+        pins = {
+            "Platform": ([], []),
+            "Runner": ([nexkit.RUNNER], [nexkit.RUNNER]),
+            "Claude Code": ([], []),
+            "Python for NexKit in the pipeline": ([python], [python]),
+            "Python for the `nexkit` CLI on your machine": ([f"{python} or newer"], [python]),
+        }
+        rows = {cells[0]: cells for cells in table(README, VERSIONS_HEADER)}
+        self.assertTrue(rows, "README.md has no table of supported versions")
+        for name in sorted(set(rows) | set(pins)):
+            with self.subTest(row=name):
+                self.assertIn(
+                    name, pins, f"README.md has a row for {name}, which the test does not know"
+                )
+                self.assertIn(name, rows, f"README.md has no row for {name}")
+                found = tuple(VERSION.findall(cell) for cell in rows[name][1:3])
+                self.assertEqual(
+                    found, pins[name], f"the versions of {name} in README.md differ from the pins"
+                )
+        claude = " ".join(rows.get("Claude Code", []))
+        self.assertIn(
+            "(nexkit/__init__.py)", claude, "the Claude Code row of README.md does not link its pin"
+        )
+        self.assertNotIn(
+            nexkit.CLAUDE_CODE,
+            claude,
+            "the Claude Code row of README.md repeats the pinned version",
+        )
+
+    def test_every_runner_the_readme_names_is_the_pinned_runner(self):
+        names = set(re.findall(r"ubuntu-\d+\.\d+", README.read_text()))
+        self.assertEqual(
+            names, {nexkit.RUNNER}, "README.md names a runner other than nexkit.RUNNER"
+        )
 
 
 def table(path, header):

@@ -413,7 +413,8 @@ holds what the writer read: it reads the comment again just before the edit
 applies its own changes to the newer state and tries again, a few times: for the count of
 automatic fix rounds it adds its own difference to the stored count, and for any other field it
 changed, its value wins. After the last try it fails and changes nothing. The check narrows the
-race and does not close it, because GitHub has no compare-and-set.
+race and does not close it, because GitHub has no compare-and-set. Run and round comments are
+edited without this check, so a write that comes between a run's read and its edit can be lost.
 
 Each run comment's hidden marker is machine-readable: the command or round, its trigger,
 status (running, success, failure, paused, continued), the outcome (for example `planned`,

@@ -4,13 +4,16 @@ Status: **Agreed**
 
 ## Context
 
-The pipeline installs the agent CLI and the engine's image has a base. If each version were set in
+The pipeline installs the agent CLI on a runner, and the engine's image has a base. If each version were set in
 several files, the files would drift apart, and the checks would test a version the pipeline does
 not install.
 
 ## Decision
 
-- Pins live only in `nexkit/__init__.py`. The pipeline installs exactly those versions.
+- The pins of the agent runtimes, the image's base, the runner and Python live only in
+  `nexkit/__init__.py`. The pipeline installs exactly those versions.
+- This repository's own development tools, ruff and actionlint, are pinned once in
+  `scripts/lint.sh`. No workflow proposes them.
 - Tests use no matrix. They run the pinned versions and no others.
 - `update-agents.yml` and `update-image.yml` each propose a new pin, and each proposal needs its
   own check before it merges.

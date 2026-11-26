@@ -54,9 +54,9 @@ job holds, and the plugin are described in [Architecture](docs/architecture.md).
 - `tests/prompts/` is NexKit 6's record of each stage's prompt. Never write it again with
   `NEXKIT_WRITE_PROMPTS` from today's code. A prompt change edits its golden by hand and says why.
   See [Which check covers what](docs/testing.md#which-check-covers-what).
-- Pins live only in `nexkit/__init__.py`; the pipeline installs exactly those versions, and tests
-  use no matrix. `update-agents.yml` and `update-image.yml` each propose an update that needs its
-  own check. See [The smoke test](docs/testing.md#the-smoke-test) and
+- The pins of the agent runtimes, the image's base, the runner and Python live only in
+  `nexkit/__init__.py`; the pipeline installs exactly those, and tests use no matrix.
+  `update-agents.yml` and `update-image.yml` each propose an update that needs its own check. See [The smoke test](docs/testing.md#the-smoke-test) and
   [D9](docs/decisions/d9-pins-live-in-one-place.md).
 - Everything specific to a CLI or provider lives in `runtimes/` behind `Runtime` and `Provider`; no
   other code branches on runtime names. Settings that identify an account or resource are secret
@@ -77,7 +77,7 @@ job holds, and the plugin are described in [Architecture](docs/architecture.md).
 
 ```sh
 python3 -m unittest discover -s tests -t .
-scripts/lint.sh                            # ruff 0.13.3 and actionlint
+scripts/lint.sh                            # ruff and actionlint at their pins
 tests/differential/check.sh                # the engine against NexKit 6, as CI runs it
 claude plugin validate --strict .
 python3 scripts/smoke.py [--program PATH]  # real Claude Code: docs/testing.md#the-smoke-test says when

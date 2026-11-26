@@ -407,6 +407,39 @@ class MainTests(unittest.TestCase):
             ],
         )
 
+    def test_plan_prints_what_the_cap_leaves_out(self):
+        findings = [finding("docs/x.md", "unbuilt", f"Rule {n}", n) for n in range(1, 12)]
+        answers = {"issue list": "[]", "milestones": ""}
+        with tempfile.TemporaryDirectory() as tmp:
+            gh = Path(tmp) / "gh"
+            gh.write_text(
+                "#!/usr/bin/env python3\nimport json, sys\n"
+                f"answers = json.loads({json.dumps(json.dumps(answers))})\n"
+                "args = ' '.join(sys.argv[1:])\n"
+                "print(next(v for k, v in answers.items() if k in args), end='')\n"
+            )
+            gh.chmod(0o755)
+            found = Path(tmp) / "findings.json"
+            found.write_text(json.dumps(findings))
+            out, err = io.StringIO(), io.StringIO()
+            env = {"GH": str(gh), "GITHUB_REPOSITORY": "phuongnse/nexkit"}
+            with (
+                mock.patch.dict("os.environ", env),
+                mock.patch.object(audit, "planned_markers", return_value=[]),
+                mock.patch.object(audit, "doc_words", return_value=[]),
+                contextlib.redirect_stdout(out),
+                contextlib.redirect_stderr(err),
+            ):
+                # No homes file: the run has no broken links to relink.
+                homes = str(Path(tmp) / "homes.json")
+                self.assertEqual(audit.main(["x", "plan", str(found), homes, "77"]), 0)
+        self.assertEqual(len(json.loads(out.getvalue())["issues"]), audit.MAX_ISSUES)
+        self.assertIn(
+            "Left out by the cap of 10, until a later audit finds it again: docs/x.md:11 unbuilt",
+            err.getvalue(),
+        )
+        self.assertNotIn("next audit", err.getvalue())
+
     def test_the_schema_holds_only_what_an_agent_receives(self):
         keywords = {"type", "enum", "properties", "required", "items", "description"}
 

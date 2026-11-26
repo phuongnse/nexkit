@@ -1,0 +1,48 @@
+{
+  "policies": {},
+  "state": {
+    "example": "new",
+    "set": {
+      "hold": true,
+      "waits": [
+        {
+          "id": "w1.1",
+          "for": "start",
+          "until": null,
+          "on": null
+        }
+      ]
+    }
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "requested",
+        "what": "start"
+      },
+      "state": "new",
+      "changed": false,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "released",
+        "label": "on-hold"
+      },
+      "state": "new",
+      "changed": true,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "start"
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    }
+  ]
+}

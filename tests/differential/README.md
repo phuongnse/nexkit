@@ -47,6 +47,7 @@ other difference grouped by where it differs, with an example, and exits 1 when 
 | `ended` | #393 | what a merge finds and a parent's end: a pull request a person merged or closed, a change the base branch holds, a head pushed while the merge waits, and the parent after the merge |
 | `replan` | #413 | a pull request's round that ran out of time, then the plan it asked for: too large or not, parts, titles, depth, autopilot's record, questions, no change, protected paths |
 | `failure` | #415 | a `/nexkit go` that stopped as blocked with nothing to answer, then a comment or a blocker's close, with autopilot on or off |
+| `new` | #438 | the first plan of a new issue, with a hold label, a blocker, a lower wave, a failed plan or `/nexkit go`, an author outside the repository, `max_parallel` with another issue busy, and a parent |
 
 A family is a module with `scenarios()`, which yields each scenario as plain JSON in a fixed
 order whatever tree plays it, and `run(sc)`, which plays one and returns what it recorded. A time
@@ -67,7 +68,8 @@ then, and checks the invariants that `INVARIANTS` lists after every step: the pr
 schemas, the transitions the states table names, the outbox, every open item carried on,
 counts within the policies, which rounds give their count back, `due` and `automatic`,
 diagnosis, usage-limit waits, runs again after a transient stop, holds and conflict rounds, the
-wait for required checks with its six hours, and the engine's answers to a round's questions.
+wait for required checks with its six hours, which items a `requested` start starts, and the
+engine's answers to a round's questions.
 Some walks start from the example of an item that accepts, which a walk from a new item seldom
 reaches. Each rule is checked both ways where it can be: a count neither passes its policy
 nor fails to come back when its round stops. It exits 1 when one breaks that `KNOWN` does not

@@ -65,6 +65,8 @@ INVARIANTS = {
     "a plan that a round which ran out of time asked for (`supersede`)",
     "parent-end": "a split ends as accepted only when every part ended, one was accepted and "
     "`parentEnd` is `whenPartAccepted`, and under `person` its parts' end leaves it to a person",
+    "start": "a `requested` start starts work only on an item that waits to start, with no hold "
+    "and no blocker wait, and on a free `new` item it starts exactly one plan run",
     "required-checks": "a start of the wait for required checks lives only in `accepting`, on "
     "the change's version; a refusal for them that have not passed leaves one wait, a tick and "
     "the first start of that version; a tick more than six hours after it needs a person",
@@ -79,6 +81,9 @@ KNOWN = {
 TITLE = "Cache the results"
 # The share of walks that start from the example of an item that accepts.
 ACCEPTING = 0.2
+# The share that start from the example of a new item that waits to start, as the import builds
+# it, and for a blocker too, which a walk from a created item reaches only by its own events.
+NEW = 0.1
 # The share that start from the example of a split whose parts end, which a walk from a new item
 # reaches only through a plan that splits.
 SPLIT = 0.1
@@ -833,6 +838,7 @@ class Walker:
             if not old.get("due") and rounds["conflicts"] == old["conflicts"]:
                 flag("usage-limit", "a run again after a tick counted as started", info)
         self.required_checks(state, event, answer, done, flag, info)
+        self.start(state, event, new, actions, flag, info)
         # automatic: a round that its checks or its review judged keeps its count, so only a
         # fix round issued in the same step is automatic after it.
         judged = done is not None and done["kind"] == "runChecks"
@@ -857,6 +863,26 @@ class Walker:
             flag("hold", "a conflict round started under a hold", info)
         if state["hold"] and new["hold"] and any(a["kind"] == "replaceChange" for a in actions):
             flag("hold", "a change made again under a hold", info)
+
+    def start(self, state, event, new, actions, flag, info):
+        """A `requested` start starts work only on an item that waits to start with no hold and
+        no blocker wait, and plans a free `new` item once."""
+        if state is None or event["kind"] != "requested" or event["what"] != "start":
+            return
+        waits = {wait["for"] for wait in state["waits"]}
+        free = (
+            state["itemKind"] == "change"
+            and "start" in waits
+            and "blocker" not in waits
+            and not state["hold"]
+        )
+        started = [a for a in actions if a["kind"] in self.tc.WORK]
+        if started and not free:
+            flag("start", "a start works on an item that may not start", info)
+        if free and state["state"] == "new":
+            plans = [a for a in started if a["kind"] == "runAgent" and a["stage"] == "plan"]
+            if len(plans) != 1 or new["state"] != "planning":
+                flag("start", "a start of a free new item plans it other than once", info)
 
     def required_checks(self, state, event, answer, done, flag, info):
         """The invariants of the wait for required checks and its six hours."""
@@ -915,6 +941,14 @@ class Walker:
         if rng.random() < SPLIT:
             path = self.tc.EXAMPLES / "state" / "split.json"
             state = json.loads(path.read_text())
+            memory["open"] = {action["id"]: action for action in state["pending"]}
+        elif rng.random() < NEW:
+            path = self.tc.EXAMPLES / "state" / "new.json"
+            state = json.loads(path.read_text())
+            state["waits"] = [{"id": "w1.1", "for": "start", "until": None, "on": None}]
+            if rng.random() < 0.5:
+                state["waits"].append({"id": "w1.2", "for": "blocker", "until": None, "on": "7"})
+            state["hold"] = rng.random() < 0.3
             memory["open"] = {action["id"]: action for action in state["pending"]}
         elif rng.random() < ACCEPTING:
             # Some walks start at a merge that waits for required checks, which a walk from a

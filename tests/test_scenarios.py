@@ -130,6 +130,8 @@ class Pipeline:
         self.handled = 0
         self.step_dispatches = 0  # `step` dispatches handled, which MAX_DISPATCHES leaves out
         self.steps = 0  # `step` runs played
+        # The places in `gh.dispatches` of the sweeps that a `step` run started after a split.
+        self.split_sweeps = set()
         # How many `step` runs GitHub drops from the queue before they run.
         self.lose_steps = 0
         self.runs = itertools.count(100)
@@ -259,8 +261,18 @@ class Pipeline:
             return
         self.steps += 1
         self.test.assertLess(self.steps, MAX_STEPS, f"a loop: {self.played}")
+        before = len(self.gh.dispatches)
         decision = route(self.gh, "workflow_dispatch", {}, dispatch["inputs"])
-        maintain(self.gh, decision, self.cfg, workflow="nexkit.yml", ref="main", alerts=self.alerts)
+        lines = maintain(
+            self.gh, decision, self.cfg, workflow="nexkit.yml", ref="main", alerts=self.alerts
+        )
+        # A split that GitHub refused in part still starts the sweep.
+        if any(line.startswith(("Split #", "Could not split #")) for line in lines):
+            self.split_sweeps.update(
+                place
+                for place in range(before, len(self.gh.dispatches))
+                if self.gh.dispatches[place]["inputs"].get("command") == "autopilot"
+            )
         self.gh.runs[run_id] = {"status": "completed"}
 
     def wait_for_ends(self, gh, run_ids, tries=0, delay=0):
@@ -483,9 +495,7 @@ class Pipeline:
         listed = {(item["number"], item["reason"]) for item in data["needs_person"]}
         people = {s["number"] for s in steps if s["state"] == "waits" and s.get("person")}
         # A `step` run that splits an issue starts a sweep, which sends the mention.
-        sweeping = any(
-            d["inputs"].get("command") == "autopilot" for d in self.gh.dispatches[self.handled :]
-        )
+        sweeping = any(place >= self.handled for place in self.split_sweeps)
         for step in steps:
             where = f"#{step['number']} {step['state']}: {step['reason']} after {self.played}"
             if step["state"] == "waits" and step.get("person"):

@@ -120,11 +120,15 @@ KNOWN = [
         "why": (
             "While GitHub refuses a dispatch, the sweep sends no `step`, so it makes none of "
             "the writes NexKit 6's sweep made itself, and says so in its log. The next sweep "
-            "sends the step again."
+            "sends the step again. Only that is excused: GitHub holds the same after each "
+            "sweep as before the first."
         ),
         "match": lambda sc, old, new: (
             sc["refusal"] == "dispatch_fails"
             and any(line.startswith("Could not send a step to") for line in _lines(new))
+            and isinstance(new.get("gh"), dict)
+            and new.get("gh1") == new["gh"]
+            and new.get("gh2") == new["gh"]
         ),
     },
 ]

@@ -1,7 +1,8 @@
 # Installed by `nexkit init`. Commands: /nexkit plan, /nexkit go, /nexkit trust (issues);
 # /nexkit fix (NexKit pull requests); /nexkit review (any pull request of this repository's
 # branches). On a NexKit pull request, a writer's *Request changes* review starts a fix
-# round, and an approval merges one whose merge GitHub refused (merge.auto). Settings:
+# round, and an approval merges one whose merge GitHub refused (merge.auto). The commands on
+# an issue and the rounds on its NexKit pull request wait in one queue. Settings:
 # .nexkit/config.json
 name: NexKit
 
@@ -25,7 +26,7 @@ on:
   workflow_dispatch:
     inputs:
       command:
-        description: plan, go, fix, review, or autopilot for a sweep
+        description: plan, go, fix, review, step for one issue's step (sent by a sweep or an approval), or autopilot for a sweep
         required: true
         type: string
       number:
@@ -51,23 +52,52 @@ permissions:
   checks: read
 
 jobs:
-  nexkit:
+  # Names the work item of the event, for the group below. Read only, with no App key and no
+  # checkout of this repository: it runs NexKit's code and reads numbers and branch names.
+  item:
     if: >-
       contains(fromJSON('["workflow_dispatch","issues","milestone","push","schedule","workflow_run"]'), github.event_name) ||
       (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/nexkit')) ||
       (github.event_name == 'pull_request_review' &&
        contains(fromJSON('["changes_requested","approved"]'), github.event.review.state) &&
        startsWith(github.event.pull_request.head.ref, 'nexkit/'))
-    # One run at a time per issue or pull request. Set on the job, so only commands join.
-    # Runs for other events, such as the schedule, form a group per event. Autopilot's
-    # events and sweeps share one group, and an approval has a group of its own for its
-    # pull request, so they never replace a command that waits.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      item: ${{ steps.item.outputs.item }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: phuongnse/nexkit
+          ref: v6.13.1
+          path: kit
+          persist-credentials: false
+      - id: python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          update-environment: false
+      - id: item
+        run: ${{ steps.python.outputs.python-path }} kit/bin/nexkit item
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+  nexkit:
+    needs: item
+    # One run at a time per work item: an issue and its NexKit pull request, or a person's
+    # pull request. Set on the job, so only commands join. The `item` job names the item;
+    # a sweep, the run that waits for paused commands, an approval and each other event
+    # keep a group of their own, so they never replace a command that waits.
     concurrency:
-      group: nexkit-${{ (github.event_name == 'milestone' || (github.event_name == 'issues' && github.event.action != 'closed')) && 'autopilot' || (github.event_name == 'pull_request_review' && github.event.review.state == 'approved') && format('approved-{0}', github.event.pull_request.number) || github.event.issue.number || github.event.pull_request.number || inputs.number || github.event_name }}
-    uses: phuongnse/nexkit/.github/workflows/pipeline.yml@v6.12.2
+      group: nexkit-${{ (github.event_name == 'milestone' || (github.event_name == 'issues' && github.event.action != 'closed')) && 'autopilot' || (github.event_name == 'pull_request_review' && github.event.review.state == 'approved') && format('approved-{0}', github.event.pull_request.number) || needs.item.outputs.item || github.event_name }}
+    uses: phuongnse/nexkit/.github/workflows/pipeline.yml@v6.13.1
     with:
       nexkit_repository: phuongnse/nexkit
-      nexkit_ref: v6.12.2
+      nexkit_ref: v6.13.1
     # The pipeline passes each job only the secrets .nexkit/config.json names for it (its
     # stages' agents, or the App's), so it can read them by those names.
     secrets: inherit

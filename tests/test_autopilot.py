@@ -22,6 +22,7 @@ from nexkit.report import report
 from nexkit.route import route
 from nexkit.state import ACTIONS_BOT, PLAN_MARKER, render_run
 from nexkit.status import collect, render
+from tests.answers import NOT_ANSWERS, STEPS, _before, _calls
 from tests.support import BOT_LOGIN, FakeGitHub, make_config, play_steps, play_sweep
 
 WORKFLOW = "acme/app/.github/workflows/nexkit.yml@refs/heads/main"
@@ -5242,80 +5243,15 @@ class WaitForEndsTests(AutopilotCase):
         self.assertFalse(any("step run" in line for line in lines))
 
 
-# What `.host` gives that is not an answer of the engine: a refusal and its words.
-NOT_ANSWERS = ("Refused", "refused_reason")
-
-
-def _calls(nodes):
-    """The calls by name within the expressions `nodes`, as (name, place, node)."""
-    return [
-        (node.func.id, (node.lineno, node.col_offset), node)
-        for top in nodes
-        for node in ast.walk(top)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-    ]
-
-
-def _heads(stmt):
-    """The expressions of `stmt` itself, not those of the statements within it: a condition,
-    what a loop runs over, what a `with` opens, or a whole simple statement."""
-    return [
-        child
-        for name, value in ast.iter_fields(stmt)
-        for child in (value if isinstance(value, list) else [value])
-        if isinstance(child, ast.AST) and not isinstance(child, (ast.stmt, ast.ExceptHandler))
-    ]
-
-
-def _passed(stmt):
-    """The calls that run before the statement after `stmt` does, whatever the branch taken:
-    its own expressions, and the body of a `try` or `with`, which runs through. The branches
-    of an `if` or a loop do not count, since another branch may be the one that ran."""
-    found = _calls(_heads(stmt))
-    if isinstance(stmt, (ast.Try, ast.With)):
-        for inner in stmt.body:
-            found += _passed(inner)
-    return found
-
-
-def _before(stmts, target):
-    """The calls that run before `target`, which is within `stmts`, on the way to it, or None
-    when it is not within them."""
-    before = []
-    for stmt in stmts:
-        if not any(node is target for node in ast.walk(stmt)):
-            before += _passed(stmt)
-            continue
-        own = _calls(_heads(stmt))
-        blocks = [getattr(stmt, "body", []), getattr(stmt, "orelse", [])]
-        blocks.append(getattr(stmt, "finalbody", []))
-        blocks += [handler.body for handler in getattr(stmt, "handlers", [])]
-        for block in blocks:
-            found = _before(block, target)
-            if found is not None:
-                if isinstance(stmt, (ast.Try, ast.With)) and block is not stmt.body:
-                    found = _passed_body(stmt) + found
-                return before + own + found
-        return before + own
-    return None
-
-
-def _passed_body(stmt):
-    return [call for inner in stmt.body for call in _passed(inner)]
-
-
-# The kinds of step that start, merge or end an item's work: each needs an answer of the engine.
-STEPS = ("start", "merge", "close")
-
-
 def unanswered_steps(source, kinds=STEPS):
     """The top-level functions of `source` (autopilot.py's text) that make a
     `_step(..., kind, ...)` of one of `kinds` with no engine call on the way to it in the same
-    function. A
-    call of the engine is one of a name imported from `.host`, other than `NOT_ANSWERS`, or of
-    a function of `source` that makes one, directly or through others. On the way means a
-    statement that runs before the start whatever the branch: a call in one branch of an `if`
-    does not count for the start in another. Only direct calls by name are followed."""
+    function. A call of the engine is one of a name imported from `.host`, other than
+    `NOT_ANSWERS`, or of a function of `source` that makes one, directly or through others. On
+    the way means a statement that runs before the start whatever the branch: a call in one
+    branch of an `if` does not count for the start in another, unless every branch asks or
+    leaves the function. Only direct calls by name are followed. `tests/test_answers.py` does
+    the same for every module."""
     tree = ast.parse(source)
     hosts = {
         (alias.asname or alias.name)
@@ -5342,18 +5278,18 @@ def unanswered_steps(source, kinds=STEPS):
             kind = node.args[1]
             if not (isinstance(kind, ast.Constant) and kind.value in kinds):
                 continue
-            ways = _before(function.body, node) or []
+            ways = _before(function.body, node, lambda call: call[0] in hosts | callers) or []
             if not any(other in hosts | callers and at < place for other, at, _ in ways):
                 found.append(function.name)
     return found
 
 
 class EveryStartFollowsTheEngine(unittest.TestCase):
-    """Autopilot starts a command, merges and closes only after an answer of the engine, in
+    """Autopilot starts a command, merges, closes and splits only after an answer of the engine, in
     the function that makes the step: the host asks the engine, and autopilot carries out
     what it answers (docs/engine.md#getting-there)."""
 
-    def test_every_start_merge_and_close_of_autopilot_follows_an_engine_call(self):
+    def test_every_start_merge_close_and_split_of_autopilot_follows_an_engine_call(self):
         source = (Path(autopilot.__file__)).read_text(encoding="utf-8")
         self.assertEqual(unanswered_steps(source), [])
 
@@ -5426,6 +5362,10 @@ class EveryStartFollowsTheEngine(unittest.TestCase):
             '    return _step(issue, "close", "x", parent=True)\n'
         )
         self.assertEqual(unanswered_steps(source), [])
+
+    def test_a_split_with_no_engine_call_before_it_fails(self):
+        source = 'def bad(issue):\n    return _step(issue, "split", "x")\n'
+        self.assertEqual(unanswered_steps(source), ["bad"])
 
     def test_a_kind_that_is_not_asked_for_is_not_checked(self):
         source = 'def waits(issue):\n    return _step(issue, "merge", "x")\n'

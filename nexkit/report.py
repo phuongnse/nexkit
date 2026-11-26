@@ -2450,7 +2450,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             fields = {}
             error = _transient(decision, agent, publish, needs)
             command = progress.COMMANDS[action]
-            now, answer, refused = datetime.now(UTC), None, None
+            now, refused, failed, again = datetime.now(UTC), None, False, None
             if error:
                 # The engine decides when the stage runs again, and when a person does, after a
                 # stop of the agent or of publish alike.
@@ -2461,18 +2461,18 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
                     answer = host.stage_transient(cfg, decision, now, error, label)
                 except host.Refused as exc:
                     refused = host.refused_reason(exc)
-            failed = answer == ("failed",)
-            again = None
-            if answer and not failed:
-                again = _retry(
-                    gh,
-                    decision,
-                    command,
-                    decision["target"],
-                    workflow_ref,
-                    default_branch,
-                    answer,
-                )
+                else:
+                    failed = answer == ("failed",)
+                    if answer and not failed:
+                        again = _retry(
+                            gh,
+                            decision,
+                            command,
+                            decision["target"],
+                            workflow_ref,
+                            default_branch,
+                            answer,
+                        )
             if again:
                 outcome, message, fields = _retrying(
                     gh, cfg, decision, agent, error, again, message
@@ -2701,7 +2701,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         outcome = "review_failed"
         found["error"], message = review_failure(reviewed)
         error = _transient(decision, reviewed, {}, needs, "review")
-        answer, again, failed = None, None, False
+        again, failed = None, False
         try:
             if error:
                 # The engine decides when the review runs again, and when a person does.
@@ -2709,9 +2709,11 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
                 failed = answer == ("failed",)
                 if not failed:
                     again = _retry(gh, decision, "review", pr, workflow_ref, default_branch, answer)
-            if not again and not failed:
-                # A review that failed otherwise, or whose run again GitHub refused to start,
-                # waits for a person.
+                if not again and not failed:
+                    # A review whose run again GitHub refused to start waits for a person.
+                    ended(("failed", found["error"]))
+            else:
+                # A review that failed otherwise waits for a person.
                 ended(("failed", found["error"]))
         except Refused as error_:
             refused = error_

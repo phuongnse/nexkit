@@ -164,7 +164,8 @@ class ChecksTests(unittest.TestCase):
 
     def test_the_roadmap_rows_of_this_repository(self):
         rows = audit.roadmap_rows((ROOT / "docs/roadmap.md").read_text())
-        self.assertEqual(rows[18], "Under way")
+        self.assertEqual(rows[18], "Done")
+        self.assertEqual(rows[1], "Under way")
         self.assertEqual(rows[8], "Done")
         self.assertTrue(all(s in ("Done", "Under way") for s in rows.values()))
 
@@ -359,7 +360,7 @@ class MainTests(unittest.TestCase):
         issues = [{"number": 6, "title": "An issue", "body": f"See {link}."}]
         answers = {
             "issue list": json.dumps(issues),
-            "milestones": '{"number": 18, "title": "Foundation", "state": "closed"}\n',
+            "milestones": '{"number": 18, "title": "Foundation", "state": "open"}\n',
             "issues/359": "open\n",
             "issues/360": "closed\n",
         }

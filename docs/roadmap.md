@@ -26,12 +26,12 @@ These features make up NexKit 6, released from 1.0.0 (2026-10-05) to 6.13.1 (202
 | [GitHub App and security](https://github.com/phuongnse/nexkit/milestone/15?closed=1) | Jobs that keep the agent away from writes, secrets named in the configuration, redaction, markers, and writes only as the repository's GitHub App | 1.0 |
 | [Setup, status and skills](https://github.com/phuongnse/nexkit/milestone/16?closed=1) | `nexkit init`, `doctor` and `status`, the release the CLI runs, the plugin's skills and the docs for people | 1.0 |
 | [Releases and upkeep](https://github.com/phuongnse/nexkit/milestone/17?closed=1) | Release pull requests, runtime pin updates, docs sweeps and NexKit's own tests | 1.0 |
+| [Foundation](https://github.com/phuongnse/nexkit/milestone/18?closed=1) | NexKit's own docs, delivery and checks at the standard it asks of the repositories it runs on: a map of the docs, short agent instructions, architecture, security, decisions, CodeQL, a docs audit, the owner's maintenance skill, and NexKit working its own issues | 6.13 |
 
 ## Under way
 
 | Milestone | What it delivers | Status |
 | --- | --- | --- |
-| [Foundation](https://github.com/phuongnse/nexkit/milestone/18) | NexKit's own docs, delivery and checks at the standard it asks of the repositories it runs on: a map of the docs, short agent instructions, architecture, security, decisions, CodeQL, a docs audit, the owner's maintenance skill, and NexKit working its own issues | In progress |
 | [Engine and hosts](https://github.com/phuongnse/nexkit/milestone/1) | The loop's decisions in one engine that any host runs, as [The engine](engine.md) describes. NexKit 7.0 ships when the GitHub host runs only through it | In progress |
 
 Built so far: the protocol's schemas, `nexkit-engine step`, `prompt`, `sweep` and `serve`, the state

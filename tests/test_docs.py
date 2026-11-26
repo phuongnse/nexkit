@@ -43,7 +43,9 @@ README's own setup command. No doc, the README, AGENTS.md or a skill repeats a p
 pin that D9 governs, or a lint tool's version from scripts/lint.sh. The decisions index matches the
 decision files, and each decision is linked, as docs/writing-docs.md#how-the-docs-stay-correct says.
 The list of files where a release sets the version, on the delivery page, names each file of the
-package, the plugin, pyproject.toml and the README that holds the version, and no other."""
+package, the plugin, pyproject.toml and the README that holds the version, and no other.
+The table of CI issue titles on the autopilot page shows the titles `ci_title` and `red_title`
+write, for each kind and form of title the code has, and no other."""
 
 import argparse
 import ast
@@ -194,6 +196,8 @@ DECISION_TITLE = re.compile(r"# D(\d+)\. (.+)$", re.M)
 DECISION_STATUS = re.compile(r"^Status: \*\*(Agreed|Proposed)\*\*$", re.M)
 DECISION_LINK = re.compile(r"\[D(\d+)\]\(decisions/([^)]+)\)")
 SKILL_NAME = re.compile(r"^name:\s*(\S+)\s*$", re.M)
+AUTOPILOT_PAGE = DOCS / "autopilot.md"
+CI_TITLES_HEADER = "| Failure | Title |"
 
 
 def anchors(path):
@@ -503,6 +507,13 @@ def table(path, header):
     """The rows under the table line that starts with `header`, as lists of stripped cells."""
     lines = path.read_text().splitlines()
     start = next((i + 1 for i, line in enumerate(lines) if line.startswith(header)), len(lines))
+    return rows_from(lines, start)
+
+
+def indented_table(path, header):
+    """The rows of the table in a list item, whose header line is `header` once stripped."""
+    lines = [line.strip() for line in path.read_text().splitlines()]
+    start = next((i + 1 for i, line in enumerate(lines) if line == header), len(lines))
     return rows_from(lines, start)
 
 
@@ -2058,6 +2069,183 @@ class ApprovableTests(unittest.TestCase):
                     f"docs/work-without-a-command.md lists {outcome!r}, which "
                     "maintain.APPROVABLE does not hold"
                 )
+
+
+def _ci_note(title="", path="e2e/order-checkout.spec.ts", line=12):
+    """An error annotation of a failed job, made by autopilot's own code."""
+    note = {"annotation_level": "failure", "title": title, "path": path, "start_line": line}
+    return autopilot._annotated("[e2e](https://job)", note)
+
+
+def _ci_job(name, *steps):
+    """A failed job of ci.yml whose steps all failed, made by autopilot's own code."""
+    failed = [{"name": step, "conclusion": "failure"} for step in steps]
+    return autopilot._job_failure("ci.yml", {"name": name, "steps": failed}, "job")
+
+
+def _ci_start():
+    """The failure of a run in which no job failed, made by autopilot's own code."""
+    gh = mock.Mock(attempt_jobs=lambda *_: [])
+    [start] = autopilot._attempt_failures(gh, "ci.yml", {"id": 50}, 1)
+    return start
+
+
+def _ci_shared(step, count):
+    """The one failure of a step that failed the same way in `count` jobs of ci.yml."""
+    found = {}
+    for n in range(count):
+        autopilot._merged(found, _ci_job(f"Build {n}", step), "ci.yml")
+    [failure] = found.values()
+    return failure
+
+
+def _ci_run(count):
+    """The failure of a run with `count` new failures, made by autopilot's own code."""
+    failures = [{"attempts": {1: [f"- line {n}"]}} for n in range(count)]
+    return autopilot._run_failure("ci.yml", {"id": 123}, failures)
+
+
+def _ci_title(failure):
+    """The title `ci_title` writes for a failure, with the kind of the failure."""
+    return ("ci_title", {failure["kind"]}, autopilot.ci_title(failure, "main"))
+
+
+def _red_title(*failures):
+    """The title `red_title` writes for a branch's failures, with their kinds."""
+    kinds = {failure["kind"] for failure in failures}
+    return ("red_title", kinds, autopilot.red_title("ci.yml", list(failures), "main"))
+
+
+TEST_NOTE = (
+    "[chromium] › order-checkout.spec.ts:12:5 › order checkout › "
+    "a customer pays for an order and the shop shows the receipt"
+)
+VITEST_NOTE = "OrderHistory > pages through more than twenty orders"
+
+# The Failure cell of each row of the table, as the page writes it, with a builder of the titles
+# that the code writes for its failures: each gives (function, kinds, title), for branch main.
+CI_TITLE_ROWS = {
+    "A test": lambda: [_ci_title(_ci_note(TEST_NOTE))],
+    "A Vitest test": lambda: [
+        _ci_title(_ci_note(VITEST_NOTE, "src/x/OrderHistory.test.tsx")),
+    ],
+    "An annotation with only a file and line": lambda: [
+        _ci_title(_ci_note("", "src/orders.ts", 12)),
+    ],
+    "An annotation with only a file": lambda: [_ci_title(_ci_note("", "src/orders.ts", None))],
+    "A job, or a step named like its job": lambda: [
+        _ci_title(_ci_job("Integration tests")),
+        _ci_title(_ci_job("Integration tests", "Integration tests")),
+    ],
+    "A step": lambda: [_ci_title(_ci_job("Lint and unit tests", "Unit tests"))],
+    "A step that failed the same way in several jobs": lambda: [
+        _ci_title(_ci_shared("Run actions/setup-dotnet@v5", 3)),
+    ],
+    "Runs with no failed job, two within a day": lambda: [_ci_title(_ci_start())],
+    "A run with more than five new failures": lambda: [_ci_title(_ci_run(7))],
+    "A red branch": lambda: [
+        _red_title(_ci_job("Static checks", "Lint"), _ci_job("Lint and unit tests", "Unit tests")),
+    ],
+    "A red branch, failures of several kinds or more than three": lambda: [
+        _red_title(*[_ci_job(f"Job {n}", f"Step {n}") for n in range(4)]),
+        _red_title(
+            _ci_job("Lint and unit tests", "Unit tests"),
+            _ci_job("Static checks", "Lint"),
+            _ci_note(VITEST_NOTE, "src/x/OrderHistory.test.tsx"),
+            _ci_note("", "src/a.ts", 3),
+        ),
+    ],
+    "A red branch with no failed job, also when run again": lambda: [_red_title(_ci_start())],
+}
+
+
+def ci_kinds():
+    """The kinds that autopilot.py gives a failure: the strings of each `"kind"` key and each
+    `kind=` keyword in its source."""
+    kinds = set()
+    for node in ast.walk(ast.parse(inspect.getsource(autopilot))):
+        if isinstance(node, ast.Dict):
+            for key, value in zip(node.keys, node.values, strict=True):
+                if isinstance(key, ast.Constant) and key.value == "kind":
+                    kinds.update(_kind_strings(value))
+        elif isinstance(node, ast.keyword) and node.arg == "kind":
+            kinds.update(_kind_strings(node.value))
+    return kinds
+
+
+def _kind_strings(value):
+    """The strings that a kind can be, which must be readable: a string or conditional strings."""
+    strings = state_values(value)
+    if not strings:
+        raise AssertionError(f"autopilot.py gives a kind the test cannot read at {value.lineno}")
+    return strings
+
+
+def title_forms(function):
+    """A pattern for each title that `function` returns as an f-string: its constant text
+    as it is, and each `{...}` as any text. Any other return fails."""
+    forms = []
+    for node in ast.walk(ast.parse(inspect.getsource(function))):
+        if not isinstance(node, ast.Return):
+            continue
+        value = node.value
+        if not (
+            isinstance(value, ast.Call)
+            and isinstance(value.func, ast.Name)
+            and value.func.id == "_fit"
+            and len(value.args) == 1
+            and isinstance(value.args[0], ast.JoinedStr)
+        ):
+            raise AssertionError(
+                f"{function.__name__} returns a title the test cannot read at {node.lineno}"
+            )
+        forms.append(
+            "".join(
+                re.escape(part.value) if isinstance(part, ast.Constant) else ".+"
+                for part in value.args[0].values
+            )
+        )
+    return forms
+
+
+class CiTitlesTests(unittest.TestCase):
+    def test_the_title_table_lists_each_title_the_code_writes_and_no_other(self):
+        rows = indented_table(AUTOPILOT_PAGE, CI_TITLES_HEADER)
+        self.assertTrue(rows, "docs/autopilot.md has no table of CI issue titles")
+        listed = {"ci_title": [], "red_title": []}  # the Title cells, by the function that wrote
+        kinds = set()  # the kinds of the failures that ci_title writes a title for
+        for failure, title in rows:
+            with self.subTest(row=failure):
+                if failure not in CI_TITLE_ROWS:
+                    self.fail(f"docs/autopilot.md has a row {failure!r} the test cannot build")
+                for function, row_kinds, built in CI_TITLE_ROWS[failure]():
+                    self.assertEqual(
+                        title,
+                        built,
+                        f"docs/autopilot.md row {failure!r} says {title!r}, "
+                        f"but {function} writes {built!r}",
+                    )
+                    listed[function].append(title)
+                    if function == "ci_title":
+                        kinds |= row_kinds
+        for failure in sorted(set(CI_TITLE_ROWS) - {row[0] for row in rows}):
+            with self.subTest(builder=failure):
+                self.fail(f"docs/autopilot.md has no row for {failure!r}, which the test builds")
+        for kind in sorted(ci_kinds()):
+            with self.subTest(kind=kind):
+                if kind not in kinds:
+                    self.fail(
+                        f"docs/autopilot.md has no row for a {kind!r} failure, which "
+                        "autopilot.py gives a kind and ci_title writes a title for"
+                    )
+        for name in ("ci_title", "red_title"):
+            for form in title_forms(getattr(autopilot, name)):
+                with self.subTest(form=form):
+                    if not any(re.fullmatch(form, title) for title in listed[name]):
+                        self.fail(
+                            f"docs/autopilot.md has no row for a title of the form {form!r}, "
+                            f"which autopilot.{name} writes"
+                        )
 
 
 if __name__ == "__main__":

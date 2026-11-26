@@ -314,6 +314,7 @@ every open issue in scope, in order, and starts the one command that moves it on
   | A test | Test "a customer pays for an order and the shop shows the receipt" in order-checkout.spec.ts fails at times on main |
   | A Vitest test | Test "pages through more than twenty orders" in OrderHistory.test.tsx fails at times on main |
   | An annotation with only a file and line | Line 12 of src/orders.ts fails at times on main |
+  | An annotation with only a file | src/orders.ts fails at times on main |
   | A job, or a step named like its job | Job "Integration tests" in ci.yml fails at times on main |
   | A step | Step "Unit tests" of job "Lint and unit tests" in ci.yml fails at times on main |
   | A step that failed the same way in several jobs | Step "Run actions/setup-dotnet@v5" in 3 jobs of ci.yml fails at times on main |

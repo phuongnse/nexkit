@@ -10,10 +10,10 @@ answer with NexKit 6's code, in NexKit 6's words. After a plan, a stopped round 
 So far the engine decides what follows a plan: its approval by autopilot, the answers to its
 questions, once in a row, a writer's answer that only closes the issue, a plan that finds no
 change or needs a hand-made change, splits and their rules, a new plan after a collaborator's
-comment, and what a plan waits for without autopilot. One stays NexKit 6's
-(`autopilot._replanned`): a plan that splits an issue whose pull request's round ran out of
-time. The engine splits such an item and withdraws its change (docs/engine.md#states), but the
-host does not send it that plan yet.
+comment, and what a plan waits for without autopilot. That includes the plan that autopilot asked
+for after a round of the issue's pull request ran out of time (`autopilot._replanned`): the host
+sends it with the pull request as the change and `supersede` asked, and when the engine splits the
+issue and answers `withdrawChange`, the host closes the pull request as superseded.
 
 It also decides what follows a `/nexkit go` that stopped as blocked with questions or with
 protected paths its change needs (`autopilot.engine_round`): the answers to its questions, once
@@ -424,6 +424,9 @@ def after_plan(gh, cfg, issue, plan, run, record, start, comments, pull=None):
         if pull:
             change = {"id": str(pull), "version": gh.pull(pull)["head"]["sha"]}
         doc = _document(issue, record, change=change)
+        if pull:
+            # The plan that a round that ran out of time asked for: its split withdraws the change.
+            doc["asked"].append("supersede")
         doc = _planning(doc, _depth(gh, issue, data), autopilot.asked_again(comments))
         event = _result(number, plan, data, run, change)
     found = step(doc, event, policies(cfg))
@@ -443,7 +446,7 @@ class _PlanView:
         if "close" in kinds:
             return self.closed(kinds["close"])
         if "createParts" in kinds:
-            return self.split(kinds["createParts"])
+            return self.split(kinds["createParts"], kinds.get("withdrawChange"))
         if "runAgent" in kinds:
             shown = any(a["kind"] == "show" and a["what"] == "answers" for a in actions)
             asked = [name for name in after if name not in before]
@@ -465,7 +468,14 @@ class _PlanView:
         reason = "its plan finds that no change is needed"
         return self.step("close", reason, finding=self.data["no_change"], plan_url=url)
 
-    def split(self, create):
+    def split(self, create, withdraw):
+        # The engine withdraws a change when it splits the item that has one, and only then.
+        named = (withdraw or {}).get("changeId")
+        if named != (str(self.pull) if self.pull else None):
+            if not self.pull:
+                raise Refused("The engine withdraws a change from an issue with no pull request.")
+            why = f"The engine splits the issue without withdrawing pull request #{self.pull}."
+            raise Refused(why)
         # The parts the engine files, as the plan's record holds them, which needs no more
         # than the earlier parts that each part's `needs` names.
         recorded = self.data.get("split") or []
@@ -530,7 +540,8 @@ class _PlanView:
         elif reason == "handMadeChange":
             text = autopilot.protected_reason(self.data["protected_paths"])
         elif reason == "approval":
-            # The plan is too large, and the engine splits no item with a change.
+            # The plan is too large, and the engine splits an item with a change only from the
+            # plan that a round which ran out of time asked for.
             text = TOO_LARGE
         elif reason == "splitDepth":
             # Its scope was set levels above, so a person splits it on, or implements it.

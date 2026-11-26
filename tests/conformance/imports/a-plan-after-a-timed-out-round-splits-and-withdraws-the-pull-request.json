@@ -1,0 +1,217 @@
+{
+  "kind": "started",
+  "nexkit6": {
+    "issue": {
+      "number": 42,
+      "title": "Retire the old cache"
+    },
+    "pull": {
+      "number": 308,
+      "head": "5a54e2bd5a54e2bd5a54e2bd5a54e2bd5a54e2bd",
+      "mergeable": true,
+      "changed_files": 2
+    },
+    "comments": [
+      {
+        "plan": {
+          "criteria": [
+            "A test shows the cache is gone."
+          ],
+          "record": {
+            "questions": [],
+            "too_large": false
+          }
+        }
+      },
+      {
+        "run": {
+          "command": "plan",
+          "status": "success",
+          "url": "https://github.com/acme/app/actions/runs/1",
+          "outcome": "planned"
+        }
+      },
+      {
+        "run": {
+          "command": "go",
+          "status": "success",
+          "url": "https://github.com/acme/app/actions/runs/2",
+          "outcome": "ready"
+        }
+      },
+      {
+        "autopilot": {
+          "split_asked": true,
+          "command": "plan",
+          "basis": [
+            0,
+            0
+          ]
+        },
+        "id": 149
+      },
+      {
+        "run": {
+          "command": "plan",
+          "status": "running",
+          "url": "https://github.com/acme/app/actions/runs/3"
+        },
+        "id": 150
+      }
+    ],
+    "pullComments": [
+      {
+        "run": {
+          "round": 1,
+          "trigger": "implement",
+          "action": "implement",
+          "kinds": [],
+          "status": "success",
+          "url": "https://github.com/acme/app/actions/runs/101",
+          "head": "5a54e2bd5a54e2bd5a54e2bd5a54e2bd5a54e2bd",
+          "checks": "passed",
+          "verdict": "approve",
+          "outcome": "auto_fix"
+        }
+      },
+      {
+        "run": {
+          "round": 2,
+          "trigger": "fix",
+          "action": "fix",
+          "kinds": [
+            "auto"
+          ],
+          "status": "failure",
+          "url": "https://github.com/acme/app/actions/runs/102",
+          "head": "5a54e2bd5a54e2bd5a54e2bd5a54e2bd5a54e2bd",
+          "outcome": "agent_error",
+          "timed_out": true
+        }
+      }
+    ]
+  },
+  "policies": {
+    "planApproval": "autoWhenClean",
+    "splits": true,
+    "splitParts": 10,
+    "splitDepth": 3
+  },
+  "state": {
+    "schemaVersion": 1,
+    "revision": 1,
+    "item": "42",
+    "itemKind": "change",
+    "state": "planning",
+    "change": {
+      "id": "308",
+      "version": "5a54e2bd5a54e2bd5a54e2bd5a54e2bd5a54e2bd"
+    },
+    "observed": {
+      "changeId": "308",
+      "version": "5a54e2bd5a54e2bd5a54e2bd5a54e2bd5a54e2bd",
+      "conflicts": false,
+      "merged": false,
+      "empty": false
+    },
+    "attention": null,
+    "hold": false,
+    "waits": [],
+    "pending": [
+      {
+        "id": "a1.1",
+        "next": null,
+        "kind": "runAgent",
+        "stage": "plan",
+        "changeVersion": "5a54e2bd5a54e2bd5a54e2bd5a54e2bd5a54e2bd",
+        "access": "read",
+        "inputs": [
+          "item",
+          "discussion",
+          "notes",
+          "previousPlan",
+          "linked",
+          "evidence",
+          "parts",
+          "workspace"
+        ],
+        "result": "results/plan.schema.json",
+        "agent": null,
+        "model": null,
+        "effort": null,
+        "budget": {
+          "tokens": null,
+          "seconds": null,
+          "usd": null
+        },
+        "session": null,
+        "resume": false
+      }
+    ],
+    "actors": {
+      "plan": "engine",
+      "change": "engine",
+      "review": "engine"
+    },
+    "plan": {
+      "text": {
+        "name": "plan",
+        "ref": "1"
+      },
+      "questions": [],
+      "criteria": 1,
+      "tooLarge": false,
+      "parts": 0,
+      "noChange": false,
+      "protectedPaths": [],
+      "approved": true,
+      "split": []
+    },
+    "rounds": {
+      "started": 2,
+      "counted": 0,
+      "conflicts": 0,
+      "signatures": [],
+      "findings": [],
+      "criteria": [],
+      "checklist": []
+    },
+    "used": {
+      "tokens": {
+        "input": 0,
+        "cached": 0,
+        "output": 0
+      },
+      "seconds": 0,
+      "usd": 0,
+      "since": null
+    },
+    "asked": [
+      "split",
+      "supersede"
+    ],
+    "parts": [],
+    "policies": {},
+    "recentEvents": [],
+    "title": "Retire the old cache"
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:planSplit"
+      },
+      "state": "split",
+      "changed": true,
+      "actions": [
+        "show",
+        "createParts",
+        "withdrawChange"
+      ],
+      "expect": {
+        "change": null
+      }
+    }
+  ]
+}

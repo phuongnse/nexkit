@@ -35,7 +35,6 @@ from .state import (
     BOT_LOGINS,
     CONTINUED,
     FAILURE,
-    MAX_PARTS,
     PAUSED,
     RUNNING,
     SUCCESS,
@@ -1185,56 +1184,6 @@ def _since_stop(gh, issue, comments, stop):
     return None
 
 
-def _split(gh, issue, plan, data, record, start, pull):
-    """The step for an issue whose pull request's round ran out of time and whose plan since
-    is too large: split it as the plan suggests, and close the pull request as superseded;
-    or, when it suggests no parts or parts titled like the issue, ask once for the plan
-    again; or wait for a person at `MAX_DEPTH` and after a second such plan. The engine
-    decides every other plan's split (`host.after_plan`). It splits an item that has a change
-    too, from this plan, but the host does not send it that plan yet, so this split stays
-    NexKit 6's (docs/engine.md#getting-there)."""
-    if depth(issue, lineage(gh, issue)) >= MAX_DEPTH:
-        # Its scope was set levels above, so a person splits it on, or implements it.
-        return _step(issue, "waits", person(DEPTH_DO, DEPTH_REASON))
-    parts = planned_parts(plan, data)
-    if parts > MAX_PARTS and record.get("fewer_asked"):
-        why = f"its plan has {parts} parts again, and autopilot files at most {MAX_PARTS}"
-        return _step(issue, "waits", person(SPLIT_DO, why))
-    if parts > MAX_PARTS:
-        start = {
-            **start,
-            "note": FEWER_NOTE.format(parts=parts, most=MAX_PARTS),
-            "remember": {"fewer_asked": True},
-        }
-        reason = (
-            f"the plan has {parts} parts and autopilot files at most {MAX_PARTS}, so autopilot "
-            "plans again for fewer"
-        )
-        return _step(issue, "start", reason, command="plan", **start)
-    if not data.get("split") and record.get("parts_asked"):
-        why = "its plan is too large for one session and suggests no parts again"
-        return _step(issue, "waits", person(SPLIT_DO, why))
-    if not data.get("split"):
-        start = {**start, "note": PARTS_NOTE, "remember": {"parts_asked": True}}
-        reason = "the plan is too large and suggests no parts, so autopilot plans again"
-        return _step(issue, "start", reason, command="plan", **start)
-    repeated = repeated_titles(issue, data["split"])
-    if repeated and record.get("titles_asked"):
-        why = "the parts of its plan are titled like the issue again"
-        return _step(issue, "waits", person(SPLIT_DO, why))
-    if repeated:
-        titles = ", ".join(f'"{title}"' for title in repeated)
-        start = {
-            **start,
-            "note": TITLE_NOTE.format(titles=titles),
-            "remember": {"titles_asked": True},
-        }
-        reason = "parts of the plan are titled like the issue, so autopilot plans again"
-        return _step(issue, "start", reason, command="plan", **start)
-    fields = {"parts": data["split"], "plan_url": plan.get("html_url") or "", "pull": pull}
-    return _step(issue, "split", "the plan splits the issue", **fields, **start)
-
-
 def _meaningful(rounds):
     """(comment, round) for the latest round that says something about the pull request:
     a round that found nothing to merge does not."""
@@ -1714,14 +1663,11 @@ def _merge_step(gh, cfg, issue, pull, comment, run, start, now):
 
 def _replanned(gh, cfg, issue, plan, last, record, start, comments, pull):
     """The step after the plan autopilot asked for when a round of the pull request ran out
-    of time: split the issue as the plan suggests (`_split`), or what the engine decides
-    (`host.after_plan`): answer its questions, or, when it needs nobody, a fix round on the
-    pull request that follows the revised plan."""
+    of time, which the engine decides (`host.after_plan`): split the issue and close the pull
+    request as superseded, plan once more for what a split needs, answer its questions, or,
+    when it needs nobody, start a fix round on the pull request that follows the revised plan."""
     if last.get("status") != SUCCESS:
         return _step(issue, "waits", last.get("attention") or failed_reason("plan"))
-    data = plan_data(plan) if plan else None
-    if (data or {}).get("too_large"):
-        return _split(gh, issue, plan, data, record, start, pull)
     return _after_plan(gh, cfg, issue, plan, last, record, start, comments, pull)
 
 

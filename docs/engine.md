@@ -738,7 +738,9 @@ adapter. A new rule of the engine comes with a case.
   split is imported with how many levels of parts it is below the issue first split, so a part at
   the deepest level whose plan is too large waits for a person. Autopilot's answers are kept in
   `asked` only while the plan or round they started is on its way: a person's comment, or a run
-  that reported and changed the item, ends them. A NexKit 6 run on its way becomes the action the
+  that reported and changed the item, ends them. The plan that autopilot asked for after a pull
+  request's round ran out of time is imported with `supersede`, so its split withdraws the pull
+  request. A NexKit 6 run on its way becomes the action the
   engine waits for, and an automatic fix round on its way, with a count, is marked
   `rounds.automatic`, so that a stop gives its count back. A run paused at a usage limit, or until
   it runs again after a transient stop, becomes a wait with its time, the second keeping the
@@ -775,8 +777,8 @@ adapter. A new rule of the engine comes with a case.
    the engine holds, the GitHub host builds the item's document for each of them from NexKit 6's
    markers, as its import reads them, sends the event that GitHub shows, and carries out the
    answer with NexKit 6's code and in its words. So far these are the decisions that follow a
-   plan, but one: a plan that splits an item whose round ran out of time on its pull request,
-   which NexKit 6 still splits, closing the pull request as superseded. They are also the
+   plan, a split after a round that ran out of time on its pull request included, whose
+   `withdrawChange` the host carries out by closing the pull request as superseded. They are also the
    decisions that follow a `/nexkit go` that stopped as blocked with questions or with paths
    only a person changes, a writer's command that answers its questions with the option that
    only closes the issue, the reason a plan waits for without autopilot, what follows the

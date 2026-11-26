@@ -35,7 +35,9 @@ row names exists. The configuration example of the README is what `nexkit init` 
 README's own setup command. No doc, the README, AGENTS.md or a skill repeats a pinned version:
 each pin that D9 governs, or a lint tool's version from scripts/lint.sh. The decisions index
 matches the decision files, and each decision is linked, as
-docs/writing-docs.md#how-the-docs-stay-correct says."""
+docs/writing-docs.md#how-the-docs-stay-correct says. The list of files where a release sets the
+version, on the delivery page, names each file of the package, the plugin, pyproject.toml and the
+README that holds the version, and no other."""
 
 import argparse
 import ast
@@ -79,6 +81,9 @@ FENCE = re.compile(r"^```.*?^```", re.M | re.S)
 AGENTS = ROOT / "AGENTS.md"
 README = ROOT / "README.md"
 VERSIONS_HEADER = "| Dependency | Supported | Tested |"
+RELEASE_FILES = re.compile(
+    r"^- A release pull request sets the version in (.+?),\s+and adds", re.M | re.S
+)
 # A runner such as ubuntu-24.04, or a version such as 3.12, 2.1.323 or 3.12 or newer.
 VERSION = re.compile(r"ubuntu-\d+\.\d+|\d+\.\d+(?:\.\d+)?(?: or newer)?")
 ARCH = DOCS / "architecture.md"
@@ -393,6 +398,69 @@ class ReadmeVersionsTests(unittest.TestCase):
         self.assertEqual(
             names, {nexkit.RUNNER}, "README.md names a runner other than nexkit.RUNNER"
         )
+
+
+def release_files():
+    """The files that the Releases bullet of the delivery page lists as holding the version."""
+    found = RELEASE_FILES.search((DOCS / "delivery.md").read_text())
+    assert found, (
+        "docs/delivery.md has no Releases bullet that lists where a release sets the version "
+        "(the test reads the bullet by its opening words, so change it with the bullet)"
+    )
+    text = " ".join(found.group(1).split())
+    files = {t for t in re.findall(r"`([^`]+)`", text) if (ROOT / t).is_file()}
+    if "README's `pipx install` line" in text:
+        files.add("README.md")
+    return files
+
+
+def files_with_version():
+    """The files a release ships that hold nexkit.__version__."""
+    pattern = re.compile(rf"(?<![\d.]){re.escape(nexkit.__version__)}(?![\d.])")
+    paths = [ROOT / "pyproject.toml", README]
+    for top in ("nexkit", ".claude-plugin", "skills"):
+        paths.extend(sorted((ROOT / top).rglob("*")))
+    found = set()
+    for path in paths:
+        if not path.is_file() or "__pycache__" in path.parts:
+            continue
+        try:
+            body = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        if pattern.search(body):
+            found.add(path.relative_to(ROOT).as_posix())
+    return found
+
+
+class ReleaseVersionTests(unittest.TestCase):
+    def test_the_release_list_names_each_file_that_holds_the_version(self):
+        listed, found = release_files(), files_with_version()
+        version = nexkit.__version__
+        for name in sorted(listed | found):
+            with self.subTest(file=name):
+                self.assertIn(
+                    name,
+                    found,
+                    f"docs/delivery.md lists {name}, which does not hold version {version}",
+                )
+                self.assertIn(
+                    name,
+                    listed,
+                    f"{name} holds version {version}, "
+                    "which docs/delivery.md#releases does not list",
+                )
+
+    def test_the_readme_installs_the_tag_of_the_version(self):
+        lines = [line for line in README.read_text().splitlines() if "pipx install git+" in line]
+        self.assertEqual(len(lines), 1, "README.md needs one `pipx install git+` line")
+        self.assertRegex(
+            lines[0],
+            rf"@v{re.escape(nexkit.__version__)}(?![\d.])",
+            "the pipx install line of README.md does not install the tag of nexkit.__version__",
+        )
+        example = ROOT / "nexkit/protocol/v1/examples/calls/describe.answer.json"
+        self.assertEqual(json.loads(example.read_text())["engine"], nexkit.__version__)
 
 
 class PinSourcesTests(unittest.TestCase):

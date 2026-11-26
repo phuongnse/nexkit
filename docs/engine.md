@@ -61,6 +61,7 @@ that reads one JSON request on standard input and writes one JSON answer, or run
 `nexkit-engine serve` beside it, which answers the same requests over HTTP. A host in any
 language can therefore run it, and the engine could be written again in another language
 without a change to any host, as long as the conformance suite passes.
+[D12](decisions/d12-a-host-runs-the-engine-as-a-program-or-over-http.md) gives the reasons.
 
 - **Over HTTP**, `POST /<call>` takes the request as its body and answers with the same JSON
   text as standard input: status `200`, or `400` when the engine refuses the request. Both read

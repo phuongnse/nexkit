@@ -919,8 +919,8 @@ class Walker:
             if not own and any(("by" in a) != (event["by"] is not None) for a in marked):
                 flag("lost", "a request's work is marked other than by who asked", info)
         # usage-limit
-        limit = (event["result"] or {}).get("limit")
-        if done and done["kind"] == "runAgent" and limit and not budget_stop:
+        agent_run = done and done["kind"] == "runAgent"
+        if agent_run and (event["result"] or {}).get("limit") and not budget_stop:
             reset = event["result"]["limit"]["reset"]
             if reset:
                 if not any(w["for"] == "usageLimit" and w["until"] == reset for w in new["waits"]):

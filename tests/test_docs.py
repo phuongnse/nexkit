@@ -17,7 +17,9 @@ The trigger table of its workflow file section lists each trigger of the workflo
 other. The table of the App's permissions matches the permissions and levels of the App manifest.
 The refusals of `unaffected_by` that the checks page lists name each refusal of the code and no
 other, and the code refuses each one. The plan and review layouts of stages match the sections
-the code writes, and the values the pages repeat match their constants. The README's table of
+the code writes, and the values the pages repeat match their constants. The words that the agents
+and profiles and the failure handling pages list as marking a failing line match FAILURE_LINE.
+The README's table of
 supported versions is compared with the pins in nexkit/__init__.py, and each ubuntu-NN.NN in the
 README with the pinned runner. The local commands
 table of the README lists each command the CLI defines for people and no other, and each option a
@@ -1233,6 +1235,9 @@ VALUES = (
     ("work-without-a-command.md", f"{restart_delays()} after its last start"),
     ("failure-handling.md", f"{restart_delays()} after its last start"),
 )
+# The pages that list the words which mark a failing line, and the regex that finds each list.
+FAILURE_WORDS_PAGES = ("agents-and-profiles.md", "failure-handling.md")
+FAILURE_WORDS = re.compile(r"contains? (`[^`]+`(?:(?:, | or )`[^`]+`)*), in any case")
 
 
 class LayoutTests(unittest.TestCase):
@@ -1276,6 +1281,36 @@ class ValuesTests(unittest.TestCase):
                 self.assertIn(
                     phrase, text, f"docs/{name} does not say {phrase!r}, the code's value"
                 )
+
+
+class FailureWordsTests(unittest.TestCase):
+    def test_each_page_lists_the_words_of_failure_line_and_no_other(self):
+        code = sorted(textutil.FAILURE_LINE.pattern.split("|"))
+        for word in code:
+            self.assertEqual(
+                re.escape(word),
+                word,
+                f"FAILURE_LINE's word {word!r} has regex syntax; this test reads plain words",
+            )
+        for name in FAILURE_WORDS_PAGES:
+            # Lines are wrapped, so the page is searched with its spaces made one each.
+            text = " ".join((DOCS / name).read_text().split())
+            match = FAILURE_WORDS.search(text)
+            if match is None:
+                with self.subTest(page=name):
+                    self.fail(f"docs/{name} has no list of the words that mark a failing line")
+                continue
+            self.assertTrue(
+                bool(textutil.FAILURE_LINE.flags & re.IGNORECASE),
+                f"docs/{name} says the words match in any case; FAILURE_LINE does not ignore case",
+            )
+            listed = sorted(re.findall(r"`([^`]+)`", match.group(1)))
+            for word in sorted(set(code) - set(listed)):
+                with self.subTest(page=name, word=word):
+                    self.fail(f"docs/{name} does not list {word!r}, which FAILURE_LINE matches")
+            for word in sorted(set(listed) - set(code)):
+                with self.subTest(page=name, word=word):
+                    self.fail(f"docs/{name} lists {word!r}, which FAILURE_LINE does not match")
 
 
 if __name__ == "__main__":

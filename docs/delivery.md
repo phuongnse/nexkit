@@ -84,9 +84,10 @@ over the version or the changelog.
 
 - Feature pull requests change neither the version nor `CHANGELOG.md`.
 - A release pull request sets the version in `nexkit/__init__.py`, `pyproject.toml`,
-  `.claude-plugin/plugin.json` and the README's `pipx install` line, and adds a `## X.Y.Z`
-  changelog entry, ending with `### Upgrade` steps when the configuration, caller workflow or
-  permissions must change. Its description holds the output of
+  `.claude-plugin/plugin.json`, the protocol example
+  `nexkit/protocol/v1/examples/calls/describe.answer.json` and the README's `pipx install` line,
+  and adds a `## X.Y.Z` changelog entry, ending with `### Upgrade` steps when the configuration,
+  caller workflow or permissions must change. Its description holds the output of
   `python3 scripts/release_notes.py X.Y.Z`.
 - After the merge, the owner releases `vX.Y.Z` (titled `NexKit X.Y.Z`) on the merge commit with
   those notes.

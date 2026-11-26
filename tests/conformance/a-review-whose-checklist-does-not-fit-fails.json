@@ -18,7 +18,6 @@
           "changeVersion": "5a54e2b",
           "timedOut": false,
           "seconds": 60,
-          "usd": 0.5,
           "output": {
             "verdict": "approve",
             "summary": "The change does what the plan says.",

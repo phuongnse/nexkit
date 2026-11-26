@@ -182,10 +182,9 @@ AGENT = {
     "changeVersion": None,
     "timedOut": False,
     "seconds": None,
-    "usd": None,
 }
 # What the runner's result says an agent spent, which the engine adds to the item's `used`.
-SPENT = ("tokens", "seconds", "usd", "session")
+SPENT = ("tokens", "seconds", "session")
 
 
 def spent(ran):
@@ -2251,7 +2250,6 @@ def lost_again(cfg, issue, record, now, what, fields, extra=None, person=False, 
         changeVersion=version,
         tokens=None,
         seconds=None,
-        usd=None,
     )
     state, actions = _answers(doc, [*_hold_events(number, label), lost], found)
     kinds = {action["kind"]: action for action in actions}

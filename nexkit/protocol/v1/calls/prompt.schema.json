@@ -83,12 +83,6 @@
                     "integer",
                     "null"
                   ]
-                },
-                "usd": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
                 }
               }
             },
@@ -104,12 +98,6 @@
                 "seconds": {
                   "type": [
                     "integer",
-                    "null"
-                  ]
-                },
-                "usd": {
-                  "type": [
-                    "number",
                     "null"
                   ]
                 }
@@ -129,12 +117,6 @@
                     "integer",
                     "null"
                   ]
-                },
-                "usd": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
                 }
               }
             },
@@ -152,12 +134,6 @@
                     "integer",
                     "null"
                   ]
-                },
-                "usd": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
                 }
               }
             },
@@ -173,12 +149,6 @@
                 "seconds": {
                   "type": [
                     "integer",
-                    "null"
-                  ]
-                },
-                "usd": {
-                  "type": [
-                    "number",
                     "null"
                   ]
                 }

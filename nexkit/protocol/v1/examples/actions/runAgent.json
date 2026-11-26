@@ -16,8 +16,7 @@
   "effort": null,
   "budget": {
     "tokens": null,
-    "seconds": 900,
-    "usd": null
+    "seconds": 900
   },
   "session": null,
   "resume": false

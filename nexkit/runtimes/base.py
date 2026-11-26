@@ -48,7 +48,6 @@ class Spec:
     stage: str
     model: str
     effort: str | None
-    budget_usd: float | None
     schema: dict
     # An empty directory for the CLI's own configuration and state, removed afterwards.
     home: Path
@@ -114,8 +113,6 @@ class Outcome:
     # so NexKit asks the same session for the result alone (see `Runtime.resumes`).
     no_result: bool = False
     result_error: str = ""
-    # What the run cost in US dollars, as the CLI reported it, or None.
-    cost_usd: float | None = None
 
 
 @dataclass(frozen=True)
@@ -222,7 +219,6 @@ class Runtime:
     release_url = ""
     program = ""  # the executable, found on PATH
     efforts: tuple[str, ...] = ()
-    supports_budget = False
     # Whether the reader can tell that the CLI stopped at a usage limit (`Outcome.limit`).
     # Only then can a run pause, or move to the agent's fallback.
     reports_limits = False
@@ -246,11 +242,6 @@ class Runtime:
         if effort is not None and effort not in self.efforts:
             raise AgentConfigError(
                 f"{where}.effort must be one of {', '.join(self.efforts)} or null for {self.label}"
-            )
-        if settings.get("max_budget_usd") is not None and not self.supports_budget:
-            raise AgentConfigError(
-                f"{where}.max_budget_usd: {self.label} has no spending limit; remove it and "
-                "rely on timeout_minutes"
             )
 
     def launch(self, agent, spec, secrets, program=None):

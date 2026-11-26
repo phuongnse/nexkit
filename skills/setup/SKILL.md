@@ -96,8 +96,8 @@ files or repository settings, and wait for confirmation.
    `"claude-api": {"runtime": "claude-code", "provider": "anthropic", "api_key_secret": "ANTHROPIC_API_KEY"}`,
    and add `"fallback": ["claude-api"]` to the `claude` agent. A stage then moves to it
    only when `claude` stops at a usage limit, and the next run starts on `claude` again.
-   Say that the fallback's runs are billed per token, so `max_budget_usd` is worth
-   setting.
+   Say that the fallback's runs on an API key are billed per token, and that
+   `timeout_minutes` limits each run.
 
 4. **Write the files.**
    `nexkit init --check "test=<command>" [--check "lint=<command>"] [--setup "<command>"] --model <model>`

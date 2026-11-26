@@ -166,7 +166,6 @@ def empty(item):
         "used": {
             "tokens": {"input": 0, "cached": 0, "output": 0},
             "seconds": 0,
-            "usd": 0,
             "since": None,
         },
         "asked": [],
@@ -851,7 +850,7 @@ def agent_run(stage, version):
         "agent": None,
         "model": None,
         "effort": None,
-        "budget": {"tokens": None, "seconds": None, "usd": None},
+        "budget": {"tokens": None, "seconds": None},
         "session": None,
         "resume": False,
     }

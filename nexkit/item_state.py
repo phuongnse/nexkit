@@ -96,6 +96,7 @@ def _document(comment):
         state = decoded(base64.b64decode(match.group(1)))
     except ValueError as error:
         raise StateError(f"Comment {comment['id']} holds no state document: {error}") from None
+    state = protocol.upgrade(state)
     found = protocol.check(state, "state.schema.json", "state")
     if found:
         raise StateError(f"Comment {comment['id']} holds a broken state document: {found[0]}")

@@ -96,7 +96,7 @@ class MultiAgentTests(unittest.TestCase):
         "profiles": {
             "claude": {
                 "when": "x",
-                "stages": {"implement": {"model": "opus", "effort": "max", "max_budget_usd": 5}},
+                "stages": {"implement": {"model": "opus", "effort": "max"}},
             },
             "team": {"when": "y", "stages": {"implement": {"agent": "team", "model": "sonnet"}}},
         },
@@ -136,11 +136,6 @@ class MultiAgentTests(unittest.TestCase):
             )
             self.assertEqual(config.runtimes(cfg), ["claude-code", "other"])
             self.assertEqual(config.secret_names([cfg], ["review"]), ["OTHER_KEY"])
-            with self.assertRaisesRegex(config.ConfigError, "max_budget_usd: Other has no"):
-                make_config(
-                    agents={"other": OTHER},
-                    stages={"review": {"agent": "other", "model": "m", "max_budget_usd": 1}},
-                )
 
 
 class SlotTests(unittest.TestCase):

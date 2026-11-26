@@ -78,6 +78,16 @@ def _normal(parts, ref):
     return out
 
 
+def upgrade(state):
+    """A state document as the current protocol reads it. Before 1.0, one of schema version 1
+    may still hold `used.usd`, which NexKit no longer keeps: it is read without it. Any other
+    value comes back as it is, for `check` to refuse."""
+    used = state.get("used") if isinstance(state, dict) else None
+    if not isinstance(used, dict) or "usd" not in used:
+        return state
+    return {**state, "used": {key: value for key, value in used.items() if key != "usd"}}
+
+
 def check(value, name, where="value"):
     """The ways `value` breaks the schema in `v1/<name>`, as short sentences: at most `LIMIT`,
     then "and more". `name` may point into the file, such as

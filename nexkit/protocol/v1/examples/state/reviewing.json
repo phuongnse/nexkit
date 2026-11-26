@@ -40,8 +40,7 @@
       "effort": null,
       "budget": {
         "tokens": null,
-        "seconds": null,
-        "usd": null
+        "seconds": null
       },
       "session": null,
       "resume": false
@@ -82,7 +81,6 @@
       "output": 0
     },
     "seconds": 640,
-    "usd": 2.37,
     "since": null
   },
   "asked": [],

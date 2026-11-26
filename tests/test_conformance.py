@@ -68,7 +68,7 @@ DEFAULTS = {
     "stopped": {"outcome": "keyRefused", "text": "The provider refused the key."},
     "held": {"label": "on-hold"},
     "reopened": {"by": PERSON},
-    "actionLost": {"tokens": None, "seconds": None, "usd": None},
+    "actionLost": {"tokens": None, "seconds": None},
 }
 AGENT = {
     "tokens": None,
@@ -80,7 +80,6 @@ AGENT = {
     "changeVersion": None,
     "timedOut": False,
     "seconds": None,
-    "usd": None,
 }
 RESULTS = {
     "@timeout": {**AGENT, "output": None, "timedOut": True},

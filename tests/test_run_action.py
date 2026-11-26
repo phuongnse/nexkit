@@ -77,9 +77,8 @@ class RunActionTests(StageCase):
                 self.assertEqual(protocol.check(ran["output"], f"results/{stage}.schema.json"), [])
                 self.assertEqual(ran["tokens"], result["tokens"])
                 self.assertIsNone(ran["error"])
-                self.assertEqual(
-                    (ran["session"], ran["changeVersion"], ran["usd"]), (None, None, None)
-                )
+                self.assertEqual((ran["session"], ran["changeVersion"]), (None, None))
+                self.assertNotIn("usd", ran)
 
     def test_triage_has_an_output_only_when_it_chose_the_profile(self):
         self.claude.configure(result={"profile": "expert", "reason": "x"})

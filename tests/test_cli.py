@@ -3009,7 +3009,10 @@ class ReleaseWorkflowTests(unittest.TestCase):
         build = self.jobs["build"]
         self.assertIn('if [ "$TAG" != "v$version" ]; then', build)
         self.assertIn('git merge-base --is-ancestor "$GITHUB_SHA" origin/main', build)
-        self.assertIn("fetch-depth: ${{ github.event_name == 'release' && 0 || 1 }}", build)
+        # Quoted: the number 0 is falsy, so `&& 0 || 1` gives a shallow checkout for a
+        # release, without origin/main, and every release fails (v6.13.0).
+        self.assertIn("fetch-depth: ${{ github.event_name == 'release' && '0' || '1' }}", build)
+        self.assertNotRegex(build, r"&& 0 \|\|")
         self.assertIn("print(nexkit.PYTHON_IMAGE)", build)
         self.assertIn('--build-arg PYTHON_IMAGE="$base"', build)
         self.assertIn('--tag "$IMAGE:$VERSION" .', build)

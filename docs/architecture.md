@@ -12,7 +12,7 @@ repository, read [How it works](how-it-works.md) first. This page says how the p
 The package `nexkit/` holds everything NexKit runs. It uses the Python standard library only, and
 it needs Python 3.12 or later. Two commands run it. `bin/nexkit` runs every command, both the ones
 a person runs on a computer and the ones that each pipeline job runs. `bin/nexkit-engine` runs the
-engine as a program, as [the engine and its hosts](#the-engine-and-its-hosts) describes.
+engine's calls as a program that reads JSON on standard input.
 
 | Module | Purpose |
 |---|---|
@@ -132,45 +132,47 @@ reads the first state document from NexKit 6's markers.
 
 ## The engine and its hosts
 
-The engine decides what happens to a work item, and a host carries that out. The engine holds the
-loop once, so a change to the loop is made in one place. A host stores the work and its state,
-sends events to the engine, carries out the actions the engine answers with, and tells people.
-GitHub is the first host. An application can be another host, where a person asks an agent to
-change what the application holds.
+The engine decides what happens to a work item, and a host carries those decisions out. The GitHub
+host, `nexkit/host.py`, stores the work and its state on GitHub, sends events to the engine, carries
+out the engine's answers and tells people. [The engine](engine.md) describes the whole design, and
+the note under its title tells what is built.
 
 ```mermaid
 flowchart LR
-    GitHub["GitHub host: nexkit/host.py"]
-    App["An application host"]
+    GitHub["GitHub host: nexkit/host.py, context.py"]
+    Program["Program: bin/nexkit-engine and its serve mode"]
     Engine["Engine: nexkit/engine/"]
     Protocol["Protocol: nexkit/protocol/"]
-    Runner["Runner: agent.py for agent CLIs"]
+    Runner["Runner: agent.run_action in nexkit/agent.py"]
     Agents["Agent CLIs, such as Claude Code"]
     Suite["Conformance suite: tests/conformance/"]
 
-    GitHub -->|"step, prompt, sweep"| Engine
-    App -->|"step, prompt, sweep"| Engine
+    GitHub -->|"step and prompt, in the same process"| Engine
+    Program -->|"the same calls, as JSON"| Engine
     Engine -->|"answers follow its schemas"| Protocol
     Suite -->|"checks the answers of"| Engine
     GitHub -->|"runs a session"| Runner
-    App -->|"runs a session"| Runner
     Runner --> Agents
 ```
 
-The engine answers three calls: `step` decides what happens to one work item, `prompt` writes the
-prompt of a stage, and `sweep` picks which waiting items start. It reads no network and no clock, and it
-reads no file but its own prompt templates. It holds no secret. A host runs it as a program, `nexkit-engine <call>`, or beside itself with
-`nexkit-engine serve`, which answers the same calls over HTTP. The protocol holds the JSON Schemas
-of the events, actions and state that pass between a host and the engine. The conformance suite
-holds cases, each an event with the answers it must give, and it checks the engine against them.
+The engine answers three calls: `step` decides what happens to one work item, `prompt` writes a
+stage's prompt from the texts the host fetched, and `sweep` chooses which waiting items start. [The
+engine](engine.md#the-engine) defines each call. The GitHub code calls `step` and `prompt` in the same
+process, as Python functions. It sends only some of its decisions to `step`, and
+[getting there](engine.md#getting-there) lists them.
 
-A runner runs one agent session for one stage, and the host gives it only its own provider's
-secrets. For agent CLIs such as Claude Code, the runner is part of this repository. The GitHub host,
-`nexkit/host.py`, makes the engine's calls for GitHub.
+The `nexkit-engine` program runs the same calls for a host that reads JSON, one request on standard
+input and one answer on standard output. `nexkit-engine serve` answers the same calls over HTTP. The
+GitHub host runs neither. The protocol, in `nexkit/protocol/`, holds the JSON Schemas of the events,
+actions and state that pass between a host and the engine. The conformance suite in
+`tests/conformance/` holds cases, each an event with the answers it must give, and checks the engine
+against them.
+
+A runner runs one agent session for one stage. For agent CLIs such as Claude Code, the runner is
+`agent.run_action` in `nexkit/agent.py`.
 
 [The parts](engine.md#the-parts) lists each part and where it lives. [Hosts](engine.md#hosts)
-compares GitHub with an application host, and [getting there](engine.md#getting-there) says how
-NexKit 6's decisions move into the engine.
+compares the GitHub host with the other hosts that the design names.
 
 ## The plugin
 

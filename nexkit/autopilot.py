@@ -1,9 +1,11 @@
 """Autopilot: work through the open issues in scope without commands.
 
-A sweep looks at every open issue in scope and starts the one command that moves it on:
-`/nexkit plan` for a ready issue, `/nexkit go` for a plan that needs nobody. Sweeps run in
-the `maintain` job, one at a time in the `nexkit-autopilot` concurrency group, and start
-commands with `workflow_dispatch`, like automatic rounds. They hold no agent credential and
+A sweep looks at every open issue in scope and finds the one step that moves it on:
+`/nexkit plan` for a ready issue, `/nexkit go` for a plan that needs nobody. It writes no
+issue or pull request itself: for each issue whose step writes, it sends a `step` dispatch,
+which carries the step out in the issue's own concurrency group (see `step`). Sweeps run in
+the `maintain` job, one at a time in the `nexkit-autopilot` concurrency group, and send
+steps with `workflow_dispatch`, like automatic rounds. They hold no agent credential and
 never check out repository code. Events start them: the end of a run, an issue that opens,
 closes or comes into scope, a closed milestone, a finished run on the default branch of a
 workflow in `merge.after_workflows` or `autopilot.watch_workflows`; the hourly schedule
@@ -29,7 +31,7 @@ from .config import SEVERITIES, after_workflow_names, autopilot_labels, watched_
 from .github import DOWNLOAD_LIMIT, LOG_CUT, TRUSTED_ASSOCIATIONS, GitHubError, alerts_off
 from .progress import STATUS_CONTEXTS, save_state
 from .redact import Redactor
-from .route import AFTER_RUN, RUN_ID, TRUST, issue_from_branch, parse_command, retry_kind
+from .route import AFTER_RUN, RUN_ID, STEP, TRUST, issue_from_branch, parse_command, retry_kind
 from .state import (
     ACTIONS_BOT,
     BOT_LOGINS,
@@ -69,6 +71,9 @@ from .usage import PAUSE_WINDOW, iso, parse_iso, shown
 SWEEP = {"command": "autopilot", "number": "autopilot", "note": "", "auto": "false"}
 # The `auto` input of the commands autopilot starts.
 AUTO = "autopilot"
+# The dispatch that carries out one issue's step. `nexkit item` names it by the issue, so it
+# joins the group of the issue's commands and of its pull request's rounds.
+STEP_INPUTS = {"command": STEP, "number": "", "note": "", "auto": AUTO}
 RECORD_PREFIX = "<!-- nexkit:autopilot "
 RECORD_PATTERN = re.compile(r"<!-- nexkit:autopilot ([A-Za-z0-9+/=]+) -->\s*\Z")
 DONE = "<!-- nexkit:autopilot-done -->"
@@ -93,8 +98,6 @@ AGAIN = (
 )
 # What the record keeps from one start to the next.
 STICKY = ("split_asked", "titles_asked", "parts_asked", "fewer_asked")
-# A sweep looks again after splitting an issue, at most this often.
-PASSES = 3
 # The note on the plan that autopilot asks for after an agent ran out of time.
 SPLIT_NOTE = (
     "The last implement or fix round did not finish within its time limit. Split this issue: "
@@ -272,6 +275,13 @@ def request(gh, workflow, ref, closed=None, after=None):
     sweep waits for to end first."""
     note = str(closed) if closed else AFTER_RUN.format(after) if after else ""
     gh.dispatch(workflow, ref, {**SWEEP, "note": note})
+
+
+def request_step(gh, workflow, ref, number):
+    """Send a `step` dispatch for issue `number`. Returns the id of the run it starts, or
+    None when GitHub does not say."""
+    inputs = {**STEP_INPUTS, "number": str(number)}
+    return (gh.dispatch(workflow, ref, inputs, run_details=True) or {}).get("workflow_run_id")
 
 
 def request_safely(gh, cfg, workflow, ref, closed=None, after=None, gate=takes):
@@ -2079,11 +2089,20 @@ def preview(gh, cfg):
 
         waiting = {s["number"]: _awaited_by(gh, issues.get(s["number"]), awaited) for s in starts}
         started = sweep(cfg, where, starts, issues, busy, waiting)
+        _read_mentions(gh, starts)
         # Each start keeps its slot among the other steps, and takes them in the engine's order.
         slots = [i for i, step in enumerate(steps) if any(step is one for one in started)]
         for slot, step in zip(slots, started, strict=False):
             steps[slot] = step
     return where, steps
+
+
+def _read_mentions(gh, steps):
+    """A start that the engine refused waits for a person, but `assess` did not know it
+    would: read whether `notify` was mentioned, so it is mentioned once."""
+    for one in steps:
+        if one["state"] == "waits" and one.get("person") and "mentioned" not in one:
+            one["mentioned"] = mentioned(gh.comments(one["number"]))
 
 
 def _awaited_by(gh, issue, awaited):
@@ -2111,6 +2130,20 @@ def mention(gh, cfg, step):
     gh.comment(step["number"], text)
     step["mentioned"] = True
     return f"#{step['number']} waits for a person: {step['reason']}."
+
+
+def writes(cfg, step):
+    """Whether a step writes on GitHub when it is carried out: a start, split, close or merge,
+    a run that ended without a report to show as ended, or a wait for a person that
+    `notify` has not mentioned yet (see `mention`)."""
+    if step["state"] in ("start", "split", "close", "merge") or step.get("stale"):
+        return True
+    return bool(
+        step["state"] == "waits"
+        and step.get("person")
+        and not step.get("mentioned")
+        and mention_text(cfg, step["reason"])
+    )
 
 
 def _save_record(gh, step, record, text, now=None):
@@ -3699,15 +3732,23 @@ def carry_out(gh, cfg, step, workflow, ref):
 
 
 def step(gh, cfg, number, workflow, ref):
-    """Carry out one issue's step as a sweep does, in the issue's own queue and without
-    `autopilot.max_parallel`, which only a sweep that sees every issue can keep. An issue
-    that is closed, is a pull request or is out of scope, and a step that has nothing to
-    write, change nothing. After a split, starts a sweep so that the parts start."""
+    """Carry out one issue's step as a sweep did before it sent steps, in the issue's own
+    queue and without `autopilot.max_parallel`, which only a sweep that sees every issue can
+    keep. An issue that is closed, is a pull request or is out of scope, and a step that has
+    nothing to write, change nothing. A start with no pull request still goes through the
+    engine's sweep, with nothing in progress, so an engine that refuses it leaves the issue
+    waiting for a person. After a split, starts a sweep so that the parts start."""
     issue = gh.issue(number)
     where = locate(gh, cfg)
     if issue.get("state") != "open" or "pull_request" in issue or not in_scope(where, issue):
         return [f"Autopilot: #{number} is closed, a pull request or out of scope; nothing to do."]
     one = assess(gh, cfg, issue, nexkit_pulls(gh), where=where)
+    if one["state"] == "start" and not one.get("pull"):
+        # `host` imports this module.
+        from .host import sweep as engine_sweep
+
+        engine_sweep(cfg, where, [one], {number: issue}, 0, {})
+        _read_mentions(gh, [one])
     lines = carry_out(gh, cfg, one, workflow, ref)
     if one["state"] == "split":
         lines += request_safely(gh, cfg, workflow, ref)
@@ -3716,31 +3757,45 @@ def step(gh, cfg, number, workflow, ref):
     return [f"Autopilot: #{number} {one['state']}: {one.get('reason', '')}; nothing to do."]
 
 
-def sweep(gh, cfg, workflow, ref, closed=None, busy=None, alerts=None):
-    """Start what moves each issue in scope on. Returns lines for the job log. Parts that
-    a split creates are in scope at once, so the sweep looks again after a split. A CI
-    failure on the default branch comes first, so its bug issue is planned first, and then
-    each Dependabot advisory; `alerts` is the client that may read them (see
-    `check_dependabot`). Adds each pull request it started a command on, or merged, to
-    `busy`. `closed`, the issue whose closing started the sweep, changes nothing: `done`
-    reads what is done from GitHub, so a sweep that replaced this one loses nothing."""
+def send_step(gh, step, workflow, ref, sent):
+    """Send a `step` dispatch for the issue of `step`, and add the id of its run to `sent`.
+    Returns a line for the log; an error from GitHub becomes a line."""
+    number = step["number"]
+    try:
+        run_id = request_step(gh, workflow, ref, number)
+    except GitHubError as exc:
+        return f"Could not send a step to #{number}: {exc}"
+    if run_id is not None and sent is not None:
+        sent.append(run_id)
+    return f"Sent a step to #{number}: {step['state']}: {step.get('reason', '')}."
+
+
+def sweep(gh, cfg, workflow, ref, closed=None, busy=None, alerts=None, sent=None):
+    """Send the step of each issue in scope whose step writes: a start, split, close or merge,
+    a run to show as ended, a person to mention. A sweep writes no issue or pull request
+    itself. Each `step` run carries its step out in the issue's queue, so the parts of a split
+    get their steps from the sweep that the splitting `step` run starts. A step that GitHub
+    drops leaves the issue as it was, and the next sweep sends it again. A CI failure on the
+    default branch comes first, so its bug issue is planned first, and then each Dependabot
+    advisory; `alerts` is the client that may read them (see `check_dependabot`). Returns lines
+    for the job log. Adds each pull request it sent work to, or a merge, to `busy`, and the
+    ids of the runs it started to `sent`. `closed`, the issue whose closing started the
+    sweep, changes nothing: `done` reads what is done from GitHub, so a sweep that replaced
+    this one loses nothing."""
     busy = set() if busy is None else busy
     lines = check_ci(gh, cfg, locate(gh, cfg), ref)
     lines += check_dependabot(gh, alerts, cfg, ref)
     lines += label_own(gh)
-    for _ in range(PASSES):
-        where, steps = preview(gh, cfg)
-        splits = [step for step in steps if step["state"] == "split"]
-        for step in steps:
-            if step["state"] in ("start", "merge", "close"):
-                busy.update(n for n in (step.get("target"), step.get("pull")) if n)
-            if step["state"] in ("split", "close", "start", "merge"):
-                lines += carry_out(gh, cfg, step, workflow, ref)
-        if not splits:
-            break
+    where, steps = preview(gh, cfg)
+    for step in steps:
+        if step["state"] in ("start", "merge", "close"):
+            busy.update(n for n in (step.get("target"), step.get("pull")) if n)
+        if step["state"] in ("split", "close", "start", "merge"):
+            lines.append(send_step(gh, step, workflow, ref, sent))
     for step in steps:
         if step["state"] == "waits" or (step["state"] == "active" and step.get("stale")):
-            lines += carry_out(gh, cfg, step, workflow, ref)
+            if writes(cfg, step):
+                lines.append(send_step(gh, step, workflow, ref, sent))
     # A sweep that a closed issue started names it in its note, but what it says comes
     # from what GitHub shows, so a sweep that replaced it in the queue says it too.
     lines += done(gh, cfg, where)

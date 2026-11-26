@@ -668,8 +668,8 @@ either. It waits for a person only:
 
 For any other rule, the round's comment and the mention say what unblocks the merge, under
 **What unblocks it**. No merge by hand is needed after that: an approval by someone with
-write access merges the pull request at once, and with autopilot, each sweep merges it once
-GitHub reports it as mergeable, such as after a rule changed (see [Automatic
+write access merges the pull request at once, and with autopilot, a sweep sends a `step` run
+that merges it once GitHub reports it as mergeable, such as after a rule changed (see [Automatic
 merge](merges-and-waits.md#automatic-merge)). An approval starts nothing while the workflow's
 `pull_request_review` trigger lets only *Request changes* reviews through: update it as
 `nexkit init` writes it, which `nexkit doctor` checks. NexKit reads the base branch's rules, the pull request's reviews,

@@ -82,7 +82,64 @@ KNOWN = [
             and _reviews(old)
         ),
     },
+    {
+        "name": "the parts of a split start one sweep later",
+        "family": "replan",
+        "by": "#468",
+        "why": (
+            "NexKit 6's sweep looked again after a split and started the parts at once. The "
+            "`step` run that splits starts a sweep instead, and that sweep sends the parts "
+            "their steps, so they are filed in the first sweep and start in the next."
+        ),
+        "match": lambda sc, old, new: (
+            any(line.startswith("Split #") for line in _lines(new))
+            and "Started an autopilot sweep." in _lines(new)
+            and any(line.startswith("Started /nexkit plan on") for line in _lines(old))
+        ),
+    },
+    {
+        "name": "no note that a start goes beyond max_parallel",
+        "family": "start",
+        "by": "#468",
+        "why": (
+            "NexKit 6's sweep started a bug issue that pull requests wait for beyond "
+            "`autopilot.max_parallel`, and said so in the start's reason. The `step` run "
+            "starts that issue alone, with nothing else counted, so it cannot know the pull "
+            "requests that wait and leaves the note out. The sweep still sends the start "
+            "beyond the limit."
+        ),
+        "match": lambda sc, old, new: (
+            any("starts beyond max_parallel" in line for line in _lines(old))
+            and not any("starts beyond max_parallel" in line for line in _lines(new))
+        ),
+    },
+    {
+        "name": "no step is sent while GitHub refuses dispatches",
+        "family": "refusals",
+        "by": "#468",
+        "why": (
+            "While GitHub refuses a dispatch, the sweep sends no `step`, so it makes none of "
+            "the writes NexKit 6's sweep made itself, and says so in its log. The next sweep "
+            "sends the step again."
+        ),
+        "match": lambda sc, old, new: (
+            sc["refusal"] == "dispatch_fails"
+            and any(line.startswith("Could not send a step to") for line in _lines(new))
+        ),
+    },
 ]
+
+
+def _lines(record):
+    """The lines of the log of the sweep that `record` holds, or none when it crashed."""
+    found = [
+        line for key, value in record.items() if key.startswith("lines") for line in _list(value)
+    ]
+    return found
+
+
+def _list(value):
+    return [line for line in value if isinstance(line, str)] if isinstance(value, list) else []
 
 
 def _after(record):

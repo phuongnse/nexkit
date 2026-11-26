@@ -9,7 +9,7 @@ and `conflicts.auto_resolve`. Records the preview, two sweeps with GitHub after 
 import itertools
 from unittest import mock
 
-from common import after, attempt, quiet, snapshot
+from common import after, attempt, quiet, snapshot, sweep
 
 from nexkit import autopilot
 from nexkit.state import PLAN_MARKER, empty_state, render_run, render_state
@@ -108,7 +108,7 @@ def run(sc):
     with over, quiet():
         after(gh, cfg, res, sweep=False, status=False)
         for n in (1, 2):
-            res[f"lines{n}"] = attempt(autopilot.sweep, gh, cfg, "nexkit.yml", "main")
+            res[f"lines{n}"] = attempt(sweep, gh, cfg)
             res[f"gh{n}"] = snapshot(gh)
         from nexkit.status import collect
 

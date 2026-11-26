@@ -370,15 +370,16 @@ To move one issue on by one step, dispatch `step` with the issue's number:
 gh workflow run nexkit.yml -f command=step -f number=<issue>
 ```
 
-The run reads the issue again and does what a sweep would do for it. It starts a command,
-splits, closes, merges, shows a run that ended without a report as ended, or mentions
-`notify` once. It does nothing when the issue is closed, is a pull request, is out of
+The run reads the issue again and does what a sweep sends it to do. A sweep sends this
+dispatch for each issue whose step writes, and then waits for those runs to end. The run
+starts a command, splits, closes, merges, shows a run that ended without a report as
+ended, or mentions `notify` once. It does nothing when the issue is closed, is a pull request, is out of
 scope, or has no step to take, such as an issue that is held or waits for another. It
 runs in the issue's own queue, so it waits behind the issue's commands and the rounds on
 its pull request. A command that waits in that queue is replaced by it, since GitHub
 keeps one waiting run per queue. It does not apply `autopilot.max_parallel`, which only a
-sweep can keep. After a split, it starts a sweep so that the parts start. It runs only
-with `autopilot.enabled`.
+sweep can keep. After a split, it starts a sweep, which sends the parts their steps. It
+runs only with `autopilot.enabled`.
 
 See [Work NexKit starts by itself](work-without-a-command.md#autopilot).
 

@@ -85,8 +85,8 @@ HOW = {"completed": "completed", "not_planned": "not planned", "duplicate": "dup
 WAIT_INPUTS = {"command": "resume", "number": "resume", "note": "", "auto": "false"}
 # How often a waiting run looks again for runs that paused while it waits.
 POLL = timedelta(minutes=10)
-# How often, and how many times, a sweep after a run whose report did not finish looks
-# whether that run ended, before it sweeps anyway.
+# How often, and how many times in all, a sweep looks whether a run ended: the run whose
+# report did not finish that asked for it, or the `step` runs it sent, before it goes on.
 END_POLL = 10
 END_TRIES = 30
 # How many of a pull request's own commits, and of the files they changed, NexKit reads to
@@ -600,6 +600,26 @@ def wait_for_end(gh, run_id, tries=END_TRIES, delay=END_POLL):
         if attempt < tries - 1:
             time.sleep(delay)
     return f"Run {run_id} has not ended yet; a later sweep handles it."
+
+
+def wait_for_ends(gh, run_ids, tries=END_TRIES, delay=END_POLL):
+    """Wait until every workflow run in `run_ids` ended, for at most `tries` looks in all:
+    each look reads the runs that have not ended yet. The sweep waits for the `step` runs it
+    sent, so the next sweep sees what they did. Returns a line for the log."""
+    waiting = list(run_ids)
+    for attempt in range(tries):
+        for run_id in list(waiting):
+            try:
+                if gh.workflow_run(run_id).get("status") == "completed":
+                    waiting.remove(run_id)
+            except GitHubError as exc:
+                return f"Could not read run {run_id}: {exc}"
+        if not waiting:
+            return f"The {len(run_ids)} step run{'s' * (len(run_ids) != 1)} ended."
+        if attempt < tries - 1:
+            time.sleep(delay)
+    some = f"{len(waiting)} step runs have" if len(waiting) != 1 else "1 step run has"
+    return f"{some} not ended yet; a later sweep handles them."
 
 
 def conflict_note(base):
@@ -1160,7 +1180,11 @@ def maintain(gh, decision, cfg, *, workflow="", ref="", alerts=None):
         busy = set()
         if autopilot.takes(cfg):
             closed = decision.get("closed")
-            lines += autopilot.sweep(gh, cfg, workflow, ref, closed, busy, alerts=alerts)
+            sent = []
+            lines += autopilot.sweep(gh, cfg, workflow, ref, closed, busy, alerts=alerts, sent=sent)
+            # So the next sweep sees what the steps did, and sends none twice.
+            if sent:
+                lines.append(wait_for_ends(gh, sent))
         if cfg["conflicts"]["auto_resolve"]:
             # After the commands it started, which merge the base branch themselves.
             max_rounds = cfg["conflicts"]["max_rounds"]

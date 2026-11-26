@@ -162,8 +162,8 @@ With autopilot on, its sweeps come to the same answers for the issues in scope, 
 what else waits for a person: an issue whose pull request needs one, an author without
 write access, a blocker outside the scope, a command that did not run after its more
 starts. When an issue starts to wait for a person and nobody was mentioned since its latest
-run, the sweep mentions `notify` once, on the issue, unless the issue closed while the
-sweep ran. `nexkit status` lists every such issue under *Needs a person* with the same
+run, the sweep sends a `step` run for it, which mentions `notify` once, on the issue, unless
+the issue closed before that run read it. `nexkit status` lists every such issue under *Needs a person* with the same
 reason.
 
 ### One run at a time
@@ -188,6 +188,13 @@ sweeps and the issue and milestone events that bring issues into scope share
 `nexkit-autopilot`, the run that waits for paused commands is `nexkit-resume`, an approval
 of a pull request is `nexkit-approved-<pr>`, and each other event, such as the schedule, a
 push or a finished workflow run, forms a group per event.
+
+A sweep in `nexkit-autopilot` writes no issue itself. For each issue whose next step
+writes, it sends a `step` dispatch, which joins the issue's own group, `nexkit-<item>`, and
+carries the step out there, on the issue as it is then. The sweep waits a limited time
+(`END_POLL` and `END_TRIES` in `maintain.py`) for those runs to end, so the next sweep sees what they did and sends no second
+`step` that would replace a command waiting in that group. Its conflict rounds, branch
+updates and stopped rounds on pull requests are still written from `nexkit-autopilot`.
 
 A pull request runs one NexKit round at a time. Its rounds (fix, review, automatic and
 conflict rounds) share the item's queue with the issue's commands, and the `/nexkit go` run

@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
-from nexkit import autopilot, state
+from nexkit import autopilot, host, state
 from nexkit import maintain as maintain_module
 from nexkit.engine.textutil import TEXT_LIMIT
 from nexkit.github import GitHubError
@@ -20,7 +20,7 @@ from nexkit.report import report
 from nexkit.route import route
 from nexkit.state import ACTIONS_BOT, PLAN_MARKER, render_run
 from nexkit.status import collect, render
-from tests.support import BOT_LOGIN, FakeGitHub, make_config
+from tests.support import BOT_LOGIN, FakeGitHub, make_config, play_steps, play_sweep
 
 WORKFLOW = "acme/app/.github/workflows/nexkit.yml@refs/heads/main"
 # The annotation the runner adds to every job whose step fails.
@@ -113,14 +113,14 @@ class AutopilotCase(unittest.TestCase):
             )
 
     def sweep(self, cfg=None, closed=None):
-        return autopilot.sweep(self.gh, cfg or self.cfg, "nexkit.yml", "main", closed)
+        return play_sweep(self.gh, cfg or self.cfg, "nexkit.yml", "main", closed)
 
     def started(self):
         """(command, number) for each command dispatched so far."""
         return [
             (d["inputs"]["command"], int(d["inputs"]["number"]))
             for d in self.gh.dispatches
-            if d["inputs"]["command"] != "autopilot"
+            if d["inputs"]["command"] not in ("autopilot", "step")
         ]
 
 
@@ -859,7 +859,13 @@ class SweepTests(AutopilotCase):
 
 class TriggerTests(AutopilotCase):
     def maintain(self, decision, cfg=None):
-        return maintain(self.gh, decision, cfg or self.cfg, workflow="nexkit.yml", ref="main")
+        """The job's lines, and then those of the `step` runs a sweep in it sent."""
+        before = len(self.gh.dispatches)
+        cfg = cfg or self.cfg
+        lines = maintain(self.gh, decision, cfg, workflow="nexkit.yml", ref="main")
+        for run in play_steps(self.gh, cfg, since=before):
+            lines += run
+        return lines
 
     def sweeps(self):
         return [d["inputs"] for d in self.gh.dispatches if d["inputs"]["command"] == "autopilot"]
@@ -1433,9 +1439,12 @@ class SplitTests(AnswerAndSplitCase):
             self.assertEqual(issue["milestone"], {"number": 1})
             self.assertEqual(issue["labels"], [{"name": "area"}])
             self.assertTrue(issue["body"].startswith("<!-- nexkit:part 5 -->"))
-        self.assertEqual(self.started(), [("plan", 6)])
+        # The parts start in the sweep that the splitting `step` run starts.
+        self.assertEqual(self.started(), [])
         self.assertEqual(self.gh.blockers[7], [6])
         self.assertTrue(self.gh.comments_matching(5, "split this issue as its plan suggests"))
+        self.sweep(pilot())
+        self.assertEqual(self.started(), [("plan", 6)])
         self.sweep(pilot())
         self.assertEqual(self.started(), [("plan", 6)])
 
@@ -1447,6 +1456,7 @@ class SplitTests(AnswerAndSplitCase):
             {"title": "Three", "body": "C.", "depends_on": [1, 1]},
         ]
         self.posted_plan(5, too_large=True, split=parts)
+        self.sweep()
         self.sweep()
         self.assertEqual(self.started(), [("plan", 6), ("plan", 7)])
         self.assertEqual((self.gh.blockers[7], self.gh.blockers[8]), ([], [6]))
@@ -1461,6 +1471,7 @@ class SplitTests(AnswerAndSplitCase):
 
         data = {"questions": [], "too_large": True, "split": split}
         self.gh.comment(5, f"{PLAN_MARKER}\n## Plan\n\n{_encode(PLAN_DATA_PREFIX, data)}")
+        self.sweep()
         self.sweep()
         self.assertEqual(self.started(), [("plan", 6)])
         self.assertEqual((self.gh.blockers[7], self.gh.blockers[8]), ([6], [7]))
@@ -1549,6 +1560,7 @@ class SplitTests(AnswerAndSplitCase):
         self.sweep()
         self.assertEqual(self.gh.pulls[9]["state"], "closed")
         self.assertTrue(self.gh.comments_matching(9, "Superseded by #10, #11"))
+        self.sweep()
         self.assertEqual(self.started(), [("plan", 5), ("plan", 10)])
         self.assertEqual(self.gh.deleted, [])  # the repository keeps head branches
 
@@ -1631,6 +1643,7 @@ class SplitTests(AnswerAndSplitCase):
         self.assertEqual(self.gh.dispatches[0]["inputs"]["note"], autopilot.SPLIT_NOTE)
         self.posted_plan(5, too_large=True, split=self.PARTS)
         self.sweep()
+        self.sweep()
         self.assertEqual(self.started(), [("plan", 5), ("plan", 6)])
         # The part's own agent runs out of time: it inherits #5's split, so a person decides.
         self.posted_plan(6)
@@ -1688,6 +1701,7 @@ class SplitTests(AnswerAndSplitCase):
         # A plan with parts titled by their own behaviour splits.
         self.posted_plan(5, too_large=True, split=self.PARTS)
         self.sweep()
+        self.sweep()
         self.assertEqual(self.started(), [("plan", 5), ("plan", 6)])
 
     def test_a_plan_too_large_without_parts_is_planned_once_more_then_waits(self):
@@ -1714,6 +1728,7 @@ class SplitTests(AnswerAndSplitCase):
         # A plan with parts splits.
         self.posted_plan(5, too_large=True, split=self.PARTS)
         self.sweep()
+        self.sweep()
         self.assertEqual(self.started(), [("plan", 5), ("plan", 6)])
 
     def test_a_plan_with_too_many_parts_files_none_and_is_planned_once_more(self):
@@ -1739,6 +1754,7 @@ class SplitTests(AnswerAndSplitCase):
         self.assertEqual(step["reason"], autopilot.person(autopilot.SPLIT_DO, why))
         # A plan with fewer parts splits.
         self.posted_plan(5, too_large=True, split=self.PARTS)
+        self.sweep()
         self.sweep()
         self.assertEqual(self.started(), [("plan", 5), ("plan", 6)])
 
@@ -3498,13 +3514,21 @@ class CIWaitTests(AutopilotCase):
         pull = self.open_pull(5, 10)
         self.assertEqual(self.report_round(5, pull)["outcome"], "ci_waiting")
         self.ci_run("success", 52)
-        self.gh.dispatch_errors["nexkit.yml"] = GitHubError(502, "Bad gateway")
+        # GitHub refuses the round, not the `step` run that starts it.
+        dispatch = self.gh.dispatch
+
+        def refusing(workflow, ref, inputs, run_details=False):
+            if inputs["command"] == "fix":
+                raise GitHubError(502, "Bad gateway")
+            return dispatch(workflow, ref, inputs, run_details)
+
+        self.gh.dispatch = refusing
         lines = self.sweep(self.cfg)
         self.assertTrue(any("Could not start /nexkit fix on #10" in line for line in lines))
         state = self.state(pull)
         self.assertEqual((state["auto_fixes"], state["ci_wait"]["bug"]), (0, self.bug))
         # The next sweep starts it and counts it, once.
-        del self.gh.dispatch_errors["nexkit.yml"]
+        self.gh.dispatch = dispatch
         self.sweep(self.cfg)
         self.assertEqual([f["number"] for f in self.fixes()], ["10"])
         self.assertEqual(self.state(pull)["auto_fixes"], 1)
@@ -4425,7 +4449,7 @@ class DependabotTests(unittest.TestCase):
 
     def test_a_sweep_goes_through_alerts_after_the_red_branch(self):
         self.gh.alerts = [alert()]
-        lines = autopilot.sweep(self.gh, self.cfg, "nexkit.yml", "main", alerts=self.gh)
+        lines = play_sweep(self.gh, self.cfg, alerts=self.gh)
         self.assertIn("GHSA-aaaa-bbbb-cccc: opened #1.", lines)
         self.assertEqual(self.gh.dispatches[0]["inputs"]["command"], "plan")
 
@@ -4728,7 +4752,7 @@ class SecondReviewTests(AutopilotCase):
 
 
 class StepDispatchTests(AutopilotCase):
-    """A `step` dispatch carries out one issue's step as a sweep does."""
+    """A `step` dispatch carries out one issue's step, as a sweep did before it sent steps."""
 
     HEAD = "c" * 40
 
@@ -4753,11 +4777,17 @@ class StepDispatchTests(AutopilotCase):
             "merged": list(gh.merged),
         }
 
+    def carried_out(self, gh):
+        """What a sweep did itself before it sent steps: carry out each step it found."""
+        for found in autopilot.preview(gh, self.cfg)[1]:
+            autopilot.carry_out(gh, self.cfg, found, "nexkit.yml", "main")
+
     def same_as_a_sweep(self, number):
-        """Run `step` on the fake and a sweep on a copy of it, and compare what they do."""
+        """Run `step` on the fake, and carry out the steps of a sweep on a copy of it, and
+        compare what they do."""
         sweep_gh = copy.deepcopy(self.gh)
         before = self.effects(self.gh)
-        autopilot.sweep(sweep_gh, self.cfg, "nexkit.yml", "main")
+        self.carried_out(sweep_gh)
         self.step(self.gh, number)
         self.assertNotEqual(self.effects(self.gh), before)
         return self.effects(self.gh), self.effects(sweep_gh)
@@ -4783,13 +4813,13 @@ class StepDispatchTests(AutopilotCase):
         self.run_comment(5, "plan", outcome="planned")
         return self.gh.comment(5, render_plan(plan_output(**output)))
 
-    def test_a_start_is_what_a_sweep_does(self):
+    def test_a_start_is_what_a_sweep_did(self):
         self.issue(5)
         mine, sweep = self.same_as_a_sweep(5)
         self.assertEqual(mine, sweep)
         self.assertEqual(self.started(), [("plan", 5)])
 
-    def test_a_split_is_what_a_sweep_does_and_starts_one_sweep(self):
+    def test_a_split_is_what_a_sweep_did_and_starts_one_sweep(self):
         self.issue(5)
         parts = [
             {"title": "First part", "body": "Do A.", "depends_on": []},
@@ -4797,7 +4827,7 @@ class StepDispatchTests(AutopilotCase):
         ]
         self.posted(too_large=True, split=parts)
         sweep_gh = copy.deepcopy(self.gh)
-        autopilot.sweep(sweep_gh, self.cfg, "nexkit.yml", "main")
+        self.carried_out(sweep_gh)
         lines = self.step(self.gh, 5)
         self.assertIn("Split #5 into #6, #7.", lines)
         self.assertEqual(sorted(self.gh.issues), [5, 6, 7])
@@ -4812,21 +4842,21 @@ class StepDispatchTests(AutopilotCase):
         self.assertEqual(dispatch["inputs"], {**autopilot.SWEEP, "note": ""})
         self.assertEqual(self.started(), [])
 
-    def test_a_close_is_what_a_sweep_does(self):
+    def test_a_close_is_what_a_sweep_did(self):
         self.issue(5)
         self.posted(no_change="main has the fix already.")
         mine, sweep = self.same_as_a_sweep(5)
         self.assertEqual(mine, sweep)
         self.assertEqual(self.gh.issues[5]["state"], "closed")
 
-    def test_a_merge_is_what_a_sweep_does(self):
+    def test_a_merge_is_what_a_sweep_did(self):
         self.merge_waiting()
         mine, sweep = self.same_as_a_sweep(5)
         self.assertEqual(mine, sweep)
         self.assertEqual(self.gh.merged, [(10, self.HEAD, "squash")])
         self.assertEqual(self.gh.issues[5]["state"], "closed")
 
-    def test_a_mention_is_what_a_sweep_does_and_is_made_once(self):
+    def test_a_mention_is_what_a_sweep_did_and_is_made_once(self):
         self.issue(5)
         self.posted(questions=["Which port?"])
         mine, sweep = self.same_as_a_sweep(5)
@@ -4880,6 +4910,29 @@ class StepDispatchTests(AutopilotCase):
         self.gh.add_pull(10, 5)
         self.nothing_changes(10)
 
+    def test_a_start_the_engine_refuses_waits_for_a_person_and_starts_nothing(self):
+        self.issue(5)
+        engine_answer = host.engine.answer
+
+        def answer(request):
+            if request["call"] == "sweep":
+                return {"protocol": 1, "error": "no sweep today"}
+            return engine_answer(request)
+
+        with mock.patch.object(host.engine, "answer", side_effect=answer):
+            lines = self.step(self.gh, 5)
+        self.assertEqual(self.started(), [])
+        self.assertTrue(any("engine refused" in line for line in lines), lines)
+        [mention] = self.gh.comments_matching(5, "@olivia a person is needed")
+        self.assertIn("no sweep today", mention["body"])
+        # Once: the sweep sends no second step, and a second `step` run finds it mentioned.
+        with mock.patch.object(host.engine, "answer", side_effect=answer):
+            [found] = autopilot.preview(self.gh, self.cfg)[1]
+            self.assertEqual((found["state"], found["mentioned"]), ("waits", True))
+            self.assertFalse(autopilot.writes(self.cfg, found))
+            self.step(self.gh, 5)
+        self.assertEqual(len(self.gh.comments_matching(5, "@olivia a person is needed")), 1)
+
     def test_a_number_that_is_not_digits_is_no_action(self):
         inputs = {"command": "step", "number": "x", "note": "", "auto": "autopilot"}
         decision = route(self.gh, "workflow_dispatch", {}, inputs)
@@ -4888,3 +4941,238 @@ class StepDispatchTests(AutopilotCase):
     def test_the_task_runs_only_with_autopilot(self):
         self.assertFalse(maintain_module.enabled("step", make_config()))
         self.assertTrue(maintain_module.enabled("step", self.cfg))
+
+
+class SweepSendsStepsTests(AutopilotCase):
+    """A sweep writes no issue or pull request: it sends one `step` dispatch for each issue
+    whose step writes."""
+
+    def setUp(self):
+        super().setUp()
+        self.cfg = make_config(autopilot={"enabled": True}, notify=["olivia"])
+        self.gh.dispatch_runs["nexkit.yml"] = "https://github.com/acme/app/actions/runs/1"
+
+    def posted(self, number, **output):
+        from nexkit.publish import render_plan
+
+        self.run_comment(number, "plan", outcome="planned")
+        return self.gh.comment(number, render_plan(plan_output(**output)))
+
+    def four_issues(self):
+        parts = [{"title": "First part", "body": "Do A.", "depends_on": []}]
+        self.issue(5)  # starts
+        self.issue(6)  # splits
+        self.posted(6, too_large=True, split=parts)
+        self.issue(7)  # closes
+        self.posted(7, no_change="main has the fix already.")
+        self.issue(8)  # waits for a person, who is mentioned
+        self.posted(8, questions=["Which port?"])
+
+    def snapshot(self):
+        return {
+            "comments": {
+                n: [c["body"] for c in self.gh.comments(n)] for n in sorted(self.gh.issues)
+            },
+            "issues": {n: (i["state"], i.get("state_reason")) for n, i in self.gh.issues.items()},
+            "labels": {n: i.get("labels") for n, i in self.gh.issues.items()},
+            "merged": list(self.gh.merged),
+            "updates": list(self.gh.updates),
+        }
+
+    def sweep_only(self, cfg=None):
+        sent = []
+        lines = autopilot.sweep(self.gh, cfg or self.cfg, "nexkit.yml", "main", sent=sent)
+        return lines, sent
+
+    def test_a_sweep_writes_no_item_and_sends_one_step_for_each(self):
+        self.four_issues()
+        before = self.snapshot()
+        lines, sent = self.sweep_only()
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(
+            [(d["inputs"]["command"], d["inputs"]["number"]) for d in self.gh.dispatches],
+            [("step", "5"), ("step", "6"), ("step", "7"), ("step", "8")],
+        )
+        for dispatch in self.gh.dispatches:
+            self.assertEqual(
+                dispatch["inputs"],
+                {**autopilot.STEP_INPUTS, "number": dispatch["inputs"]["number"]},
+            )
+        self.assertEqual(len(sent), 4)
+        self.assertEqual(
+            [line.split(":")[0] for line in lines], [f"Sent a step to #{n}" for n in (5, 6, 7, 8)]
+        )
+
+    def test_a_sweep_that_merges_nothing_itself_sends_a_step_for_a_merge(self):
+        self.issue(5)
+        self.posted(5)
+        self.run_comment(5, "go", outcome="ready")
+        head = "c" * 40
+        self.gh.add_pull(10, 5, head_sha=head)
+        run = {
+            "round": 1,
+            "trigger": "implement (autopilot)",
+            "status": "success",
+            "outcome": "merge_waiting",
+            "head": head,
+            "waiting_since": autopilot.iso(datetime.now(UTC)),
+        }
+        self.gh.comment(10, render_run(run))
+        busy = set()
+        autopilot.sweep(self.gh, self.cfg, "nexkit.yml", "main", busy=busy)
+        self.assertEqual(self.gh.merged, [])
+        self.assertEqual([d["inputs"]["number"] for d in self.gh.dispatches], ["5"])
+        self.assertEqual(busy, {10})
+
+    def test_an_issue_that_is_carried_on_or_already_mentioned_gets_no_step(self):
+        self.issue(5)
+        self.run_comment(5, "plan", status="running")
+        self.issue(6)
+        self.posted(6, questions=["Which port?"])
+        self.gh.comment(6, "@olivia a person is needed: answer the questions.")
+        lines, sent = self.sweep_only()
+        steps = autopilot.preview(self.gh, self.cfg)[1]
+        self.assertEqual(
+            [(s["state"], bool(s.get("mentioned"))) for s in steps],
+            [("active", False), ("waits", True)],
+        )
+        self.assertEqual((self.gh.dispatches, sent), ([], []))
+        self.assertEqual(lines, ["Autopilot: nothing to start in milestone M1."])
+
+    def test_a_wait_for_a_person_without_notify_gets_no_step(self):
+        self.issue(5)
+        self.posted(5, questions=["Which port?"])
+        self.sweep_only(make_config(autopilot={"enabled": True}))
+        self.assertEqual(self.gh.dispatches, [])
+
+    def test_a_step_that_cannot_be_sent_is_a_line_and_the_sweep_goes_on(self):
+        self.four_issues()
+        dispatch = self.gh.dispatch
+
+        def refusing(workflow, ref, inputs, run_details=False):
+            if inputs["number"] == "6":
+                raise GitHubError(502, "Bad gateway")
+            return dispatch(workflow, ref, inputs, run_details)
+
+        self.gh.dispatch = refusing
+        lines, sent = self.sweep_only()
+        self.assertIn("Could not send a step to #6: GitHub API 502: Bad gateway", "\n".join(lines))
+        self.assertEqual([d["inputs"]["number"] for d in self.gh.dispatches], ["5", "7", "8"])
+        self.assertEqual(len(sent), 3)
+        # Nothing on #6 changed, so the next sweep sends its step again.
+        self.gh.dispatch = dispatch
+        self.sweep_only()
+        self.assertEqual(
+            [d["inputs"]["number"] for d in self.gh.dispatches][3:], ["5", "6", "7", "8"]
+        )
+
+
+class WaitForEndsTests(AutopilotCase):
+    """The sweep job waits for the `step` runs its sweep sent."""
+
+    def setUp(self):
+        super().setUp()
+        self.sleeps = 0
+        patch = mock.patch("nexkit.maintain.time.sleep", side_effect=self.slept)
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.ends = {}  # run id -> the sleep after which it ended
+        self.reads = []
+        real = self.gh.workflow_run
+
+        def read(run_id):
+            self.reads.append(run_id)
+            if self.sleeps >= self.ends.get(run_id, 10**9):
+                self.gh.runs[run_id] = {"status": "completed"}
+            return real(run_id)
+
+        self.gh.workflow_run = read
+
+    def slept(self, _seconds):
+        self.sleeps += 1
+
+    def test_it_stops_at_once_when_every_run_ended(self):
+        self.gh.runs.update({1: {"status": "completed"}, 2: {"status": "completed"}})
+        line = maintain_module.wait_for_ends(self.gh, [1, 2])
+        self.assertEqual(line, "The 2 step runs ended.")
+        self.assertEqual((self.sleeps, self.reads), (0, [1, 2]))
+
+    def test_it_reads_only_the_runs_that_have_not_ended_and_stops_when_all_ended(self):
+        self.gh.runs.update({n: {"status": "queued"} for n in (1, 2, 3)})
+        self.ends = {1: 0, 2: 2, 3: 3}
+        line = maintain_module.wait_for_ends(self.gh, [1, 2, 3])
+        self.assertEqual(line, "The 3 step runs ended.")
+        self.assertEqual(self.sleeps, 3)
+        self.assertEqual(self.reads, [1, 2, 3, 2, 3, 2, 3, 3])
+
+    def test_the_runs_share_one_budget_of_tries(self):
+        self.gh.runs.update({1: {"status": "queued"}, 2: {"status": "queued"}})
+        line = maintain_module.wait_for_ends(self.gh, [1, 2])
+        self.assertEqual(line, "2 step runs have not ended yet; a later sweep handles them.")
+        self.assertEqual(self.sleeps, maintain_module.END_TRIES - 1)
+        self.assertEqual(len(self.reads), 2 * maintain_module.END_TRIES)
+
+    def test_a_run_that_cannot_be_read_is_a_line(self):
+        line = maintain_module.wait_for_ends(self.gh, [9])
+        self.assertTrue(line.startswith("Could not read run 9: "), line)
+
+    def test_the_sweep_task_waits_for_the_steps_it_sent_before_the_conflict_rounds(self):
+        self.issue(5)
+        self.issue(6)
+        dispatch = self.gh.dispatch
+        ids = iter((51, 52))
+
+        def dispatched(workflow, ref, inputs, run_details=False):
+            dispatch(workflow, ref, inputs, run_details)
+            run_id = next(ids)
+            self.gh.runs[run_id] = {"status": "queued"}
+            self.ends[run_id] = 2 * (run_id - 50)
+            return {"workflow_run_id": run_id}
+
+        self.gh.dispatch = dispatched
+        cfg = make_config(autopilot={"enabled": True}, conflicts={"auto_resolve": True})
+        with mock.patch("nexkit.maintain.resolve_conflicts", return_value=["conflicts"]) as rounds:
+            rounds.side_effect = lambda *a, **k: [f"conflicts after {self.sleeps} waits"]
+            lines = maintain(
+                self.gh,
+                {"action": "maintain", "task": "sweep"},
+                cfg,
+                workflow="nexkit.yml",
+                ref="main",
+            )
+        self.assertEqual(self.sleeps, 4)
+        self.assertEqual(
+            [line for line in lines if "step run" in line or "conflicts" in line],
+            ["The 2 step runs ended.", "conflicts after 4 waits"],
+        )
+
+    def test_the_sweep_task_stops_waiting_after_END_TRIES_polls_in_all(self):
+        self.issue(5)
+        dispatch = self.gh.dispatch
+
+        def dispatched(workflow, ref, inputs, run_details=False):
+            dispatch(workflow, ref, inputs, run_details)
+            self.gh.runs[51] = {"status": "queued"}
+            return {"workflow_run_id": 51}
+
+        self.gh.dispatch = dispatched
+        lines = maintain(
+            self.gh,
+            {"action": "maintain", "task": "sweep"},
+            self.cfg,
+            workflow="nexkit.yml",
+            ref="main",
+        )
+        self.assertIn("1 step run has not ended yet; a later sweep handles them.", lines)
+        self.assertEqual(len(self.reads), maintain_module.END_TRIES)
+
+    def test_a_sweep_that_sent_no_step_waits_for_none(self):
+        lines = maintain(
+            self.gh,
+            {"action": "maintain", "task": "sweep"},
+            self.cfg,
+            workflow="nexkit.yml",
+            ref="main",
+        )
+        self.assertEqual((self.sleeps, self.reads), (0, []))
+        self.assertFalse(any("step run" in line for line in lines))

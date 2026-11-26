@@ -10,7 +10,7 @@ from nexkit.maintain import maintain
 from nexkit.refusal import codeowners, explain, owners_of
 from nexkit.state import render_run
 from nexkit.status import collect
-from tests.support import FakeGitHub, make_config
+from tests.support import FakeGitHub, make_config, play_sweep
 from tests.test_report import HEAD, ReportCase, review_result
 
 # What GitHub answers when a ruleset refuses a merge for a code owner review.
@@ -411,7 +411,7 @@ class CleanMergeSweepTests(ReportCase):
         self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], "merge_refused")
 
     def sweep(self):
-        return autopilot.sweep(self.gh, self.cfg, "nexkit.yml", "main")
+        return play_sweep(self.gh, self.cfg)
 
     def test_a_refused_merge_merges_once_github_reports_it_clean(self):
         self.gh.pulls[6]["mergeable_state"] = "blocked"
@@ -505,7 +505,7 @@ class ReviewFixTests(ReportCase):
         self.assertEqual(self.run_report(cfg=cfg)["outcome"], "merge_refused")
         self.assertEqual(self.gh.run_comments(6)[-1]["run"]["refused_clean"], HEAD)
         before = len(self.gh.comments(6))
-        autopilot.sweep(self.gh, cfg, "nexkit.yml", "main")
+        play_sweep(self.gh, cfg)
         self.assertEqual(len(self.gh.comments(6)), before)
 
     def test_a_pull_request_github_would_merge_with_a_check_it_does_not_require_is_swept(self):
@@ -517,7 +517,7 @@ class ReviewFixTests(ReportCase):
         self.run_report(cfg=cfg)
         self.gh.pulls[6]["mergeable_state"] = "unstable"
         self.gh.merge_error = None
-        autopilot.sweep(self.gh, cfg, "nexkit.yml", "main")
+        play_sweep(self.gh, cfg)
         self.assertEqual(self.gh.merged, [(6, HEAD, "squash")])
 
 
@@ -578,7 +578,7 @@ class UnreadHoldTests(ReportCase):
         self.assertEqual(self.gh.merged, [])
         self.assertIn("could not read whether a label holds #5", outcome["summary"])
         # The next sweep reads that no label holds it, and merges.
-        autopilot.sweep(self.gh, cfg, "nexkit.yml", "main")
+        play_sweep(self.gh, cfg)
         self.assertEqual(self.gh.merged, [(6, HEAD, "squash")])
 
 

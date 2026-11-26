@@ -91,6 +91,36 @@ def outside_plan(pull):
     return prompt.outside_plan(context.outside_section(pull))
 
 
+def play_steps(gh, cfg, workflow="nexkit.yml", ref="main", alerts=None, since=0):
+    """Run the `step` dispatches in `gh.dispatches[since:]`, as the pipeline runs them: each
+    through `route` and `maintain`. They leave `gh.dispatches` once played. Returns the lines
+    of each run, in the order of the dispatches."""
+    from nexkit.maintain import maintain
+    from nexkit.route import route
+
+    sent = [d for d in gh.dispatches[since:] if d["inputs"]["command"] == "step"]
+    gh.dispatches[since:] = [d for d in gh.dispatches[since:] if d["inputs"]["command"] != "step"]
+    played = []
+    for dispatch in sent:
+        decision = route(gh, "workflow_dispatch", {}, dispatch["inputs"])
+        played.append(maintain(gh, decision, cfg, workflow=workflow, ref=ref, alerts=alerts))
+    return played
+
+
+def play_sweep(gh, cfg, workflow="nexkit.yml", ref="main", closed=None, busy=None, alerts=None):
+    """Play a sweep and the `step` runs it sent (see `play_steps`). Returns the sweep's lines,
+    with each `Sent a step to #n` line replaced by the lines of that run."""
+    from nexkit import autopilot
+
+    before = len(gh.dispatches)
+    lines = autopilot.sweep(gh, cfg, workflow, ref, closed, busy, alerts)
+    runs = iter(play_steps(gh, cfg, workflow, ref, alerts, before))
+    found = []
+    for line in lines:
+        found += next(runs) if line.startswith("Sent a step to #") else [line]
+    return found
+
+
 def make_config(**overrides):
     raw = {"checks": [{"name": "test", "run": "true"}], "github_app": APP, **overrides}
     return validate(with_claude(raw))

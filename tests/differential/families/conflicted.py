@@ -10,7 +10,7 @@ import itertools
 import json
 from unittest import mock
 
-from common import HEAD, TOK, WORKFLOW, Artifacts, attempt, planned_issue, quiet, snapshot
+from common import HEAD, TOK, WORKFLOW, Artifacts, attempt, planned_issue, quiet, snapshot, sweep
 
 from nexkit import autopilot, maintain, progress
 from nexkit import report as report_module
@@ -148,7 +148,7 @@ def run(sc):
         _, steps = autopilot.preview(gh, cfg)
         res["step"] = attempt(lambda: {s["number"]: s for s in steps}.get(5))
         for n in (1, 2):
-            res[f"lines{n}"] = attempt(autopilot.sweep, gh, cfg, "nexkit.yml", "main")
+            res[f"lines{n}"] = attempt(sweep, gh, cfg)
             res[f"gh{n}"] = snapshot(gh)
         from nexkit.status import collect
 

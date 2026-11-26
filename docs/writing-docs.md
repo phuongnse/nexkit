@@ -197,13 +197,13 @@ Docs drift when a change adds a rule and leaves the old one beside it, when prog
 the text, when one fact lives in two places, when work is built and its page still says planned, and
 when a list of what the code defines misses an entry. These rules close each of them.
 
-1. **Every pull request states its docs.** Its plan and its description have a line `Docs:` that
-   names the doc sections it changes, or says why it changes none. It rewrites the section that
-   describes what it changes and deletes what it replaces, removes the planned marker of what it
-   builds, and searches the docs and the skills for every name it renames or removes, such as a
-   setting, a command, a label or a status. A pull request that makes any doc statement false fixes
-   it. The review checks the docs diff against the code diff, as NexKit's review checklist for this
-   repository asks.
+1. **Every pull request states its docs.** The item of this repository's [review
+   checklist](configuration.md#review-checklist) that points at this page asks for them, so the plan's
+   answer to that item, and the review's, name the doc sections the change touches, or say why it
+   touches none. The pull request rewrites the section that describes what it changes and deletes what
+   it replaces, removes the planned marker of what it builds, and searches the docs and the skills for
+   every name it renames or removes, such as a setting, a command, a label or a status. A pull request
+   that makes any doc statement false fixes it. The review checks the docs diff against the code diff.
 2. **A setting, a command or a prompt contract changes together with its docs and skills,** in the
    same pull request, as its tests do.
 3. **A changed decision is a new decision,** which replaces the old one as [Decisions](#decisions)

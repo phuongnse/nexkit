@@ -12,9 +12,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from unittest import mock
 
-from nexkit import agent, cli
+from nexkit import agent, autopilot, cli, host
 from nexkit.github import GitHubError, run_url
 from nexkit.maintain import is_conflicting, maintain, resolve_conflicts
+from nexkit.report import _not_up_to_date
 from nexkit.route import route, skip_unaffected
 from nexkit.state import (
     approved_head,
@@ -1348,6 +1349,96 @@ class MergeRefusalTests(ReportCase):
         self.assertIn("At least 1 approving review is required", outcome["summary"])
         self.assertFalse(self.gh.dispatches[:-1])  # only the autopilot sweep after the run
         self.assertEqual(self.gh.updated, [])
+
+
+class MergeConflictEngineTests(ReportCase):
+    """A merge refused for a conflict is the engine's to decide (`host.accept_answer`): the
+    host sends the refusal with the conflict rounds used and carries out the answer."""
+
+    def setUp(self):
+        super().setUp()
+        for target in ("nexkit.report.time.sleep", "nexkit.maintain.time.sleep"):
+            patch = mock.patch(target)
+            patch.start()
+            self.addCleanup(patch.stop)
+        self.gh.required = set()
+        self.gh.merge_error = GitHubError(405, "Pull Request is not mergeable")
+        self.candidate()
+
+    def config(self, auto_resolve=True, max_rounds=3):
+        conflicts = {"auto_resolve": auto_resolve, "max_rounds": max_rounds}
+        return make_config(merge={"auto": True}, conflicts=conflicts)
+
+    def sent(self, cfg, **mutate):
+        """The accept results that the engine received for the merge, and the report's
+        outcome, after the pull request is as `mutate` says."""
+        self.gh.pulls[6].update(mutate)
+        with mock.patch.object(host, "step", wraps=host.step) as step:
+            outcome = self.run_report(cfg=cfg)
+        sent = [
+            (call.args[0], call.args[1])
+            for call in step.call_args_list
+            if call.args[1]["kind"] == "actionFinished" and "refusal" in call.args[1]["result"]
+        ]
+        return sent, outcome
+
+    def test_a_conflict_goes_to_the_engine_with_the_rounds_used(self):
+        [(doc, event)], outcome = self.sent(self.config(), mergeable=False)
+        self.assertEqual(event["result"]["refusal"], "conflict")
+        self.assertEqual(doc["rounds"]["conflicts"], 0)
+        self.assertEqual(outcome["outcome"], "conflict_fix")
+        self.assertEqual(len(rounds_started(self.gh)), 1)
+
+    def test_a_conflict_with_the_rounds_used_up_waits_for_a_person(self):
+        self.gh.comment(6, render_run(self.tried_round()))
+        [(doc, event)], outcome = self.sent(self.config(max_rounds=1), mergeable=False)
+        self.assertEqual(event["result"]["refusal"], "conflict")
+        self.assertEqual(doc["rounds"]["conflicts"], 1)
+        self.assertEqual(outcome["outcome"], "merge_refused")
+        self.assertIn("conflict rounds are used up", outcome["summary"])
+        self.assertFalse(rounds_started(self.gh))
+
+    def tried_round(self):
+        return {
+            "round": 1,
+            "trigger": "fix (auto, conflicts)",
+            "url": "https://x/1",
+            "status": "failure",
+            "conflicts": True,
+            "base_sha": "e" * 40,
+        }
+
+    def test_a_dirty_pull_request_is_a_conflict_without_auto_resolve(self):
+        sent, outcome = self.sent(self.config(False), mergeable_state="dirty")
+        [(doc, event)] = sent
+        self.assertEqual(event["result"]["refusal"], "conflict")
+        self.assertEqual(outcome["outcome"], "merge_refused")
+        do, why = _not_up_to_date("dirty", "main")
+        self.assertIn(f"**What unblocks it:** {autopilot.person(do, why)}.", outcome["summary"])
+        self.assertFalse(rounds_started(self.gh))
+
+    def test_a_dirty_pull_request_found_only_at_the_end_needs_a_person(self):
+        sent, outcome = self.sent(self.config(), mergeable=None, mergeable_state="dirty")
+        [(doc, event)] = sent
+        self.assertEqual(event["result"]["refusal"], "needsPerson")
+        self.assertEqual(outcome["outcome"], "merge_refused")
+        do, why = _not_up_to_date("dirty", "main")
+        self.assertIn(f"**What unblocks it:** {autopilot.person(do, why)}.", outcome["summary"])
+        self.assertFalse(rounds_started(self.gh))
+
+    def test_an_answer_the_host_cannot_carry_out_waits_for_a_person_and_says_why(self):
+        for kwargs in (
+            {"mergeable": False},
+            {"mergeable": None, "mergeable_state": "dirty"},
+        ):
+            with self.subTest(**kwargs):
+                self.gh.pulls[6].update(kwargs)
+                with mock.patch.object(host, "accept_answer", side_effect=host.Refused("No.")):
+                    outcome = self.run_report(cfg=self.config())
+                self.assertEqual(outcome["outcome"], "merge_refused")
+                said = "NexKit's engine refused to decide its next step: `No.`"
+                self.assertIn(said, outcome["summary"])
+                self.assertFalse(rounds_started(self.gh))
 
 
 if __name__ == "__main__":

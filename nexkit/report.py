@@ -1517,6 +1517,7 @@ def _passed_but(head, ended):
 
 def _refused(gh, cfg, target, row, message, exc, workflow, default_branch):
     """(outcome, message) after GitHub refused the merge: a conflict round for a conflict,
+    or a person once the rounds are used up, as the engine decides (`host.accept_answer`),
     a review of a head that moved, an automatic fix round for required checks that failed,
     at the first try or while the merge waits (see `_required_failed`), an update of a
     branch that is behind with a review of the new commit, `merge_waiting` for required
@@ -1541,7 +1542,26 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch):
     message += f" Automatic merge was not possible: {exc}"
     auto_resolve, limit = cfg["conflicts"]["auto_resolve"], cfg["conflicts"]["max_rounds"]
     if auto_resolve and is_conflicting(gh, pr):
-        started = start_conflict_round(gh, pr, base, workflow, default_branch, limit, row=row)
+        # Whether a round is left, or a person decides, is the engine's (`host.accept_answer`).
+        from .host import Refused, accept_answer, refused_parts
+
+        result = {"accepted": False, "refusal": "conflict", "text": f"It conflicts with `{base}`."}
+        auto_fixes = (target.get("state") or {}).get("auto_fixes", 0)
+        used = conflict_rounds_of(gh, pr, row)
+        try:
+            end, _ = accept_answer(
+                cfg, target["issue"], pr, head, auto_fixes, result, conflicts=used
+            )
+            if end not in ("fix", "person"):
+                raise Refused(f"The engine answers {end!r} to a conflict at the merge.")
+        except Refused as error:
+            do, why = refused_parts(error)
+            target["found"] = {"refused": (do, why)}
+            unblocks = autopilot.person(do, why)
+            return "merge_refused", f"{message}\n\n**What unblocks it:** {unblocks}."
+        started = start_conflict_round(
+            gh, pr, base, workflow, default_branch, limit, row=row, left=end == "fix"
+        )
         if started.startswith("Started"):
             return "conflict_fix", f"{message}\n\nIt conflicts with `{base}`. {started}"
         target["found"] = {
@@ -1612,9 +1632,28 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch):
     if state == "clean":
         # GitHub calls it mergeable and still refuses it: sweeps do not try this head again.
         row["refused_clean"] = head
-    if state in ("dirty", "behind"):
-        # Only without `conflicts.auto_resolve` does a refusal for these get here.
-        do, why = _not_up_to_date(state, base)
+    if state == "dirty":
+        # With `conflicts.auto_resolve` on, GitHub could not say before whether it conflicts,
+        # so a person decides (`needsPerson`); with it off, a conflict is the engine's.
+        from .host import Refused, accept_answer, refused_parts
+
+        refusal_kind = "needsPerson" if auto_resolve else "conflict"
+        text = f"It conflicts with `{base}`."
+        result = {"accepted": False, "refusal": refusal_kind, "text": text}
+        auto_fixes = (target.get("state") or {}).get("auto_fixes", 0)
+        try:
+            used = 0 if auto_resolve else conflict_rounds_of(gh, pr, row)
+            end, _ = accept_answer(
+                cfg, target["issue"], pr, head, auto_fixes, result, conflicts=used
+            )
+            if end != "person":
+                raise Refused(f"The engine answers {end!r} to a conflict at the merge.")
+            do, why = _not_up_to_date("dirty", base)
+        except Refused as error:
+            do, why = refused_parts(error)
+    elif state == "behind":
+        # Only without `conflicts.auto_resolve` does a refusal for this get here.
+        do, why = _not_up_to_date("behind", base)
     else:
         do, why = refusal.explain_safely(gh, target, exc)
     target["found"] = {"refused": (do, why)}

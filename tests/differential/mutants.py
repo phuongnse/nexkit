@@ -134,10 +134,42 @@ MUTANTS = {
     # One conflict round more than `conflictRounds` (#347).
     "conflict-rounds-plus-one": {
         "path": MACHINE,
-        "old": """elif policy == "resolve" and rounds["conflicts"] < self.p["conflictRounds"]:""",
-        "new": """elif policy == "resolve" and rounds["conflicts"] <= self.p["conflictRounds"]:""",
+        "old": """return self.s["rounds"]["conflicts"] < self.p["conflictRounds"]""",
+        "new": """return self.s["rounds"]["conflicts"] <= self.p["conflictRounds"]""",
         "seen": ("harness", "walker"),
-        "families": ("conflict", "released", "chains"),
+        "families": ("conflict", "released", "chains", "conflicted"),
+    },
+    # The conflict rounds used never reach the engine at a merge, so it starts a round past
+    # `conflicts.max_rounds` (#423).
+    "accept-answer-ignores-conflict-rounds": {
+        "path": HOST,
+        "old": """    doc["rounds"]["conflicts"] = max(int(conflicts or 0), 0)""",
+        "new": """    doc["rounds"]["conflicts"] = 0""",
+        "seen": ("harness",),
+        "families": ("conflicted",),
+    },
+    # A `dirty` state that GitHub could not explain sooner starts a conflict round, where
+    # NexKit 6 leaves it to a person (#423).
+    "unknown-dirty-sent-as-conflict": {
+        "path": "nexkit/report.py",
+        "old": '''        refusal_kind = "needsPerson" if auto_resolve else "conflict"''',
+        "new": '''        refusal_kind = "conflict"''',
+        "seen": ("harness",),
+        "families": ("conflicted",),
+    },
+    # A conflict at the merge always waits for a person, whatever the policy and the rounds
+    # left (#423).
+    "conflict-at-the-accept-always-a-person": {
+        "path": MACHINE,
+        "old": """        elif result["refusal"] == "conflict":
+            self.on_conflict_found()
+""",
+        "new": """        elif result["refusal"] == "conflict":
+            self.move("ready")
+            self.need("acceptRefused", result["text"] or "The accept was refused.")
+""",
+        "seen": ("harness", "walker"),
+        "families": ("conflicted",),
     },
     # A judged round's next fix round starts even under a hold (#341).
     "hold-ignored-on-fix": {

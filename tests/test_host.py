@@ -1064,6 +1064,20 @@ class AcceptAnswerTest(ReportCase):
         end, state = self.answer("conflict", person)
         self.assertEqual((end, state["attention"]["reason"]), ("person", "acceptRefused"))
 
+    def test_a_conflict_counts_the_conflict_rounds_used_against_the_limit(self):
+        conflicts = {"auto_resolve": True, "max_rounds": 2}
+        resolve = make_config(merge={"auto": True}, conflicts=conflicts)
+        for used in (0, 1, 2, 3):
+            with self.subTest(used=used):
+                with mock.patch.object(host, "step", wraps=host.step) as step:
+                    end, state = self.answer("conflict", resolve, conflicts=used)
+                self.assertEqual(step.call_args.args[0]["rounds"]["conflicts"], used)
+                if used < 2:
+                    self.assertEqual(end, "fix")
+                else:
+                    reason = state["attention"]["reason"]
+                    self.assertEqual((end, reason), ("person", "acceptRefused"))
+
     def test_the_events_before_the_answer_are_heard_first_at_the_given_time(self):
         seen = {"changeId": "6", "version": self.HEAD, "conflicts": False}
         seen.update(merged=False, empty=False)

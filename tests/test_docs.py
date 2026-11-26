@@ -30,7 +30,8 @@ and profiles and the failure handling pages list as marking a failing line match
 The retry delays that the failure handling page gives for `publish` and for every other GitHub API
 call match `publish.WAITS` and `github.GitHub.waits`, with their counts of tries.
 The tools that the access table of agents and profiles gives the plan and review stages match
-READ_ONLY_TOOLS. The README's table of
+READ_ONLY_TOOLS. The outcomes after which a writer's approval merges, which the
+work-without-a-command page lists, match APPROVABLE. The README's table of
 supported versions is compared with the pins in nexkit/__init__.py, and each ubuntu-NN.NN in the
 README with the pinned runner. The local commands
 table of the README lists each command the CLI defines for people and no other, and each option a
@@ -65,6 +66,7 @@ from nexkit import (
     config,
     context,
     github,
+    maintain,
     publish,
     report,
     route,
@@ -1631,6 +1633,10 @@ FAILURE_WORDS = re.compile(r"contains? (`[^`]+`(?:(?:, | or )`[^`]+`)*), in any 
 # The page and the row of its access table that give the tools of the plan and review stages.
 ACCESS_PAGE = DOCS / "agents-and-profiles.md"
 READ_ACCESS_ROW = "| plan, review |"
+# The page and the sentence that list the outcomes after which a writer's approval merges. The
+# group keeps the word `as` before the first outcome, which the outcomes are found after.
+APPROVAL_PAGE = DOCS / "work-without-a-command.md"
+APPROVAL_OUTCOMES = re.compile(r"latest round ended (as .+?), merges it on the head")
 # The row of failure handling that gives the retry delays of `publish` and of every other GitHub API
 # call. Its first cell starts with PUBLISH_ROW; its second cell is the one the regexes read.
 FAILURE_PAGE = DOCS / "failure-handling.md"
@@ -1790,6 +1796,32 @@ class ReadOnlyToolsTests(unittest.TestCase):
                 self.fail(
                     f"docs/agents-and-profiles.md lists {tool!r}, "
                     "which READ_ONLY_TOOLS does not give Claude Code"
+                )
+
+
+class ApprovableTests(unittest.TestCase):
+    def test_the_page_lists_each_outcome_an_approval_merges_after_and_no_other(self):
+        # Lines are wrapped, so the page is searched with its spaces made one each.
+        text = " ".join(APPROVAL_PAGE.read_text().split())
+        match = APPROVAL_OUTCOMES.search(text)
+        if match is None:
+            self.fail(
+                "docs/work-without-a-command.md has no list of the outcomes after which "
+                "an approval merges"
+            )
+        listed = sorted(set(re.findall(r"\bas `(\w+)`", match.group(1))))
+        code = sorted(set(maintain.APPROVABLE))
+        for outcome in sorted(set(code) - set(listed)):
+            with self.subTest(outcome=outcome):
+                self.fail(
+                    f"docs/work-without-a-command.md does not list {outcome!r}, after which "
+                    "maintain.APPROVABLE lets an approval merge"
+                )
+        for outcome in sorted(set(listed) - set(code)):
+            with self.subTest(outcome=outcome):
+                self.fail(
+                    f"docs/work-without-a-command.md lists {outcome!r}, which "
+                    "maintain.APPROVABLE does not hold"
                 )
 
 

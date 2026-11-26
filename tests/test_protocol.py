@@ -361,6 +361,15 @@ class ProtocolTest(unittest.TestCase):
             bullet_names("States", "Wait:"), sorted(waits["properties"]["for"]["enum"])
         )
 
+    def test_the_page_lists_the_kinds_of_a_request(self):
+        rows = [
+            line for line in section("Events").splitlines() if line.startswith("| `requested` |")
+        ]
+        self.assertEqual(len(rows), 1)
+        kinds = sorted(set(re.findall(r"`(\w+)`", rows[0].split("|")[2])))
+        what = protocol.load("events/requested.schema.json")["properties"]["what"]["enum"]
+        self.assertEqual(kinds, sorted(what))
+
     def test_the_page_names_each_policy_and_its_default_fits(self):
         policies = protocol.load("policies.schema.json")["properties"]
         self.assertEqual(table_names("What a host decides", every_row=True), sorted(policies))

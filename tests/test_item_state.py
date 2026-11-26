@@ -156,6 +156,65 @@ class StoreTest(unittest.TestCase):
         # Each wait longer than the one before, by a random part.
         self.assertEqual(sleeps.waits, [1.5, 3.0, 6.0])
 
+    def test_the_cursor_moves_only_with_a_caller_that_takes_a_source(self):
+        gh = FakeGitHub()
+        created(gh)
+        self.assertIsNone(item_state.since(item_state.read(gh, 42)[0]))
+        first = ("2026-11-23T15:00:00Z", "comment-7")
+        item_state.apply(gh, 42, lambda state: step(state, PLAN), since=first)
+        read = item_state.read(gh, 42)
+        self.assertEqual((item_state.since(read[0]), read[1]["revision"]), (first, 2))
+        # Another writer's write keeps it.
+        held, _, _ = step(read[1], HELD)
+        self.assertTrue(item_state.write(gh, 42, held, read))
+        self.assertEqual(item_state.since(item_state.read(gh, 42)[0]), first)
+        # A source that is not past it leaves it where it is, and a later one moves it.
+        older = ("2026-11-23T14:00:00Z", "comment-9")
+        later = ("2026-11-23T15:00:00Z", "review-1")
+        for since, found in ((older, first), (first, first), (later, later)):
+            item_state.apply(gh, 42, lambda state: step(state, RELEASED), since=since)
+            self.assertEqual(item_state.since(item_state.read(gh, 42)[0]), found)
+            item_state.apply(gh, 42, lambda state: step(state, HELD), since=since)
+
+    def test_an_answer_that_changed_nothing_still_moves_the_cursor_on_the_same_revision(self):
+        gh = FakeGitHub()
+        state = created(gh)
+        tick = event("tick", 9, wait="none")
+        since = ("2026-11-23T15:00:00Z", "issue-event-3")
+        found, actions = item_state.apply(gh, 42, lambda state: step(state, tick), since=since)
+        self.assertEqual((found, actions), (state, []))
+        read = item_state.read(gh, 42)
+        self.assertEqual((read[1], item_state.since(read[0])), (state, since))
+        # Nothing to write the second time.
+        before = copy.deepcopy(gh.issue_comments[42])
+        item_state.apply(gh, 42, lambda state: step(state, tick), since=since)
+        self.assertEqual(gh.issue_comments[42], before)
+
+    def test_a_cursor_that_loses_to_another_write_is_set_again_on_the_stored_state(self):
+        gh = FakeGitHub()
+        created(gh)
+        tick = event("tick", 9, wait="none")
+        since = ("2026-11-23T15:00:00Z", "comment-3")
+        seen = []
+
+        def answer(state):
+            seen.append(state["revision"])
+            if len(seen) == 1:
+                other, _, _ = step(state, HELD)
+                self.assertTrue(item_state.write(gh, 42, other, item_state.read(gh, 42)))
+            return step(state, tick)
+
+        item_state.apply(gh, 42, answer, since=since, sleep=Sleeps())
+        read = item_state.read(gh, 42)
+        self.assertEqual((seen, read[1]["revision"], read[1]["hold"]), ([1, 2], 2, True))
+        self.assertEqual(item_state.since(read[0]), since)
+
+    def test_a_cursor_that_names_no_source_is_not_written(self):
+        state, _, _ = step(None, CREATED)
+        for since in (("yesterday", "comment-1"), ("2026-11-23T15:00:00Z", "comment 1")):
+            with self.assertRaises(item_state.StateError):
+                item_state.render(state, since)
+
     def test_an_answer_that_changes_nothing_writes_nothing(self):
         gh = FakeGitHub()
         state = created(gh)

@@ -93,7 +93,9 @@ of these hold:
   autopilot's record, a plan's record and the markers that end a CI report, counts only where it
   ends the comment or issue. A marker that names what an issue or comment is, and the people a
   mention names, counts only at the start of its text. A plan's profile record and an advisory
-  part's marker count only on the line after the first marker.
+  part's marker count only on the line after the first marker. The cursor of a work item's state
+  comment, which names the newest source that NexKit took from GitHub, counts only on the line
+  before the state marker.
 - **Agent text cannot open a marker.** Where agent text stands on both sides of a marker, as around
   a plan's profile lines, follows a part's marker, or ends a comment of NexKit's, as the finding
   autopilot closes an issue with, NexKit writes `<!-- nexkit:` in it as `‹!-- nexkit:`. That

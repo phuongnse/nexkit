@@ -401,12 +401,22 @@ adapter's tests and the answers as what its adapter carries out.
   own. The engine moves an older state document to the current schema when it reads one, and
   refuses one that is newer than it knows, so an engine rolled back never guesses. Before 1.0, a
   document of schema version 1 that still holds `used.usd` is read without it.
+  `tests/golden/state/v<N>/` keeps a document of each state for each schema version, from 1, and
+  a test steps each one with a `tick`: the engine must read it and answer at the current version.
 - **Major and minor.** Every message carries the protocol's major version, `"protocol": 1`.
   Version 1 may change freely until NexKit 7.0 ships; at that release it is 1.0. From then on,
   each additive change raises the minor version, and every field it adds carries
   `"x-since": "1.<minor>"` in its schema; a new value of a field is a new major version, below.
   `protocol.MINOR` in `nexkit/protocol/` is the one place the minor version lives, and `load`
   leaves `x-since` out, as it does `$comment`.
+- **A test holds each released minor version.** `scripts/protocol_freeze.py` writes the schemas to
+  `tests/golden/protocol/`: in the release pull request of 7.0, and in each release that raises
+  the minor version. Whenever that folder holds a copy, a test compares the tree with it. It
+  allows a new optional property whose `x-since` is above the copy's minor version, and a changed
+  `$comment`. It refuses every other change, a changed `description` or `default` included: a
+  removed or renamed property, a new required one, a changed type, enum, `const` or limit, and a
+  new or removed schema file, such as an event or action kind. `state.schema.json` instead needs a
+  new state schema version. The script refuses to replace a copy that the tree breaks.
 - **A host asks which version it talks to.** The `describe` call carries the major version the
   host speaks, and answers the protocol's major and minor version, the engine's own version and
   the calls it answers; an engine that does not serve that major version answers an error. A host

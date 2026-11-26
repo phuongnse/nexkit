@@ -39,7 +39,8 @@ engine's calls as a program that reads JSON on standard input.
 | `templates/` | The caller workflow that `nexkit init` installs in a repository |
 
 `scripts/` holds the smoke test, the pin updates, the release notes, the docs audit, the
-conformance file and `lint.sh`. `tests/` holds the checks that [Testing](testing.md) describes.
+conformance file, the script that freezes the protocol's schemas for a test, and `lint.sh`.
+`tests/` holds the checks that [Testing](testing.md) describes.
 
 The reasons for the package's use of the standard library only are in
 [D8](decisions/d8-standard-library-only.md).

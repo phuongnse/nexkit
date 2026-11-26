@@ -2237,12 +2237,12 @@ def close(gh, cfg, step, workflow, ref):
     from .maintain import close_parent, close_parents_safely
 
     if step.get("parent"):
-        lines, closed = close_parent(gh, number)
+        lines, closed = close_parent(gh, cfg, number)
         if not closed:
             return lines
         # Its own parent may be done now, issues it blocked may start, and the scope may
         # be done.
-        lines += close_parents_safely(gh, number)
+        lines += close_parents_safely(gh, cfg, number)
         return lines + request_safely(gh, cfg, workflow, ref, number)
     if "answer" in step:
         asked = (
@@ -2282,7 +2282,7 @@ def close(gh, cfg, step, workflow, ref):
             lines.append(f"Could not close #{step['pull']}: {exc}")
     if cfg["close_parent_issues"]:
         # Here it runs at once; the `issues: closed` run that follows finds nothing left.
-        lines += close_parents_safely(gh, number)
+        lines += close_parents_safely(gh, cfg, number)
     # Issues it blocked may start now, and the scope may be done.
     return lines + request_safely(gh, cfg, workflow, ref, number)
 

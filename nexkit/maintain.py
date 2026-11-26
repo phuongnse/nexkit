@@ -131,9 +131,10 @@ def _closed_as(issue):
     return HOW.get(issue.get("state_reason") or "", "closed")
 
 
-def close_parents(gh, number):
+def close_parents(gh, cfg, number):
     """After issue `number` closed: close its parent when every sub-issue of the parent is
-    closed and at least one was completed, then do the same for that parent's parent.
+    closed and at least one was completed, then do the same for that parent's parent. At each
+    level the engine decides (`close_parent`).
 
     A parent whose sub-issues were all closed as not planned stays open with a note for a
     person. Returns one line per parent that NexKit closed or left a note on."""
@@ -144,22 +145,51 @@ def close_parents(gh, number):
             return lines
         if not in_repository(gh, parent):
             return lines
-        number = parent["number"]
+        part, number = number, parent["number"]
         seen.add(number)
-        found, closed = close_parent(gh, number)
+        found, closed = close_parent(gh, cfg, number, part)
         lines += found
         if not closed:
             return lines
 
 
-def close_parent(gh, number):
+def _last_closed(subs):
+    """The closed sub-issue of `subs` that closed last, or the one with the highest number
+    when GitHub gives no time."""
+    return max(
+        (sub for sub in subs if sub.get("state") == "closed"),
+        key=lambda sub: (sub.get("closed_at") or "", sub["number"]),
+    )["number"]
+
+
+def close_parent(gh, cfg, number, part=None):
     """Close the parent issue `number` when every sub-issue of it is closed and at least
     one was completed, with one `parent-closed` comment, however many runs and sweeps try
-    it. Returns (lines, whether NexKit closed it now). Without a completed sub-issue, or
-    with fewer sub-issues than its latest plan lists parts, the parent stays open with a
-    note for a person."""
+    it. `part` is the sub-issue that ended, or None for the one that closed last. The engine
+    decides whether the parent ends (`host.part_ended`), and the parent stays open when it
+    answers `stays` or refuses. Returns (lines, whether NexKit closed it now). Without a
+    completed sub-issue, or with fewer sub-issues than its latest plan lists parts, the
+    parent stays open with a note for a person."""
+    from . import first_state, host  # host imports this module
+
     subs = gh.sub_issues(number)
-    if not subs or any(sub.get("state") == "open" for sub in subs):
+    if not subs:
+        return [], False
+    if part is None:
+        if all(sub.get("state") == "open" for sub in subs):
+            return [], False
+        part = _last_closed(subs)
+    found = next((sub for sub in subs if sub["number"] == part), None)
+    if found and found.get("state") == "open":
+        return [], False
+    # A list that GitHub has not caught up with may miss the part, which has closed.
+    state = first_state._ended(found or gh.issue(part)) or "accepted"
+    try:
+        answer = host.part_ended(cfg, number, subs, part, state)
+    except host.Refused as error:
+        why = autopilot.quoted(str(error), 300)
+        return [f"Left #{number} as it is: NexKit's engine refused to decide: {why}"], False
+    if answer == "stays":
         return [], False
     listing = "\n".join(f"- #{sub['number']}: {_closed_as(sub)}" for sub in subs)
     missing = autopilot.unfiled(gh, number, subs)
@@ -173,7 +203,7 @@ def close_parent(gh, number):
             "sub-issues of it, or close it once its work is done.",
         )
         return [f"Left #{number} open: it has fewer sub-issues than its plan lists parts."], False
-    if not any(sub.get("state_reason") == "completed" for sub in subs):
+    if answer == "person":
         _note_once(
             gh,
             number,
@@ -240,10 +270,10 @@ def _note_once(gh, number, marker, text):
         gh.comment(number, body)
 
 
-def close_parents_safely(gh, number):
+def close_parents_safely(gh, cfg, number):
     """`close_parents` for a run that must not fail because of it: errors become a line."""
     try:
-        return close_parents(gh, number)
+        return close_parents(gh, cfg, number)
     except GitHubError as exc:
         return [f"Could not check the parent issue of #{number}: {exc}"]
 
@@ -386,7 +416,7 @@ def close_on_base(gh, cfg, target, commit=None):
             lines.append(closed_line(issue, close_or_find_closed(gh, issue)))
             if cfg["close_parent_issues"]:
                 # At once, for this comment; the `issues: closed` run finds nothing left.
-                lines += close_parents_safely(gh, issue)
+                lines += close_parents_safely(gh, cfg, issue)
     except GitHubError as exc:
         lines.append(f"Could not close #{issue}: {exc}. Close it yourself.")
         return "on_base_failed", "\n\n".join(lines), commit
@@ -1265,8 +1295,9 @@ def maintain(gh, decision, cfg, *, workflow="", ref="", alerts=None):
     if task == "approved":
         return merge_approved(gh, cfg, decision, workflow, ref)
     if task == "parents":
-        lines = close_parents_safely(gh, decision["issue"]) if cfg["close_parent_issues"] else []
-        return lines + autopilot.request_safely(gh, cfg, workflow, ref, decision["issue"])
+        issue = decision["issue"]
+        lines = close_parents_safely(gh, cfg, issue) if cfg["close_parent_issues"] else []
+        return lines + autopilot.request_safely(gh, cfg, workflow, ref, issue)
     if task == "autopilot":
         # Even an event that changes nothing in scope, such as a milestoned issue with
         # `null`, starts a sweep: its run joins the group `nexkit-autopilot`, where it may

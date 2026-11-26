@@ -30,7 +30,6 @@ from .maintain import (
     update_branch,
     updates_used,
 )
-from .protocol.size import MOST
 from .route import auto_input, on_base
 from .runlog import add_tokens, one_line
 from .schema import filled
@@ -668,7 +667,7 @@ def _no_change(gh, cfg, decision, agent):
     lines = [f"No change is needed, so NexKit closed #{issue} as completed.", "", finding]
     if cfg["close_parent_issues"]:
         # At once, for this round's comment; the `issues: closed` run finds nothing left.
-        lines += ["", *close_parents_safely(gh, issue)]
+        lines += ["", *close_parents_safely(gh, cfg, issue)]
     return {
         "outcome": "no_change",
         "summary": "\n".join(lines).strip(),
@@ -974,35 +973,14 @@ def _automatic(decision):
     return bool(decision.get("auto") or decision.get("autopilot"))
 
 
-def _retries_left(cfg, decision):
-    """How many runs again after a transient error `retry.wait_minutes` still allows."""
-    return max(0, len(cfg["retry"]["wait_minutes"]) - int(decision.get("retry") or 0))
-
-
-def _agent_transient(agent, needs):
-    """Whether the agent itself stopped on a transient error: its job ended without a result,
-    or its result says so. A stop of `publish` is NexKit's own retry."""
-    if (needs.get("agent") or {}).get("result") in ("cancelled", "skipped"):
-        return False
-    return agent is None or (agent.get("status") == "error" and bool(agent.get("transient")))
-
-
-def _retry(gh, cfg, decision, command, number, workflow_ref, default_branch, now=None, answer=None):
+def _retry(gh, decision, command, number, workflow_ref, default_branch, answer):
     """Start `command` again after a transient error, with the same note for the same
-    command, after the next wait of `retry.wait_minutes`: at once when it is 0, otherwise
-    later, by `maintain.resume_paused`. `answer` is the engine's (`host.stage_transient`)
-    for a stop of the agent itself. Returns the inputs of the run it started, for the
-    run's `next` (see `autopilot._handed_on`), or for one that waits, its resume record
-    with `at` and `retry`, its number. None when the waits are used up, or the run could
-    not start."""
-    if answer:
-        count, until = answer[-1], answer[1] if answer[0] == "later" else None
-    elif _retries_left(cfg, decision):
-        count = int(decision.get("retry") or 0) + 1
-        wait = cfg["retry"]["wait_minutes"][count - 1]
-        until = iso((now or datetime.now(UTC)) + timedelta(minutes=wait)) if wait else None
-    else:
-        return None
+    command, as the engine answers (`answer`, from `host.stage_transient` or
+    `host.round_ended`, never `("failed",)`): at once, or later after the next wait of
+    `retry.wait_minutes`, by `maintain.resume_paused`. Returns the inputs of the run it
+    started, for the run's `next` (see `autopilot._handed_on`), or for one that waits, its
+    resume record with `at` and `retry`, its number. None when the run could not start."""
+    count, until = answer[-1], answer[1] if answer[0] == "later" else None
     same = command == progress.COMMANDS[decision["action"]]
     note = (decision.get("note") or "") if same else ""
     if same:
@@ -1345,7 +1323,7 @@ def merge_pull(gh, cfg, target, row, message, workflow, default_branch):
     (see `maintain.close_on_base`). One that a person merged or closed first ends the round
     as `pull_closed`, before its issue counts, since that merge closes the issue too. The
     engine decides what a merge by a person and an emptied change end (`host.change_seen`), and
-    whether a parent ends after NexKit's merge (`host.part_ended`)."""
+    whether a parent ends once its part ended (`host.part_ended`)."""
     pr, head = target["pr"], target["head"]
     number = pr
     try:
@@ -1479,11 +1457,11 @@ def _seen(cfg, target, message, seen, expect):
 
 def _parent_ends(gh, cfg, target):
     """Lines for the round's comment about the parent issue of `target`'s issue, which NexKit
-    merged and closed. The engine decides whether the direct parent ends (`host.part_ended`),
-    and when it does, `maintain.close_parents` closes it, with the facts only GitHub knows, and
-    goes on up. A parent with more sub-issues than a state document holds is NexKit 6's:
-    `close_parent_issues` decides. The parent of an issue that merges stays as it is when the
-    engine refuses to decide."""
+    merged and closed. With `close_parent_issues` on, `maintain.close_parents` asks the engine
+    about every parent, from the direct one up (`host.part_ended`), and closes those it ends,
+    with the facts only GitHub knows. Without it the engine still hears the end of the part, as
+    `person`, and NexKit writes nothing on the parent. The parent of an issue that merges stays
+    as it is when the engine refuses to decide."""
     from .host import Refused, accept_answer, part_ended
 
     issue = target["issue"]
@@ -1491,15 +1469,14 @@ def _parent_ends(gh, cfg, target):
         parent = gh.parent_issue(issue)
         if not parent or parent.get("state") != "open" or not autopilot.in_repository(gh, parent):
             return []
-        subs = gh.sub_issues(parent["number"])
-        if len({sub["number"] for sub in subs} | {issue}) > MOST["split"]:
-            return close_parents_safely(gh, issue) if cfg["close_parent_issues"] else []
         auto_fixes = (target.get("state") or {}).get("auto_fixes", 0)
         accepted = {"accepted": True, "refusal": None, "text": ""}
         end, state = accept_answer(cfg, issue, target["pr"], target["head"], auto_fixes, accepted)
         if end != "accepted":
             raise Refused(f"The engine answers {end!r} to a merge that went through.")
-        close = part_ended(cfg, parent["number"], subs, issue, state["state"])
+        if cfg["close_parent_issues"]:
+            return close_parents_safely(gh, cfg, issue)
+        part_ended(cfg, parent["number"], gh.sub_issues(parent["number"]), issue, state["state"])
     except GitHubError as exc:
         return [f"Could not check the parent issue of #{issue}: {exc}"]
     except Refused as error:
@@ -1508,7 +1485,7 @@ def _parent_ends(gh, cfg, target):
             f"Left the parent issue of #{issue} as it is: NexKit's engine refused to decide: {why}"
         )
         return [line]
-    return close_parents_safely(gh, issue) if close == "close" else []
+    return []
 
 
 def _passed_but(head, ended):
@@ -2448,8 +2425,9 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             error = _transient(decision, agent, publish, needs)
             command = progress.COMMANDS[action]
             now, answer, refused = datetime.now(UTC), None, None
-            if error and _agent_transient(agent, needs):
-                # The engine decides when the agent runs again, and when a person does.
+            if error:
+                # The engine decides when the stage runs again, and when a person does, after a
+                # stop of the agent or of publish alike.
                 from . import host
 
                 try:
@@ -2458,20 +2436,15 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
                 except host.Refused as exc:
                     refused = host.refused_reason(exc)
             failed = answer == ("failed",)
-            if answer is None and not refused:
-                # A stop of publish is NexKit's own retry, by `retry.wait_minutes`.
-                failed = bool(error) and not _retries_left(cfg, decision)
             again = None
-            if error and not refused and not failed:
+            if answer and not failed:
                 again = _retry(
                     gh,
-                    cfg,
                     decision,
                     command,
                     decision["target"],
                     workflow_ref,
                     default_branch,
-                    now,
                     answer,
                 )
             if again:
@@ -2627,11 +2600,12 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
 
     from .host import Refused, after_round, round_ended
 
-    def ended(given):
+    def ended(given, now=None):
         """What the engine answers to this round's checks and a review that is not a
         verdict on a NexKit pull request (`host.round_ended`), with the checks that failed
         the same way before and after a fix round, which the next automatic fix round
-        diagnoses first, kept in the state comment."""
+        diagnoses first, kept in the state comment. `now` is when a review stopped on a
+        transient error."""
         found_end, repeated = round_ended(
             cfg,
             decision,
@@ -2643,6 +2617,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             given,
             recheck,
             ran=review_ran,
+            now=now,
         )
         state["feedback"] = _with_repeated(state["feedback"], repeated)
         return found_end
@@ -2700,11 +2675,18 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         outcome = "review_failed"
         found["error"], message = review_failure(reviewed)
         error = _transient(decision, reviewed, {}, needs, "review")
-        again = error and _retry(gh, cfg, decision, "review", pr, workflow_ref, default_branch)
+        answer, again, failed = None, None, False
         try:
-            # A review that runs again after a transient error is the host's own retry, which
-            # the engine does not see end; one that failed otherwise waits for a person.
-            ended(("again", None) if again else ("failed", found["error"]))
+            if error:
+                # The engine decides when the review runs again, and when a person does.
+                answer = ended(("transient", error), datetime.now(UTC))
+                failed = answer == ("failed",)
+                if not failed:
+                    again = _retry(gh, decision, "review", pr, workflow_ref, default_branch, answer)
+            if not again and not failed:
+                # A review that failed otherwise, or whose run again GitHub refused to start,
+                # waits for a person.
+                ended(("failed", found["error"]))
         except Refused as error_:
             refused = error_
         if again:
@@ -2715,7 +2697,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
                 # The review runs again later; until then it is neither passed nor failed.
                 waits = f"Runs again after {shown(resume['at'])} after a transient error"
                 gh.set_status(head, "nexkit/review", "pending", waits[:STATUS_LIMIT], url)
-        elif error and not _retries_left(cfg, decision):
+        elif failed:
             outcome, message = "retry_failed", _retried(gh, decision, error, message)
             found.update(error=error, stops=int(decision.get("retry") or 0) + 1)
     else:

@@ -1596,7 +1596,8 @@ class ChecksWaitedTest(ReportCase):
 
 class RoundEndTest(ReportCase):
     """`report` sends every round's checks and review to the engine: a person's own pull
-    request, a review that paused, failed or runs again, and a round whose change conflicts,
+    request, a review that paused, failed or stopped on a transient error, and a round whose
+    change conflicts,
     and keeps the checks the engine finds repeated for the next automatic fix round."""
 
     def answers(self, **kw):
@@ -1625,17 +1626,88 @@ class RoundEndTest(ReportCase):
                 self.assertEqual(outcome["outcome"], "paused")
                 self.assertEqual(calls[-1]["event"]["result"]["limit"]["reset"], reset)
 
-    def test_a_failed_review_waits_for_a_person_and_a_retried_one_is_the_host_s(self):
+    def test_a_failed_review_waits_for_a_person(self):
         self.candidate(review={"status": "error", "error": "Review crashed", "tokens": TOKENS})
         outcome, calls = self.answers(d=self.fix())
         self.assertEqual(outcome["outcome"], "review_failed")
         self.assertEqual(calls[-1]["event"]["result"]["error"], "Review crashed")
-        transient = {"status": "error", "error": "Overloaded", "transient": True}
-        self.candidate(review={**transient, "tokens": TOKENS})
-        outcome, calls = self.answers(d=self.fix(), cfg=make_config(retry={"wait_minutes": [0]}))
+        self.assertFalse(calls[-1]["event"]["result"]["transient"])
+
+    TRANSIENT = {"status": "error", "error": "Overloaded", "transient": True}
+    WAITS = make_config(retry={"wait_minutes": [0, 15]})
+
+    def stopped(self, retry, cfg=None, **kw):
+        self.candidate(review={**self.TRANSIENT, "tokens": TOKENS})
+        d = self.fix(retry=retry)
+        self.answered = []
+
+        def answer(request):
+            self.answered.append(ANSWER(request))
+            return self.answered[-1]
+
+        with mock.patch.object(host.engine, "answer", side_effect=answer) as engine_answer:
+            outcome = self.run_report(d=d, cfg=cfg or self.WAITS)
+        return outcome, [call.args[0] for call in engine_answer.call_args_list]
+
+    def test_a_review_that_stopped_on_a_transient_error_runs_again_as_the_engine_answers(self):
+        now = datetime.now(UTC)
+        outcome, calls = self.stopped(0)
         self.assertEqual(outcome["outcome"], "retry")
-        # Only the checks: the review runs again, and its end is the next report's.
-        self.assertEqual(len(calls), 1)
+        [dispatch] = self.gh.dispatches
+        self.assertEqual(dispatch["inputs"]["command"], "review")
+        self.assertEqual(dispatch["inputs"]["auto"], "retry")
+        request = calls[-1]
+        self.assertEqual(request["event"]["kind"], "actionFinished")
+        result = request["event"]["result"]
+        self.assertTrue(result["transient"])
+        self.assertEqual(result["error"], "Overloaded")
+        self.assertNotIn("transient", request["state"].get("again") or {})
+        self.assertEqual(request["event"]["action"], request["state"]["pending"][0]["id"])
+        self.assertEqual(request["state"]["pending"][0]["stage"], "review")
+        # The checks and then the review: nothing is decided by the host.
+        self.assertEqual(len(calls), 2)
+
+        self.gh.dispatches.clear()
+        outcome, calls = self.stopped(1)
+        self.assertEqual(calls[-1]["state"]["again"], {"transient": 1})
+        self.assertEqual(outcome["outcome"], "retry_waiting")
+        # What starts it later is `maintain`'s run that waits for the time, not the review.
+        self.assertEqual([d["inputs"]["command"] for d in self.gh.dispatches], ["resume"])
+        [wait] = [a for a in self.answered[-1]["actions"] if a["kind"] == "wait"]
+        self.assertEqual(outcome["resume_at"], wait["until"])
+        at = datetime.strptime(wait["until"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+        self.assertLess(abs(at - now - timedelta(minutes=15)), timedelta(minutes=1))
+
+    def test_a_review_that_stopped_after_the_last_wait_goes_to_a_person(self):
+        outcome, calls = self.stopped(2)
+        self.assertEqual(calls[-1]["state"]["again"], {"transient": 2})
+        self.assertEqual(outcome["outcome"], "retry_failed")
+        self.assertEqual(self.gh.dispatches, [])
+        self.assertNotIn("resume", outcome)
+        self.assertIsNotNone(outcome["attention"])
+
+    def test_a_review_that_ended_without_a_result_is_a_transient_stop_too(self):
+        self.candidate(review=self.TRANSIENT)
+        (self.artifacts / "nexkit-review" / "result.json").unlink()
+        with mock.patch.object(host.engine, "answer", side_effect=lambda r: ANSWER(r)) as answer:
+            outcome = self.run_report(d=self.fix(), cfg=ONCE)
+        self.assertEqual(outcome["outcome"], "retry")
+        self.assertTrue(answer.call_args.args[0]["event"]["result"]["transient"])
+
+    def test_a_review_the_engine_refuses_to_run_again_waits_for_a_person(self):
+        self.candidate(review={**self.TRANSIENT, "tokens": TOKENS})
+        with mock.patch.object(host, "_transient_answer", side_effect=host.Refused("No.")):
+            outcome = self.run_report(d=self.fix(), cfg=ONCE)
+        self.assertEqual(self.gh.dispatches, [])
+        self.assertIn("refused", outcome["attention"])
+        self.assertNotIn(outcome["outcome"], ("retry", "retry_waiting", "retry_failed"))
+
+    def test_a_review_whose_run_again_could_not_start_waits_for_a_person(self):
+        self.candidate(review={**self.TRANSIENT, "tokens": TOKENS})
+        with mock.patch.object(self.gh, "dispatch", side_effect=GitHubError(500, "no")):
+            outcome = self.run_report(d=self.fix(), cfg=ONCE)
+        self.assertEqual(outcome["outcome"], "review_failed")
+        self.assertEqual(self.gh.dispatches, [])
 
     def test_a_refused_review_end_asks_a_person_why(self):
         self.candidate(review=LIMIT)
@@ -1836,7 +1908,7 @@ class HeldConflictReleasedTest(HostCase):
 class StageStopTest(ReportCase):
     """`report` sends a plan, implement or fix stage that stopped at the usage limit or on a
     transient error to the engine, and carries out when it runs again or that a person
-    decides. A stop of publish is NexKit's own retry."""
+    decides. A stop of publish goes as a transient stop of the agent."""
 
     TRANSIENT = {"status": "error", "error": "Overloaded", "transient": True}
     HOLD = make_config(
@@ -1934,7 +2006,7 @@ class StageStopTest(ReportCase):
         [call] = answer.call_args_list
         self.assertTrue(call.args[0]["event"]["result"]["transient"])
 
-    def test_a_stop_of_publish_is_nexkit_s_own_retry_and_asks_nothing(self):
+    def publish_stop(self, d, cfg):
         self.write("nexkit-agent", "result.json", {"status": "done", "output": {}})
         error = "git push --quiet origin failed: The requested URL returned error: 500"
         result = {"published": False, "error": error, "transient": True}
@@ -1942,16 +2014,28 @@ class StageStopTest(ReportCase):
         with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
             outcome = report(
                 self.gh,
-                decision(),
-                ONCE,
+                d,
+                cfg,
                 needs,
                 self.artifacts,
                 workflow_ref=WORKFLOW,
                 default_branch="main",
             )
+        return outcome, [call.args[0] for call in answer.call_args_list], error
+
+    def test_a_stop_of_publish_goes_to_the_engine_as_a_transient_stop(self):
+        outcome, [request], error = self.publish_stop(decision(), ONCE)
+        self.assertEqual(request["event"]["kind"], "actionFinished")
+        self.assertTrue(request["event"]["result"]["transient"])
+        self.assertEqual(request["event"]["result"]["error"], error)
         self.assertEqual(outcome["outcome"], "retry")
         self.assertEqual(len(self.gh.dispatches), 1)
-        answer.assert_not_called()
+
+    def test_a_stop_of_publish_after_the_last_wait_goes_to_a_person(self):
+        outcome, [request], _ = self.publish_stop(decision(retry=1), ONCE)
+        self.assertEqual(request["state"]["again"], {"transient": 1})
+        self.assertEqual(outcome["outcome"], "retry_failed")
+        self.assertEqual(self.gh.dispatches, [])
 
     def test_a_hold_is_sent_first_and_changes_nothing_the_engine_answers(self):
         self.hold()
@@ -2107,15 +2191,15 @@ class PartEndedTest(ReportCase):
     def test_the_parent_stays_while_a_part_is_open(self):
         self.assertEqual(self.ended(("open", None)), "stays")
 
-    def test_the_parent_stays_when_no_part_was_completed(self):
+    def test_a_person_decides_when_no_part_was_completed(self):
         subs = [{"number": 5, "state": "closed", "state_reason": "completed"}]
         with mock.patch.object(host, "step", wraps=host.step) as step:
-            self.assertEqual(host.part_ended(make_config(), 1, subs, 7, "dropped"), "stays")
+            self.assertEqual(host.part_ended(make_config(), 1, subs, 7, "dropped"), "person")
         self.assertEqual(step.call_args.args[1]["part"], "7")
 
-    def test_without_close_parent_issues_the_engine_gets_person_and_the_parent_stays(self):
+    def test_without_close_parent_issues_the_engine_gets_person_and_a_person_decides(self):
         with mock.patch.object(host, "step", wraps=host.step) as step:
-            self.assertEqual(self.ended(close=False), "stays")
+            self.assertEqual(self.ended(close=False), "person")
             self.assertEqual(step.call_args.args[2]["parentEnd"], "person")
             self.assertEqual(self.ended(close=True), "close")
             self.assertEqual(step.call_args.args[2]["parentEnd"], "whenPartAccepted")
@@ -2123,13 +2207,45 @@ class PartEndedTest(ReportCase):
     def test_a_list_that_misses_the_part_still_counts_it(self):
         self.assertEqual(self.ended(subs=[]), "close")
 
-    def test_a_parent_with_more_parts_than_a_state_holds_is_refused(self):
-        many = [
-            {"number": n, "state": "closed", "state_reason": "completed"}
-            for n in range(5, 5 + MOST["split"] + 1)
-        ]
-        with self.assertRaises(host.Refused):
-            self.ended(subs=many)
+    def many(self, last=("closed", "not_planned")):
+        """The part 5, closed as not planned, and more sub-issues than a state holds: nine
+        closed as not planned, then `last`."""
+        found = [{"number": 5, "state": "closed", "state_reason": "not_planned"}]
+        for number in range(20, 20 + MOST["split"] - 1):
+            found.append({"number": number, "state": "closed", "state_reason": "not_planned"})
+        state, reason = last
+        found.append({"number": 99, "state": state, "state_reason": reason})
+        self.assertGreater(len(found), MOST["split"])
+        return found
+
+    def test_a_parent_with_more_parts_than_a_state_holds_goes_by_a_reduced_list(self):
+        cfg = make_config(close_parent_issues=True)
+        subs = self.many(("closed", "completed"))
+        with mock.patch.object(host, "step", wraps=host.step) as step:
+            # The completed part is beyond the first ten, and the reduced list keeps it.
+            self.assertEqual(host.part_ended(cfg, 1, subs, 5, "dropped"), "close")
+        parts = step.call_args.args[0]["parts"]
+        self.assertEqual(len(parts), MOST["split"])
+        self.assertIn({"item": "99", "state": "accepted"}, parts)
+        self.assertEqual(step.call_args.args[1]["part"], "5")
+
+    def test_a_parent_with_more_parts_than_a_state_holds_waits_for_a_person_when_none_completed(
+        self,
+    ):
+        cfg = make_config(close_parent_issues=True)
+        self.assertEqual(host.part_ended(cfg, 1, self.many(), 5, "dropped"), "person")
+
+    def test_a_parent_with_more_parts_than_a_state_holds_stays_while_one_is_open(self):
+        subs = self.many(("open", None))
+        self.assertEqual(self.ended(subs=subs), "stays")
+
+    def test_a_parent_with_more_parts_than_a_state_holds_closes_when_all_ended_and_one_completed(
+        self,
+    ):
+        subs = self.many(("closed", "completed"))
+        self.assertEqual(self.ended(subs=subs), "close")
+
+    def test_the_engine_may_refuse_to_decide(self):
         with mock.patch.object(host, "step", side_effect=host.Refused("no")):
             with self.assertRaises(host.Refused):
                 self.ended()
@@ -2219,7 +2335,7 @@ class MergeFindsTest(ReportCase):
             self.assertEqual(self.merge(cfg)["outcome"], "merged")
         self.assertEqual(self.gh.issues[1]["state"], "closed")
 
-    def test_without_close_parent_issues_the_engine_gets_person_and_the_parent_stays(self):
+    def test_without_close_parent_issues_the_engine_gets_person_and_a_person_decides(self):
         self.parent((2, "completed"))
         with mock.patch.object(host, "step", wraps=host.step) as step:
             self.assertEqual(self.merge()["outcome"], "merged")
@@ -2245,12 +2361,12 @@ class MergeFindsTest(ReportCase):
         [row] = self.gh.run_comments(6)
         self.assertIn("engine refused to decide", row["body"])
 
-    def test_a_parent_with_more_sub_issues_than_a_state_holds_keeps_nexkit_6s_path(self):
+    def test_a_parent_with_more_sub_issues_than_a_state_holds_goes_through_the_engine_too(self):
         cfg = make_config(merge={"auto": True}, close_parent_issues=True)
         self.parent(*[(n, "completed") for n in range(20, 20 + MOST["split"])])
-        with mock.patch.object(host, "part_ended") as ended:
+        with mock.patch.object(host, "part_ended", wraps=host.part_ended) as ended:
             self.assertEqual(self.merge(cfg)["outcome"], "merged")
-        ended.assert_not_called()
+        ended.assert_called_once()
         self.assertEqual(self.gh.issues[1]["state"], "closed")
 
 

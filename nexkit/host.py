@@ -90,8 +90,8 @@ that fails to start after a stop (`stop_failed`) stay the host's.
 It decides when a plan, implement or fix stage runs again after its agent stopped at a usage
 limit or on a transient error (`stage_limited`, `stage_transient`, called by `report`), and when
 a paused or waiting run starts at its time (`resumes`, called by `maintain.resume_paused`), a hold
-on the issue included. A reset stays the host's to give, and a transient stop of publish stays
-its own retry.
+on the issue included. A transient stop of publish goes as a transient stop of the stage's agent.
+A reset stays the host's to give.
 
 It decides what follows a command that autopilot started and lost, whose run GitHub never
 started, or that ended without a report, or that handed the work on to a run that never started
@@ -103,15 +103,16 @@ again, the wait or the person. What counts as lost, and the six-hour window of t
 It decides what the merge finds too (`report.merge_pull`, `autopilot._merge_step`):
 `change_seen` sends a pull request that a person merged first, a change that its base branch
 already holds, and a commit that a person pushed while the merge waited, as observations, and the
-item ends or its new head is checked as the engine answers. After NexKit's own merge,
-`part_ended` sends the end of the part to its parent's document, which closes the parent only when
-every part ended and one was completed, under `parentEnd`. Only the direct parent is the engine's:
-the parents above it, and the facts only GitHub knows, such as parts never filed as sub-issues,
-stay with `maintain.close_parents`.
+item ends or its new head is checked as the engine answers. Every parent's end goes through it:
+`part_ended` sends the end of a part to its parent's document, at every level and on every close
+of the part (a merge, a person's close, a change already on the base branch, no change needed,
+autopilot's sweep), and the parent ends only when every part ended and one was completed, under
+`parentEnd`, whatever the number of its sub-issues. Only the facts GitHub knows, such as parts
+never filed as sub-issues, stay with `maintain.close_parent`.
 
 Every round's checks and review reach it (`round_ended`): a review that paused at a usage
-limit, a review that failed, and a person's own pull request, which is only reviewed; a
-review that runs again after a transient error is the host's own retry. It finds the checks
+limit, a review that stopped on a transient error, a review that failed, and a person's own pull
+request, which is only reviewed. It finds the checks
 that failed the same way before and after a fix round, which the state comment keeps, and
 names those that the fix round `route` starts diagnoses (`diagnosis`). A round whose commit
 conflicts with its base branch starts the round that resolves it, within
@@ -1421,8 +1422,8 @@ def after_round(
 
 # What `report` does after a round's review that is not a verdict on a NexKit pull request,
 # by what the engine answers: a person's own pull request reviewed, a review paused at a
-# usage limit or failed, or one that the host runs again after a transient error.
-REVIEW_ENDS = ("person_reviewed", "paused", "review_failed", "again")
+# usage limit or failed.
+REVIEW_ENDS = ("person_reviewed", "paused", "review_failed")
 
 
 def round_ended(
@@ -1438,15 +1439,18 @@ def round_ended(
     wait=None,
     label=None,
     ran=None,
+    now=None,
 ):
     """What follows the checks and the review of the round of `decision` on the pull request
     `pr`, which ended on `head`, as the engine decides it: (end, repeated). `review` is
     (`done`, the review NexKit acts on), (`paused`, the time the host runs it again after
-    its usage limit resets, or None when it does not), (`failed`, why), or (`again`, None)
-    for a review that the host runs again after a transient error, as its own retries do,
-    which the engine does not see end. `before` are the checks of the round before, as the
+    its usage limit resets, or None when it does not), (`failed`, why), or (`transient`, the
+    error) for a review that stopped on a transient error at `now`, which the engine runs
+    again, makes wait or leaves to a person as `stage_transient` does, counting from the
+    decision's runs again. `before` are the checks of the round before, as the
     state comment recorded them (`checks.recorded`). The end is one of `ROUND_ENDS` after a
-    verdict on a NexKit pull request, else one of `REVIEW_ENDS`; `repeated` names the checks
+    verdict on a NexKit pull request, `stage_transient`'s answer after a transient stop,
+    else one of `REVIEW_ENDS`; `repeated` names the checks
     that failed the same way before and after a fix round, for the next automatic fix round
     to diagnose. Raises `Refused`."""
     number = decision["issue"]
@@ -1470,6 +1474,11 @@ def round_ended(
         doc["rounds"]["fixed"] = head
     run = {"id": first_state.RUN_ID, "next": None, "kind": "runChecks", "changeVersion": head}
     doc["pending"] = [run]
+    kind, given = review
+    retry = int(decision.get("retry") or 0)
+    if kind == "transient" and retry > 0:
+        # The runs again of the round's command, which a review handed on keeps counting.
+        doc["again"] = {"transient": min(retry, MOST_AGAIN)}
     results = {"checks": _checks(checks), "baseFailure": str(wait["bug"]) if wait else None}
     event = _event(
         "actionFinished",
@@ -1484,9 +1493,6 @@ def round_ended(
     review_run = [a for a in answer["actions"] if a["kind"] == "runAgent"]
     if not review_run or review_run[0]["stage"] != "review":
         raise Refused("The engine runs no review after a round's checks.")
-    kind, given = review
-    if kind == "again":
-        return "again", _repeated(answer)
     if kind == "done":
         result = {**spent(ran), "output": _review_output(given)}
     elif kind == "paused":
@@ -1496,18 +1502,22 @@ def round_ended(
             "output": None,
             "limit": {"message": message, "reset": _time(given)},
         }
+    elif kind == "transient":
+        result = {**spent(ran), "output": None, "transient": True, "error": str(given)}
     else:
         result = {**spent(ran), "output": None, "error": str(given or "The review failed.")}
     event = _event(
         "actionFinished",
         number,
-        None,
+        usage.iso(now) if kind == "transient" and now else None,
         f"round-review-{pr}-{head}",
         action=review_run[0]["id"],
         changeVersion=head,
         result=result,
     )
     answer = step(answer["state"], event, found)
+    if kind == "transient":
+        return _transient_answer(answer["state"], answer["actions"], "review"), _repeated(answer)
     if kind == "done" and not person:
         return _round_end(answer, recheck), _repeated(answer)
     return _review_end(answer, kind, person), _repeated(answer)
@@ -2010,17 +2020,21 @@ def change_seen(cfg, issue, pr, head, auto_fixes, seen, waiting=False):
 
 
 def part_ended(cfg, parent, subs, part, state):
-    """Whether the parent issue `parent` ends once its sub-issue `part`, which NexKit merged
-    and closed as `state`, ended, as the engine decides it (`report.merge_pull`): `close` when
-    every one of the sub-issues `subs` ended and one was completed, under `parentEnd`, which
-    GitHub gives as `person` without `close_parent_issues`; otherwise `stays`. Facts only
-    GitHub knows, such as parts that were never filed, stay with `maintain.close_parents`.
-    Raises `Refused`, also when the parent has more sub-issues than a state holds."""
+    """Whether the parent issue `parent` ends once its sub-issue `part`, which closed as
+    `state`, ended, as the engine decides it (`maintain.close_parent`, at every level and for
+    every way a part closes): `close` when every one of the sub-issues `subs` ended and one
+    was completed, under `parentEnd`, which GitHub gives as `person` without
+    `close_parent_issues`; `person` when every part ended and a person decides; otherwise
+    `stays`. Facts only GitHub knows, such as parts that were never filed, stay with
+    `maintain.close_parent`. A parent with more sub-issues than a state holds sends a reduced
+    list: the part, and one open, one completed and one dropped sub-issue, which keep the two
+    facts the rule reads, that every part ended and that one was completed. Raises
+    `Refused`."""
     ended = {str(sub["number"]): first_state._ended(sub) for sub in subs}
     # The part is one of them, though a list that GitHub has not caught up with may miss it.
     ended[str(part)] = None
     if len(ended) > MOST["split"]:
-        raise Refused("The parent has more sub-issues than the engine keeps parts.")
+        ended = _reduced(ended, str(part))
     doc = first_state.empty(str(parent))
     doc["state"] = "split"
     doc["waits"] = [{"id": "w1.1", "for": "parts", "until": None, "on": None}]
@@ -2029,7 +2043,22 @@ def part_ended(cfg, parent, subs, part, state):
     found = {**policies(cfg), "parentEnd": end}
     event = _event("partEnded", parent, None, f"part-{parent}-{part}", part=str(part), state=state)
     _, actions = _answers(doc, [event], found)
-    return "close" if any(action["kind"] == "close" for action in actions) else "stays"
+    kinds = {action["kind"] for action in actions}
+    if "close" in kinds:
+        return "close"
+    return "person" if "needPerson" in kinds else "stays"
+
+
+def _reduced(ended, part):
+    """The parts `ended` (item to state) cut to `MOST["split"]`, with `part` first, then the
+    first open one, the first completed and the first dropped, then the others in order. The
+    engine's rule reads only whether every part ended and whether one was completed, and the
+    list keeps both."""
+    keep = [part]
+    for wanted in (None, "accepted", "dropped"):
+        keep += [item for item, how in ended.items() if how == wanted and item not in keep][:1]
+    keep += [item for item in ended if item not in keep]
+    return {item: ended[item] for item in keep[: MOST["split"]]}
 
 
 def stopped_counts(issue, pr, head, auto_fixes, automatic, by_host, checking=False):
@@ -2123,7 +2152,8 @@ def stage_limited(cfg, decision, reset, label=None):
 
 def stage_transient(cfg, decision, now, error, label=None):
     """What follows the transient stop of the agent of `decision`, a plan, implement or fix
-    stage, at `now` (`report._retry`), as the engine decides it: `("now", count)` to run it
+    stage, or of its publish, which goes as the same stop, at `now` (`report._retry`), as the
+    engine decides it: `("now", count)` to run it
     again at once, `("later", until, count)` after the next wait of `retry.wait_minutes`, or
     `("failed",)` for a person after the last. `count` is the number of the run again. Raises
     `Refused`."""
@@ -2135,9 +2165,16 @@ def stage_transient(cfg, decision, now, error, label=None):
     events = _hold_events(number, label)
     events.append(_event("actionFinished", number, usage.iso(now), _run_event_id(), **fields))
     state, actions = _answers(doc, events, policies(cfg))
+    return _transient_answer(state, actions, decision["action"])
+
+
+def _transient_answer(state, actions, stage):
+    """What the engine answers after the transient stop of `stage`'s agent, from the `state`
+    and `actions` it gave: `("now", count)`, `("later", until, count)` or `("failed",)` as
+    `stage_transient` says. Raises `Refused`."""
     kinds = {action["kind"]: action for action in actions}
     count = (state.get("again") or {}).get("transient")
-    if (kinds.get("runAgent") or {}).get("stage") == decision["action"] and count:
+    if (kinds.get("runAgent") or {}).get("stage") == stage and count:
         return "now", count
     if "wait" in kinds and count:
         return "later", kinds["wait"]["until"], count

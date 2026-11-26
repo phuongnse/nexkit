@@ -6,7 +6,8 @@ NexKit 6 at 8bf5190, and keeps the engine's invariants
 they go with NexKit 6's code once 7.0 ships.
 
 Nothing here is a test that `unittest discover` runs: the folder is no package, and no file's
-name starts with `test`. Standard library only.
+name starts with `test`. Nothing that `unittest` or the engine's mutation check runs reads it.
+Standard library only.
 
 ## The differential check
 
@@ -68,25 +69,11 @@ drops the clock's.
 
 ## The random walks
 
-```sh
-python3 tests/differential/walk.py                 # 2,000 walks of seed 349
-python3 tests/differential/walk.py --walk 17 --show
-```
-
-`walk.py` sends random events to the engine's `step`, with random policies that change now and
-then, and checks the invariants that `INVARIANTS` lists after every step: the protocol's
-schemas, the transitions the states table names, the outbox, every open item carried on,
-counts within the policies, which rounds give their count back, `due` and `automatic`,
-diagnosis, usage-limit waits, runs again after a transient stop, holds and conflict rounds, the
-wait for required checks with its six hours, which items a `requested` start starts, the
-engine's answers to a round's questions, and a random `sweep` request for each walk: every item
-answered once, starts within `maxParallel` but for an awaited item, none on a limited account, the
-key order and each wait's running count.
-Some walks start from the example of an item that accepts, which a walk from a new item seldom
-reaches. Each rule is checked both ways where it can be: a count neither passes its policy
-nor fails to come back when its round stops. It exits 1 when one breaks that `KNOWN` does not
-list, or when the engine refuses more than a tenth of the events, as walks it refuses check
-nothing. A change adds invariants for the rules it adds.
+The engine's random walks are no longer a part of this folder: `tests/walk.py` plays them, with
+no NexKit 6, and they stay after 7.0. `tests/test_walk.py` plays a fixed sample of them in the
+unit tests, and `check.sh` plays 1,000 more here until 7.0. A change adds the invariants of its
+rules to `tests/walk.py`. Its docstring says what the walker checks, and
+[Which check covers what](../../docs/testing.md#which-check-covers-what) lists it.
 
 ## Mutation checks
 
@@ -94,10 +81,16 @@ nothing. A change adds invariants for the rules it adds.
 python3 tests/differential/mutants.py --v6 ../nexkit-v6
 ```
 
-`mutants.py` breaks one rule in a copy of the tree for each of `MUTANTS`, plays the families
-that cover it and walks the engine, and says whether each check that should see the broken rule
-did. No CI job runs it: it takes several minutes. A change adds mutants of its own rules and
-runs it.
+`mutants.py` breaks one rule in a copy of the tree for each mutant, plays the families that cover
+it and says whether the differential check saw it. No CI job runs it: it takes several minutes.
+
+The mutants of the engine's rules live in `tests/mutants.py`, which needs no NexKit 6 and stays
+after 7.0: the conformance suite or the walker must see each one. A change adds mutants of its
+engine rules there. Only the mutants that the differential check alone sees stay here: those of
+host code, whose rules are NexKit 6's GitHub behaviour. This file plays the engine's mutants too,
+with the families of `ENGINE` that cover them, so that a change proves its rules against NexKit 6
+until 7.0. It lists `start-resumes-a-blocked-item-on-a-conflict` as well, which no check sees
+today.
 
 The engine's state lives only for one call of the host while the GitHub host builds each
 item's document from NexKit 6's markers. A rule that only matters across calls, such as

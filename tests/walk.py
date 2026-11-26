@@ -1,7 +1,7 @@
 """Random walks of the engine against its invariants.
 
-usage: python3 tests/differential/walk.py [--walks N] [--seed S] [--steps M] [--tree PATH]
-                                          [--walk W] [--show]
+usage: python3 tests/walk.py [--walks N] [--seed S] [--steps M] [--tree PATH] [--walk W] [--show]
+                             [--jobs J]
 
 Each walk starts an item with random policies, which change now and then, and sends up to
 `--steps` events: every kind the conformance cases send, results of each action it has
@@ -10,15 +10,26 @@ one of two signatures, some skipped, with and without a failure the base branch 
 publishes that conflict or leave the version as it was, refused accepts, usage limits with and
 without a reset, transient stops), holds and their end, pushes, conflicts and lost actions.
 After every step it checks the invariants below; `INVARIANTS` names them by the rule each
-guards. Walk W plays the same events whatever else runs (`--walk W --show` prints its trail).
+guards. Walk W plays the same events whatever else runs (`--walk W --show` prints its steps, and
+those of the application's walk that follows it).
+After `APPLICATION` of the walks, one more walk plays with an application's policies, as
+docs/engine-hosts.md#what-a-host-decides gives them, and keeps them for the whole walk. Some
+walks start from the example of an item that accepts, which a walk from a new item seldom
+reaches. Each rule is checked both ways where it can be: a count neither passes its policy nor
+fails to come back when its round stops. A random `sweep` request for each walk checks the
+sweep's rules.
 It prints how often each invariant broke, with an example, and exits 1 when one broke that
-`KNOWN` does not list.
+`KNOWN` does not list, or when the engine refuses more than `REFUSED` of the events, as walks it
+refuses check nothing.
 
-A change that moves a decision into the engine adds invariants for its rules here.
+`tests/test_walk.py` plays a fixed sample of walks in the unit tests. This script plays longer
+ones, and `tests/mutants.py` plays it against a broken engine. A change to an engine rule adds
+invariants for its rules here, before NexKit 7.0 and after it.
 """
 
 import argparse
 import collections
+import contextlib
 import copy
 import functools
 import json
@@ -28,8 +39,10 @@ import random
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
+ROOT = HERE.parent
 
 INVARIANTS = {
     "schema": "every answer fits the protocol's schema, and the engine never fails on one",
@@ -113,6 +126,8 @@ KNOWN = {
 }
 
 TITLE = "Cache the results"
+# The share of walks that take an application's policies, fixed for the whole walk.
+APPLICATION = 0.15
 # The share of walks that start from the example of an item that accepts.
 ACCEPTING = 0.2
 # The share of those that an import left waiting to start, which no event of a walk makes.
@@ -144,19 +159,17 @@ def _later(seconds):
 
 
 class Walker:
-    def __init__(self, tree):
-        sys.path.insert(0, str(tree))
-        os.chdir(tree)
+    """Plays walks of the engine that `sys.path` finds. Use it as a context: it reads each file
+    that does not change during a walk once, and puts the reads back when the context ends."""
+
+    def __init__(self):
         from nexkit import engine, protocol
         from nexkit.engine.machine import DEFAULTS, RUNS, _later
         from nexkit.protocol.size import failure_key
         from tests import test_conformance as tc
 
-        # Both read files that do not change during a walk: read each once. The schemas the
-        # engine checks every state against stay the same objects.
-        protocol._refs = functools.cache(protocol._refs)
-        tc.table_transitions = functools.cache(tc.table_transitions)
         self.engine, self.protocol, self.tc = engine, protocol, tc
+        self.stack = contextlib.ExitStack()
         self.defaults, self.failure_key, self.later = dict(DEFAULTS), failure_key, _later
         self.runs = RUNS
         self.suite = tc.ConformanceTest("test_the_cases")
@@ -173,7 +186,19 @@ class Walker:
         self.errors = collections.Counter()
         self.pairs = collections.Counter()
         self.events = 0
+        self.applied = 0
         self.last_checks = None
+
+    def __enter__(self):
+        # The schemas the engine checks every state against stay the same objects.
+        refs = functools.cache(self.protocol._refs)
+        table = functools.cache(self.tc.table_transitions)
+        self.stack.enter_context(mock.patch.object(self.protocol, "_refs", refs))
+        self.stack.enter_context(mock.patch.object(self.tc, "table_transitions", table))
+        return self
+
+    def __exit__(self, *error):
+        return self.stack.__exit__(*error)
 
     # -- what a walk sends ------------------------------------------------------------------
 
@@ -216,6 +241,36 @@ class Walker:
             )
             found["budgets"] = {**found.get("budgets", {}), "item": item}
         return found
+
+    @staticmethod
+    def application_policies(rng):
+        """An application's policies, as docs/engine-hosts.md#what-a-host-decides gives them:
+        a person approves a plan and a split, the engine reviews only after passing checks and
+        accepts what passed, a conflict makes the change again, and each item has a budget."""
+        return {
+            "planApproval": "person",
+            "answers": "never",
+            "reviewAfterFailingChecks": "onlyAfterPassing",
+            "accept": "autoWhenPassed",
+            "fixRounds": 3,
+            "whenRoundsRunOut": "person",
+            "conflicts": "redo",
+            "conflictRounds": rng.choice([1, 2, 3]),
+            "splits": True,
+            "splitParts": 10,
+            "splitDepth": rng.choice([1, 2, 3]),
+            "parentEnd": "whenPartAccepted",
+            "afterFailure": "person",
+            "retryWaits": rng.choice([[0], [15]]),
+            "lostWaits": [],
+            "budgets": {
+                "item": {
+                    "tokens": rng.choice([300, 2000, 50000]),
+                    "seconds": rng.choice([1800, 7200]),
+                },
+                "fix": {"modelCalls": 5},
+            },
+        }
 
     def plan_output(self, rng):
         found = copy.deepcopy(self.tc.FIXTURES["plan"])
@@ -1472,9 +1527,17 @@ class Walker:
             flag("an awaited item on a free account does not start", info)
 
     def walk(self, w, seed, steps, show=False):
+        """Walk `w`, and for `APPLICATION` of the walks one more with an application's policies.
+        That one comes from generators of its own, so every walk plays as it did without it."""
         self.sweep_check(w, seed)
-        rng = random.Random(seed * 100003 + w)
-        pol = self.policies(rng)
+        self.play(w, random.Random(seed * 100003 + w), steps, show)
+        own = random.Random(f"application-{seed}-{w}")
+        if own.random() < APPLICATION:
+            self.applied += 1
+            self.play(w, own, steps, show, application=True)
+
+    def play(self, w, rng, steps, show, application=False):
+        pol = self.application_policies(rng) if application else self.policies(rng)
         state = None
         trail = []
         memory = {"open": {}, "floor": None}
@@ -1534,7 +1597,7 @@ class Walker:
                 event = self.tc.event_of(short, state, number)
             except Exception:  # noqa: BLE001
                 continue
-            if rng.random() < 0.05:
+            if rng.random() < 0.05 and not application:
                 pol = self.policies(rng)
             request = {"protocol": 1, "call": "step", "state": state, "event": event}
             request["policies"] = pol
@@ -1550,15 +1613,39 @@ class Walker:
                 state = answer["state"]
 
 
+def _found(walker):
+    refused = sum(walker.errors.values())
+    found = (walker.problems, walker.examples, walker.known, walker.events, walker.pairs)
+    return (*found, walker.tc.table_transitions(), refused, walker.applied)
+
+
 def _walks(job):
     tree, walks, seed, steps, show = job
-    walker = Walker(tree)
-    for w in walks:
-        walker.walk(w, seed, steps, show=show)
-    table = walker.tc.table_transitions()
-    refused = sum(walker.errors.values())
-    found = (walker.problems, walker.examples, walker.known, walker.events, walker.pairs, table)
-    return (*found, refused)
+    # The tree to walk comes first, and the walk reads no file by a relative path.
+    sys.path.insert(0, str(tree))
+    os.chdir(tree)
+    with Walker() as walker:
+        for w in walks:
+            walker.walk(w, seed, steps, show=show)
+        return _found(walker)
+
+
+def sample(walks, seed=349, steps=40):
+    """`walks` walks of the engine that `sys.path` finds, in this process, with no change to the
+    working folder or `sys.path`: what a test plays. Returns the problems with an example of each,
+    the known ones, and the counts of events, refused events and walks with an application's
+    policies."""
+    with Walker() as walker:
+        for w in range(walks):
+            walker.walk(w, seed, steps)
+    return {
+        "problems": walker.problems,
+        "examples": walker.examples,
+        "known": walker.known,
+        "events": walker.events,
+        "refused": sum(walker.errors.values()),
+        "applied": walker.applied,
+    }
 
 
 def main(argv=None):
@@ -1566,7 +1653,7 @@ def main(argv=None):
     parser.add_argument("--walks", type=int, default=2000)
     parser.add_argument("--seed", type=int, default=349)
     parser.add_argument("--steps", type=int, default=40)
-    parser.add_argument("--tree", default=str(HERE.parent.parent), help="the tree to walk")
+    parser.add_argument("--tree", default=str(ROOT), help="the tree to walk")
     parser.add_argument("--walk", type=int, help="play only this walk")
     parser.add_argument("--show", action="store_true", help="print each step of the walk")
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 1)
@@ -1581,7 +1668,7 @@ def main(argv=None):
         with multiprocessing.Pool(jobs) as pool:
             found = pool.map(_walks, chunks)
     problems, examples, known, events = collections.Counter(), {}, collections.Counter(), 0
-    pairs, table, refused = collections.Counter(), set(), 0
+    pairs, table, refused, applied = collections.Counter(), set(), 0, 0
     for (
         their_problems,
         their_examples,
@@ -1590,9 +1677,11 @@ def main(argv=None):
         their_pairs,
         their_table,
         their_refused,
+        their_applied,
     ) in found:
         table |= their_table
         refused += their_refused
+        applied += their_applied
         problems.update(their_problems)
         pairs.update(their_pairs)
         known.update(their_known)
@@ -1601,6 +1690,7 @@ def main(argv=None):
             if name not in examples or info["walk"] < examples[name]["walk"]:
                 examples[name] = info
     print(f"{len(walks)} walks, seed {args.seed}, {events} events")
+    print(f"  {applied} walks took an application's policies")
     played = len(table & set(pairs))
     print(f"  {played} of the {len(table)} transitions the states table names played")
     # A walk whose events the engine mostly refuses checks nothing: that must stay rare.

@@ -1636,6 +1636,42 @@ class ChecksWaitedTest(ReportCase):
             with self.assertRaises(host.Refused):
                 self.waited(timedelta(hours=1))
 
+    def test_a_merge_with_no_recorded_start_is_tried_and_sends_no_start(self):
+        cfg = make_config(merge={"auto": True})
+        now = datetime(2026, 11, 23, 15, 0, 0, tzinfo=UTC)
+        with mock.patch.object(host, "step", wraps=host.step) as step:
+            end = host.checks_waited(cfg, 5, 6, "c" * 40, None, now)
+        self.assertEqual(end, "merge")
+        self.assertNotIn("checksSince", step.call_args.args[0])
+
+
+class RefusalClearedTest(ReportCase):
+    """A sweep's look at a merge that GitHub refused: the engine accepts it again only for a
+    head that GitHub would accept now and did not refuse while it would."""
+
+    def cleared(self, acceptable, refused_clean=False, auto=True):
+        cfg = make_config(merge={"auto": auto})
+        run = {"head": "c" * 40, "outcome": "merge_refused"}
+        if refused_clean:
+            run["refused_clean"] = "c" * 40
+        return host.refusal_cleared(cfg, 5, 6, run, acceptable)
+
+    def test_an_acceptable_head_is_merged_whatever_merge_auto_says(self):
+        for auto in (True, False):
+            with self.subTest(auto=auto):
+                self.assertEqual(self.cleared(True, auto=auto), "merge")
+
+    def test_a_head_that_would_not_be_accepted_waits(self):
+        self.assertEqual(self.cleared(False), "waits")
+
+    def test_a_head_refused_while_acceptable_is_not_tried_again(self):
+        self.assertEqual(self.cleared(True, refused_clean=True), "waits")
+
+    def test_an_answer_the_engine_refuses_is_refused(self):
+        with mock.patch.object(host, "step", side_effect=host.Refused("no")):
+            with self.assertRaises(host.Refused):
+                self.cleared(True)
+
 
 class RoundEndTest(ReportCase):
     """`report` sends every round's checks and review to the engine: a person's own pull

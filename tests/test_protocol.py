@@ -310,9 +310,11 @@ class ProtocolTest(unittest.TestCase):
     def test_a_change_is_observed_whole_never_as_a_delta(self):
         shape = protocol.load("common.schema.json")["$defs"]["observation"]
         fields = shape["required"]
-        # `behind` is the one field a host may leave out: it means the change is not behind.
-        self.assertEqual(sorted(fields), sorted(set(shape["properties"]) - {"behind"}))
-        self.assertNotIn("behind", fields)
+        # `behind` and `acceptable` are the fields a host may leave out: each means the change is
+        # not, as far as the host can tell.
+        optional = {"behind", "acceptable"}
+        self.assertEqual(sorted(fields), sorted(set(shape["properties"]) - optional))
+        self.assertFalse(optional & set(fields))
         event = protocol.load("events/changeObserved.schema.json")
         state = protocol.load("state.schema.json")["properties"]["observed"]["anyOf"][0]
         for schema, base in ((event, "../common.schema.json"), (state, "common.schema.json")):
@@ -322,9 +324,10 @@ class ProtocolTest(unittest.TestCase):
                 ref = f"{base}#/$defs/observation/properties/{field}"
                 self.assertEqual(schema["properties"][field], {"$ref": ref})
         for schema, base in ((event, "../common.schema.json"), (state, "common.schema.json")):
-            ref = f"{base}#/$defs/observation/properties/behind"
-            self.assertEqual(schema["properties"]["behind"], {"$ref": ref})
-            self.assertNotIn("behind", schema["required"])
+            for field in sorted(optional):
+                ref = f"{base}#/$defs/observation/properties/{field}"
+                self.assertEqual(schema["properties"][field], {"$ref": ref})
+                self.assertNotIn(field, schema["required"])
         for kind in ("publish", "replaceChange", "updateChange"):
             # The host reads the change when it handles the result of an action that changed it.
             self.assertIn(

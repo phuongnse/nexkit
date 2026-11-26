@@ -491,14 +491,22 @@ host runs it through its own adapter. A new rule of the engine comes with a case
    otherwise a person; an update that GitHub refuses goes back to the engine, which hands it to
    a person. A merge that waited more than six hours for required checks, and whose branch
    GitHub reports as behind its base, keeps being tried under `conflicts.auto_resolve`: the
-   engine makes that exception. The merge's observations reach the engine too
+   engine makes that exception, and so does a merge that waits with no recorded start of its
+   wait: the sweep asks `host.checks_waited` for it too, and merges when the engine answers a
+   merge. A merge that GitHub refused is tried again by the sweep only when the engine answers
+   with an accept (`host.refusal_cleared`): the host sends the head as an observation, with
+   `acceptable` when `mergeable_state` is `clean`, `unstable` or `has_hooks`, and NexKit 6's
+   `refused_clean` marker as `refusedAcceptable`, so that each head is tried once. The import
+   sets `refusedAcceptable` from that marker. The merge's observations reach the engine too
    (`host.change_seen`): a pull request that a person merged first ends the item as `accepted`, a
    change that the base branch already holds ends it as `noChange`, and a commit that a person
    pushes while the merge waits is checked. Every parent's end goes through
    `host.part_ended`, which sends the parent its part's end: after NexKit's own merge, after a
    person closes the part, after a round that finds no change is needed, after a pull request
    whose base branch already holds its change, and in autopilot's sweep, at every level up the
-   tree and for a parent of any number of sub-issues. The parent closes only when the engine
+   tree and for a parent of any number of sub-issues. The sweep's assessment of a parent whose
+   parts all closed asks `host.part_ended` with the part that closed last, as the close does,
+   and closes the parent or leaves it for a person only as the engine answers. The parent closes only when the engine
    answers `close`: it does so under `parentEnd` `whenPartAccepted`, which the GitHub host gives
    with `close_parent_issues`. When the engine answers that a person decides, NexKit leaves
    NexKit 6's note on the parent. A parent of more sub-issues than a state document holds sends
@@ -569,8 +577,9 @@ host runs it through its own adapter. A new rule of the engine comes with a case
    no plan, `new` and waiting to start, sends a `requested` start with no person, and dispatches
    `/nexkit plan` only when the engine answers with a plan run. Otherwise the issue waits for a
    person. NexKit 6's checks of a hold, trust, blockers and waves come first, so the engine is
-   never asked for a held or blocked issue. Every start that autopilot makes now follows an
-   answer of the engine, which `tests/test_autopilot.py` checks by reading `autopilot.py`. Which of the issues that may start do, and in what order, is the engine's too
+   never asked for a held or blocked issue. Every start, merge and close that autopilot makes now
+   follows an answer of the engine, which `tests/test_autopilot.py` checks by reading
+   `autopilot.py`. Which of the issues that may start do, and in what order, is the engine's too
    (`host.sweep`, called by `autopilot.preview`): the host sends the start steps without a pull
    request as a `sweep` call, with the busy count as `running`, the index of each issue's
    milestone, its wave and whether pull requests wait for it as a bug issue about the default

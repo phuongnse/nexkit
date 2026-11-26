@@ -256,10 +256,12 @@ when a list of what the code defines misses an entry. These rules close each of 
    [stages](stages.md) list the sections the code writes, and that each value the pages repeat
    matches its constant, and that the words [agents and profiles](agents-and-profiles.md) and
    [failure handling](failure-handling.md#failure-handling) list as marking a failing line are those
-   of `FAILURE_LINE`; that no doc, the README, AGENTS.md or a skill repeats a pinned version: each pin that
-   [D9](decisions/d9-pins-live-in-one-place.md) governs, or a lint tool's version from
-   `scripts/lint.sh`; that each test the security page names exists; that the refusals of
-   `unaffected_by` that [the checks page](checks.md#checks-that-a-change-cannot-affect) lists are
+   of `FAILURE_LINE`; that the tools [agents and profiles](agents-and-profiles.md#agents) give the
+   plan and review stages are those of `READ_ONLY_TOOLS`; that no doc, the README, AGENTS.md or a
+   skill repeats a pinned version: each pin that [D9](decisions/d9-pins-live-in-one-place.md)
+   governs, or a lint tool's version from `scripts/lint.sh`; that each test the security page
+   names exists; that the refusals of `unaffected_by` that
+   [the checks page](checks.md#checks-that-a-change-cannot-affect) lists are
    the code's, and that the code refuses each one; that the outcome table of
    [how it works](how-it-works.md) lists each outcome the code defines and no other; that the mention
    table of [troubleshooting](troubleshooting.md#what-a-mention-says) lists each outcome that needs a

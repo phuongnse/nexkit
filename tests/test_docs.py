@@ -19,7 +19,8 @@ The refusals of `unaffected_by` that the checks page lists name each refusal of 
 other, and the code refuses each one. The plan and review layouts of stages match the sections
 the code writes, and the values the pages repeat match their constants. The words that the agents
 and profiles and the failure handling pages list as marking a failing line match FAILURE_LINE.
-The README's table of
+The tools that the access table of agents and profiles gives the plan and review stages match
+READ_ONLY_TOOLS. The README's table of
 supported versions is compared with the pins in nexkit/__init__.py, and each ubuntu-NN.NN in the
 README with the pinned runner. The local commands
 table of the README lists each command the CLI defines for people and no other, and each option a
@@ -59,6 +60,7 @@ from nexkit import (
     state,
 )
 from nexkit.engine import prompt, textutil
+from nexkit.runtimes import claude_code
 from tests.support import make_config, with_claude
 from tests.test_cli import jobs_of, permissions_of
 
@@ -1238,6 +1240,9 @@ VALUES = (
 # The pages that list the words which mark a failing line, and the regex that finds each list.
 FAILURE_WORDS_PAGES = ("agents-and-profiles.md", "failure-handling.md")
 FAILURE_WORDS = re.compile(r"contains? (`[^`]+`(?:(?:, | or )`[^`]+`)*), in any case")
+# The page and the row of its access table that give the tools of the plan and review stages.
+ACCESS_PAGE = DOCS / "agents-and-profiles.md"
+READ_ACCESS_ROW = "| plan, review |"
 
 
 class LayoutTests(unittest.TestCase):
@@ -1311,6 +1316,30 @@ class FailureWordsTests(unittest.TestCase):
             for word in sorted(set(listed) - set(code)):
                 with self.subTest(page=name, word=word):
                     self.fail(f"docs/{name} lists {word!r}, which FAILURE_LINE does not match")
+
+
+class ReadOnlyToolsTests(unittest.TestCase):
+    def test_the_access_table_lists_the_read_only_tools_and_no_other(self):
+        code = sorted(claude_code.READ_ONLY_TOOLS.split(","))
+        lines = ACCESS_PAGE.read_text().splitlines()
+        rows = [line for line in lines if line.startswith(READ_ACCESS_ROW)]
+        if len(rows) != 1:
+            self.fail("docs/agents-and-profiles.md has no single `plan, review` row in its table")
+        # The Claude Code column is the last cell of the row.
+        cells = rows[0].strip().strip("|").split("|")
+        listed = sorted(re.findall(r"`([^`]+)`", cells[-1]))
+        for tool in sorted(set(code) - set(listed)):
+            with self.subTest(tool=tool):
+                self.fail(
+                    f"docs/agents-and-profiles.md does not list {tool!r}, "
+                    "which READ_ONLY_TOOLS gives Claude Code"
+                )
+        for tool in sorted(set(listed) - set(code)):
+            with self.subTest(tool=tool):
+                self.fail(
+                    f"docs/agents-and-profiles.md lists {tool!r}, "
+                    "which READ_ONLY_TOOLS does not give Claude Code"
+                )
 
 
 if __name__ == "__main__":

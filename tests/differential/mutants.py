@@ -513,6 +513,78 @@ MUTANTS = {
         "seen": ("harness", "walker"),
         "families": ("failure",),
     },
+    # A trust from anyone but a writer vouches too (#538). The host sends only a writer's, so
+    # only the walker sees it.
+    "vouch-ignores-the-role": {
+        "path": MACHINE,
+        "old": """            or by["role"] not in WRITERS
+""",
+        "new": "",
+        "seen": ("walker",),
+        "families": ("vouch",),
+    },
+    # A writer's trust vouches on any stop, not only an untrusted one (#538). The host builds
+    # only untrusted stops, so only the walker sees it.
+    "vouch-ignores-the-attention": {
+        "path": MACHINE,
+        "old": """            or (self.s["attention"] or {}).get("reason") != "untrusted"
+""",
+        "new": "",
+        "seen": ("walker",),
+        "families": ("vouch",),
+    },
+    # The vouched fix round runs without counting, so it goes past `fixRounds` when none is
+    # left (#538). NexKit 6 counts it, but the host counts only when it starts the round, so
+    # only the walker sees it.
+    "vouch-fix-round-is-not-counted": {
+        "path": MACHINE,
+        "old": """            if not self.s["hold"]:
+                self.issue_fix(fresh=True)
+        elif self.state == "ready":""",
+        "new": """            if not self.s["hold"]:
+                self.s["rounds"].pop("due", None)
+                self.by = None
+                self.run("fix")
+        elif self.state == "ready":""",
+        "seen": ("walker",),
+        "families": ("vouch",),
+    },
+    # An item with no change is not planned again by a writer's vouch, so the issue waits
+    # for a person on GitHub, where NexKit 6 plans it (#538).
+    "vouch-plans-nothing-for-an-item-with-no-change": {
+        "path": MACHINE,
+        "old": """        if self.state == "failed" and not self.s["change"]:
+            self.start_plan()
+        elif self.state == "failed":
+            # The round that stopped""",
+        "new": """        if self.state == "failed" and not self.s["change"]:
+            return False
+        elif self.state == "failed":
+            # The round that stopped""",
+        "seen": ("harness", "walker"),
+        "families": ("vouch",),
+    },
+    # A stopped merge starts a fix round after a writer's vouch instead of its checks and
+    # review (#538).
+    "vouch-starts-a-fix-for-a-stopped-merge": {
+        "path": MACHINE,
+        "old": """            self.move("checking")
+            self.check()
+        else:
+            return False
+        return True
+
+    def takes_request""",
+        "new": """            self.move("fixing")
+            self.run("fix")
+        else:
+            return False
+        return True
+
+    def takes_request""",
+        "seen": ("harness", "walker"),
+        "families": ("vouch",),
+    },
     # A new item's start plans nothing, so the issue waits for a person on GitHub, where
     # NexKit 6 plans it (#438).
     "new-start-plans-nothing": {

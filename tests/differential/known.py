@@ -131,6 +131,28 @@ KNOWN = [
             and new.get("gh2") == new["gh"]
         ),
     },
+    {
+        "name": "a vouch with no automatic fix round left waits for a person",
+        "family": "vouch",
+        "by": "#538",
+        "why": (
+            "After an untrusted edit stopped a person's fix round on a pull request whose "
+            "automatic fix rounds are used up, NexKit 6 started a counted round when a writer "
+            "vouched again, which went past `fix.max_auto_rounds`. The engine keeps the budget "
+            "and a person decides when no automatic round is left (`roundsUsedUp`)."
+        ),
+        "match": lambda sc, old, new: (
+            sc["where"] == "pull_round"
+            and sc["rounds"] == "used_up"
+            and sc["vouch"] == "writer"
+            and isinstance(old.get("step"), dict)
+            and old["step"].get("command") == "fix"
+            and old["step"].get("count") is True
+            and isinstance(new.get("step"), dict)
+            and new["step"].get("state") == "waits"
+            and new["step"].get("person") is True
+        ),
+    },
 ]
 
 

@@ -106,7 +106,7 @@
       "empty": false
     },
     "attention": {
-      "reason": "blocked",
+      "reason": "untrusted",
       "text": "Read the issue, and comment `/nexkit trust` on it if you trust it",
       "ref": null
     },
@@ -161,7 +161,24 @@
     {
       "event": {
         "kind": "requested",
-        "what": "review"
+        "what": "trust",
+        "by": {
+          "id": "rita",
+          "role": "reader"
+        }
+      },
+      "state": "ready",
+      "changed": false,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "trust",
+        "by": {
+          "id": "olivia",
+          "role": "writer"
+        }
       },
       "state": "checking",
       "changed": true,

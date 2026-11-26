@@ -15,6 +15,8 @@ the configuration reference list each key the code defines and no other, with th
 ranges the code has. The list of a check's fields on the checks page lists each key the code
 defines and no other. The runtime table of that page lists each runtime the code defines and no
 other, with its providers, effort levels and budget support, and which runtimes report usage limits.
+The provider table of that page lists each provider the code defines and no other, with its
+settings and secret fields.
 The trigger table of its workflow file section lists each trigger of the workflow template and no
 other. The table of the App's permissions matches the permissions and levels of the App manifest.
 The refusals of `unaffected_by` that the checks page lists name each refusal of the code and no
@@ -110,6 +112,10 @@ STAGE_KEYS_HEADER = "| Key | Meaning |"
 TRIGGERS_HEADER = "| Trigger | Starts NexKit for |"
 WORKFLOW_TEMPLATE = ROOT / "nexkit/templates/workflow.yml"
 RUNTIMES_HEADER = "| Runtime | Providers | `effort` |"
+PROVIDERS_HEADER = "| Provider | Settings | Secret |"
+# A field's name in a cell of the provider table, in backticks: `none` and `claude setup-token`
+# have no such name.
+FIELD_NAME = re.compile(r"`([a-z][a-z0-9_]*)`")
 LIMITS = re.compile(r"((?:`[\w-]+`(?:, | and )?)+) reports? usage limits")
 DECISIONS = DOCS / "decisions"
 DECISIONS_INDEX = DOCS / "decisions.md"
@@ -756,6 +762,29 @@ class ConfigurationTests(unittest.TestCase):
                     re.findall(r"`([^`]+)`", cells[2]),
                     list(runtime.efforts),
                     f"the effort levels of {name} in docs/configuration.md differ from the code",
+                )
+
+    def test_the_provider_table_lists_each_provider_the_code_defines_and_no_other(self):
+        rows = {cells[0].strip("`"): cells for cells in table(CONFIG_PAGE, PROVIDERS_HEADER)}
+        self.assertTrue(rows, "docs/configuration.md has no provider table")
+        for name in sorted(set(rows) | set(runtimes.PROVIDERS)):
+            with self.subTest(provider=name):
+                self.assertIn(
+                    name,
+                    runtimes.PROVIDERS,
+                    f"docs/configuration.md has a row for {name}, which the code does not define",
+                )
+                self.assertIn(name, rows, f"docs/configuration.md has no row for provider {name}")
+                fields = runtimes.PROVIDERS[name].fields
+                self.assertEqual(
+                    set(FIELD_NAME.findall(rows[name][1])),
+                    {key for key, f in fields.items() if f.kind != "secret"},
+                    f"the settings of {name} in docs/configuration.md differ from the code",
+                )
+                self.assertEqual(
+                    set(FIELD_NAME.findall(rows[name][2])),
+                    {key for key, f in fields.items() if f.kind == "secret"},
+                    f"the secret fields of {name} in docs/configuration.md differ from the code",
                 )
 
     def test_the_page_names_each_runtime_that_reports_usage_limits(self):

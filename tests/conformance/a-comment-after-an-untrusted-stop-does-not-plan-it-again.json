@@ -1,0 +1,28 @@
+{
+  "policies": {
+    "planApproval": "autoWhenClean",
+    "afterFailure": "replan"
+  },
+  "state": {
+    "example": "failed",
+    "set": {
+      "change": null,
+      "observed": null,
+      "attention": {
+        "reason": "untrusted",
+        "text": "An untrusted edit stopped the round",
+        "ref": null
+      }
+    }
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "commented"
+      },
+      "state": "failed",
+      "changed": false,
+      "actions": []
+    }
+  ]
+}

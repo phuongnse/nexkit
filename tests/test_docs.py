@@ -18,13 +18,18 @@ The plan and review layouts of stages match the sections the code writes, and th
 repeat match their constants. The README's table of supported versions is compared with the pins in
 nexkit/__init__.py, and each ubuntu-NN.NN in the README with the pinned runner. The local commands
 table of the README lists each command the CLI defines for people and no other, and each option a
-row names exists. The decisions index matches the decision files, and each decision is linked, as
+row names exists. The configuration example of the README is what `nexkit init` writes for the
+README's own setup command. The decisions index matches the decision files, and each decision is
+linked, as
 docs/writing-docs.md#how-the-docs-stay-correct says."""
 
 import argparse
+import contextlib
 import copy
+import io
 import json
 import re
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -42,6 +47,7 @@ from nexkit import (
     report,
     route,
     runtimes,
+    scaffold,
     state,
 )
 from nexkit.engine import prompt, textutil
@@ -377,7 +383,45 @@ def people_commands():
     }
 
 
+def readme_configuration():
+    """The configuration example of the README: its first ```json block after `## Configuration`,
+    parsed."""
+    text = README.read_text()
+    start = text.index("```json\n", text.index("## Configuration")) + len("```json\n")
+    return json.loads(text[start : text.index("\n```", start)])
+
+
 class ReadmeTests(unittest.TestCase):
+    def test_the_configuration_example_is_what_nexkit_init_writes(self):
+        block = readme_configuration()
+        settings = app.settings("nexkit-acme")
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                mock.patch.object(scaffold, "github_app", return_value=(settings, [])),
+                contextlib.redirect_stdout(io.StringIO()),
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
+                status = cli.main(
+                    [
+                        "init",
+                        "--repo",
+                        tmp,
+                        "--check",
+                        "test=npm test",
+                        "--check",
+                        "lint=npm run lint",
+                        "--setup",
+                        "npm ci",
+                    ]
+                )
+            written = json.loads(Path(tmp, config.CONFIG_PATH).read_text())
+        self.assertEqual(status, 0)
+        self.assertEqual(
+            written,
+            block,
+            "README.md's configuration example differs from what nexkit init writes",
+        )
+
     def test_the_local_commands_table_lists_each_command_for_people_and_no_other(self):
         rows = table(README, LOCAL_COMMANDS_HEADER)
         self.assertTrue(rows, "README.md has no table of local commands")

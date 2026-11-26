@@ -153,6 +153,23 @@ KNOWN = [
             and new["step"].get("person") is True
         ),
     },
+    {
+        "name": "a part closed with no reason counts as completed",
+        "family": "parents",
+        "by": "#570",
+        "why": (
+            "NexKit 6 counted a closed sub-issue as completed only when GitHub's `state_reason` "
+            "said `completed`, so a parent whose parts were all closed with no reason, as old "
+            "issues are, waited for a person. The engine reads a part with no reason as accepted, "
+            "as `maintain.close_parent` does for a part that a person closed, so under "
+            "`close_parent_issues` it closes the parent, in the sweep too, which asks the engine "
+            "the same question. Only a parent with no part completed in NexKit 6's sense and a "
+            "part closed with no reason is excused."
+        ),
+        "match": lambda sc, old, new: (
+            sc["reason"] is None and sc["close"] and sc["sibling"] in ("none", "not_planned")
+        ),
+    },
 ]
 
 

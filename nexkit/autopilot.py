@@ -1476,7 +1476,7 @@ def _pull_step(gh, cfg, issue, pull, rounds, record, start, comments, pull_comme
     if latest.get("outcome") == PULL_CLOSED:
         return _step(issue, "waits", person(*REOPENED))
     if latest.get("outcome") == "merge_refused":
-        step = _refused_step(gh, issue, pull, comment, latest)
+        step = _refused_step(gh, cfg, issue, pull, comment, latest)
         if step:
             return step
     if latest.get("outcome") == CI_WAITING:
@@ -1588,16 +1588,25 @@ def _held_end(cfg, issue, pull, run, pull_comments, head):
     return released(cfg, issue["number"], pull, run, head, found)
 
 
-def _refused_step(gh, issue, pull, comment, run):
+def _refused_step(gh, cfg, issue, pull, comment, run):
     """The merge of a pull request whose merge GitHub refused, once GitHub reports it as
-    mergeable (`clean`) on the head that its checks and review passed, such as after an
-    owner approved it while no run could, or a rule changed; or None. A head that GitHub
-    called mergeable and still refused is not tried again."""
+    mergeable (`clean`, `unstable` or `has_hooks`) on the head that its checks and review
+    passed, such as after an owner approved it while no run could, or a rule changed; or
+    None. The engine decides (`host.refusal_cleared`): a head that GitHub called mergeable
+    and still refused is not tried again. A pull request whose head moved is not this
+    round's to merge."""
+    from .host import Refused, refusal_cleared, refused_reason
+
     details = gh.pull(pull)
     head = (details.get("head") or {}).get("sha")
-    if details.get("mergeable_state") not in MERGEABLE_STATES or head != run.get("head"):
+    if head != run.get("head"):
         return None
-    if run.get("refused_clean") == head:
+    acceptable = details.get("mergeable_state") in MERGEABLE_STATES
+    try:
+        answer = refusal_cleared(cfg, issue["number"], pull, run, acceptable)
+    except Refused as error:
+        return _step(issue, "waits", refused_reason(error))
+    if answer != "merge":
         return None
     base = (details.get("base") or {}).get("ref") or ""
     reason = f"GitHub now accepts the merge of pull request #{pull}, which it refused"
@@ -1629,24 +1638,23 @@ def _merge_step(gh, cfg, issue, pull, comment, run, start, now):
         )
         fields = {**start, "target": pull, "auto": "true"}
         return _step(issue, "start", reason, command="review", **fields)
-    since = parse_iso(run.get("waiting_since"))
-    if since:
-        # The six hours are the engine's (`host.checks_waited`), and so is the exception of a
-        # branch behind its base.
-        from .host import Refused, checks_waited, refused_reason
+    # The six hours are the engine's (`host.checks_waited`), and so is the exception of a
+    # branch behind its base, and the merge of a round with no start of its wait recorded.
+    from .host import Refused, checks_waited, refused_reason
 
-        behind = details.get("mergeable_state") == "behind"
-        try:
-            waited = checks_waited(cfg, issue, pull, head, since, now, behind=behind)
-        except Refused as error:
-            return _step(issue, "waits", refused_reason(error))
-        if waited == "waits":
-            do = (
-                "find out from their runs why the checks neither passed nor failed, start them "
-                f"again, and comment `/nexkit review` on #{pull} once they can pass"
-            )
-            why = f"the required checks of pull request #{pull} have not passed for six hours"
-            return _step(issue, "waits", person(do, why))
+    since = parse_iso(run.get("waiting_since"))
+    behind = details.get("mergeable_state") == "behind"
+    try:
+        waited = checks_waited(cfg, issue, pull, head, since, now, behind=behind)
+    except Refused as error:
+        return _step(issue, "waits", refused_reason(error))
+    if waited == "waits":
+        do = (
+            "find out from their runs why the checks neither passed nor failed, start them "
+            f"again, and comment `/nexkit review` on #{pull} once they can pass"
+        )
+        why = f"the required checks of pull request #{pull} have not passed for six hours"
+        return _step(issue, "waits", person(do, why))
     base = (details.get("base") or {}).get("ref") or ""
     reason = f"pull request #{pull} waits for its required checks"
     return _step(issue, "merge", reason, round_comment=comment["id"], base=base)
@@ -1825,6 +1833,35 @@ def changed_comment(comments):
     )
 
 
+def _parent_step(cfg, issue, parts):
+    """The step for a parent issue whose sub-issues `parts` are all closed, which the engine
+    decides (`host.part_ended`, as `maintain.close_parent` asks it after the part that closed
+    last): close it, as that does after the last part closed, which may not have run, or may
+    close it while this sweep runs, whichever comes first; or wait for a person, without
+    `close_parent_issues` or a completed part. An issue whose next step the engine refuses to
+    decide waits for a person, alone."""
+    from . import first_state
+    from .host import Refused, part_ended, refused_reason
+    from .maintain import _last_closed  # maintain imports this module
+
+    last = _last_closed(parts)
+    found = next(part for part in parts if part["number"] == last)
+    try:
+        answer = part_ended(cfg, issue["number"], parts, last, first_state._ended(found))
+    except Refused as error:
+        return _step(issue, "waits", refused_reason(error))
+    if answer == "close":
+        reason = "every sub-issue of this parent issue is closed, and one was completed"
+        return _step(issue, "close", reason, parent=True)
+    # Without `close_parent_issues`, or without a completed part, a person decides.
+    reason = person(
+        "close it, or open new parts for what is left",
+        "every sub-issue of this parent issue is closed, and NexKit closes a parent only "
+        "with `close_parent_issues` on and a part completed",
+    )
+    return _step(issue, "waits", reason)
+
+
 def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
     number = issue["number"]
     label = hold_label(cfg, issue)
@@ -1846,24 +1883,8 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
     missing = unfiled(gh, number, parts) if parts else ""
     if missing:
         return _step(issue, "waits", person(UNFILED_DO, missing))
-    done = parts and all(part.get("state") == "closed" for part in parts)
-    if (
-        done
-        and cfg["close_parent_issues"]
-        and any(part.get("state_reason") == "completed" for part in parts)
-    ):
-        # As `maintain.close_parents` does after the last part closed, which may not have
-        # run, or may close it while this sweep runs: whichever comes first closes it.
-        reason = "every sub-issue of this parent issue is closed, and one was completed"
-        return _step(issue, "close", reason, parent=True)
-    if done:
-        # Without `close_parent_issues`, or without a completed part, a person decides.
-        reason = person(
-            "close it, or open new parts for what is left",
-            "every sub-issue of this parent issue is closed, and NexKit closes a parent only "
-            "with `close_parent_issues` on and a part completed",
-        )
-        return _step(issue, "waits", reason)
+    if parts and all(part.get("state") == "closed" for part in parts):
+        return _parent_step(cfg, issue, parts)
     if parts:
         reason = "a parent issue: autopilot works on its sub-issues"
         return _step(issue, "waits", reason, person=False)

@@ -55,6 +55,10 @@ and `checks_waited` sends the sweep's tick, which tries the merge again or, once
 have not passed for `machine.CHECKS_END`, leaves it to a person. A merge whose issue no
 sweep looks at is the host's own refusal, since no tick would come for it.
 
+It decides, in the sweep, whether a merge that GitHub refused is tried again: `refusal_cleared`
+sends the head as an observation, `acceptable` when GitHub's `mergeable_state` says it would
+accept it, and the host merges only when the engine asks for the accept.
+
 It decides what follows the other refusals of a merge (`report._refused`, `report._head_moved`,
 `report._guarded`): a head that moved, which the host sends as an observation of the new head
 first, so that the engine checks it, or a person decides when none was read or it is the head
@@ -2173,15 +2177,16 @@ def approved(cfg, issue, pr, run, commit, actor):
 
 def checks_waited(cfg, issue, pr, head, since, now, behind=False):
     """What follows a sweep's tick of the merge of the NexKit pull request `pr` that waits for
-    required checks since `since` on `head`, as the engine decides it
-    (`autopilot._merge_step`): `merge`, to try it again, or `waits` for a person once the
-    checks have not passed for more than six hours. A `behind` branch keeps being tried
-    under `conflicts.auto_resolve`, as the engine decides. Raises `Refused`."""
+    required checks since `since` on `head`, which is None when no start was recorded, as the
+    engine decides it (`autopilot._merge_step`): `merge`, to try it again, or `waits` for a
+    person once the checks have not passed for more than six hours. A `behind` branch keeps
+    being tried under `conflicts.auto_resolve`, as the engine decides. Raises `Refused`."""
     doc = _pull_doc(cfg, issue, pr, head, "accepting", 0)
     version = doc["change"]["version"]
     if behind:
         doc["observed"]["behind"] = True
-    doc["checksSince"] = {"version": version, "at": usage.iso(since)}
+    if since is not None:
+        doc["checksSince"] = {"version": version, "at": usage.iso(since)}
     doc["waits"] = [{"id": "w1.1", "for": "requiredChecks", "until": usage.iso(now), "on": None}]
     event = _event("tick", issue, usage.iso(now), f"merge-{pr}-{version}", wait="w1.1")
     answer = step(doc, event, policies(cfg))
@@ -2191,6 +2196,34 @@ def checks_waited(cfg, issue, pr, head, since, now, behind=False):
     if (kinds.get("needPerson") or {}).get("reason") == "acceptRefused":
         return "waits"
     raise Refused(f"The engine answers {sorted(kinds)} after a merge's wait, which it cannot do.")
+
+
+def refusal_cleared(cfg, issue, pr, run, acceptable):
+    """What follows a sweep's look at the NexKit pull request `pr` whose merge GitHub refused,
+    the marker `run` (`autopilot._refused_step`), as the engine decides it: `merge` when the
+    engine accepts it again, once `acceptable` says GitHub would accept the head `run` names
+    now (`mergeable_state` `clean`, `unstable` or `has_hooks`), or `waits` when it asks for
+    nothing, such as when GitHub would not, or when that head was refused while it was
+    acceptable (`refused_clean`), so that each head is tried once. The accept policy decides
+    nothing here, as in NexKit 6. Raises `Refused`."""
+    head = str(run["head"])
+    doc = _pull_doc(cfg, issue, pr, head, "ready", 0)
+    text = first_state.SAYS["acceptRefused"]
+    doc["attention"] = {"reason": "acceptRefused", "text": text, "ref": None}
+    if run.get("refused_clean") == run["head"]:
+        doc["refusedAcceptable"] = doc["change"]["version"]
+    fields = {"changeId": str(pr), "version": head, "conflicts": False}
+    fields.update(merged=False, empty=False)
+    if acceptable:
+        fields["acceptable"] = True
+    event = _event("changeObserved", issue, None, f"cleared-{pr}-{head}", **fields)
+    answer = step(doc, event, policies(cfg))
+    kinds = {action["kind"] for action in answer["actions"]}
+    if "accept" in kinds:
+        return "merge"
+    if not kinds:
+        return "waits"
+    raise Refused(f"The engine answers {sorted(kinds)} after a refused merge, which it cannot do.")
 
 
 def update_failed(cfg, issue, pr, head, auto_fixes, why, updates=0):

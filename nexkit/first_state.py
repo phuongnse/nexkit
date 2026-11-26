@@ -516,6 +516,12 @@ class Item:
             UNTRUSTED_MERGE: "untrusted",
         }
         if outcome in named:
+            if outcome == "merge_refused" and latest.get("refused_clean"):
+                # GitHub called the head mergeable and still refused it: the engine does not
+                # try that head again (`refusedAcceptable`).
+                version = (self.doc["change"] or {}).get("version")
+                if latest["refused_clean"] == version:
+                    self.doc["refusedAcceptable"] = version
             return self.be("needs a person", "ready", named[outcome], latest)
         if outcome == "agent_blocked" and latest.get("questions"):
             stage = "implement" if latest.get("action") == "implement" else "fix"

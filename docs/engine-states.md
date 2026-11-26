@@ -237,6 +237,15 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   `checking`, the pending accept is cancelled, and the refusal that follows changes nothing. A
   `headMoved` with no newer observation waits for a person, since the engine has no version to
   check.
+- **An accept refused and waiting for a person is tried again** once an observation of the
+  current version says that it is acceptable and does not conflict (`acceptable`, which GitHub
+  gives when `mergeable_state` is `clean`, `unstable` or `has_hooks`). It applies in `ready` with
+  `acceptRefused`, to an item that is not review-only and has no hold. The item goes to
+  `accepting` and the engine asks for the accept, whatever the `accept` policy says, as NexKit 6
+  tries a refused merge again after a writer's approval whatever `merge.auto` says. A version
+  whose accept was refused while an observation said it was acceptable (`refusedAcceptable`) is
+  not tried again, so each version is tried once. The engine drops `refusedAcceptable` with the
+  version.
 - **A person's approval of a change that waits for its accept** (`changeApproved` in `ready`
   with attention `accept`, `acceptRefused` or `reopened`) accepts it under the `autoWhenPassed`
   accept policy and changes nothing under `person`, where that person accepts it themselves. An
@@ -319,7 +328,7 @@ Three things sit beside the state, never in place of it:
 | `planApproved`, `answered`, `changesRequested`, `changeApproved`, `dropRequested` | A person decides: the plan, its questions, the change, a person-only checklist item or criterion on the change's version, or the end |
 | `actionFinished` | An action ended, with its id, the change version and its result |
 | `actionLost` | An action the host started never reported, with any tokens it is known to have used |
-| `changeObserved` | The host read the change: its version, and whether it conflicts, was merged, became empty or, when it says so, is behind its base |
+| `changeObserved` | The host read the change: its version, and whether it conflicts, was merged, became empty or, when it says so, is behind its base or acceptable |
 | `stopped` | The host stops the item, with the outcome |
 | `held`, `released` | A hold was set or taken off |
 | `blockerClosed`, `partEnded` | Work that this item waits for ended |

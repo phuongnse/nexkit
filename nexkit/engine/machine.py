@@ -671,6 +671,7 @@ class Step:
             # A person's push is checked as the engine's own work.
             self.by = None
             self.s.pop("checksSince", None)
+            self.s.pop("refusedAcceptable", None)
             if self.state != "fixing":
                 # The round published: its change stays under the push, and the push's checks
                 # judge it, so its count stands, as NexKit 6 keeps it (`report._head_moved`,
@@ -683,11 +684,34 @@ class Step:
         elif observed["conflicts"] and not self.review_only and self.at_once():
             if not self.on_conflict_found():
                 return False
+        elif self.refusal_cleared():
+            # What refused the accept is gone, as far as the host can tell: try it again once.
+            self.move("accepting")
+            self.do("accept", changeVersion=self.version, by="engine")
         elif self.behind_in_checks():
             self.update_behind()
         else:
             return False
         return True
+
+    def refusal_cleared(self):
+        """Whether an accept that was refused and waits for a person is tried again: the latest
+        observation says that this version would be accepted now and does not conflict, and
+        this version was not refused while an observation said so already, so that it is tried
+        once. It reads no `accept` policy, as NexKit 6 tries a refused merge again after a
+        writer's approval whatever `merge.auto` says (`autopilot._refused_step`)."""
+        observed = self.s["observed"]
+        attention = self.s["attention"] or {}
+        return bool(
+            self.state == "ready"
+            and attention.get("reason") == "acceptRefused"
+            and not self.review_only
+            and not self.s["hold"]
+            and observed.get("acceptable")
+            and not observed["conflicts"]
+            and observed["version"] == self.version
+            and self.s.get("refusedAcceptable") != self.version
+        )
 
     def update_behind(self):
         """Stop the checks that run on a branch behind its base, and update it. The checks of
@@ -1962,7 +1986,16 @@ class Step:
         self.move("reviewing")
         self.run("review")
 
+    def refused_acceptable(self):
+        """Keep that the accept of this version was refused while the latest observation said it
+        would be accepted: the engine does not try that observation's accept again."""
+        observed = self.s["observed"]
+        if observed and observed["version"] == self.version and observed.get("acceptable"):
+            self.s["refusedAcceptable"] = self.version
+
     def finished_accept(self, result, action):
+        if not result["accepted"]:
+            self.refused_acceptable()
         if result["accepted"]:
             self.move("accepted")
             self.close("completed")
@@ -2047,10 +2080,11 @@ class Step:
 
 def observation(fields):
     """The observation that `fields`, an event or a result's, hold as the state keeps it:
-    `behind` only when it is true."""
+    `behind` and `acceptable` only when they are true."""
     found = {key: fields[key] for key in OBSERVED}
-    if fields.get("behind"):
-        found["behind"] = True
+    for key in ("behind", "acceptable"):
+        if fields.get(key):
+            found[key] = True
     return found
 
 

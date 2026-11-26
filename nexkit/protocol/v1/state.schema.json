@@ -65,6 +65,9 @@
             },
             "behind": {
               "$ref": "common.schema.json#/$defs/observation/properties/behind"
+            },
+            "acceptable": {
+              "$ref": "common.schema.json#/$defs/observation/properties/acceptable"
             }
           },
           "required": [
@@ -114,6 +117,10 @@
     },
     "hold": {
       "type": "boolean"
+    },
+    "refusedAcceptable": {
+      "$comment": "The version whose accept was refused while the latest observation of it said it was acceptable (`acceptable`): the engine does not accept it again for that observation, since a second refusal of it would only repeat (docs/engine-states.md#states). The engine drops it when the item's version changes. Left out when there is none.",
+      "$ref": "common.schema.json#/$defs/change/properties/version"
     },
     "checksSince": {
       "$comment": "When the first accept on `version` was refused because required checks had not passed, while the item stays in `accepting`: the wait for them ends six hours after it (docs/engine-states.md#states). A start recorded for another version counts as missing, and the engine drops it when the item leaves `accepting`.",

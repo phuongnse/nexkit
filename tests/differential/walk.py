@@ -89,6 +89,9 @@ INVARIANTS = {
     "no hold, stop and the branch is updated when the conflict policy is not `person` and "
     "`conflictRounds` has an update left: one `updateChange`, the item staying in `checking`; "
     "otherwise a step in `checking` asks for no update",
+    "accept-again": "an accept refused for a reason that waits for a person is asked for again "
+    "only when the latest observation says the current version is acceptable, with no conflict, "
+    "no hold and no review-only item, and the version was not refused while acceptable",
     "approvals": "a person's approval of the change accepts it only under `autoWhenPassed`: "
     "under `person`, `changeApproved` never issues an `accept` and changes nothing of a change "
     "that waits for its accept",
@@ -384,7 +387,7 @@ class Walker:
             + ["actionFinished"] * 3
             + ["actionLost", "dropRequested", "changeObserved", "tick", "held", "released"]
             + ["reopened", "changesRequested", "changeApproved", "blockerClosed", "partEnded"]
-            + ["stopped", "textChanged", "push", "conflict"]
+            + ["stopped", "textChanged", "push", "conflict", "acceptable"]
         )
         busy = [a for a in state["pending"] if a["kind"] not in ("needPerson", "show", "close")]
         busy = [a for a in busy if a["kind"] != "cancel"]
@@ -487,6 +490,14 @@ class Walker:
             found = {"kind": "changeObserved", "version": version, "conflicts": rng.random() < 0.2}
             if rng.random() < 0.3:
                 found["behind"] = True
+            return found
+        if kind == "acceptable":
+            # The host's accept of the version would go through now, or no longer would.
+            if not state["change"]:
+                return None
+            found = {"kind": "changeObserved", "conflicts": False}
+            if rng.random() < 0.8:
+                found["acceptable"] = True
             return found
         if kind == "conflict":
             if not state["change"]:
@@ -993,6 +1004,7 @@ class Walker:
         self.trust(state, event, pol, answer, given, flag, info)
         self.accept_conflict(state, event, answer, done, given, flag, info)
         self.accept_behind(state, event, answer, done, given, flag, info)
+        self.accept_again(state, event, answer, flag, info)
         self.behind_checks(state, event, answer, {**self.defaults, **eff}, flag, info)
         # automatic: a round that its checks or its review judged keeps its count, so only a
         # fix round issued in the same step is automatic after it.
@@ -1201,6 +1213,28 @@ class Walker:
             flag("accept-behind", "an update names another version than the change's", info)
         if new["rounds"]["conflicts"] != state["rounds"]["conflicts"]:
             flag("accept-behind", "a branch behind counted a conflict round", info)
+
+    def accept_again(self, state, event, answer, flag, info):
+        """The invariant of an accept refused for a reason that waits for a person: the engine
+        asks for it again only when the observation that the step ends with says that the
+        version is acceptable and not conflicting, nothing holds it, the item is not review-only
+        and the version was not refused while it was acceptable (`refusedAcceptable`). A person's
+        approval accepts as it says, and the `approvals` invariant judges it."""
+        if state is None or state["state"] != "ready" or event["kind"] == "changeApproved":
+            return
+        if (state["attention"] or {}).get("reason") != "acceptRefused":
+            return
+        if not any(a["kind"] == "accept" for a in answer["actions"]):
+            return
+        new = answer["state"]
+        seen = new["observed"] or {}
+        version = (new["change"] or {}).get("version")
+        if not seen.get("acceptable") or seen.get("conflicts") or seen.get("version") != version:
+            flag("accept-again", "an accept is asked for again, but is not acceptable", info)
+        elif new["hold"] or new["itemKind"] == "reviewOnly":
+            flag("accept-again", "an accept is asked for again under a hold or a review", info)
+        elif state.get("refusedAcceptable") == version:
+            flag("accept-again", "an accept is asked for again for a version refused as such", info)
 
     def behind_checks(self, state, event, answer, eff, flag, info):
         """The invariants of checks that run on a version observed behind its base: they stop and

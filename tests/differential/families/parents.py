@@ -2,7 +2,7 @@
 closes the part (the `parents` task of `maintain`), the round's merge (a writer's approval of
 the merge that was refused), a round that finds no change is needed, a pull request whose base
 branch already holds the change, or nobody runs anything and autopilot's sweep finds the parts
-closed × one parent or two levels of them × the reason a person closed the part (completed or
+closed × one parent or two levels of them × the reason a person closed the part (completed, none or
 not planned) × a sibling of the part (none, open, completed, not planned) × `close_parent_issues`
 × more than ten sub-issues, a plan with a part never filed, or an open part of the grandparent.
 Records the command, GitHub after it, the preview, two sweeps and `nexkit status`."""
@@ -29,7 +29,7 @@ def scenarios():
     dims = dict(
         path=["person", "merge", "no_change", "base", "sweep"],
         depth=[1, 2],
-        reason=["completed", "not_planned"],
+        reason=["completed", "not_planned", None],
         sibling=["none", "open", "completed", "not_planned"],
         close=[False, True],
         extra=["none", "many", "unfiled", "uncle"],

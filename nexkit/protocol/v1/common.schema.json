@@ -182,7 +182,7 @@
       ]
     },
     "observation": {
-      "$comment": "The change as the host reads it: its version, whether it conflicts with what it was made on, whether it was merged or accepted outside the engine, and whether it became empty because the same change landed another way. Optionally, whether it is behind the branch it was made on, which leaves it out when it is not: only the six-hour end of the wait for required checks reads it (docs/engine-states.md#states).",
+      "$comment": "The change as the host reads it: its version, whether it conflicts with what it was made on, whether it was merged or accepted outside the engine, and whether it became empty because the same change landed another way. Optionally, whether it is behind the branch it was made on, which leaves it out when it is not: only the six-hour end of the wait for required checks reads it (docs/engine-states.md#states). Optionally, whether the host's accept of it would be accepted now (`acceptable`), left out when it would not.",
       "type": "object",
       "properties": {
         "changeId": {
@@ -201,6 +201,10 @@
           "type": "boolean"
         },
         "behind": {
+          "type": "boolean"
+        },
+        "acceptable": {
+          "$comment": "The host's accept of this version would be accepted now, as far as the host can tell, such as GitHub's `mergeable_state` being `clean`, `unstable` or `has_hooks`. Left out when it would not, or when the host cannot tell. Only the engine's retry of an accept that waits for a person reads it (docs/engine-states.md#states).",
           "type": "boolean"
         }
       },

@@ -5304,9 +5304,14 @@ def _passed_body(stmt):
     return [call for inner in stmt.body for call in _passed(inner)]
 
 
-def unanswered_starts(source):
+# The kinds of step that start, merge or end an item's work: each needs an answer of the engine.
+STEPS = ("start", "merge", "close")
+
+
+def unanswered_steps(source, kinds=STEPS):
     """The top-level functions of `source` (autopilot.py's text) that make a
-    `_step(..., "start", ...)` with no engine call on the way to it in the same function. A
+    `_step(..., kind, ...)` of one of `kinds` with no engine call on the way to it in the same
+    function. A
     call of the engine is one of a name imported from `.host`, other than `NOT_ANSWERS`, or of
     a function of `source` that makes one, directly or through others. On the way means a
     statement that runs before the start whatever the branch: a call in one branch of an `if`
@@ -5335,7 +5340,7 @@ def unanswered_starts(source):
             if name != "_step" or len(node.args) < 2:
                 continue
             kind = node.args[1]
-            if not (isinstance(kind, ast.Constant) and kind.value == "start"):
+            if not (isinstance(kind, ast.Constant) and kind.value in kinds):
                 continue
             ways = _before(function.body, node) or []
             if not any(other in hosts | callers and at < place for other, at, _ in ways):
@@ -5344,17 +5349,17 @@ def unanswered_starts(source):
 
 
 class EveryStartFollowsTheEngine(unittest.TestCase):
-    """Autopilot starts a command only after an answer of the engine, in the function that
-    makes the start: the host asks the engine, and autopilot carries out what it answers
-    (docs/engine.md#getting-there)."""
+    """Autopilot starts a command, merges and closes only after an answer of the engine, in
+    the function that makes the step: the host asks the engine, and autopilot carries out
+    what it answers (docs/engine.md#getting-there)."""
 
-    def test_every_start_of_autopilot_follows_an_engine_call(self):
+    def test_every_start_merge_and_close_of_autopilot_follows_an_engine_call(self):
         source = (Path(autopilot.__file__)).read_text(encoding="utf-8")
-        self.assertEqual(unanswered_starts(source), [])
+        self.assertEqual(unanswered_steps(source), [])
 
     def test_a_start_with_no_engine_call_before_it_fails(self):
         source = 'def bad(issue):\n    return _step(issue, "start", "x")\n'
-        self.assertEqual(unanswered_starts(source), ["bad"])
+        self.assertEqual(unanswered_steps(source), ["bad"])
 
     def test_a_start_before_the_engine_call_fails(self):
         source = (
@@ -5364,7 +5369,7 @@ class EveryStartFollowsTheEngine(unittest.TestCase):
             "    after_go()\n"
             "    return first\n"
         )
-        self.assertEqual(unanswered_starts(source), ["bad"])
+        self.assertEqual(unanswered_steps(source), ["bad"])
 
     def test_a_start_after_a_call_that_only_refuses_fails(self):
         source = (
@@ -5373,7 +5378,7 @@ class EveryStartFollowsTheEngine(unittest.TestCase):
             "    refused_reason(Refused())\n"
             '    return _step(issue, "start", "x")\n'
         )
-        self.assertEqual(unanswered_starts(source), ["bad"])
+        self.assertEqual(unanswered_steps(source), ["bad"])
 
     def test_a_start_after_a_helper_that_asks_the_engine_passes(self):
         source = (
@@ -5388,4 +5393,40 @@ class EveryStartFollowsTheEngine(unittest.TestCase):
             "def waits(issue):\n"
             '    return _step(issue, "waits", "x")\n'
         )
-        self.assertEqual(unanswered_starts(source), [])
+        self.assertEqual(unanswered_steps(source), [])
+
+    def test_a_merge_with_no_engine_call_before_it_fails(self):
+        source = 'def bad(issue):\n    return _step(issue, "merge", "x", round_comment=1)\n'
+        self.assertEqual(unanswered_steps(source), ["bad"])
+
+    def test_a_close_with_no_engine_call_before_it_fails(self):
+        source = 'def bad(issue):\n    return _step(issue, "close", "x", parent=True)\n'
+        self.assertEqual(unanswered_steps(source), ["bad"])
+
+    def test_a_merge_on_a_branch_the_engine_was_not_asked_on_fails(self):
+        source = (
+            "def bad(issue, since):\n"
+            "    if since:\n"
+            "        from .host import checks_waited\n"
+            "        checks_waited(issue)\n"
+            '    return _step(issue, "merge", "x")\n'
+        )
+        self.assertEqual(unanswered_steps(source), ["bad"])
+
+    def test_a_merge_and_a_close_after_a_helper_that_asks_the_engine_pass(self):
+        source = (
+            "def ask(issue):\n"
+            "    from .host import part_ended, refusal_cleared\n"
+            "    return part_ended(issue), refusal_cleared(issue)\n"
+            "def merge(issue):\n"
+            "    ask(issue)\n"
+            '    return _step(issue, "merge", "x")\n'
+            "def close(issue):\n"
+            "    ask(issue)\n"
+            '    return _step(issue, "close", "x", parent=True)\n'
+        )
+        self.assertEqual(unanswered_steps(source), [])
+
+    def test_a_kind_that_is_not_asked_for_is_not_checked(self):
+        source = 'def waits(issue):\n    return _step(issue, "merge", "x")\n'
+        self.assertEqual(unanswered_steps(source, kinds=("start",)), [])

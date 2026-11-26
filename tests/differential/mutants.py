@@ -513,6 +513,17 @@ MUTANTS = {
         "seen": ("harness", "walker"),
         "families": ("failure",),
     },
+    # A refused accept is tried again for a version that was refused while it was observed
+    # acceptable, where NexKit 6 never tries that head again (#570). Both checks see it: the
+    # host sends `refused_clean` as `refusedAcceptable`.
+    "refused-acceptable-version-is-tried-again": {
+        "path": MACHINE,
+        "old": """            and self.s.get("refusedAcceptable") != self.version
+""",
+        "new": "",
+        "seen": ("harness", "walker"),
+        "families": ("cleared",),
+    },
     # A trust from anyone but a writer vouches too (#538). The host sends only a writer's, so
     # only the walker sees it.
     "vouch-ignores-the-role": {

@@ -210,6 +210,14 @@ class ChecksTests(unittest.TestCase):
             [(3, f"{base}docs/engine.md#gone", ""), (3, f"{base}docs/nowhere.md", "")],
         )
 
+    def test_an_anchor_keeps_underscores_and_hyphens(self):
+        text = (
+            "# A round ended as `recheck_failed`\n\n## Fix-ups, and more!\n\n```\n# Not one\n```\n"
+        )
+        self.assertEqual(
+            audit.anchors(text), {"a-round-ended-as-recheck_failed", "fix-ups-and-more"}
+        )
+
     def test_a_link_is_replaced_only_where_it_ends(self):
         base = f"{REPO}/blob/main/"
         old, new = f"{base}docs/engine.md", f"{base}docs/engine/index.md"

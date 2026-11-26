@@ -1,4 +1,5 @@
 import base64
+import copy
 import io
 import json
 import os
@@ -19,10 +20,12 @@ from nexkit.maintain import (
     longest_reach,
     maintain,
     resume_due,
+    resume_one,
     resume_paused,
     wait_for_paused,
 )
 from nexkit.report import report
+from nexkit.route import route
 from nexkit.state import (
     ACTIONS_BOT,
     ANSWERS_PREFIX,
@@ -47,7 +50,7 @@ from nexkit.state import (
     run_comments,
     run_kinds,
 )
-from tests.support import BOT_LOGIN, FakeGitHub, make_config
+from tests.support import BOT_LOGIN, FakeGitHub, make_config, play_resume
 
 HEAD = "c" * 40
 NEW_HEAD = "e" * 40
@@ -542,9 +545,20 @@ class PausedRunTests(unittest.TestCase):
         self.gh.add_issue(7)
         self.paused(7, 2, at="2026-10-11T06:00:00Z")
         self.gh.dispatch_runs["nexkit.yml"] = "https://x/runs/3"
+        before = copy.deepcopy(self.gh.issue_comments)
         lines, upcoming = resume_paused(self.gh, "nexkit.yml", "main", now)
-        self.assertEqual(lines, ["Resumed /nexkit plan on #5."])
+        # The waiting run writes nothing: it sends a step into the item's queue.
+        self.assertEqual(lines, ["Sent a resume step to #5: /nexkit plan is due."])
         self.assertEqual(upcoming, datetime(2026, 10, 11, 6, 0, tzinfo=UTC))
+        self.assertEqual(self.gh.issue_comments, before)
+        [step] = self.gh.dispatches
+        self.assertEqual(step["inputs"]["command"], "step")
+        self.assertEqual(step["inputs"]["note"], f"resume {due['id']}")
+        self.assertEqual(step["inputs"]["number"], "5")
+        # The step, in the item's queue, starts the command.
+        self.gh.dispatches.clear()
+        lines, _ = play_resume(self.gh, make_config(), now)
+        self.assertEqual(lines, ["Resumed /nexkit plan on #5."])
         self.assertEqual(
             self.gh.dispatches,
             [
@@ -560,8 +574,27 @@ class PausedRunTests(unittest.TestCase):
         self.assertEqual(run["run"]["status"], "continued")
         self.assertIn("Resumed `/nexkit plan` in [a new run](https://x/runs/3)", due["body"])
         self.assertNotIn("⏸️ [paused]", due["body"])
-        self.assertEqual(resume_paused(self.gh, "nexkit.yml", "main", now)[0], [])  # once
+        self.assertEqual(play_resume(self.gh, make_config(), now)[0], [])  # once
         self.assertEqual(len(self.gh.dispatches), 1)
+
+    def test_a_resume_sent_twice_starts_its_command_once(self):
+        now = datetime(2026, 10, 11, 5, 0, tzinfo=UTC)
+        self.paused(5, 1)
+        cfg = make_config()
+        # The next resume run sends the step again before the first step ran.
+        resume_paused(self.gh, "nexkit.yml", "main", now, cfg)
+        resume_paused(self.gh, "nexkit.yml", "main", now, cfg)
+        steps = [d["inputs"] for d in self.gh.dispatches]
+        self.assertEqual(len(steps), 2)
+        self.gh.dispatches.clear()
+        lines = []
+        for inputs in steps:
+            decision = route(self.gh, "workflow_dispatch", {}, inputs)
+            lines += maintain(self.gh, decision, cfg, workflow="nexkit.yml", ref="main")
+        self.assertEqual(len(lines), 2)
+        self.assertEqual(lines[0], "Resumed /nexkit plan on #5.")
+        self.assertIn("is no paused run", lines[1])
+        self.assertEqual([d["inputs"]["command"] for d in self.gh.dispatches], ["plan"])
 
     def test_a_paused_run_that_someone_else_changed_is_not_resumed(self):
         now = datetime(2026, 10, 11, 5, 0, tzinfo=UTC)
@@ -572,7 +605,69 @@ class PausedRunTests(unittest.TestCase):
         # Changed by the App alone, it is resumed.
         comment["editors"] = [BOT_LOGIN]
         self.assertEqual(
-            resume_paused(self.gh, "nexkit.yml", "main", now)[0], ["Resumed /nexkit plan on #5."]
+            play_resume(self.gh, make_config(), now)[0], ["Resumed /nexkit plan on #5."]
+        )
+
+    def resume_step(self, comment, number=5, now=None, cfg=None):
+        """The step of a resume of `comment`, as a run in the item's queue plays it."""
+        now = now or datetime(2026, 10, 11, 5, 0, tzinfo=UTC)
+        return resume_one(
+            self.gh, cfg or make_config(), number, comment["id"], "n.yml", "main", now
+        )
+
+    def assert_nothing_resumed(self, lines, comment, before):
+        self.assertEqual(len(lines), 1)
+        self.assertTrue(lines[0].startswith("Nothing to resume on #"), lines)
+        self.assertEqual(self.gh.dispatches, [])
+        self.assertEqual(comment["body"], before)
+
+    def test_the_step_of_a_resume_skips_a_comment_someone_else_changed(self):
+        comment = self.paused(5, 1)
+        before = comment["body"]
+        comment["editors"] = [BOT_LOGIN, "mallory"]
+        self.assert_nothing_resumed(self.resume_step(comment), comment, before)
+
+    def test_the_step_of_a_resume_skips_a_comment_that_is_not_the_apps(self):
+        comment = self.paused(5, 1)
+        before = comment["body"]
+        comment["user"] = {"login": "mallory", "type": "User"}
+        self.assert_nothing_resumed(self.resume_step(comment), comment, before)
+
+    def test_the_step_of_a_resume_skips_a_comment_on_another_number(self):
+        self.gh.add_issue(7)
+        comment = self.paused(7, 1)
+        before = comment["body"]
+        self.assert_nothing_resumed(self.resume_step(comment, number=5), comment, before)
+
+    def test_the_step_of_a_resume_skips_a_comment_that_is_not_yet_due(self):
+        comment = self.paused(5, 1, at="2026-10-11T06:00:00Z")
+        before = comment["body"]
+        self.assert_nothing_resumed(self.resume_step(comment), comment, before)
+
+    def test_the_step_of_a_resume_skips_a_comment_that_was_already_continued(self):
+        comment = self.paused(5, 1)
+        self.assertEqual(self.resume_step(comment), ["Resumed /nexkit plan on #5."])
+        self.gh.dispatches.clear()
+        before = comment["body"]
+        self.assert_nothing_resumed(self.resume_step(comment), comment, before)
+
+    def test_the_step_of_a_resume_skips_a_comment_that_was_deleted(self):
+        comment = self.paused(5, 1)
+        self.gh.issue_comments[5].remove(comment)
+        lines = self.resume_step(comment)
+        self.assertTrue(lines[0].startswith("Nothing to resume on #5"), lines)
+        self.assertEqual(self.gh.dispatches, [])
+
+    def test_the_step_of_a_resume_follows_usage_limit_resume(self):
+        cfg = make_config(usage_limit={"resume": False})
+        usage = self.paused(5, 1)
+        before = usage["body"]
+        self.assert_nothing_resumed(self.resume_step(usage, cfg=cfg), usage, before)
+        # A run again after a transient error is resumed whatever the usage limit does.
+        self.gh.add_issue(7)
+        retry = self.paused(7, 2, retry=1)
+        self.assertEqual(
+            self.resume_step(retry, number=7, cfg=cfg), ["Resumed /nexkit plan on #7."]
         )
 
     def test_a_failed_resume_is_tried_again(self):
@@ -582,16 +677,24 @@ class PausedRunTests(unittest.TestCase):
         [line], _ = resume_paused(self.gh, "nexkit.yml", "main", now)
         self.assertIn("Could not resume /nexkit plan on #5", line)
         self.assertIn("resume", self.gh.run_comments(5)[0]["run"])
+        # The step ran, but starting the command failed too: the record stays for the next try.
+        comment_id = self.gh.run_comments(5)[0]["id"]
+        [line] = resume_one(self.gh, make_config(), 5, comment_id, "nexkit.yml", "main", now=now)
+        self.assertIn("Could not resume /nexkit plan on #5", line)
+        self.assertIn("resume", self.gh.run_comments(5)[0]["run"])
 
     def test_the_schedule_resumes_only_when_enabled(self):
         self.paused(5, 1, at="2026-01-01T00:00:00Z")
         task = {"action": "maintain", "task": "schedule"}
         maintain(self.gh, task, make_config(usage_limit={"resume": False}), workflow="n.yml")
         self.assertFalse(self.gh.dispatches)
-        # Without any wait, the schedule resumes due commands itself.
+        # Without any wait, the schedule sends the step of each due resume itself.
         cfg = make_config(usage_limit={"wait_minutes": 0}, retry={"wait_minutes": [0]})
         maintain(self.gh, task, cfg, workflow="n.yml", ref="main")
-        self.assertEqual(self.gh.dispatches[-1]["inputs"]["command"], "plan")
+        step = self.gh.dispatches[-1]["inputs"]
+        self.assertEqual(step["command"], "step")
+        self.assertRegex(step["note"], r"resume \d+")
+        self.assertEqual(self.gh.run_comments(5)[0]["run"]["status"], "paused")
 
     def test_with_waits_to_run_again_the_waiting_run_alone_starts_what_is_due(self):
         # A waiting run may be starting due commands: the schedule never starts one too.
@@ -604,7 +707,11 @@ class PausedRunTests(unittest.TestCase):
         sleep = mock.Mock()
         wait_for_paused(self.gh, cfg, sleep=sleep)
         sleep.assert_not_called()
-        self.assertEqual(resume_due(self.gh, cfg, "n.yml", "main"), ["Resumed /nexkit plan on #5."])
+        self.assertEqual(
+            resume_due(self.gh, cfg, "n.yml", "main"),
+            ["Sent a resume step to #5: /nexkit plan is due."],
+        )
+        self.assertEqual(self.gh.run_comments(5)[0]["run"]["status"], "paused")
 
     def test_the_schedule_hands_due_commands_to_the_waiting_run(self):
         now = datetime(2026, 10, 11, 0, 0, tzinfo=UTC)
@@ -637,6 +744,29 @@ class PausedRunTests(unittest.TestCase):
         # The App's token comes after this wait, so it writes nothing.
         self.assertFalse(self.gh.dispatches)
 
+    def test_the_waiting_run_leaves_a_command_whose_step_was_sent_before_it_started(self):
+        # The resume run sent the step of 5 and started this wait for 7. The step may wait in
+        # the item's queue for hours, so 5 being due must not end this wait at once, which
+        # would send its step again, and start yet another wait, every minute.
+        clock = [datetime(2026, 10, 11, 4, 41, tzinfo=UTC)]
+        slept = []
+
+        def sleep(seconds):
+            slept.append(seconds)
+            clock[0] += timedelta(seconds=seconds)
+
+        self.paused(5, 1)  # due at 04:40, its step sent
+        self.gh.add_issue(7)
+        self.paused(7, 2, at="2026-10-11T04:50:00Z")
+        wait_for_paused(self.gh, make_config(), now=lambda tz: clock[0], sleep=sleep)
+        self.assertEqual(slept, [540])
+        self.assertEqual(clock[0], datetime(2026, 10, 11, 4, 50, tzinfo=UTC))
+        # A wait that starts with both due has nothing to wait for.
+        later = mock.Mock()
+        wait_for_paused(self.gh, make_config(), now=lambda tz: clock[0], sleep=later)
+        later.assert_not_called()
+        self.assertFalse(self.gh.dispatches)
+
     def test_the_waiting_run_does_not_wait_for_what_comes_too_late(self):
         now = datetime(2026, 10, 11, 0, 0, tzinfo=UTC)
         sleep = mock.Mock()
@@ -655,11 +785,11 @@ class PausedRunTests(unittest.TestCase):
         self.assertEqual(
             lines,
             [
-                "Resumed /nexkit plan on #5.",
+                "Sent a resume step to #5: /nexkit plan is due.",
                 "Started a run that waits for the next paused command.",
             ],
         )
-        self.assertEqual([d["inputs"]["command"] for d in self.gh.dispatches], ["plan", "resume"])
+        self.assertEqual([d["inputs"]["command"] for d in self.gh.dispatches], ["step", "resume"])
 
     def test_after_the_wait_a_later_resume_is_left_to_the_schedule(self):
         self.paused(5, 1)  # due at 04:40
@@ -672,7 +802,7 @@ class PausedRunTests(unittest.TestCase):
         now = datetime(2026, 10, 11, 5, 0, tzinfo=UTC)
         comment = self.paused(5, 1, at="2026-10-11T04:59:00Z", retry=2)
         self.gh.dispatch_runs["nexkit.yml"] = "https://x/runs/3"
-        [line], _ = resume_paused(self.gh, "nexkit.yml", "main", now)
+        [line], _ = play_resume(self.gh, make_config(), now)
         self.assertEqual(line, "Resumed /nexkit plan on #5.")
         self.assertEqual(self.gh.dispatches[-1]["inputs"]["auto"], "retry:2")
         self.assertIn(
@@ -702,8 +832,15 @@ class PausedRunTests(unittest.TestCase):
 
         wait_for_paused(self.gh, cfg, now=lambda tz: clock[0], sleep=sleep)
         self.assertEqual(clock[0], datetime(2026, 10, 11, 4, 30, tzinfo=UTC))
-        lines = resume_due(self.gh, cfg, "nexkit.yml", "main", clock[0] + timedelta(minutes=11))
-        self.assertEqual(lines, ["Resumed /nexkit plan on #7."])
+        later = clock[0] + timedelta(minutes=11)
+        self.assertEqual(
+            resume_due(self.gh, cfg, "nexkit.yml", "main", later),
+            ["Sent a resume step to #7: /nexkit plan is due."],
+        )
+        [step] = [d["inputs"] for d in self.gh.dispatches[1:]]
+        self.assertEqual(step["number"], "7")
+        self.gh.dispatches.clear()
+        self.assertEqual(play_resume(self.gh, cfg, later)[0], ["Resumed /nexkit plan on #7."])
         # The usage limit's pause stays: `usage_limit.resume` is off.
         self.assertEqual(self.gh.run_comments(5)[0]["run"]["status"], "paused")
         # The waiting run may last as long as the longest wait.

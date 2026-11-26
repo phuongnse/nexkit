@@ -1,7 +1,9 @@
-"""#415: a `/nexkit go` that stopped as blocked with nothing to answer, with the run's attention
-or without × autopilot on or off × `autopilot.answer` × autopilot's answers before it or not ×
-what came after (nothing, a collaborator's comment, an outsider's, a command, a blocker closed
-after the round, before it, or as not planned). Records the preview, one sweep with GitHub after
+"""#415, #537: a `/nexkit go` that failed with no pull request, by how it ended (blocked with
+nothing to answer, an agent error, `agent_failed`, a refused publish, retries used up, or timed
+out), with the run's attention or without × autopilot on or off × what came after (nothing, a
+collaborator's comment, an outsider's, a command, a blocker closed after the round, before it,
+or as not planned). A blocked round also varies `autopilot.answer` and autopilot's answers
+before it, which only a blocked round reads. Records the preview, one sweep with GitHub after
 it, and `nexkit status`. With autopilot off no sweep runs (`maintain.maintain` starts one only
 with `autopilot.takes`) and `nexkit status` does not read the preview, so only those two are
 played."""
@@ -25,6 +27,16 @@ SINCE = [
 STOPPED, AFTER, BEFORE = "2026-01-02T00:00:00Z", "2026-01-03T00:00:00Z", "2026-01-01T12:00:00Z"
 
 
+GOS = [
+    "agent_blocked",
+    "agent_error",
+    "agent_failed",
+    "publish_failed",
+    "retry_failed",
+    "timed_out",
+]
+
+
 def scenarios():
     dims = dict(
         attention=[True, False],
@@ -34,7 +46,11 @@ def scenarios():
         since=SINCE,
     )
     for values in itertools.product(*dims.values()):
-        yield dict(zip(dims, values, strict=True))
+        yield {"go": "agent_blocked", **dict(zip(dims, values, strict=True))}
+    # The other outcomes never read the answers.
+    dims = dict(go=GOS[1:], attention=[True, False], auto=[True, False], since=SINCE)
+    for values in itertools.product(*dims.values()):
+        yield {**dict(zip(dims, values, strict=True)), "answer": "recommended", "answered": False}
 
 
 def build(sc):
@@ -48,7 +64,11 @@ def build(sc):
     if sc["answered"]:
         record = {"answers": [{"question": "Which port?", "answer": "8080"}]}
         gh.comment(5, f"NexKit autopilot answers\n\n{answers_marker(record)}")
-    go = {"command": "go", "status": "failure", "outcome": "agent_blocked", "url": next(url)}
+    # A time-out is an agent error that ran out of time.
+    outcome = "agent_error" if sc["go"] == "timed_out" else sc["go"]
+    go = {"command": "go", "status": "failure", "outcome": outcome, "url": next(url)}
+    if sc["go"] == "timed_out":
+        go["timed_out"] = True
     if sc["attention"]:
         go["attention"] = "The agent stopped: it needs a secret it does not have"
     stop = gh.comment(5, render_run(go, "Stopped."))

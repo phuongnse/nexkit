@@ -86,6 +86,7 @@ SAYS = {
     ),
     "blocked": "The agent was blocked.",
     "failed": "The last run failed.",
+    "roundFailed": "The last round failed on an error.",
     "reopened": "The pull request was closed and opened again.",
     "outage": "A run ended without a report, and NexKit started it again as often as it does.",
     "paused": "The agent hit its usage limit, and NexKit does not resume this run.",
@@ -393,8 +394,16 @@ class Item:
             return self.be("go again", "awaitingApproval", "approval", run, ref=ref)
         if outcome == "agent_blocked":
             return self.after_blocked(comment, run)
-        # An untrusted edit's stop is `failed`, so that a comment does not plan it again under
-        # `afterFailure`: NexKit 6 waits for a writer to vouch.
+        if (
+            run.get("status") == FAILURE
+            and outcome not in (autopilot.UNTRUSTED_ROUND, "issue_closed")
+            and not run.get("timed_out")
+        ):
+            # A round that failed on an error: NexKit 6 plans again after a comment.
+            return self.be("failed", "failed", "roundFailed", run)
+        # An untrusted edit's stop, a time-out and an issue that closed with its round are
+        # `failed`, so that a comment does not plan them again under `afterFailure`: NexKit 6
+        # waits for a writer to vouch, or for a person.
         return self.be("failed", "failed", "failed", run)
 
     def after_blocked(self, comment, run):

@@ -199,6 +199,20 @@ def sweep(gh, cfg):
     return play_sweep(gh, cfg)
 
 
+def resume(gh, cfg, now):
+    """The run that resumes paused commands and the `step` runs it sent, as the pipeline plays
+    them: (its log, the next resume time). NexKit 6 sends no `step`, so there it is `resume_paused`
+    itself. The `step` dispatches leave `gh`, so what the two trees compare is what the resume
+    and its steps wrote."""
+    from nexkit import maintain
+
+    if not hasattr(maintain, "resume_one"):
+        return maintain.resume_paused(gh, "nexkit.yml", "main", now, cfg)
+    from tests.support import play_resume
+
+    return play_resume(gh, cfg, now)
+
+
 # `after` has an argument that hides `sweep`.
 _sweep = sweep
 

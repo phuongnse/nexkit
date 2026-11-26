@@ -658,6 +658,19 @@ class RouteTests(unittest.TestCase):
         pull["head"]["repo"] = {"full_name": "acme/app"}
         self.assertEqual(step("approval 9")["task"], "step")
 
+    def test_a_step_with_a_resume_note_becomes_the_start_of_that_paused_run(self):
+        def step(note, number="5"):
+            inputs = {"command": "step", "number": number, "note": note, "auto": "false"}
+            return route(self.gh, "workflow_dispatch", {}, inputs)
+
+        self.assertEqual(
+            step("resume 1234"),
+            {"action": "maintain", "task": "resumed", "number": 5, "comment": 1234},
+        )
+        # A note that is not the pattern is a sweep's step, and routes nothing of its own.
+        for note in ("resume", "resume x", "resume 12 3", "resumed 12", "approval 1234"):
+            self.assertEqual(step(note)["task"], "step", note)
+
     def test_dispatch(self):
         self.gh.add_pull(9, 5)
         event = {"sender": {"login": BOT_LOGIN}}

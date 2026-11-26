@@ -127,6 +127,21 @@ def work_item(gh, event_name, event):
         return _unread(number, exc)
 
 
+def queue_item(gh, event_name, event):
+    """The number of the work item whose concurrency group (`nexkit-<number>`) the run of
+    this event joins, or None for a run in a group of its own: a sweep, the run that waits for
+    paused commands, an approval, an autopilot event and each other event. It follows the
+    group expression of the installed workflow (`nexkit/templates/workflow.yml`), which a test
+    checks. A run in an item's group takes the item's events (`host.take`)."""
+    if event_name == "milestone" or (event_name == "issues" and event.get("action") != "closed"):
+        return None
+    review = event.get("review") or {}
+    if event_name == "pull_request_review" and review.get("state") == "approved":
+        return None
+    item = work_item(gh, event_name, event)
+    return int(item) if item and item.isdigit() else None
+
+
 def _pull_item(gh, pull):
     issue = issue_from_branch((pull.get("head") or {}).get("ref"))
     repo = ((pull.get("head") or {}).get("repo") or {}).get("full_name")
@@ -162,6 +177,10 @@ STEP = "step"
 # pull request and the id of the approving review, which the step reads back from GitHub.
 APPROVAL = "approval {} {}"
 APPROVAL_PATTERN = re.compile(r"approval (\d+) (\d+)")
+# The note of a `step` that resumes paused work, and how route reads it: the id of the run
+# comment that holds the resume record, which the step reads back from GitHub.
+RESUMED = "resume {}"
+RESUMED_PATTERN = re.compile(r"resume (\d+)")
 # The note of a sweep that waits for a workflow run to end first, and how route reads it.
 AFTER_RUN = "after run {}"
 AFTER_RUN_PATTERN = re.compile(r"after run (\d+)")
@@ -319,10 +338,20 @@ def route(gh, event_name, event, inputs=None):
         if not number.isdigit():
             return _none("Dispatch input 'number' must be an issue or PR number")
         if command == STEP:
-            approval = APPROVAL_PATTERN.fullmatch(str(inputs.get("note") or "").strip())
+            note = str(inputs.get("note") or "").strip()
+            approval = APPROVAL_PATTERN.fullmatch(note)
             if approval:
                 # A writer's approval, carried out in the issue's queue.
                 return _approval_step(gh, int(number), int(approval[1]), int(approval[2]))
+            resumed = RESUMED_PATTERN.fullmatch(note)
+            if resumed:
+                # Paused work that came due, started in the issue's queue.
+                return {
+                    "action": "maintain",
+                    "task": "resumed",
+                    "number": int(number),
+                    "comment": int(resumed[1]),
+                }
             # One issue's step, in the issue's queue (`autopilot.step`).
             return {"action": "maintain", "task": "step", "issue": int(number)}
         issue = gh.issue(int(number))

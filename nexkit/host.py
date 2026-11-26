@@ -22,8 +22,9 @@ change is needed or without it, one that only a new plan carries out, a writer's
 only closes the issue, by a comment or a command, and a new plan after a collaborator's comment
 or the close of an issue that blocks it. So does one that stopped as blocked with nothing to
 answer, which waits for a person and, with autopilot, is planned again after a comment or the
-close of an issue that blocks it (`afterFailure`). Only a `/nexkit go` that ended in an agent
-error stays NexKit 6's.
+close of an issue that blocks it (`afterFailure`). So does one that failed on an error, with no
+pull request, and not on time: the host sends it as an agent error, and the engine plans it again
+after a collaborator's comment or the same close.
 
 And it decides what follows a round's checks and review on a NexKit pull request (`report`):
 the review's verdict and criteria, an automatic fix round within `fix.max_auto_rounds`, counted,
@@ -89,7 +90,7 @@ that fails to start after a stop (`stop_failed`) stay the host's.
 
 It decides when a plan, implement or fix stage runs again after its agent stopped at a usage
 limit or on a transient error (`stage_limited`, `stage_transient`, called by `report`), and when
-a paused or waiting run starts at its time (`resumes`, called by `maintain.resume_paused`), a hold
+a paused or waiting run starts at its time (`resumes`, called by `maintain.resume_one`), a hold
 on the issue included. A transient stop of publish goes as a transient stop of the stage's agent.
 A reset stays the host's to give.
 
@@ -979,11 +980,11 @@ def _plan_doc(issue, record, comments):
 def after_go(gh, cfg, issue, comment, run, record, start, comments):
     """The step after the `/nexkit go` of `issue` whose run comment `comment`, with the
     marker `run`, says it stopped as blocked, with questions or protected paths or with
-    nothing to answer (`autopilot.engine_round`, `autopilot._assess`), as the engine decides
-    it: a writer's comment since that
+    nothing to answer, or failed on an error and not on time (`autopilot.engine_round`,
+    `autopilot._assess`), as the engine decides it: a writer's comment since that
     picks the option that only closes the issue closes it; otherwise the round's result,
     then a collaborator's comment since, or the close of an issue that blocked it after the
-    round started (`autopilot._since_stop`). `record` is autopilot's record and `start` what
+    round started. `record` is autopilot's record and `start` what
     a command that the step starts begins from. Raises `Refused`."""
     number = issue["number"]
     said = autopilot._commented_after(comments, comment)
@@ -1034,7 +1035,14 @@ def after_go(gh, cfg, issue, comment, run, record, start, comments):
 
 
 def _round_result(number, comment, run):
-    """The end of the `/nexkit go` whose run comment `comment` holds the marker `run`."""
+    """The end of the `/nexkit go` whose run comment `comment` holds the marker `run`: a
+    blocked round's result, or for any other failed round an agent error, worded from NexKit's
+    own marker and never from agent text."""
+    if run.get("outcome") == "agent_blocked":
+        result = {**AGENT, "output": round_output(run)}
+    else:
+        text = str(run.get("attention") or "The round failed.")[: LONGEST["reason"]]
+        result = {**AGENT, "error": text, "output": None}
     return _event(
         "actionFinished",
         number,
@@ -1042,13 +1050,13 @@ def _round_result(number, comment, run):
         _run_event_id(run.get("url")),
         action=first_state.RUN_ID,
         changeVersion=None,
-        result={**AGENT, "output": round_output(run)},
+        result=result,
     )
 
 
 def _closed_since(gh, issue, comment):
     """{number: completed} of the issues that block `issue` and closed after the round of the
-    run comment `comment` started, as `autopilot._since_stop` reads them."""
+    run comment `comment` started."""
     started = autopilot.parse_iso(comment.get("created_at"))
     return {
         blocker["number"]: blocker.get("state_reason") in (None, "completed")
@@ -1121,10 +1129,10 @@ class _RoundView:
             text = autopilot.REPEATED
         elif reason == "closeRecommended":
             text = autopilot.CLOSE_UNFOUNDED
-        elif reason in ("question", "blocked"):
+        elif reason in ("question", "blocked", "roundFailed"):
             text = self.run.get("attention") or autopilot.failed_reason("go")
         else:
-            raise Refused(f"The engine waits for a person for {reason!r} after a blocked round.")
+            raise Refused(f"The engine waits for a person for {reason!r} after a stopped round.")
         return self.step("waits", text)
 
 
@@ -2177,7 +2185,8 @@ def _transient_answer(state, actions, stage):
         return "now", count
     if "wait" in kinds and count:
         return "later", kinds["wait"]["until"], count
-    if (kinds.get("needPerson") or {}).get("reason") == "failed":
+    # An implement round on an item with no change ends in `roundFailed`.
+    if (kinds.get("needPerson") or {}).get("reason") in ("failed", "roundFailed"):
         return ("failed",)
     raise Refused(f"The engine answers {sorted(kinds)} after a transient stop, which it cannot do.")
 
@@ -2185,7 +2194,7 @@ def _transient_answer(state, actions, stage):
 def resumes(cfg, run, number, now, label=None):
     """Whether the engine runs again the command of the resume record of `run`, which `number`
     paused at the usage limit or which waits to run again after a transient error, at `now`
-    (`maintain.resume_paused`): True to start it, which a hold on the issue, the `label`, does
+    (`maintain.resume_one`): True to start it, which a hold on the issue, the `label`, does
     not stop. Raises `Refused`, for a command that NexKit never writes too."""
     resume = run["resume"]
     command = str(resume.get("command") or "")

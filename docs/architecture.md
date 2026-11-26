@@ -69,7 +69,9 @@ flowchart LR
 The diagram shows the jobs of one run. Each arrow means that the job after it waits for the job
 before it. `report` also waits for every job before it, and `finish` runs only when `report` did
 not finish. `maintain` is not part of a round. It waits for `route` only, and it runs
-for events that are not commands. With `parallel_checks`, one `verify` job runs for each check
+for events that are not commands. `route` also starts each run in an item's concurrency group by
+taking the item's waiting events from their sources (`host.take`), so every job waits for that
+first. With `parallel_checks`, one `verify` job runs for each check
 job, all at once. Jobs that do not apply to a command are skipped. What each job does is in
 [One run, ten jobs](how-it-works.md#one-run-ten-jobs).
 

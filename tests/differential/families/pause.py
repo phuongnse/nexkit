@@ -21,12 +21,12 @@ from common import (
     attempt,
     planned_issue,
     quiet,
+    resume,
     snapshot,
 )
 
 from nexkit import progress
 from nexkit import report as reports
-from nexkit.maintain import resume_paused
 from nexkit.report import report
 from nexkit.state import empty_state, render_state
 from tests.support import FakeGitHub, make_config
@@ -116,7 +116,7 @@ def run(sc):
         res["report"] = one_stage(gh, cfg, d, sc["stop"])
         res["after_report"] = snapshot(gh)
         after(gh, cfg, res)
-        res["resume"] = attempt(resume_paused, gh, "nexkit.yml", "main", LATER, cfg)
+        res["resume"] = attempt(resume, gh, cfg, LATER)
         res["end"] = snapshot(gh)
     return res
 

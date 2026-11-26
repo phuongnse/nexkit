@@ -180,14 +180,22 @@ request, the item is the number itself.
 Only commands, *Request changes* reviews, dispatches and the short run for a closed issue
 wait in this queue; other comments do not. GitHub keeps one waiting run, so a command
 posted while another waits replaces it, also one on the issue that waits behind a round of
-its pull request. A command that never got 👀 did not run; post it again. How the engine's
-host will take such a command from its comment instead is in [Hosts](engine-hosts.md#hosts).
+its pull request. A command that never got 👀 did not run; post it again. Each run in the
+queue first takes the item's events from their sources, so a command whose run GitHub
+replaced is still answered by the run that ran: [Hosts](engine-hosts.md#hosts) says how.
 
 Four kinds of run keep a group of their own, so they never replace a command that waits:
 sweeps and the issue and milestone events that bring issues into scope share
 `nexkit-autopilot`, the run that waits for paused commands is `nexkit-resume`, an approval
 of a pull request is `nexkit-approved-<pr>`, and each other event, such as the schedule, a
-push or a finished workflow run, forms a group per event.
+push or a finished workflow run, forms a group per event. None of them takes an item's events.
+
+The run in `nexkit-resume` and the hourly schedule write no item's state either. For each
+paused command that is due, they send a `step` dispatch for its issue, with the id of the
+paused run's comment as its note. That run joins `nexkit-<item>`, reads the comment back from
+GitHub, and does nothing when the command is no longer paused or not yet due. Otherwise it
+starts the command and marks the comment as continued. A resume sent twice starts the
+command once.
 
 The run of an approval in `nexkit-approved-<pr>` writes nothing on the issue or the pull
 request. After the read-only checks that a merge makes, it sends a `step` dispatch for the

@@ -44,7 +44,7 @@
     "change": null,
     "observed": null,
     "attention": {
-      "reason": "failed",
+      "reason": "roundFailed",
       "text": "Read the error in the run's comment and log, remove its cause, then post the command again. The run stopped on an error",
       "ref": null
     },

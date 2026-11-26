@@ -449,15 +449,16 @@ cannot have them.
   the reset is at most `usage_limit.wait_minutes` away, the run that paused starts a run
   that waits for it: a dispatch of the workflow with the command `resume`, in the
   `nexkit-resume` concurrency group, so it never holds up a command on an issue or pull
-  request. Its job may run `wait_minutes` plus 15 minutes, which is why `wait_minutes` is
-  at most 330: a GitHub-hosted job ends after six hours. The same run starts commands that
+  request. That run writes nothing on the issue: for each command that is due, it sends a
+  `step` into the item's own group, and that run starts the command. Its job may run `wait_minutes` plus 15 minutes, which is why `wait_minutes` is
+  at most 330: a GitHub-hosted job ends after six hours. The same run sends the steps for commands that
   wait to run again after a transient error (see [Failure handling](failure-handling.md#failure-handling)),
   within the longest wait of `retry.wait_minutes`, which may be at most 330 minutes too;
   its job may run as long as the longer of the two plus 15 minutes. It runs no agent and no
   repository code, looks for due commands every ten minutes until nothing is left within
   its wait, and also resumes runs that pause meanwhile. Resets further away wait for the
   hourly `schedule`, which starts the waiting run once one comes within reach; with
-  `wait_minutes: 0`, the schedule resumes commands itself. GitHub runs scheduled workflows
+  `wait_minutes: 0`, the schedule sends the steps itself. GitHub runs scheduled workflows
   when it can, often hours apart, which is why NexKit does not rely on it for resets that
   are close.
 - A review that stopped after its round published a commit resumes as `/nexkit review`,

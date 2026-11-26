@@ -121,6 +121,31 @@ def play_sweep(gh, cfg, workflow="nexkit.yml", ref="main", closed=None, busy=Non
     return found
 
 
+def play_resume(gh, cfg, now=None, workflow="nexkit.yml", ref="main"):
+    """Play the run that resumes paused commands and the `step` runs it sent: each through
+    `route` and `maintain`, as the item's queue runs them. They leave `gh.dispatches` once
+    played. Returns (lines, upcoming) of `resume_paused`, with each `Sent a resume step to`
+    line replaced by the lines of that run."""
+    from nexkit.maintain import RESUME_SENT, resume_one, resume_paused
+    from nexkit.route import route
+
+    before = len(gh.dispatches)
+    lines, upcoming = resume_paused(gh, workflow, ref, now, cfg)
+    sent = [d for d in gh.dispatches[before:] if d["inputs"]["command"] == "step"]
+    gh.dispatches[before:] = [d for d in gh.dispatches[before:] if d["inputs"]["command"] != "step"]
+    runs = []
+    for dispatch in sent:
+        decision = route(gh, "workflow_dispatch", {}, dispatch["inputs"])
+        runs.append(
+            resume_one(gh, cfg, decision["number"], decision["comment"], workflow, ref, now=now)
+        )
+    runs = iter(runs)
+    found = []
+    for line in lines:
+        found += next(runs) if line.startswith(RESUME_SENT) else [line]
+    return found, upcoming
+
+
 def make_config(**overrides):
     raw = {"checks": [{"name": "test", "run": "true"}], "github_app": APP, **overrides}
     return validate(with_claude(raw))

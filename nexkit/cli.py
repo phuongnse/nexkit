@@ -290,8 +290,29 @@ def cmd_app(args):
     return 0
 
 
+def _take(gh, cfg, event_name, event):
+    """Take the events of the work item whose group this run joins from their sources
+    (`host.take`), before the run's own work, so that a command whose run GitHub replaced is
+    answered by the run that ran (docs/engine-hosts.md#hosts). A run in a group of its own
+    takes nothing. The engine refusing an event, or GitHub failing while the sources are read,
+    only warns: the run goes on. Raises `item_state.Moved` when every write lost."""
+    from . import host
+    from .github import GitHubError
+    from .route import queue_item
+
+    number = queue_item(gh, event_name, event)
+    if number is None:
+        return
+    try:
+        taken = host.take(gh, cfg, number)
+    except (host.Refused, GitHubError) as exc:
+        print(f"::warning::Could not take the events of #{number} from their sources: {exc}")
+        return
+    print(f"Took {len(taken)} event(s) of #{number} from their sources.")
+
+
 def cmd_route(args):
-    from . import progress
+    from . import item_state, progress
     from .checks import all_skipped, check_jobs, check_matrix, sharded
     from .github import GitHubError
     from .maintain import TASKS, enabled, longest_reach
@@ -313,6 +334,15 @@ def cmd_route(args):
             f"belongs to {minted}; correct {configuration.CONFIG_PATH}"
         )
         return 1
+    if loaded:
+        try:
+            _take(gh, loaded, os.environ["GITHUB_EVENT_NAME"], event)
+        except item_state.Moved:
+            print(
+                "::error::Every write of the item's state lost to another; its events stay at "
+                "their source for the next run."
+            )
+            return 1
     decision = route(gh, os.environ["GITHUB_EVENT_NAME"], event, event.get("inputs") or {})
     cfg = None
     if decision["action"] != "none":

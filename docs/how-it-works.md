@@ -189,12 +189,13 @@ sweeps and the issue and milestone events that bring issues into scope share
 of a pull request is `nexkit-approved-<pr>`, and each other event, such as the schedule, a
 push or a finished workflow run, forms a group per event.
 
-A sweep in `nexkit-autopilot` writes no issue itself. For each issue whose next step
-writes, it sends a `step` dispatch, which joins the issue's own group, `nexkit-<item>`, and
+A sweep in `nexkit-autopilot` carries out no issue's step (start, split, close, merge,
+settle or mention) itself. For each issue whose next step writes, it sends a `step` dispatch, which joins the issue's own group, `nexkit-<item>`, and
 carries the step out there, on the issue as it is then. The sweep waits a limited time
 (`END_POLL` and `END_TRIES` in `maintain.py`) for those runs to end, so the next sweep sees what they did and sends no second
-`step` that would replace a command waiting in that group. Its conflict rounds, branch
-updates and stopped rounds on pull requests are still written from `nexkit-autopilot`.
+`step` that would replace a command waiting in that group. It still writes NexKit's
+own labels, the bug issues for CI failures, done notices on closed issues, and its conflict
+rounds, branch updates and stopped rounds on pull requests, all from `nexkit-autopilot`.
 
 A pull request runs one NexKit round at a time. Its rounds (fix, review, automatic and
 conflict rounds) share the item's queue with the issue's commands, and the `/nexkit go` run

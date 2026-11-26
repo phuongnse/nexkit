@@ -1,11 +1,13 @@
 """Autopilot: work through the open issues in scope without commands.
 
 A sweep looks at every open issue in scope and finds the one step that moves it on:
-`/nexkit plan` for a ready issue, `/nexkit go` for a plan that needs nobody. It writes no
-issue or pull request itself: for each issue whose step writes, it sends a `step` dispatch,
-which carries the step out in the issue's own concurrency group (see `step`). Sweeps run in
-the `maintain` job, one at a time in the `nexkit-autopilot` concurrency group, and send
-steps with `workflow_dispatch`, like automatic rounds. They hold no agent credential and
+`/nexkit plan` for a ready issue, `/nexkit go` for a plan that needs nobody. It carries
+out no issue's step itself: for each issue whose step writes, it sends a `step` dispatch,
+which carries the step out in the issue's own concurrency group (see `step`). It still
+labels NexKit's own issues, reports CI failures and Dependabot alerts, posts done notices
+and, in the same job, writes conflict rounds on pull requests (see `resolve_conflicts`).
+Sweeps run in the `maintain` job, one at a time in the `nexkit-autopilot` concurrency group,
+and send steps with `workflow_dispatch`, like automatic rounds. They hold no agent credential and
 never check out repository code. Events start them: the end of a run, an issue that opens,
 closes or comes into scope, a closed milestone, a finished run on the default branch of a
 workflow in `merge.after_workflows` or `autopilot.watch_workflows`; the hourly schedule
@@ -3780,8 +3782,9 @@ def send_step(gh, step, workflow, ref, sent):
 
 def sweep(gh, cfg, workflow, ref, closed=None, busy=None, alerts=None, sent=None):
     """Send the step of each issue in scope whose step writes: a start, split, close or merge,
-    a run to show as ended, a person to mention. A sweep writes no issue or pull request
-    itself. Each `step` run carries its step out in the issue's queue, so the parts of a split
+    a run to show as ended, a person to mention. A sweep carries out none of
+    these steps itself, and still writes NexKit's own labels, CI and Dependabot bug issues and
+    done notices. Each `step` run carries its step out in the issue's queue, so the parts of a split
     get their steps from the sweep that the splitting `step` run starts. A step that GitHub
     drops leaves the issue as it was, and the next sweep sends it again. A CI failure on the
     default branch comes first, so its bug issue is planned first, and then each Dependabot

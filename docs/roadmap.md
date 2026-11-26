@@ -32,13 +32,17 @@ These features make up NexKit 6, released from 1.0.0 (2026-10-05) to 6.12.2 (202
 | Milestone | What it delivers | Status |
 | --- | --- | --- |
 | [Foundation](https://github.com/phuongnse/nexkit/milestone/18) | NexKit's own docs, delivery and checks at the standard it asks of the repositories it runs on: a map of the docs, short agent instructions, architecture, security, decisions, CodeQL, a docs audit, the owner's maintenance skill, and NexKit working its own issues | In progress |
-| [Engine and hosts](https://github.com/phuongnse/nexkit/milestone/1) | The loop's decisions in one engine that any host runs, as [The engine](engine.md) describes. NexKit 7.0 ships when the GitHub host runs only through it (#320) | In progress |
+| [Engine and hosts](https://github.com/phuongnse/nexkit/milestone/1) | The loop's decisions in one engine that any host runs, as [The engine](engine.md) describes. NexKit 7.0 ships when the GitHub host runs only through it | In progress |
 
 Built so far: the protocol's schemas, `nexkit-engine step`, `prompt`, `sweep` and `serve`, the state
-document and its import from NexKit 6's markers, the differential check against NexKit 6, and the
-decisions that follow a plan, a blocked `/nexkit go` and a round on a pull request. Left: the
-accept, the waits, the runner and the rest that
-[Getting there](engine.md#getting-there) lists.
+document and its import from NexKit 6's markers, and the differential check against NexKit 6. The
+GitHub host already sends the engine the decisions that follow a plan, a blocked `/nexkit go` and a
+round on a pull request. It also sends the accept of a merge and most of GitHub's refusals, the
+waits for required checks and for the base branch, the retries after a transient stop, the resumes
+after a usage limit, and the runner's `run.json`. The sweep sends its lost commands, released
+conflicts, first plans and order of starts. Left: the merge itself, conflicts that `maintain` finds
+after the base branch moves, a transient stop of publish, a `/nexkit go` that ended in an agent
+error, autopilot's other starts and the rest that [Getting there](engine.md#getting-there) lists.
 
 ## Later
 

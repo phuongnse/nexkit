@@ -18,7 +18,7 @@ Each kind of content has one home. Write a fact in its home and link to it from 
 | Why a run stopped or waits, and what to do | [Troubleshooting](troubleshooting.md) |
 | The engine, its protocol and its hosts | [The engine](engine.md) |
 | How NexKit is built: modules, workflows and jobs, tokens and secrets | [Architecture](architecture.md) |
-| What NexKit trusts, and the rule that contains each input it does not | Security _(planned, #360)_ |
+| What NexKit trusts, and the rule that contains each input it does not | [Security](security.md) |
 | A choice between real alternatives, with its reasons | A [decision](#decisions), listed in the [index of decisions](decisions.md) |
 | How the work on NexKit is done: issues, pull requests, labels, milestones, releases | [Delivery](delivery.md) |
 | How NexKit is tested | [Testing](testing.md) |
@@ -93,7 +93,8 @@ the status, as in this row:
 
 A reference page describes how NexKit behaves, as it is, and the agreed work that is not built yet.
 [How it works](how-it-works.md), the [configuration reference](configuration.md),
-[troubleshooting](troubleshooting.md) and [the engine](engine.md) are reference pages.
+[troubleshooting](troubleshooting.md), [the engine](engine.md) and [security](security.md) are
+reference pages.
 
 - **Write the current rule, never the change.** When a rule changes, rewrite it where it lives and
   delete the old text. A page does not say "no longer", "now" or "this replaces". What changed between
@@ -223,7 +224,6 @@ when a list of what the code defines misses an entry. These rules close each of 
    its status. The docs mark only planned work.
 5. **The security page follows new trust boundaries.** A change that adds a kind of input NexKit does
    not trust, a token, a secret or a job that holds one updates the security page in the same change.
-   _(planned, #360)_
 6. **A list of what the code defines has a test, or is not written.** A doc that lists settings,
    commands, statuses, labels, jobs or anything else the code defines has a test that reads the list
    from the doc and from the code and compares them. Without such a test, the doc names the file that
@@ -241,8 +241,9 @@ when a list of what the code defines misses an entry. These rules close each of 
    page is read and what each issue holds.
 9. **Checks catch what a machine can.** `tests/test_docs.py` checks that [the map](README.md) lists
    every doc, with the decisions listed through [the index](decisions.md); that the links of the
-   map, of this page, of the architecture page, of the index, of each decision file and of
-   [AGENTS.md](../AGENTS.md) resolve; that AGENTS.md keeps within its word limits; that the job and
-   module tables of the architecture page match the workflows and `nexkit/`; and that the index
-   matches the decision files, each of which follows the template and is linked from a rule or a
-   page. A docs check is added only once the whole tree passes it: there are no lists of exceptions.
+   map, of this page, of the architecture page, of the security page, of the index, of each decision
+   file and of [AGENTS.md](../AGENTS.md) resolve; that AGENTS.md keeps within its word limits; that
+   the job and module tables of the architecture page match the workflows and `nexkit/`; that each
+   test the security page names exists; and that the index matches the decision files, each of which
+   follows the template and is linked from a rule or a page. A docs check is added only once the whole
+   tree passes it: there are no lists of exceptions.

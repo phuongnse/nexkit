@@ -1557,10 +1557,8 @@ after an automatic merge each started `merge.after_workflows` run. A round's mar
 holds its commit, whether its checks passed, and which of them passed on that commit,
 each with a digest of its `run` command, and a digest of its `setup` commands. `nexkit status` reads these markers, not
 the text people read, to list the open NexKit work and what each item waits for. NexKit
-reads a marker only from a comment by its App, and only where it ends the comment:
-text before it can quote agent output. Every other marker, too, counts only where NexKit
-writes it (see [Security notes](#security-notes)). The latest commit whose checks passed becomes the
-next round's `NEXKIT_VERIFIED_SHA`, and for each check the latest commit on which it passed
+reads a marker only where [Comments and markers](security.md#comments-and-markers) says. The
+latest commit whose checks passed becomes the next round's `NEXKIT_VERIFIED_SHA`, and for each check the latest commit on which it passed
 with its current command and the current `setup` becomes its `NEXKIT_CHECK_VERIFIED_SHA`
 (see [Skipping work that a change cannot
 affect](configuration.md#skipping-work-that-a-change-cannot-affect)). In an automatic
@@ -1708,64 +1706,24 @@ The reasons are in [D6](decisions/d6-agent-errors-never-retry.md).
 
 ## Security notes
 
-- Only collaborators with write, maintain or admin access can start runs. Prompts include
-  issue text from anyone but mark it as untrusted; discussion and review feedback come only
-  from collaborators.
-- The implement session can run any command on the runner, so it can read the secrets
-  its job holds: the credentials of the agents that job may run, such as its fallback
-  agents (see [How secrets reach an agent](#agents)), and no other agent's. Treat `/nexkit go` like
-  running a script that the issue describes: approve plans only for issues whose content
-  you trust.
-- With profiles, an issue's text can steer triage towards a more expensive profile, for
-  example through prompt injection. Requests in the issue do not count as a person's
-  request, and the plan comment shows the profile before anyone comments `/nexkit go`.
-- Logs and artifacts can show anything the agent saw. NexKit redacts known secrets (see
-  [What is redacted](#what-is-redacted)), but on a public repository treat them as public.
-- Workflow and NexKit files (`.github/`, `.nexkit/`) are protected, so a NexKit change
-  cannot alter its own pipeline or configuration. The App may push workflow changes, but
-  only those a merge brings from the base branch, since `publish` rejects any such edit by
-  an agent.
-- Fork pull requests are never NexKit pull requests: commands on them are refused. Only a
-  writer's `/nexkit review` runs anything on a person's pull request, and only from a branch
-  of this repository, which only writers can push to.
-- Autopilot starts `/nexkit go` without a person's approval of the plan. It takes only
-  issues opened by people with write access, and anyone else's issues stay untouched, so
-  an outsider cannot start an implement session by opening or editing an issue. Issues
-  that NexKit opens itself, the parts of a split and the issues for CI failures, flaky
-  runs and Dependabot advisories, are trusted by a marker at the start of their text; such an issue opened by the
-  App is NexKit's, unless a workflow of the repository that holds the App's key writes
-  untrusted text there. The Actions bot proves nothing, since a pull request's CI can write
-  as it. An issue from a workflow in
-  `autopilot.trusted_workflows` is trusted only when GitHub's record of the run its marker
-  names confirms it: the listed file, the default branch, an event a writer or a schedule
-  controls, and a run that was running when the issue was opened (see [Issues from a
-  workflow](configuration.md#issues-from-a-workflow)). A writer can vouch for any other
-  issue with [`/nexkit trust`](configuration.md#vouching-for-an-issue). Autopilot reads that
-  comment itself, so nothing an agent wrote into a comment of NexKit's can stand in for it.
-  The issue's author may still edit such an issue, so an edit by anyone else after it ends
-  the trust, and each round NexKit starts looks for one right after it read the text, before
-  any agent or setup, and so does a merge.
-- GitHub lets anyone with write access, and any token, edit a comment of the App, which stays
-  the App's by author. So NexKit counts a marker only in a comment of the App that, by its
-  edit history, no one else ever changed, even if the App edited it again afterwards. A
-  changed comment's markers count for nothing, and autopilot leaves the issue and its pull
-  request to a person (see [A comment of NexKit was changed by someone
-  else](troubleshooting.md#a-comment-of-nexkit-was-changed-by-someone-else)). NexKit reads the
-  edit history only of the comments of bots that were edited, with the read-only token every
-  job holds.
-- NexKit's comments and issues quote text it does not trust: agent output, such as a plan,
-  a fix round's cause or a finding that no change is needed, and the output, test names
-  and annotations of CI runs. NexKit reads each of its markers only where it writes it, so
-  such text never passes for NexKit's own record: a record, such as the state of a pull
-  request, a run's or autopilot's record, a plan's record and the markers that end a CI
-  report, only where it ends the comment or issue; a marker that names what an issue or
-  comment is, and the people a mention names, only at the start of its text; a plan's
-  profile record and an advisory part's marker only on the line after the first marker.
-  Where agent text stands on both sides of a marker, as around a plan's profile lines,
-  follows a part's marker, or ends a comment of NexKit's, as the finding autopilot closes
-  an issue with, NexKit writes `<!-- nexkit:` in it as `‹!-- nexkit:`. That covers all
-  of a plan's agent text, so the plan text the agents read and the parts filed from a split
-  show it so too.
+What NexKit trusts, and the rule and test for each input it does not, are in [Security](security.md).
+These are the choices that remain with whoever runs NexKit on a repository.
+
+- Treat `/nexkit go` like running a script that the issue describes: approve plans only for issues
+  whose content you trust, since the implement session can read the secrets its job holds (see
+  [What the rules do not stop](security.md#what-the-rules-do-not-stop)).
+- With [profiles](configuration.md#profiles), an issue's text can steer triage towards a more
+  expensive profile. Requests in the issue do not count as a person's request, and the plan comment
+  shows the profile before anyone comments `/nexkit go`.
+- Logs and artifacts can show anything the agent saw, and redaction is best-effort (see
+  [What is redacted](#what-is-redacted)). On a public repository treat them as public, and consider
+  `transcript` and `log.tool_output` ([Logs and
+  transcripts](configuration.md#logs-and-transcripts)).
+- Add to `protected_paths` the paths no agent may change, beyond `.github/` and `.nexkit/`, which
+  are required (see the [configuration reference](configuration.md)).
+- List in `autopilot.trusted_workflows` only workflows whose output you would act on unread (see
+  [Issues from a workflow](configuration.md#issues-from-a-workflow)), and vouch for any other issue
+  that autopilot should take with [`/nexkit trust`](configuration.md#vouching-for-an-issue).
 
 The reasons are in [D4](decisions/d4-outside-text-is-untrusted.md) and
 [D5](decisions/d5-agents-cannot-change-the-pipeline.md).

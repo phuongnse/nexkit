@@ -21,7 +21,8 @@ job holds, and the plugin are described in [Architecture](docs/architecture.md).
 - Jobs that run an agent or repository code have read-only tokens and no App key. Jobs with write
   tokens never run repository code or get an agent credential. `tests/test_cli.py` checks every
   workflow; extend it for new jobs. See [Tokens and secrets](docs/architecture.md#tokens-and-secrets)
-  and [D3](docs/decisions/d3-agent-jobs-hold-no-write-token.md).
+  and [Repository code and CI](docs/security.md#repository-code-and-ci) and
+  [D3](docs/decisions/d3-agent-jobs-hold-no-write-token.md).
 - NexKit writes on GitHub only as the App. Each writing job mints its own token. Each write must
   leave the run it starts nothing to do. The exception is `release.yml`'s `publish` job, which runs
   no repository code and pushes the image with `github.token`. See
@@ -29,7 +30,8 @@ job holds, and the plugin are described in [Architecture](docs/architecture.md).
 - Agent output is untrusted: validate it before publishing, redact what a session prints or stores
   with `redact.py`, and print tool output with workflow commands stopped. Markers count only in the
   App's comments that no one else changed, never the Actions bot, and only at the position NexKit
-  writes them. See [Security notes](docs/how-it-works.md#security-notes) and
+  writes them. See [Agent output](docs/security.md#agent-output) and
+  [Comments and markers](docs/security.md#comments-and-markers) and
   [D4](docs/decisions/d4-outside-text-is-untrusted.md).
 - State lives only on GitHub: comments, pull requests and statuses. See
   [State](docs/how-it-works.md#state) and [D1](docs/decisions/d1-state-lives-only-on-github.md).
@@ -62,8 +64,7 @@ job holds, and the plugin are described in [Architecture](docs/architecture.md).
   [D7](docs/decisions/d7-one-tested-runtime-claude-code.md).
 - NexKit reads only the secrets the configuration names, and a job that runs an agent never indexes
   `secrets` itself, since that puts every secret on its runner. Agent secret names may not start
-  with `GITHUB_` or `NEXKIT_`. See [Settings and
-  secrets](docs/configuration.md#settings-and-secrets) and
+  with `GITHUB_` or `NEXKIT_`. See [Secrets](docs/security.md#secrets) and
   [D3](docs/decisions/d3-agent-jobs-hold-no-write-token.md).
 - A session outside NexKit takes only `hand-made` issues, and never merges, pushes a tag or
   releases. See [NexKit on this repository](docs/delivery.md#nexkit-on-this-repository) and

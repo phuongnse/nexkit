@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/phuongnse/nexkit/protocol/v1/state.schema.json",
-  "$comment": "One work item's state document, which the host stores and passes back. It holds decisions, not prose. As `protocol.size` measures it, JSON in UTF-8 with sorted keys and no spaces, it is at most 48,000 bytes, so that its base64 fits one GitHub comment. Each list the results and events fill has the most items it keeps (`maxItems`), and its texts are clipped as they come in. When a document would still pass the limit, the engine shortens the findings, the questions and options, the protected paths and the attention's text to fit.",
+  "$comment": "One work item's state document, which the host stores and passes back. It holds decisions and the history that the prompts show, not other prose. As `protocol.size` measures it, JSON in UTF-8 with sorted keys and no spaces, it is at most 48,000 bytes, so that its base64 fits one GitHub comment. Each list the results and events fill has the most items it keeps (`maxItems`), and its texts are clipped as they come in. When a document would still pass the limit, the engine shortens the findings, the questions and options, the protected paths, the attention's text and the repeated checks' names, then the last review's findings, the fix records' texts and, last, the names and signatures of the checks and the conflicting files in them, to fit, and, if that is not enough, the oldest fix records leave out the checks that still failed after them.",
   "type": "object",
   "properties": {
     "schemaVersion": {
@@ -524,6 +524,151 @@
         "fixed": {
           "$comment": "The version of the change that a fix round published, until its checks end: those checks are compared with the ones before it.",
           "$ref": "common.schema.json#/$defs/id"
+        },
+        "fixRound": {
+          "$comment": "The fix round under way, until its agent returns a result that is not blocked and the engine records it in `fixes`: who started it, whether it diagnoses, and its note, clipped to 2,000 characters.",
+          "type": "object",
+          "properties": {
+            "auto": {
+              "type": "boolean"
+            },
+            "diagnosis": {
+              "type": "boolean"
+            },
+            "note": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "auto",
+            "diagnosis",
+            "note"
+          ],
+          "additionalProperties": false
+        },
+        "fixes": {
+          "$comment": "The latest five fix rounds, oldest first, as the fix prompt shows them: `round` is the engine's count of started rounds, or the next number after an imported record's; `auto` whether the engine started it, `diagnosis` whether it looked into repeated checks; the note, the agent's summary and the cause it found are clipped to 2,000, 4,000 and 2,000 characters. `failing` lists the checks that still failed after the round, by name and failure signature (at most 200 characters), and is left out until its checks end; empty when every check passed. `conflicts` names the files of a merge of the base branch that conflicted, which only an imported record has. Left out until the first round.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "round": {
+                "type": "integer"
+              },
+              "auto": {
+                "type": "boolean"
+              },
+              "diagnosis": {
+                "type": "boolean"
+              },
+              "note": {
+                "type": "string"
+              },
+              "summary": {
+                "type": "string"
+              },
+              "cause": {
+                "type": "string"
+              },
+              "failing": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "signature": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "signature"
+                  ],
+                  "additionalProperties": false
+                },
+                "maxItems": 30
+              },
+              "conflicts": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 30
+              }
+            },
+            "required": [
+              "round",
+              "auto",
+              "diagnosis",
+              "note",
+              "summary",
+              "cause"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 5
+        },
+        "lastReview": {
+          "$comment": "The latest review, as the next review and fix prompts show it: its round, the version it reviewed, its verdict and its findings with file, line and body (at most 1,500 characters). Up to 30 findings are kept: in the reviewer's order when there are no more, otherwise the blocking ones first, and `leftOut` counts those left out. Left out until the first review.",
+          "type": "object",
+          "properties": {
+            "round": {
+              "type": "integer"
+            },
+            "version": {
+              "$ref": "common.schema.json#/$defs/id"
+            },
+            "verdict": {
+              "enum": [
+                "approve",
+                "request_changes"
+              ]
+            },
+            "findings": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "severity": {
+                    "enum": [
+                      "blocking",
+                      "suggestion"
+                    ]
+                  },
+                  "file": {
+                    "type": "string"
+                  },
+                  "line": {
+                    "type": "integer"
+                  },
+                  "body": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "severity",
+                  "file",
+                  "line",
+                  "body"
+                ],
+                "additionalProperties": false
+              },
+              "maxItems": 30
+            },
+            "leftOut": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "required": [
+            "round",
+            "version",
+            "verdict",
+            "findings"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [

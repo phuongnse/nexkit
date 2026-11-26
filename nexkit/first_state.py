@@ -24,8 +24,9 @@ from . import autopilot, item_state, protocol
 from .autopilot import CHAINED, CI_WAITING, HELD, PULL_CLOSED, UNTRUSTED_MERGE, UNTRUSTED_ROUND
 from .checks import failing_signatures
 from .engine.machine import ACCESS, INPUTS
+from .engine.textutil import clip as clip_text
 from .github import TRUSTED_ASSOCIATIONS
-from .protocol.size import LONGEST, MOST, clip, failure_key, fit, signature
+from .protocol.size import HISTORY, LONGEST, MOST, clip, failure_key, fit, signature
 from .schema import filled
 from .state import (
     COMMIT,
@@ -720,6 +721,86 @@ class Item:
             {"severity": item["severity"], "text": clip(item.get("body") or "", "finding")}
             for item in findings[: MOST["findings"]]
         ]
+        fixes = [fix for fix in map(_fix, record.get("fixes") or []) if fix]
+        if fixes:
+            rounds["fixes"] = fixes[-MOST["fixes"] :]
+        last = _last_review(record.get("last_review"))
+        if last:
+            rounds["lastReview"] = last
+
+
+def _number(value):
+    """`value` when it is an integer that is not a boolean, else None."""
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _text(value, kind):
+    """A text of NexKit 6's record as the engine keeps it of the history."""
+    return clip_text(value if isinstance(value, str) else "", HISTORY[kind])
+
+
+def _fix(item):
+    """One fix round of NexKit 6's record as the engine keeps it (`rounds.fixes`), or None for
+    one that names no round."""
+    if not isinstance(item, dict) or _number(item.get("round")) is None:
+        return None
+    fix = {
+        "round": item["round"],
+        "auto": item.get("auto") is True,
+        "diagnosis": item.get("diagnosis") is True,
+        "note": _text(item.get("note"), "note"),
+        "summary": _text(item.get("summary"), "summary"),
+        "cause": _text(item.get("cause"), "cause"),
+    }
+    if isinstance(item.get("failing"), list):
+        fix["failing"] = [
+            {
+                "name": clip(entry.get("name") or "", "check"),
+                "signature": _text(entry.get("signature"), "signature"),
+            }
+            for entry in item["failing"]
+            if isinstance(entry, dict)
+        ][: MOST["fixFailing"]]
+    if isinstance(item.get("conflicts"), list):
+        fix["conflicts"] = [
+            clip(name, "path") for name in item["conflicts"] if isinstance(name, str)
+        ][: MOST["fixFailing"]]
+    return fix
+
+
+def _last_review(item):
+    """The last review of NexKit 6's record as the engine keeps it (`rounds.lastReview`), or
+    None for one that names no round, version or verdict the protocol knows."""
+    if not isinstance(item, dict) or _number(item.get("round")) is None:
+        return None
+    head, verdict = item.get("head"), item.get("verdict")
+    if not isinstance(head, str) or verdict not in ("approve", "request_changes"):
+        return None
+    found = [
+        entry
+        for entry in item.get("findings") or []
+        if isinstance(entry, dict) and entry.get("severity") in ("blocking", "suggestion")
+    ]
+    review = {
+        "round": item["round"],
+        "version": head,
+        "verdict": verdict,
+        "findings": [
+            {
+                "severity": entry["severity"],
+                "file": clip(
+                    entry.get("file") if isinstance(entry.get("file"), str) else "", "path"
+                ),
+                "line": _number(entry.get("line")) or 0,
+                "body": _text(entry.get("body"), "body"),
+            }
+            for entry in found[: MOST["findings"]]
+        ],
+    }
+    left_out = _number(item.get("left_out"))
+    if left_out and left_out > 0:
+        review["leftOut"] = left_out
+    return review
 
 
 def agent_run(stage, version):

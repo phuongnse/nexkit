@@ -343,6 +343,113 @@ class ImportTest(unittest.TestCase):
         made.pop("by", None)
         self.assertEqual(state["pending"], [{**made, "id": first_state.RUN_ID}])
 
+    def test_the_fix_records_and_the_last_review_are_those_of_nexkit_6_s_marker(self):
+        fixes = [
+            {
+                "round": 4,
+                "head": "a" * 40,
+                "auto": False,
+                "summary": "Kept the header.",
+                "note": "Keep the header",
+                "failing": [{"name": "test", "signature": "fail test_x"}],
+            },
+            {
+                "round": 6,
+                "head": "b" * 40,
+                "auto": True,
+                "summary": "Read the stale fake again.",
+                "note": "",
+                "cause": "The test read a stale fake issue.",
+                "diagnosis": True,
+                "failing": [],
+                "conflicts": ["a.py", "b.py"],
+            },
+        ]
+        review = {
+            "round": 7,
+            "head": "b" * 40,
+            "verdict": "request_changes",
+            "findings": [
+                {"severity": "suggestion", "file": "a.py", "line": 3, "body": "Name it."},
+                {"severity": "blocking", "file": "", "line": 0, "body": "The close is lost."},
+            ],
+            "left_out": 2,
+        }
+        marker = {"version": 2, "issue": 42, "auto_fixes": 1, "feedback": None}
+        given = {
+            "issue": {"number": 42},
+            "pull": {"number": 308, "head": "b" * 40},
+            "pullComments": [{"state": {**marker, "fixes": fixes, "last_review": review}}],
+        }
+        rounds = first_state.imported(**situation({"nexkit6": given}))["rounds"]
+        self.assertEqual(
+            rounds["fixes"],
+            [
+                {
+                    "round": 4,
+                    "auto": False,
+                    "diagnosis": False,
+                    "note": "Keep the header",
+                    "summary": "Kept the header.",
+                    "cause": "",
+                    "failing": [{"name": "test", "signature": "fail test_x"}],
+                },
+                {
+                    "round": 6,
+                    "auto": True,
+                    "diagnosis": True,
+                    "note": "",
+                    "summary": "Read the stale fake again.",
+                    "cause": "The test read a stale fake issue.",
+                    "failing": [],
+                    "conflicts": ["a.py", "b.py"],
+                },
+            ],
+        )
+        self.assertEqual(
+            rounds["lastReview"],
+            {
+                "round": 7,
+                "version": "b" * 40,
+                "verdict": "request_changes",
+                "findings": [
+                    {"severity": "suggestion", "file": "a.py", "line": 3, "body": "Name it."},
+                    {"severity": "blocking", "file": "", "line": 0, "body": "The close is lost."},
+                ],
+                "leftOut": 2,
+            },
+        )
+        # The prompts clip the texts as the state keeps them, and a record that names no
+        # round, or a review with no verdict the protocol knows, is not imported.
+        long = {**fixes[0], "note": "n" * 5000, "summary": "s" * 9000, "cause": "c" * 5000}
+        sig = {"name": "t" * 90, "signature": "g" * 900}
+        found = {**review, "findings": [{**review["findings"][0], "body": "b" * 4000}]}
+        given["pullComments"] = [
+            {
+                "state": {
+                    **marker,
+                    "fixes": [{**long, "failing": [sig]}, {"summary": "No round."}, "text"],
+                    "last_review": found,
+                }
+            }
+        ]
+        rounds = first_state.imported(**situation({"nexkit6": given}))["rounds"]
+        [fix] = rounds["fixes"]
+        self.assertEqual(
+            (len(fix["note"]), len(fix["summary"]), len(fix["cause"])), (2000 + 12, 4000 + 12, 2012)
+        )
+        self.assertEqual(
+            (fix["failing"][0]["name"], len(fix["failing"][0]["signature"])),
+            ("t" * 40 + "...", 200 + 12),
+        )
+        self.assertEqual(len(rounds["lastReview"]["findings"][0]["body"]), 1500 + 12)
+        given["pullComments"] = [
+            {"state": {**marker, "last_review": {**review, "verdict": "comment"}}}
+        ]
+        rounds = first_state.imported(**situation({"nexkit6": given}))["rounds"]
+        self.assertNotIn("lastReview", rounds)
+        self.assertNotIn("fixes", rounds)
+
     def test_the_import_keeps_lists_and_signatures_within_the_state_s_bounds(self):
         part = {"title": "A part", "body": "Part.", "depends_on": []}
         record = {"questions": [], "too_large": True, "parts": 12, "split": [part] * 12}

@@ -12,6 +12,7 @@ import copy
 
 from ..protocol.size import (
     DIAGNOSES,
+    HISTORY,
     LONGEST,
     MOST,
     STATE_LIMIT,
@@ -21,6 +22,7 @@ from ..protocol.size import (
     signature,
 )
 from ..schema import filled
+from .textutil import clip as clip_text
 
 FINAL = ("accepted", "noChange", "dropped")
 # The state that runs each stage's agent.
@@ -255,6 +257,8 @@ class Step:
             self.s.pop("checksSince", None)
         if name not in COUNTING:
             self.s["rounds"].pop("automatic", None)
+        if name != "fixing":
+            self.s["rounds"].pop("fixRound", None)
         if self.state == "planning" and name != "planning":
             # The engine's answers count only for the plan they started: a plan that ends
             # without its result, such as one that fails, forgets them, so the next plan's
@@ -281,6 +285,8 @@ class Step:
         self.actions = [item for item in self.actions if item["id"] != action["id"]]
         if action["kind"] == "runAgent" and action["stage"] in ("implement", "fix"):
             self.s["rounds"]["started"] -= 1
+        if action["kind"] == "runAgent" and action["stage"] == "fix":
+            self.s["rounds"].pop("fixRound", None)
         self.give_back(action)
 
     def cancel(self, action):
@@ -349,11 +355,13 @@ class Step:
         used["seconds"] += source.get("seconds") or 0
         used["usd"] += source.get("usd") or 0
 
-    def run(self, stage, again=False, diagnose=False):
+    def run(self, stage, again=False, diagnose=False, by=None, note=""):
         """Run `stage`'s agent. A fix round names the checks it looks into first: with
         `diagnose`, an automatic fix round, those that failed the same way before and after the
         fix round before it, as NexKit 6's `route` makes it a diagnosis round; a person's round,
-        a conflict round and the round that the engine's answers run again name none."""
+        a conflict round and the round that the engine's answers run again name none. A new fix
+        round keeps who started it (`by`, a person, or the engine when none), whether it
+        diagnoses and the request's `note` until its result records it (`finished_change`)."""
         if self.review_only and stage != "review":
             raise EngineError("A review-only item is only checked and reviewed.")
         if not again and stage != "review":
@@ -366,6 +374,12 @@ class Step:
             self.s["asked"].remove("supersede")
         repeated = self.s["rounds"].get("repeated") or []
         fields = {"diagnose": repeated[:DIAGNOSES] if diagnose else []} if stage == "fix" else {}
+        if stage == "fix" and not again:
+            self.s["rounds"]["fixRound"] = {
+                "auto": by is None,
+                "diagnosis": bool(fields["diagnose"]),
+                "note": clip_text(note, HISTORY["note"]),
+            }
         self.do(
             "runAgent",
             stage=stage,
@@ -825,7 +839,7 @@ class Step:
             self.s["rounds"].pop("automatic", None)
             self.s["policies"], self.p = {}, self.given
             self.move("fixing")
-            self.run("fix")
+            self.run("fix", by=event["by"], note=event["note"])
         elif what == "review":
             if not change or not self.takes_request(("new", "ready", "failed")):
                 return False
@@ -842,7 +856,7 @@ class Step:
                 self.check()
             elif change:
                 self.move("fixing")
-                self.run("fix")
+                self.run("fix", by=event["by"], note=event["note"])
             else:
                 self.start_plan()
         else:
@@ -971,7 +985,7 @@ class Step:
         self.s["rounds"].pop("recheck", None)
         self.by = "person"
         self.move("fixing")
-        self.run("fix")
+        self.run("fix", by=event["by"])
         return True
 
     def on_changeApproved(self, event):
@@ -1509,7 +1523,26 @@ class Step:
             self.move("noChange")
             self.close("completed", {"name": "noChange", "ref": number})
         else:
+            if stage == "fix":
+                self.record_fix(output)
             self.do("publish", stage=stage)
+
+    def record_fix(self, output):
+        """Keep the fix round that the agent's result ends, for the prompts of the rounds
+        after it: its number, who started it, its note and the agent's summary and cause. Its
+        checks add what still failed (`finished_runChecks`). The latest five are kept."""
+        rounds = self.s["rounds"]
+        record = rounds.pop("fixRound", None) or {"auto": True, "diagnosis": False, "note": ""}
+        fixes = rounds.get("fixes") or []
+        fixes.append(
+            {
+                "round": max(rounds["started"], newest(rounds) + 1),
+                **record,
+                "summary": clip_text(output.get("summary"), HISTORY["summary"]),
+                "cause": clip_text(output.get("cause"), HISTORY["cause"]),
+            }
+        )
+        rounds["fixes"] = fixes[-MOST["fixes"] :]
 
     def blocked(self, output, number, stage, again):
         """A round that stopped as blocked: one whose change needs paths only a person changes
@@ -1583,6 +1616,7 @@ class Step:
         rounds = self.s["rounds"]
         # The round's review ended, so its count stands.
         rounds.pop("automatic", None)
+        self.keep_review(output)
         if self.review_only:
             # A person's own change is only checked and reviewed: it waits for its next request.
             self.move("ready")
@@ -1610,6 +1644,34 @@ class Step:
             self.next_fix()
         else:
             self.ready()
+
+    def keep_review(self, output):
+        """Keep the review as the last one, for the prompts of the next review and fix
+        rounds: its findings with file, line and body, as NexKit 6 keeps them
+        (`report._kept_findings`): all of them up to the most, else the blocking ones first,
+        each group in the reviewer's order."""
+        rounds = self.s["rounds"]
+        found = output["findings"]
+        kept = found
+        if len(found) > MOST["findings"]:
+            kept = sorted(found, key=lambda item: item["severity"] != "blocking")
+            kept = kept[: MOST["findings"]]
+        rounds["lastReview"] = {
+            "round": max(rounds["started"], newest(rounds), 1),
+            "version": self.version,
+            "verdict": output["verdict"],
+            "findings": [
+                {
+                    "severity": item["severity"],
+                    "file": clip(item["file"], "path"),
+                    "line": item["line"],
+                    "body": clip_text(item["body"], HISTORY["body"]),
+                }
+                for item in kept
+            ],
+        }
+        if len(found) > len(kept):
+            rounds["lastReview"]["leftOut"] = len(found) - len(kept)
 
     def finished_publish(self, result, action):
         if result["change"] is None:
@@ -1653,6 +1715,7 @@ class Step:
         ][: MOST["signatures"]]
         # The item about a failure the base branch has, which every failing check matches.
         self.s["rounds"]["baseFailure"] = (result.get("baseFailure") or None) if failing else None
+        self.fixed_checks(failing)
         self.repeats(failing)
         if self.review_only or not failing:
             self.review()
@@ -1660,6 +1723,19 @@ class Step:
             self.review()
         else:
             self.next_fix()
+
+    def fixed_checks(self, failing):
+        """The checks of the version a fix round published add to its record the checks that
+        still failed, each with its failure signature: none when every check passed."""
+        rounds = self.s["rounds"]
+        if rounds.get("fixed") != self.version or not rounds.get("fixes"):
+            return
+        found = {
+            check["name"]: clip_text(check["signature"], HISTORY["signature"]) for check in failing
+        }
+        rounds["fixes"][-1]["failing"] = [
+            {"name": clip(name, "check"), "signature": text} for name, text in found.items()
+        ][: MOST["fixFailing"]]
 
     def repeats(self, failing):
         """Keep the failing checks, each by the digest of its name and signature, and, for the
@@ -1848,6 +1924,16 @@ def _option(number, options):
 def _closes(question):
     """Whether a question's recommended option only closes the item."""
     return 0 < question["recommended"] == question.get("closes", 0)
+
+
+def newest(rounds):
+    """The number of the newest round that the state keeps a record of, or 0: records that an
+    import made carry NexKit 6's numbers, which count every run on a pull request, so the
+    numbers that the engine gives go on from them."""
+    found = [record["round"] for record in rounds.get("fixes") or []]
+    if rounds.get("lastReview"):
+        found.append(rounds["lastReview"]["round"])
+    return max(found, default=0)
 
 
 def _most(answers, kind, first):

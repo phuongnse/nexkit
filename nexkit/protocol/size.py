@@ -6,10 +6,13 @@ one comment, which GitHub refuses past 65,536 characters. The protocol therefore
 document as `encoded` writes it. What results and events bring is bounded as it comes in:
 each list to the most items `state.schema.json` allows (MOST), each text to the most
 characters NexKit 6 keeps of it (LONGEST), and a failure signature, which rounds compare, is
-never cut but named by its hash when it is long. The texts that a person reads in full where
-the host keeps them are shortened further only when a document would still pass the limit
-(`fit`). The engine never answers a larger document, and a host that builds a first one, as
-an import does, keeps it the same way.
+never cut but named by its hash when it is long. The history that the prompts show, the fix
+rounds' notes, summaries and causes and the last review's findings, is clipped as the prompts
+clip it (HISTORY). The texts that a person reads in full where the host keeps them are
+shortened further only when a document would still pass the limit (`fit`), the history after
+the others, and the lists of failing checks in the fix records last of all. The engine never
+answers a larger document, and a host that builds a first one, as an import does, keeps it the
+same way.
 """
 
 from __future__ import annotations
@@ -35,6 +38,10 @@ MOST = {
     "repeated": 150,
     "criteria": 50,
     "checklist": 50,
+    # The fix rounds' records (NexKit 6's `report.MAX_FIXES`), and the checks that still
+    # failed after one.
+    "fixes": 5,
+    "fixFailing": 30,
 }
 # The most characters of each text that comes in: NexKit 6's own (`state.questions`,
 # `state.plan_data_record`), for a reason a person reads, enough to say it, and for a check's
@@ -48,6 +55,10 @@ LONGEST = {
     "reason": 1000,
     "check": 40,
 }
+# The most characters of each text of the history, as the prompts clip it
+# (`engine.textutil.clip`, which ends a shortened text with a line of its own): a fix round's
+# note, summary and cause, a finding's body, and the failure signature that a fix record shows.
+HISTORY = {"note": 2000, "summary": 4000, "cause": 2000, "body": 1500, "signature": 200}
 # The most bytes of a failure signature as JSON writes it; a longer one is named by its hash.
 SIGNATURE = 80
 # The most checks a diagnosis round looks into (NexKit 6's `state.MAX_QUESTIONS`).
@@ -138,11 +149,53 @@ def _repeated(state):
     return [(names, index) for index in range(DIAGNOSES, len(names))]
 
 
+def _review(severity):
+    def found(state):
+        review = state["rounds"].get("lastReview") or {}
+        return [
+            (item, "body") for item in review.get("findings") or [] if item["severity"] == severity
+        ]
+
+    return found
+
+
+def _review_files(state):
+    review = state["rounds"].get("lastReview") or {}
+    return [(item, "file") for item in review.get("findings") or []]
+
+
+def _fix_texts(state):
+    """The notes, summaries and causes of the fix records, and the note of the round under
+    way, which becomes a record's."""
+    rounds = state["rounds"]
+    found = [
+        (record, key)
+        for record in rounds.get("fixes") or []
+        for key in ("note", "summary", "cause")
+    ]
+    return found + ([(rounds["fixRound"], "note")] if rounds.get("fixRound") else [])
+
+
+def _fix_checks(state):
+    """The names and failure signatures that a fix record shows of the checks that still
+    failed after it, and the files of an imported record's conflicts. Only for display:
+    `rounds.signatures` and `rounds.failing` decide."""
+    found = []
+    for record in state["rounds"].get("fixes") or []:
+        for entry in record.get("failing") or []:
+            found += [(entry, "name"), (entry, "signature")]
+        paths = record.get("conflicts") or []
+        found += [(paths, index) for index in range(len(paths))]
+    return found
+
+
 # What is shortened, in this order, while a document does not fit: texts that a person reads
 # in full where the host keeps them, never a count, a status, an id, a list's length, a split
 # part's title, which names the part it files, or a failure signature, which rounds compare.
 # Findings go first, the suggestions before the blocking ones, as NexKit 6's state comment
-# shortens them first.
+# shortens them first. The history that the prompts show comes after all of these: the last
+# review's findings, then the fix rounds' texts, then the checks of their records and, last,
+# the files of the last review's findings.
 SHORTENED = (
     _findings("suggestion"),
     _findings("blocking"),
@@ -150,6 +203,11 @@ SHORTENED = (
     _paths,
     _attention,
     _repeated,
+    _review("suggestion"),
+    _review("blocking"),
+    _fix_texts,
+    _fix_checks,
+    _review_files,
 )
 
 
@@ -182,4 +240,15 @@ def fit(state, limit=STATE_LIMIT):
             low, high = (middle, high) if cut(middle) else (low, middle - 1)
         cut(low)
         return state
-    return None
+    return _forgotten(state, limit)
+
+
+def _forgotten(state, limit):
+    """`state` within `limit` after the oldest fix records forgot which checks still failed
+    after them, or None when that does not fit it either. A record without `failing` is one
+    whose checks did not run, which a prompt shows as unknown; this is the last resort, for a
+    document whose other lists are all as long as the schema allows."""
+    for record in state["rounds"].get("fixes") or []:
+        if record.pop("failing", None) is not None and size(state) <= limit:
+            return state
+    return state if size(state) <= limit else None

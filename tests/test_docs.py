@@ -3,8 +3,9 @@ plugin's skills matches skills/. The links of every page under docs/, of the REA
 of the plugin's skills and of the maintenance skills resolve, every link to how it works and the
 pages split from it resolves, each task of the nexkit-maintain skill links a section of the delivery
 page, AGENTS.md keeps within its word limits, the architecture page's job and module tables match
-the workflows and nexkit/, the how-it-works page's job table matches the jobs of pipeline.yml, the
-permissions its rows name and the number in its heading, each test the security page names exists,
+the workflows and nexkit/, its job diagram shows each job of pipeline.yml and the order each job's
+needs: set, the how-it-works page's job table matches the jobs of pipeline.yml, the permissions its
+rows name and the number in its heading, each test the security page names exists,
 and the outcome table of how it works lists each outcome the code defines and no other. The table
 of a stage's keys under `## Stages` in the configuration reference lists each stage key the code
 accepts and no other. The mention
@@ -1180,6 +1181,55 @@ class ArchitectureTests(unittest.TestCase):
                 f"docs/architecture.md has no row for nexkit/{name}",
             )
 
+    def test_the_job_diagram_shows_each_job_of_the_pipeline_and_the_order_it_waits_in(self):
+        lines = job_diagram(ARCH)
+        self.assertIsNotNone(lines, "docs/architecture.md has no mermaid diagram of its jobs")
+        self.assertEqual(lines[0], "flowchart LR", "the job diagram is not a flowchart LR")
+        edges = set()
+        for line in lines[1:]:
+            self.assertIsNotNone(
+                re.fullmatch(r"\w+(?:\s*-->\s*\w+)+", line),
+                f"the job diagram line `{line}` is not a plain chain of arrows",
+            )
+            names = [name.strip() for name in line.split("-->")]
+            edges.update(zip(names, names[1:], strict=False))
+        nodes = {name for edge in edges for name in edge}
+        jobs = jobs_of((ROOT / ".github/workflows/pipeline.yml").read_text())
+        needs = {}
+        for name, body in jobs.items():
+            self.assertIsNone(
+                re.search(r"^    needs:\s*$", body, re.M),
+                f"pipeline.yml job {name} sets its needs: over several lines, which the test "
+                "does not read",
+            )
+            found = re.search(r"^    needs: (\[.*\]|\w+)$", body, re.M)
+            needs[name] = set(re.findall(r"\w+", found.group(1))) if found else set()
+        for name in sorted(jobs):
+            with self.subTest(job=name):
+                self.assertIn(
+                    name, nodes, f"the job diagram has no entry for pipeline.yml job {name}"
+                )
+        for name in sorted(nodes - set(jobs)):
+            with self.subTest(job=name):
+                self.fail(f"the job diagram names {name}, which pipeline.yml does not define")
+        for before, after in sorted(edges):
+            with self.subTest(arrow=f"{before} --> {after}"):
+                self.assertIn(
+                    before,
+                    needs.get(after, set()),
+                    f"the job diagram's arrow {before} --> {after} is not in the needs: "
+                    f"of {after} in pipeline.yml",
+                )
+        waits = {}
+        for before, after in edges:
+            waits.setdefault(after, set()).add(before)
+        for name in sorted(nodes | set(jobs)):
+            shown, wanted = waited_for(waits, name), waited_for(needs, name)
+            for other in sorted(shown ^ wanted):
+                with self.subTest(job=name, waits_for=other):
+                    side = "the job diagram" if other in shown else "pipeline.yml"
+                    self.fail(f"{name} waits for {other} in {side} only, not in the other")
+
 
 class HowItWorksTests(unittest.TestCase):
     def test_the_run_table_has_a_row_for_each_job_of_the_pipeline(self):
@@ -1318,6 +1368,29 @@ def block_after(path, marker):
     text = path.read_text()
     opening = text.index("```markdown\n", text.index(marker)) + len("```markdown\n")
     return text[opening : text.index("\n```", opening)]
+
+
+def job_diagram(path):
+    """The lines of the first mermaid block under `## The workflows and their jobs`, stripped and
+    without blank lines, or None when the section has no mermaid block."""
+    section = re.search(
+        r"^## The workflows and their jobs\n(.*?)(?=^## |\Z)", path.read_text(), re.M | re.S
+    )
+    block = re.search(r"```mermaid\n(.*?)```", section.group(1), re.S) if section else None
+    if block is None:
+        return None
+    return [line.strip() for line in block.group(1).splitlines() if line.strip()]
+
+
+def waited_for(waits, job):
+    """Every job `job` waits for, directly or through others, given the direct waits."""
+    found, todo = set(), list(waits.get(job, ()))
+    while todo:
+        other = todo.pop()
+        if other not in found:
+            found.add(other)
+            todo.extend(waits.get(other, ()))
+    return found
 
 
 def parts(text):

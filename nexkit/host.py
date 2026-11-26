@@ -110,6 +110,13 @@ no plan, `new` and waiting to start, sends a `requested` start with no person, a
 blockers and waves come first, so the engine is never asked for a held or blocked issue, and
 the other starts that autopilot makes stay its own.
 
+It decides which of the issues that may start do, and in what order, too (`sweep`, called by
+`autopilot.preview`): the start steps without a pull request go to the engine's `sweep` call, with
+the issues in progress as `running`, each issue's labels, the index of its milestone, its wave and
+whether pull requests wait for it as a bug issue about the default branch, and no account at a
+usage limit. The host says each wait in NexKit 6's words, and an engine that refuses the sweep
+leaves each issue that would start waiting for a person.
+
 An item whose document or event the engine refuses waits for a person, and no other item is
 held up by it.
 """
@@ -658,6 +665,63 @@ def first_plan(cfg, issue, record, start):
     if any(a["kind"] == "runAgent" and a["stage"] == "plan" for a in actions):
         return autopilot._step(issue, "start", "no plan yet", command="plan", **start)
     raise Refused("The engine starts no plan for a new issue.")
+
+
+def sweep(cfg, where, starts, issues, running, awaited):
+    """The start steps `starts` (no pull request, in `scope`'s order) that start, in the engine's
+    order: its `sweep`, which orders them and keeps them within `autopilot.max_parallel`, with
+    `running` issues in progress (`autopilot.preview`). The others become waits in NexKit 6's
+    words. `issues` maps a number to its issue, and `awaited` a number to the pull requests that
+    wait for it as a bug issue about the default branch. An engine that refuses the sweep leaves
+    each issue that would start waiting for a person."""
+    listed = [m["number"] for m in where.get("milestones") or []]
+    items = []
+    for one in starts:
+        issue = issues[one["number"]]
+        number = (issue.get("milestone") or {}).get("number")
+        items.append(
+            {
+                "item": str(one["number"]),
+                "labels": sorted(autopilot.labels_of(issue)),
+                "milestone": listed.index(number) if number in listed else None,
+                "wave": autopilot.wave(cfg, issue)[0],
+                "awaited": bool(awaited.get(one["number"])),
+                "account": None,
+            }
+        )
+    request = {
+        "protocol": 1,
+        "call": "sweep",
+        "policies": {
+            **policies(cfg),
+            "maxParallel": cfg["autopilot"]["max_parallel"],
+            "priority": list(where["priority"]),
+        },
+        "running": running,
+        "limited": [],
+        "items": items,
+    }
+    found = engine.answer(json.loads(json.dumps(request)))
+    if "error" in found:
+        for one in starts:
+            one.update(state="waits", reason=refused_reason(found["error"]), person=True)
+        return []
+    by_number = {str(one["number"]): one for one in starts}
+    for wait in found["waits"]:
+        reason = f"{wait['running']} issues are in progress (max_parallel)"
+        by_number[wait["item"]].update(state="waits", reason=reason, person=False)
+    started = []
+    for start in found["starts"]:
+        one = by_number[start["item"]]
+        if start["beyondLimit"]:
+            waiting = awaited[one["number"]]
+            names = ", ".join(f"#{n}" for n in waiting)
+            those = (
+                f"pull requests {names} wait" if len(waiting) > 1 else f"pull request {names} waits"
+            )
+            one["reason"] += f"; {those} for it, so it starts beyond max_parallel"
+        started.append(one)
+    return started
 
 
 # -- a blocked round ------------------------------------------------------------------

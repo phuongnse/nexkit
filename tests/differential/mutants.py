@@ -24,6 +24,7 @@ TREE = HERE.parent.parent
 MACHINE = "nexkit/engine/machine.py"
 HOST = "nexkit/host.py"
 SIZE = "nexkit/protocol/size.py"
+SWEEP = "nexkit/engine/sweep.py"
 
 MUTANTS = {
     # A fix round held back, or waiting for the base branch, starts without reading
@@ -486,6 +487,24 @@ MUTANTS = {
         "new": """ or not self.waiting("start"):""",
         "seen": ("walker",),
         "families": ("new",),
+    },
+    # The sweep orders by milestone before priority, so an issue of a later milestone with a
+    # priority label no longer goes first (#437).
+    "sweep-key-milestone-before-priority": {
+        "path": SWEEP,
+        "old": "return (rank, milestone is None, milestone or 0, wave, position)",
+        "new": "return (milestone is None, milestone or 0, rank, wave, position)",
+        "seen": ("harness", "walker"),
+        "families": ("start",),
+    },
+    # An awaited item waits for a place at the limit like any other, so the bug issue that pull
+    # requests wait for does not start beyond `max_parallel` (#437).
+    "sweep-awaited-waits-at-the-limit": {
+        "path": SWEEP,
+        "old": 'elif full and not item.get("awaited", False):',
+        "new": "elif full:",
+        "seen": ("harness", "walker"),
+        "families": ("start",),
     },
 }
 

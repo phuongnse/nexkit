@@ -175,7 +175,7 @@ class PersonsPullRequestTests(unittest.TestCase):
 
     def test_the_workflow_file_lets_the_command_through(self):
         text = workflow_text("acme/nexkit", "v1")
-        condition = text.split("if: >-", 1)[1].split("# One run at a time", 1)[0]
+        condition = text.split("if: >-", 1)[1].split("runs-on:", 1)[0]
         line = next(part for part in condition.splitlines() if "issue_comment" in part)
         self.assertIn("startsWith(github.event.comment.body, '/nexkit')", line)
         self.assertNotIn("head", line)

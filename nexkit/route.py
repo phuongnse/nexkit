@@ -91,6 +91,58 @@ def issue_from_branch(branch):
     return None
 
 
+def work_item(gh, event_name, event):
+    """The work item that the run of this event belongs to, as text, or None for an event
+    that belongs to none. The installed workflow keys its concurrency group by it, so a
+    command on an issue and a round on its NexKit pull request wait in one queue.
+
+    The item of a pull request on `nexkit/issue-<n>` of this repository is the issue `<n>`;
+    that of any other issue or pull request is its own number, a fork's included, since a
+    fork cannot claim an issue's queue by naming its branch like NexKit's. A dispatch whose
+    number names a sweep or the run that waits for paused commands is that word."""
+    if event_name == "pull_request_review":
+        return _pull_item(gh, event["pull_request"])
+    if event_name == "issue_comment":
+        number, issue = event["issue"]["number"], event["issue"]
+    elif event_name == "issues":
+        return str(event["issue"]["number"])
+    elif event_name == "workflow_dispatch":
+        given = str((event.get("inputs") or {}).get("number") or "").strip()
+        if given in (AUTOPILOT, RESUME):
+            return given
+        if not given.isdigit():
+            return None
+        number = int(given)
+        try:
+            issue = gh.issue(number)
+        except GitHubError as exc:
+            return _unread(number, exc)
+    else:
+        return None
+    if "pull_request" not in issue:
+        return str(number)
+    try:
+        return _pull_item(gh, gh.pull(number))
+    except GitHubError as exc:
+        return _unread(number, exc)
+
+
+def _pull_item(gh, pull):
+    issue = issue_from_branch((pull.get("head") or {}).get("ref"))
+    repo = ((pull.get("head") or {}).get("repo") or {}).get("full_name")
+    return str(issue if issue is not None and repo == gh.repository else pull["number"])
+
+
+def _unread(number, exc):
+    """The number itself when GitHub's API fails: a failed job would skip the run and lose
+    its command, and the number is the group that the run had before it had an item."""
+    print(
+        f"::warning::GitHub answered {exc.status} reading #{number} for its queue; "
+        "it waits by its number"
+    )
+    return str(number)
+
+
 # The `auto` dispatch input: `true` for an automatic fix round after failures, `conflicts`
 # for an automatic round that merges the base branch, `resume` for a command that NexKit
 # runs again after the agent's usage limit reset, `autopilot` for a command that autopilot
@@ -342,7 +394,7 @@ def _conflicts_tried(gh, decision):
     """Whether this conflict round repeats the pull request's latest round: a conflict
     round on the same base commit that ended. Two starters that looked at the same time,
     such as a push to the default branch and a sweep, can each start one; the second
-    waits in the pull request's concurrency group and then has nothing to add. A round
+    waits in the work item's concurrency group and then has nothing to add. A round
     that resumes or retries one, or starts once more after one ended without a report,
     goes on."""
     if decision.get("resumed") or decision.get(RETRY):

@@ -4,8 +4,8 @@ _Planned for NexKit 7. Built so far: the protocol's schemas, in `nexkit/protocol
 `step` call with its states, whose decisions are a frame that takes NexKit 6's own rules one group
 at a time, and its `prompt` call, which writes each stage's prompt as NexKit 6 does, as
 `nexkit-engine step` and `nexkit-engine prompt` and over HTTP as `nexkit-engine serve`; its
-`sweep` call, which orders and limits the items that start, as `nexkit-engine sweep`, which no host
-calls yet; the
+`sweep` call, which orders and limits the items that start, as `nexkit-engine sweep`, which
+NexKit 6's autopilot takes its starts from; the
 GitHub host's state comment and its import of NexKit 6's open work, which nothing calls yet; and
 the decisions that follow a plan, a blocked `/nexkit go` and a round on a pull request, its
 review, diagnosis and conflict rounds, the end of a round's wait and which rounds count, and the
@@ -694,7 +694,7 @@ count as its own words say, such as "4 issues are in progress".
 | Observed as behind | `mergeable_state` is `behind`; left out of an observation when it is not | The draft was made on an older release than the latest |
 | Observes on | `pull_request` synchronize, closed and reopened; a push to the base, for each open change; each sweep | A change of the draft or of the release; its worker, from time to time |
 | A change closed unmerged | Not an observation: the host tells a person, who drops the item or asks for the work again | The draft was discarded: the same |
-| One event at a time | Planned in [#332](https://github.com/phuongnse/nexkit/issues/332): every run that writes an item's state shares one concurrency group keyed by the item, which a routing job derives and passes on; the sweep sends one event into each item's group rather than writing states itself. A run that waits may be replaced by a newer one, so a run takes the item's events from their sources (comments, reviews, labels) and each already has a stable id from its source, such as the comment's id (see [Events and actions arrive more than once](#events-and-actions-arrive-more-than-once)). The run is then the state comment's only writer, which stands for the compare-and-set. The sweep's one event per item is a criterion of #332. Today NexKit groups runs by issue, by pull request, and in separate autopilot and `approved-N` review groups (`nexkit/templates/workflow.yml`), and the sweep writes many items in one run | The request's row, locked while its event is handled |
+| One event at a time | An issue's commands and its NexKit pull request's rounds share one concurrency group keyed by the issue, which the workflow's `item` job derives with `nexkit item` and passes on (a person's pull request is its own item). Planned in [#332](https://github.com/phuongnse/nexkit/issues/332): every run that writes an item's state shares such a group; the sweep sends one event into each item's group rather than writing states itself. A run that waits may be replaced by a newer one, so a run takes the item's events from their sources (comments, reviews, labels) and each already has a stable id from its source, such as the comment's id (see [Events and actions arrive more than once](#events-and-actions-arrive-more-than-once)). The run is then the state comment's only writer, which stands for the compare-and-set. The sweep's one event per item is a criterion of #332. Today the `autopilot`, `resume` and `approved-N` groups stay apart from the items' (`nexkit/templates/workflow.yml`), and the sweep writes many items in one run | The request's row, locked while its event is handled |
 
 What exists only because of GitHub stays in the GitHub host: the GitHub App, statuses, branch
 clean-up, watching CI and flaky runs, Dependabot, artifacts, carrying a review over a base merge,
@@ -899,7 +899,12 @@ adapter. A new rule of the engine comes with a case.
    `/nexkit plan` only when the engine answers with a plan run. Otherwise the issue waits for a
    person. NexKit 6's checks of a hold, trust, blockers and waves come first, so the engine is
    never asked for a held or blocked issue, and the other starts that autopilot makes stay
-   NexKit 6's. Every existing test
+   NexKit 6's. Which of the issues that may start do, and in what order, is the engine's too
+   (`host.sweep`, called by `autopilot.preview`): the host sends the start steps without a pull
+   request as a `sweep` call, with the busy count as `running`, the index of each issue's
+   milestone, its wave and whether pull requests wait for it as a bug issue about the default
+   branch, and says each answer in NexKit 6's words. It names no account at a usage limit, so
+   that rule shows only in the conformance cases. Every existing test
    passes after each step, and the engine's part of `tests/test_scenarios.py` becomes the
    conformance suite as it goes.
 2. NexKit 7 is released when the GitHub host runs only through the engine. Repositories on

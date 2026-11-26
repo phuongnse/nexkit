@@ -50,6 +50,7 @@ other difference grouped by where it differs, with an example, and exits 1 when 
 | `new` | #438 | the first plan of a new issue, with a hold label, a blocker, a lower wave, a failed plan or `/nexkit go`, an author outside the repository, `max_parallel` with another issue busy, and a parent |
 | `conflicted` | #423 | a merge refused for a conflict, or found conflicting at the end of the refusal, under both `conflicts.auto_resolve` values: the round's own merge, a sweep, a writer's approval, with conflict rounds used, a round on its way and `mergeable` unknown |
 | `behind` | #424 | a merge refused because the branch is behind its base, under both `conflicts.auto_resolve` values: the round's own merge, a sweep that waited 0 hours, 1 hour or past six, a writer's approval, with updates used, `conflicts.max_rounds` 1 or 3, an update or a review's dispatch that GitHub refuses, and required checks pending or passed |
+| `start` | #437 | which waiting issues start, and in what order: priority labels, two milestones or none, waves, the milestone or every-issue scope, `max_parallel`, busy issues, and a bug issue or a part of one that pull requests wait for. 400 scenarios drawn from a fixed seed |
 
 A family is a module with `scenarios()`, which yields each scenario as plain JSON in a fixed
 order whatever tree plays it, and `run(sc)`, which plays one and returns what it recorded. A time
@@ -70,8 +71,10 @@ then, and checks the invariants that `INVARIANTS` lists after every step: the pr
 schemas, the transitions the states table names, the outbox, every open item carried on,
 counts within the policies, which rounds give their count back, `due` and `automatic`,
 diagnosis, usage-limit waits, runs again after a transient stop, holds and conflict rounds, the
-wait for required checks with its six hours, which items a `requested` start starts, and the
-engine's answers to a round's questions.
+wait for required checks with its six hours, which items a `requested` start starts, the
+engine's answers to a round's questions, and a random `sweep` request for each walk: every item
+answered once, starts within `maxParallel` but for an awaited item, none on a limited account, the
+key order and each wait's running count.
 Some walks start from the example of an item that accepts, which a walk from a new item seldom
 reaches. Each rule is checked both ways where it can be: a count neither passes its policy
 nor fails to come back when its round stops. It exits 1 when one breaks that `KNOWN` does not

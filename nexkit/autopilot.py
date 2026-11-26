@@ -63,9 +63,9 @@ from .state import (
 )
 from .usage import PAUSE_WINDOW, iso, parse_iso, shown
 
-# The dispatch that starts a sweep. Its `number` input is not a number, so callers'
-# concurrency groups give every sweep the group `nexkit-autopilot`: one runs at a time, and
-# GitHub keeps only the latest waiting one, which sees everything the others would.
+# The dispatch that starts a sweep. Its `number` input is not a number, so `nexkit item`
+# names it `autopilot`, which gives every sweep the group `nexkit-autopilot`: one runs at a
+# time, and GitHub keeps only the latest waiting one, which sees everything the others would.
 SWEEP = {"command": "autopilot", "number": "autopilot", "note": "", "auto": "false"}
 # The `auto` input of the commands autopilot starts.
 AUTO = "autopilot"
@@ -2043,14 +2043,14 @@ def nexkit_pulls(gh):
 
 
 def preview(gh, cfg):
-    """(scope, one step per open issue in scope) for what a sweep would do now. Starts
-    stay within `autopilot.max_parallel`, in the order of `scope`."""
+    """(scope, one step per open issue in scope) for what a sweep would do now. The
+    engine's sweep (`host.sweep`) orders the starts and keeps them within
+    `autopilot.max_parallel`; each takes a slot of a start in `scope`'s order."""
     where = scope(gh, cfg)
     if not where["issues"]:
         return where, []
     pulls = nexkit_pulls(gh)
     steps = [assess(gh, cfg, issue, pulls, where=where) for issue in where["issues"]]
-    limit = cfg["autopilot"]["max_parallel"]
     # An issue whose pull request autopilot carries on is in progress already, also while
     # the pull request waits for another issue. One that waits for a person leaves its
     # place to the others.
@@ -2073,20 +2073,16 @@ def preview(gh, cfg):
         if step.get("ci_bug"):
             awaited.setdefault(step["ci_bug"], []).append(step["pull"])
     issues = {issue["number"]: issue for issue in where["issues"]}
-    for step in steps:
-        if step["state"] != "start" or step.get("pull"):
-            continue
-        if limit is not None and busy >= limit:
-            waiting = _awaited_by(gh, issues.get(step["number"]), awaited)
-            if not waiting:
-                reason = f"{busy} issues are in progress (max_parallel)"
-                step.update(state="waits", reason=reason, person=False)
-                continue
-            names = ", ".join(f"#{n}" for n in waiting)
-            many = len(waiting) > 1
-            those = f"pull requests {names} wait" if many else f"pull request {names} waits"
-            step["reason"] += f"; {those} for it, so it starts beyond max_parallel"
-        busy += 1
+    starts = [step for step in steps if step["state"] == "start" and not step.get("pull")]
+    if starts:
+        from .host import sweep
+
+        waiting = {s["number"]: _awaited_by(gh, issues.get(s["number"]), awaited) for s in starts}
+        started = sweep(cfg, where, starts, issues, busy, waiting)
+        # Each start keeps its slot among the other steps, and takes them in the engine's order.
+        slots = [i for i, step in enumerate(steps) if any(step is one for one in started)]
+        for slot, step in zip(slots, started, strict=False):
+            steps[slot] = step
     return where, steps
 
 

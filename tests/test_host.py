@@ -52,6 +52,13 @@ ASKED = {
 ROOT = Path(__file__).resolve().parent.parent
 
 
+def asked_step(answer):
+    """The `step` requests that a stand-in for the engine's answer got, in order: a sweep's
+    `sweep` request, which the engine gets beside them, has no event."""
+    requests = [call.args[0] for call in answer.call_args_list]
+    return [request for request in requests if request["call"] == "step"]
+
+
 def comment_event(number, body, login="alice"):
     return {
         "action": "created",
@@ -85,7 +92,7 @@ class HostCase(AutopilotCase):
         """The requests the engine gets while the sweep reads issue `number`."""
         with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
             self.step(number, cfg)
-        return [call.args[0] for call in answer.call_args_list]
+        return asked_step(answer)
 
 
 class AfterPlanTest(HostCase):
@@ -393,6 +400,124 @@ class RefusedTest(HostCase):
         self.assertEqual(route(self.gh, "issue_comment", event)["task"], "close_answer")
 
 
+class SweepTest(HostCase):
+    """The start steps of `autopilot.preview` go through the engine's `sweep`, which orders and
+    limits them, and the host words its answer as NexKit 6 did."""
+
+    def setUp(self):
+        super().setUp()
+        self.gh.add_milestone(1)
+        self.gh.add_milestone(2)
+        self.cfg = pilot(
+            scope=None,
+            max_parallel=3,
+            priority=["urgent", "later"],
+            labels={"journey": {"wave": 1}, "docs": {"wave": 2}},
+        )
+
+    def sweeps(self, answer):
+        return [call.args[0] for call in answer.call_args_list if call.args[0]["call"] == "sweep"]
+
+    def test_the_engine_gets_each_issue_with_its_labels_milestone_wave_and_awaited_pull_requests(
+        self,
+    ):
+        self.issue(5, milestone=2, labels=["urgent"])
+        self.issue(6, labels=["docs"])
+        self.issue(7, milestone=None)
+        self.issue(8, labels=["journey"])
+        starts = [
+            autopilot._step(issue, "start", "no plan yet") for issue in self.gh.issues.values()
+        ]
+        issues = {number: issue for number, issue in self.gh.issues.items()}
+        where = autopilot.scope(self.gh, self.cfg)
+        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+            started = host.sweep(self.cfg, where, starts, issues, 2, {8: [10, 11]})
+        [request] = self.sweeps(answer)
+        self.assertEqual(
+            request["items"],
+            [
+                {
+                    "item": "5",
+                    "labels": ["urgent"],
+                    "milestone": 1,
+                    "wave": 0,
+                    "awaited": False,
+                    "account": None,
+                },
+                {
+                    "item": "6",
+                    "labels": ["docs"],
+                    "milestone": 0,
+                    "wave": 2,
+                    "awaited": False,
+                    "account": None,
+                },
+                {
+                    "item": "7",
+                    "labels": [],
+                    "milestone": None,
+                    "wave": 0,
+                    "awaited": False,
+                    "account": None,
+                },
+                {
+                    "item": "8",
+                    "labels": ["journey"],
+                    "milestone": 0,
+                    "wave": 1,
+                    "awaited": True,
+                    "account": None,
+                },
+            ],
+        )
+        self.assertEqual((request["running"], request["limited"]), (2, []))
+        self.assertEqual(request["policies"]["maxParallel"], 3)
+        self.assertEqual(request["policies"]["priority"], ["urgent", "later"])
+        self.assertEqual(request["policies"]["splits"], host.policies(self.cfg)["splits"])
+        # One place is left: the urgent issue takes it, and the awaited one, which comes before
+        # the issue of a higher wave, starts beyond the limit.
+        self.assertEqual([one["number"] for one in started], [5, 8])
+        self.assertEqual(starts[0]["state"], "start")
+        self.assertIn(
+            "; pull requests #10, #11 wait for it, so it starts beyond max_parallel",
+            starts[3]["reason"],
+        )
+        for one in (starts[1], starts[2]):
+            self.assertEqual(
+                (one["state"], one["person"], one["reason"]),
+                ("waits", False, "4 issues are in progress (max_parallel)"),
+            )
+
+    def test_a_refused_sweep_leaves_each_start_waiting_for_a_person_and_the_others_as_they_were(
+        self,
+    ):
+        self.issue(5)
+        self.issue(6)
+        self.issue(7, labels=["on-hold"])
+        self.gh.add_issue(8, milestone=1)
+        self.gh.blockers[8] = [5]
+        cfg = {
+            **self.cfg,
+            "autopilot": {**self.cfg["autopilot"], "labels": {"on-hold": {"hold": True}}},
+        }
+        before = {s["number"]: s for s in autopilot.preview(self.gh, cfg)[1]}
+
+        def answer(request):
+            if request["call"] == "sweep":
+                return {"protocol": 1, "error": "no sweep today"}
+            return ANSWER(request)
+
+        with mock.patch.object(host.engine, "answer", side_effect=answer):
+            steps = {s["number"]: s for s in autopilot.preview(self.gh, cfg)[1]}
+        self.assertEqual((before[5]["state"], before[6]["state"]), ("start", "start"))
+        for number in (5, 6):
+            self.assertEqual((steps[number]["state"], steps[number]["person"]), ("waits", True))
+            self.assertIn("engine refused", steps[number]["reason"])
+            self.assertIn("no sweep today", steps[number]["reason"])
+        for number in (7, 8):
+            self.assertEqual(steps[number], before[number])
+
+
 class FirstPlanTest(HostCase):
     """The first plan of a new issue starts when the engine answers with a plan run."""
 
@@ -435,7 +560,8 @@ class FirstPlanTest(HostCase):
         for name, found in answers.items():
 
             def answer(request, found=found):
-                return found if request["event"]["item"] == "5" else ANSWER(request)
+                is_five = request["call"] == "step" and request["event"]["item"] == "5"
+                return found if is_five else ANSWER(request)
 
             with self.subTest(name), mock.patch.object(host.engine, "answer", side_effect=answer):
                 step = self.step(5)
@@ -457,7 +583,7 @@ class FirstPlanTest(HostCase):
         self.assertEqual(self.step(6)["state"], "waits")
         with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
             autopilot.preview(self.gh, self.HOLD)
-        asked = [call.args[0]["event"]["item"] for call in answer.call_args_list]
+        asked = [request["event"]["item"] for request in asked_step(answer)]
         self.assertEqual(asked, ["7"])
 
     def test_a_document_with_a_hold_or_a_blocker_wait_gets_no_action(self):
@@ -908,8 +1034,8 @@ class StoppedTest(HostCase):
         self.run_comment(5, "go", status="failure", outcome="agent_error", timed_out=True)
         with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
             step = self.step(5)
-        [call] = answer.call_args_list
-        self.assertTrue(call.args[0]["event"]["result"]["timedOut"])
+        [request] = asked_step(answer)
+        self.assertTrue(request["event"]["result"]["timedOut"])
         self.assertEqual((step["command"], step["remember"]), ("plan", {"split_asked": True}))
         self.assertEqual(step["note"], autopilot.SPLIT_NOTE)
         with mock.patch.object(host, "step", return_value={"actions": [], "state": {}}):

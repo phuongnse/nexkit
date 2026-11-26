@@ -116,7 +116,9 @@ files or repository settings, and wait for confirmation.
    the user has an Anthropic API key instead, change it to
    `"api_key_secret": "ANTHROPIC_API_KEY"`. Every secret NexKit reads is named in the
    config this way. The workflow passes the pipeline `secrets: inherit`; keep it, because
-   that is how the pipeline reads secrets by the names the config gives them.
+   that is how the pipeline reads secrets by the names the config gives them. The
+   workflow's first job, `item`, names the work item of each run for the queue that the
+   commands on an issue and the rounds on its pull request wait in, so keep it.
 
 5. **Add the agents' credentials** as repository secrets. With a Claude Pro or Max
    subscription, the user runs `claude setup-token` in their own terminal (in this

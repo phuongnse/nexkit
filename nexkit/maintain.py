@@ -78,8 +78,8 @@ UNFILED = "<!-- nexkit:parent-unfiled -->"
 CLOSED = "<!-- nexkit:parent-closed -->"
 HOW = {"completed": "completed", "not_planned": "not planned", "duplicate": "duplicate"}
 # The `resume` dispatch: a run that waits for paused commands to come due and starts them.
-# Its `number` input is not a number, so callers' concurrency groups give it a group of its
-# own and it never holds up a command on an issue or pull request.
+# Its `number` input is not a number, so `nexkit item` names it `resume`, which gives it a
+# concurrency group of its own, and it never holds up a command on an issue or pull request.
 WAIT_INPUTS = {"command": "resume", "number": "resume", "note": "", "auto": "false"}
 # How often a waiting run looks again for runs that paused while it waits.
 POLL = timedelta(minutes=10)

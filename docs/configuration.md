@@ -600,7 +600,7 @@ remembering them. `review.checklist` makes each one a question that needs an ans
 ```json
 "review": {
   "checklist": [
-    "The `Docs:` line names every doc section the change makes false, and each is fixed",
+    "Every doc section the change makes false is fixed in the same change",
     "A new setting has a default that keeps today's behaviour",
     {"text": "The change adds no exception to a check and loosens none", "person": true}
   ]

@@ -101,11 +101,11 @@ Checks, autopilot, and merges and waits have pages of their own: [Configuring ch
 | `autopilot.enabled` | `false` | Work through the open issues in scope without commands: plan each ready issue, start `/nexkit go` on a plan that needs nobody, and move on when an issue closes. See [Autopilot](autopilot.md#autopilot). |
 | `autopilot.scope` | `"milestone"` | Which issues autopilot takes: `"milestone"`, the open issues of the earliest open milestone, or `null`, every open issue, whatever its milestone. |
 | `autopilot.max_parallel` | `null` | How many issues in scope may have a NexKit run or an open NexKit pull request at once (1 to 100); `null` for no limit. |
-| `autopilot.lost_after_minutes` | `30` | Start a command that autopilot started again when it has posted no run comment and its workflow run ended, at once, or when that run cannot be read, after this many minutes (5 to 1440); later starts wait 30, 60 and 120 minutes after the last, and a fifth start that does not run waits for a person. A continued run, or a round that a round started next, whose new run has not started after this many minutes starts once more. A sweep notices a lost command: the one that a run `route` refused starts when that run ends, and the end of the run that replaced a waiting one in its concurrency group usually starts one too. Nothing notices a dispatch that names no run, as on older GitHub Enterprise Servers, before the first sweep after this time, which in a quiet repository is the hourly schedule. |
+| `autopilot.lost_after_minutes` | `30` | How long a command that autopilot started, or a run that a round started next, may go unstarted before autopilot starts it again (5 to 1440). See *One command per step* under [Autopilot](autopilot.md#autopilot). |
 | `autopilot.answer` | `"never"` | `"recommended"` answers each question of a plan or a blocked round with the option NexKit recommends, when every question has one; `"never"` leaves every question to a person. |
 | `autopilot.priority` | `["nexkit:ci", "nexkit:dependabot", "nexkit:flaky"]` | Labels, highest first, whose issues go before the others, and are in scope also without a milestone or outside the scope's milestone. See *Labels* under [Autopilot](autopilot.md#autopilot). |
 | `autopilot.labels` | `{}` | What a label does: `{"wave": N}` holds an issue until every issue of a lower wave in its milestone is closed; `{"hold": true}` makes autopilot start nothing for it. See *Labels* under [Autopilot](autopilot.md#autopilot). |
-| `autopilot.last_in_milestone_label` | `null` | Replaced by `autopilot.labels`: works through 6.x as `"labels": {"<label>": {"wave": 1}}`, and 7.0 removes it. `nexkit doctor` shows the replacement. |
+| `autopilot.last_in_milestone_label` | `null` | Replaced by `autopilot.labels`: the label counts as `{"<label>": {"wave": 1}}`, and `nexkit doctor` shows the replacement. See *Labels* under [Autopilot](autopilot.md#autopilot). |
 | `autopilot.trusted_workflows` | `[]` | Workflow files, such as `["docs-audit.yml"]`, whose issues autopilot takes when their marker names a run that checks out. See [Issues from a workflow](autopilot.md#issues-from-a-workflow). |
 | `autopilot.dependabot` | `null` | The lowest severity of Dependabot alert that gets an issue: `"low"`, `"medium"`, `"high"` or `"critical"`. `null` opens none. It needs an extra permission of the App. See *Dependabot advisories* under [Autopilot](autopilot.md#autopilot). |
 | `autopilot.watch_workflows` | `[]` | Workflow files, such as `["ci.yml"]`, whose runs on the default branch autopilot watches as it watches `merge.after_workflows`, whatever started them, but which NexKit does not start after its merges. File names only, each listed once, none also in `merge.after_workflows`. See *Watching CI that NexKit does not start* under [Autopilot](autopilot.md#autopilot). |
@@ -188,9 +188,8 @@ only restores, so your CI starts warm there too. For NexKit to find what it save
 - With the checkout in a folder, name it with `repo:`. A run on a schedule may not say which
   branch is the default one; give it with `base: main`, or it only restores.
 
-`nexkit doctor` warns when `cache` is set and no workflow uses the action. Hand-written
-`actions/cache` steps from an earlier release still work while they repeat every entry
-exactly, and can go once the action replaces them.
+`nexkit doctor` warns when `cache` is set and no workflow uses the action. A hand-written
+`actions/cache` step that repeats an entry exactly also works, and the action can replace it.
 
 **A miss is not a failure.** A missing cache, or a restore that fails, never fails a run.
 The *Restore caches* step in the job log lists each entry as restored, restored from an
@@ -227,7 +226,7 @@ remembering them. `review.checklist` makes each one a question that needs an ans
   commit accepts them: `nexkit/review` turns green, and with `merge.auto` NexKit merges it;
   an approval of an older commit does nothing, and a new commit needs a new review and a new
   approval. Beside other blocking findings or failing checks, the fix round starts for
-  those as before.
+  those, as for any blocking finding.
 - **A review that leaves an item out** is incomplete: it gives no verdict, `nexkit/review`
   shows an error, nothing merges, and `/nexkit review` tries again. A plan that leaves one out
   is posted as it is, since the review decides.
@@ -431,7 +430,7 @@ ones, without choosing by hand on every issue.
   takes the top-level `agent`, `model` and `effort` unless it sets its own. A profile
   cannot set it, because triage runs before there is a profile.
 - `default_profile` is used when no plan chose a profile: `/nexkit go` without a plan, a
-  plan from before profiles were configured, and a plan whose triage failed. The cheapest
+  plan that chose no profile, and a plan whose triage failed. The cheapest
   profile is a safe choice, so a failure never costs more.
 - Write `when` in terms that an issue shows: the parts of the system it touches, how
   clear the request is. Triage reads only the issue and its discussion, not the code.
@@ -565,9 +564,9 @@ no person's token when it is private, and its installation on this repository; t
 in its file. Without that option doctor says that it could not tell. A run without
 `github_app` stops at its start with what to do, and so does one that gets no token.
 
-**Comments of earlier releases.** NexKit counts only what its App wrote and no one else
-changed, and what the Actions bot wrote proves nothing, which includes the plans and rounds of
-earlier releases. See [The Actions bot](security.md#the-actions-bot).
+**Comments of the Actions bot.** NexKit counts only what its App wrote and no one else
+changed, so what the Actions bot wrote proves nothing. See
+[The Actions bot](security.md#the-actions-bot).
 
 ## Reviewing your own pull requests
 
@@ -588,9 +587,9 @@ checks and `setup` come from `.nexkit/config.json` on the default branch, so a c
 counts from its merge on. The workflow file that `nexkit init` writes lets the command
 through, as it does every `/nexkit` comment.
 
-**CI that runs the same checks.** Before 6.1.0, a repository's own CI was the only check of
-a person's branch, so many CI workflows run on every push to any branch. With `/nexkit
-review`, the commands of `checks` then run twice on such a branch: once in CI on the push,
+**CI that runs the same checks.** Many CI workflows run on every push to any branch, as the
+only check of a person's branch. With `/nexkit review`, the commands of `checks` then run
+twice on such a branch: once in CI on the push,
 once in NexKit's `verify` on the command. `nexkit doctor` names each workflow whose `run`
 steps call a command of `checks` and whose `push` trigger reaches a branch other than the
 default branch and NexKit's, or whose `pull_request` trigger runs for a pull request into
@@ -613,19 +612,25 @@ than `checks`, such as a deployment, needs no change, nor does a CodeQL scan
 ## Workflow file
 
 `nexkit init` writes `.github/workflows/nexkit.yml`, which calls
-`phuongnse/nexkit/.github/workflows/pipeline.yml` at a fixed release tag. It starts NexKit
-for `/nexkit` comments, *Request changes* reviews on NexKit pull requests, dispatches,
-closed issues (for `close_parent_issues` and `autopilot`), opened, reopened,
-milestoned, labelled and unlabelled issues and closed milestones (for `autopilot`; the
-`null` scope needs no milestone events, and only `autopilot.priority` and
-`autopilot.labels` need label events), pushes to the default branch
-(for `conflicts.auto_resolve`) and an hourly schedule (for `usage_limit.resume`,
-`conflicts.auto_resolve` and `autopilot`). With those settings off, these events start
-short runs that end at once; remove the triggers you do not use if you prefer. Issue and
-milestone events other than a closed issue join the concurrency group
-`nexkit-autopilot`, so they never replace a command that waits for its issue. Each starts
-a sweep, even a milestone event with the `null` scope, since its run may have replaced a
-sweep that waited.
+`phuongnse/nexkit/.github/workflows/pipeline.yml` at a fixed release tag. Its triggers start
+NexKit for these events:
+
+| Trigger | Starts NexKit for |
+|---|---|
+| `issue_comment` | A comment that starts with `/nexkit`, on an issue or a pull request. |
+| `pull_request_review` | A writer's *Request changes* review starts a fix round, and an approval merges a pull request that GitHub refused to merge, both only on a `nexkit/` branch. See [Automatic merge](merges-and-waits.md#automatic-merge). |
+| `issues` | A closed issue (for `close_parent_issues` and `autopilot`), and an opened, reopened, milestoned, labelled or unlabelled issue (for `autopilot`). The `null` scope needs no milestone events, and only `autopilot.priority` and `autopilot.labels` need label events. |
+| `milestone` | A closed milestone (for `autopilot`, when the next one comes into scope). |
+| `push` | A push to the default branch (for `conflicts.auto_resolve`). |
+| `schedule` | An hourly run, for `usage_limit.resume`, `retry.wait_minutes`, `conflicts.auto_resolve` and `autopilot`. |
+| `workflow_run` | A finished run on the default branch of a workflow in `merge.after_workflows` or `autopilot.watch_workflows`, for `autopilot`. It is written as a comment unless `nexkit init --after-workflow` or `--watch-workflow` is given. See *When a finished run is noticed* under [Autopilot](autopilot.md#autopilot). |
+| `workflow_dispatch` | A run that a person starts by hand, or that NexKit starts with its `auto` input set, for automatic, conflict, resumed, retried and autopilot runs. |
+
+With those settings off, these events start short runs that end at once; remove the triggers
+you do not use if you prefer. Issue and milestone events other than a closed issue join the
+concurrency group `nexkit-autopilot`, so they never replace a command that waits for its
+issue. Each starts a sweep, even a milestone event with the `null` scope, since its run may
+have replaced a sweep that waited.
 
 The workflow's first job, `item`, names the work item of each run for its concurrency
 group (see [One run at a time](how-it-works.md#one-run-at-a-time)). It checks out NexKit's
@@ -639,9 +644,9 @@ steps](#upgrading-from-earlier-releases). `nexkit doctor` reports a problem when
 differ, and mentions a newer release without failing: staying on a release is your choice.
 
 NexKit's pull requests come from branches named `nexkit/issue-<number>`. The job's `if:`
-in the workflow file lets a *Request changes* review start a run only on a branch that
-starts with `nexkit/`. A `/nexkit` comment gets through on any pull request, and `route`
-says what it does there.
+in the workflow file lets a *Request changes* review or an approval start a run only on a
+branch that starts with `nexkit/`. A `/nexkit` comment gets through on any pull request, and
+`route` says what it does there.
 
 ## Upgrading from earlier releases
 
@@ -715,6 +720,13 @@ its parent.
    trigger for the default branch, so remove one of the two. `nexkit doctor` names each such
    workflow, whether by `branches`, by a `branches-ignore` that leaves the default branch
    out, or by no filter.
+
+### Bug issues of earlier releases
+
+Autopilot records each failure on a `bug` issue, as *Flaky runs* under
+[Autopilot](autopilot.md#autopilot) describes. An issue that NexKit 5.0 or earlier opened for
+one job's step keeps getting that job's records. An issue from NexKit 4.3.0, which holds every
+failure of a workflow, gets no new records.
 
 ### Label scope removed in 5.0
 

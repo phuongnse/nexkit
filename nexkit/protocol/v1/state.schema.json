@@ -648,6 +648,9 @@
         "answers": {
           "$ref": "policies.schema.json#/properties/answers"
         },
+        "afterFailure": {
+          "$ref": "policies.schema.json#/properties/afterFailure"
+        },
         "splitParts": {
           "$ref": "policies.schema.json#/properties/splitParts"
         },

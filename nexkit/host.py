@@ -20,7 +20,10 @@ protected paths its change needs (`autopilot.engine_round`): the answers to its 
 in a row, a recommended option that only closes the issue, with the round's finding that no
 change is needed or without it, one that only a new plan carries out, a writer's answer that
 only closes the issue, by a comment or a command, and a new plan after a collaborator's comment
-or the close of an issue that blocks it.
+or the close of an issue that blocks it. So does one that stopped as blocked with nothing to
+answer, which waits for a person and, with autopilot, is planned again after a comment or the
+close of an issue that blocks it (`afterFailure`). Only a `/nexkit go` that ended in an agent
+error stays NexKit 6's.
 
 And it decides what follows a round's checks and review on a NexKit pull request (`report`):
 the review's verdict and criteria, an automatic fix round within `fix.max_auto_rounds`, counted,
@@ -165,6 +168,7 @@ def policies(cfg):
         "conflicts": "resolve" if cfg["conflicts"]["auto_resolve"] else "person",
         "conflictRounds": cfg["conflicts"]["max_rounds"],
         "answers": cfg["autopilot"]["answer"],
+        "afterFailure": "replan" if taken else "person",
         "splits": taken,
         "splitParts": MAX_PARTS,
         "splitDepth": autopilot.MAX_DEPTH,
@@ -685,8 +689,9 @@ def _plan_doc(issue, record, comments):
 
 def after_go(gh, cfg, issue, comment, run, record, start, comments):
     """The step after the `/nexkit go` of `issue` whose run comment `comment`, with the
-    marker `run`, says it stopped as blocked with questions or protected paths
-    (`autopilot.engine_round`), as the engine decides it: a writer's comment since that
+    marker `run`, says it stopped as blocked, with questions or protected paths or with
+    nothing to answer (`autopilot.engine_round`, `autopilot._assess`), as the engine decides
+    it: a writer's comment since that
     picks the option that only closes the issue closes it; otherwise the round's result,
     then a collaborator's comment since, or the close of an issue that blocked it after the
     round started (`autopilot._since_stop`). `record` is autopilot's record and `start` what
@@ -827,7 +832,7 @@ class _RoundView:
             text = autopilot.REPEATED
         elif reason == "closeRecommended":
             text = autopilot.CLOSE_UNFOUNDED
-        elif reason == "question":
+        elif reason in ("question", "blocked"):
             text = self.run.get("attention") or autopilot.failed_reason("go")
         else:
             raise Refused(f"The engine waits for a person for {reason!r} after a blocked round.")

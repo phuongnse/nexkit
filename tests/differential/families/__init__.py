@@ -23,6 +23,7 @@ FAMILIES = {
     "waits": "#390",
     "pause": "#398",
     "ended": "#393",
+    "failure": "#415",
     "lost": "#399",
     "replan": "#413",
 }

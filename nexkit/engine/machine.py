@@ -101,6 +101,7 @@ DEFAULTS = {
     "conflictRounds": 3,
     "splits": False,
     "answers": "never",
+    "afterFailure": "person",
     "splitParts": 10,
     "splitDepth": 3,
     "retryWaits": [15, 30, 60],
@@ -1110,16 +1111,31 @@ class Step:
     def on_textChanged(self, event):
         return False
 
+    def fails_for_nothing(self):
+        """Whether the item failed because its round was blocked with nothing to answer, on no
+        change, and `afterFailure` plans it again: the item waits in `failed` with attention
+        `blocked`, which only that round gives (`autopilot._since_stop`)."""
+        return (
+            self.state == "failed"
+            and not self.s["change"]
+            and (self.s["attention"] or {}).get("reason") == "blocked"
+            and self.p["afterFailure"] == "replan"
+        )
+
     def on_commented(self, event):
         """A person's comment: the engine may answer the next plan's questions again, and with
         automatic approval a plan that waits for a person on an item with no change is
         planned again, since the plan did not hold what the comment says
-        (`autopilot._commented_after`)."""
+        (`autopilot._commented_after`). An item that failed for nothing is planned again
+        under `afterFailure` `replan` (`fails_for_nothing`)."""
         if event["by"]["role"] == "outside":
             return False
         answered = "answers" in self.s["asked"]
         self.forget_answers()
         if self.round_commented():
+            return True
+        if self.fails_for_nothing():
+            self.start_plan()
             return True
         plan = self.s["plan"]
         if (
@@ -1153,9 +1169,15 @@ class Step:
         """An item that blocks this one ended, or the bug issue of a failure that the base
         branch has: the waits on it end. With automatic approval, the questions of a round on
         an item with no change, which the engine could not answer, are planned again: the
-        round may have stopped for that work (`autopilot._since_stop`)."""
+        round may have stopped for that work (`autopilot._since_stop`). An item that failed for
+        nothing is planned again whether or not it waited on that blocker
+        (`fails_for_nothing`)."""
         ends = ("blocker", "baseFailure")
         waits = [w for w in self.s["waits"] if w["for"] in ends and w["on"] == event["blocker"]]
+        if self.fails_for_nothing():
+            self.s["waits"] = [wait for wait in self.s["waits"] if wait not in waits]
+            self.start_plan()
+            return True
         if not waits and self.p["planApproval"] == "autoWhenClean" and not self.s["change"]:
             if self.round_waits("question"):
                 self.start_plan()

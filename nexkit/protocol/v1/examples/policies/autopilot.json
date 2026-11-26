@@ -8,6 +8,7 @@
   "conflictRounds": 3,
   "splits": true,
   "answers": "recommended",
+  "afterFailure": "replan",
   "splitParts": 10,
   "splitDepth": 3
 }

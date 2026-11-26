@@ -542,6 +542,9 @@ class Walker:
         if (new["observed"] or {}).get("conflicts"):
             # The conflict policy acts on the checks that start again, as on any checks.
             return
+        if self.stopped_for_budget(state, new):
+            # A spent item budget stops the run that would start again (`budget` checks it).
+            return
         if new["state"] != state["state"]:
             flag("lost", "a lost run that starts again moved the item", info)
         if after.get("lost") != count + 1:
@@ -568,6 +571,13 @@ class Walker:
             flag("lost", "a lost run asks for no tick", info)
         if starts:
             flag("lost", "a lost run starts again before its wait", info)
+
+    @staticmethod
+    def stopped_for_budget(state, new):
+        """Whether this step failed the item for its own budget (the `budget` check asks that
+        it was spent): the stop is that rule's, not the rule of the run that would have started."""
+        text = (new["attention"] or {}).get("text")
+        return text in BUDGET_TEXTS and new["attention"] != (state or {}).get("attention")
 
     @staticmethod
     def item_left(item, used, at):
@@ -1066,6 +1076,9 @@ class Walker:
         seen = state["observed"]
         calm = not seen or not (seen["conflicts"] or seen["merged"] or seen["empty"])
         calm = calm and (not seen or seen["version"] == (state["change"] or {}).get("version"))
+        if self.stopped_for_budget(state, new):
+            # A spent item budget stops the round that the trust starts (`budget` checks it).
+            return
         if not calm or not answer["changed"]:
             if calm:
                 flag("trust", "a writer's trust on an untrusted stop changed nothing", info)

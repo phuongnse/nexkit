@@ -900,12 +900,12 @@ class AfterGoTest(HostCase):
         run = {"outcome": "agent_blocked", "attention": "It needs a secret.", **fields}
         return self.run_comment(number, "go", status="failure", **run)
 
-    def since_stop(self, number):
-        """NexKit 6's own reason for the issue's latest `/nexkit go`."""
-        issue = self.gh.issue(number)
-        comments = self.gh.comments(number)
-        [stop] = [c for c in comments if c.get("id") == self.stop_id]
-        return autopilot._since_stop(self.gh, issue, comments, stop)
+    def failed(self, number, **fields):
+        """A plan, then a `/nexkit go` that failed on an agent error with no pull request."""
+        self.issue(number)
+        self.plan(number)
+        run = {"outcome": "agent_error", "attention": "The agent crashed.", **fields}
+        return self.run_comment(number, "go", status="failure", **run)
 
     def stopped(self, number, asked=(), **fields):
         """A plan, then a `/nexkit go` that stopped as blocked with the questions `asked`, as
@@ -1013,8 +1013,7 @@ class AfterGoTest(HostCase):
         self.assertEqual(self.step(6)["reason"], autopilot.failed_reason("go"))
 
     def test_a_go_blocked_with_nothing_to_answer_plans_again_after_a_comment(self):
-        comment = self.blocked(5)
-        self.stop_id = comment["id"]
+        self.blocked(5)
         self.gh.human_comment(5, "The secret is set now.")
         kinds = [request["event"]["kind"] for request in self.requests(5)]
         self.assertEqual(kinds, ["actionFinished", "commented"])
@@ -1024,11 +1023,9 @@ class AfterGoTest(HostCase):
             "collaborators commented after the stopped `/nexkit go`, so autopilot plans again",
             step["reason"],
         )
-        self.assertEqual(step["reason"], self.since_stop(5))
 
     def test_a_go_blocked_with_nothing_to_answer_plans_again_after_a_blocker_closes(self):
         comment = self.blocked(5)
-        self.stop_id = comment["id"]
         comment["created_at"] = "2026-01-02T00:00:00Z"
         self.issue(7, state="closed", reason="completed")
         self.gh.issues[7]["closed_at"] = "2026-01-03T00:00:00Z"
@@ -1036,18 +1033,48 @@ class AfterGoTest(HostCase):
         step = self.step(5)
         self.assertEqual(step["command"], "plan")
         self.assertIn("#7, which blocked it, closed after the stopped", step["reason"])
-        self.assertEqual(step["reason"], self.since_stop(5))
 
     def test_a_blocker_that_closed_before_the_round_leaves_it_waiting(self):
         comment = self.blocked(5)
-        self.stop_id = comment["id"]
         comment["created_at"] = "2026-01-04T00:00:00Z"
         self.issue(7, state="closed", reason="completed")
         self.gh.issues[7]["closed_at"] = "2026-01-03T00:00:00Z"
         self.gh.blockers[5] = [7]
         step = self.step(5)
         self.assertEqual((step["state"], step["reason"]), ("waits", "It needs a secret."))
-        self.assertIsNone(self.since_stop(5))
+
+    def test_a_go_that_failed_on_an_error_is_sent_as_an_agent_error(self):
+        self.failed(5)
+        [request] = self.requests(5)
+        event = request["event"]
+        self.assertEqual(event["kind"], "actionFinished")
+        self.assertEqual(request["state"]["state"], "working")
+        self.assertEqual(event["result"]["error"], "The agent crashed.")
+        self.assertIsNone(event["result"]["output"])
+        step = self.step(5)
+        self.assertEqual((step["state"], step["reason"]), ("waits", "The agent crashed."))
+        self.failed(6, attention=None)
+        self.assertEqual(self.step(6)["reason"], autopilot.failed_reason("go"))
+
+    def test_a_go_that_failed_on_an_error_plans_again_after_a_comment_or_a_blocker_closes(self):
+        self.failed(5)
+        self.gh.human_comment(5, "The secret is set now.")
+        kinds = [request["event"]["kind"] for request in self.requests(5)]
+        self.assertEqual(kinds, ["actionFinished", "commented"])
+        step = self.step(5)
+        self.assertEqual((step["state"], step["command"]), ("start", "plan"))
+        self.assertIn(
+            "collaborators commented after the stopped `/nexkit go`, so autopilot plans again",
+            step["reason"],
+        )
+        comment = self.failed(6)
+        comment["created_at"] = "2026-01-02T00:00:00Z"
+        self.issue(7, state="closed", reason="completed")
+        self.gh.issues[7]["closed_at"] = "2026-01-03T00:00:00Z"
+        self.gh.blockers[6] = [7]
+        step = self.step(6)
+        self.assertEqual(step["command"], "plan")
+        self.assertIn("#7, which blocked it, closed after the stopped", step["reason"])
 
     def test_a_reason_the_host_has_no_words_for_is_refused_for_that_issue_alone(self):
         self.stopped(5, [ASKED])

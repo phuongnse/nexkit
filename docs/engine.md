@@ -551,8 +551,10 @@ host runs it through its own adapter. A new rule of the engine comes with a case
    sweep does not read the head then either. A `/nexkit go`
    that stopped as blocked with neither is the engine's too: it waits for a person, and with
    autopilot, under `afterFailure`, a comment or the close of an issue that blocks it plans it
-   again. Only a `/nexkit go` that ended in an agent error stays NexKit 6's
-   (`autopilot._since_stop`). Autopilot's start of the first plan of a new issue is the engine's
+   again. A `/nexkit go` that failed on an error, with no pull request, is the engine's too: the
+   host sends it as an agent error, and the engine ends it with attention `roundFailed` and
+   plans it again in the same way. A time-out and a failed plan wait for a person after a
+   comment. Autopilot's start of the first plan of a new issue is the engine's
    too (`host.first_plan`): the host builds the document that the import builds for an issue with
    no plan, `new` and waiting to start, sends a `requested` start with no person, and dispatches
    `/nexkit plan` only when the engine answers with a plan run. Otherwise the issue waits for a

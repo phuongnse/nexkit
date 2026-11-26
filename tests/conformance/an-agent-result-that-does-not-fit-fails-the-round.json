@@ -45,7 +45,7 @@
         "needPerson"
       ],
       "expect": {
-        "attention.reason": "failed",
+        "attention.reason": "roundFailed",
         "used.seconds": 60,
         "used.usd": 0.5
       }

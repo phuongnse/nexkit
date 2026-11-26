@@ -109,7 +109,7 @@
         "needPerson"
       ],
       "expect": {
-        "attention.reason": "failed",
+        "attention.reason": "roundFailed",
         "attention.text": "The agent stopped on a transient error after every wait to run it again.",
         "waits": []
       }

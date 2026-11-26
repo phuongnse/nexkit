@@ -271,7 +271,8 @@ when a list of what the code defines misses an entry. These rules close each of 
    [configuration reference](configuration.md) list each key the code defines and no other, with its
    default and range; that the runtime table of the configuration reference lists each runtime the
    code defines, with its providers and effort levels, and which runtimes report
-   usage limits; that the table of the App's
+   usage limits; that the provider table of the configuration reference lists each provider the code
+   defines and no other, with its settings and secret fields; that the table of the App's
    permissions in [configuration](configuration.md#the-github-app) matches the permissions and
    levels `nexkit/app.py` asks for; that the trigger table of [the workflow
    file](configuration.md#workflow-file) lists each trigger of the workflow template and no

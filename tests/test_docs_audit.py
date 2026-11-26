@@ -1,5 +1,6 @@
-"""scripts/docs_audit.py: the docs audit's pages, its reading with read-only tools, and the
-issues it plans, as .claude/skills/nexkit-docs-audit/SKILL.md says."""
+"""scripts/docs_audit.py: the docs audit's pages, its reading with read-only tools, the
+issues it plans, and the skill's table of kinds, which lists each kind the code defines and no
+other, as .claude/skills/nexkit-docs-audit/SKILL.md says."""
 
 import contextlib
 import importlib.util
@@ -13,6 +14,7 @@ from unittest import mock
 
 import nexkit.config
 from tests.support import FakeClaude
+from tests.test_docs import table
 
 ROOT = Path(__file__).resolve().parent.parent
 spec = importlib.util.spec_from_file_location("docs_audit", ROOT / "scripts" / "docs_audit.py")
@@ -20,6 +22,7 @@ audit = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(audit)
 
 REPO = "https://github.com/acme/nexkit"
+KINDS_HEADER = "| Kind | What it is |"
 
 
 def finding(page="docs/a.md", kind="wrong", statement="It says X.", line=3, **extra):
@@ -421,6 +424,21 @@ class MainTests(unittest.TestCase):
         )
         self.assertTrue(re.match(r"^\.claude/skills/", audit.SKILL))
         self.assertTrue((ROOT / audit.SKILL).exists())
+
+
+class KindsTests(unittest.TestCase):
+    def test_the_table_of_kinds_lists_each_kind_the_code_defines_and_no_other(self):
+        rows = table(ROOT / audit.SKILL, KINDS_HEADER)
+        self.assertTrue(rows, f"{audit.SKILL} has no table of kinds")
+        listed = {name for row in rows for name in re.findall(r"`([a-z-]+)`", row[0])}
+        for name in sorted(audit.KINDS):
+            with self.subTest(kind=name):
+                self.assertIn(name, listed, f"{audit.SKILL} has no row for the kind {name}")
+        for name in sorted(listed):
+            with self.subTest(row=name):
+                self.assertIn(
+                    name, audit.KINDS, f"{audit.SKILL} lists {name}, which KINDS does not define"
+                )
 
 
 if __name__ == "__main__":

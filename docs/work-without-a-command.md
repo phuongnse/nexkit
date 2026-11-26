@@ -171,6 +171,12 @@ Issue and milestone events other than a closed issue run in that group as well, 
 starts a sweep, even one that changes nothing in scope, such as a milestone event with
 the `null` scope, since it may have replaced a sweep that waited.
 
+A `workflow_dispatch` with the command `step` and an issue's number carries out that one
+issue's step, as a sweep would. Its `number` is the issue, so `nexkit item` gives it the
+issue's group, together with the issue's commands and the rounds on its pull request. It
+reads the issue again and changes nothing when the issue is closed, out of scope or has no
+step to take. It applies no `autopilot.max_parallel`. After a split, it starts a sweep.
+
 - **What starts a sweep.** The end of every NexKit run, except one that waits for a usage
   limit, and one that started the next automatic round itself while no finished run on
   the default branch needs a sweep (see *CI on the default branch*). A run whose `report`

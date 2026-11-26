@@ -3654,6 +3654,66 @@ def _count_round(gh, pull):
     return lambda: save_state(gh, pull, comment_id, before)
 
 
+def carry_out(gh, cfg, step, workflow, ref):
+    """Do what one step of `assess` says, as a sweep does for each issue: start, split,
+    close or merge, show a run that ended without a report as ended, or mention who is
+    needed once. Returns lines for the job log; a step that does nothing gives none.
+    Errors from GitHub become a line."""
+    state = step["state"]
+    if state in ("split", "close", "start", "merge"):
+        try:
+            if state == "split":
+                return [split(gh, step)]
+            if state == "close":
+                return close(gh, cfg, step, workflow, ref)
+            if state == "start":
+                return [start(gh, step, workflow, ref)]
+            # `report` holds what a merge leads to; it imports this module.
+            from .report import merge_waiting
+
+            return [merge_waiting(gh, cfg, step, workflow, ref)]
+        except GitHubError as exc:
+            what = {
+                "split": "split",
+                "merge": "merge the pull request of",
+                "close": "close",
+            }.get(state, f"start /nexkit {step.get('command')} on")
+            target = step.get("target") or step.get("pull") or step["number"]
+            return [f"Could not {what} #{target}: {exc}"]
+    if state == "active" and step.get("stale"):
+        # A run that ended without a report, which starts again later.
+        try:
+            settle(gh, step)
+        except GitHubError as exc:
+            return [f"Could not show the run on #{step['number']} as ended: {exc}"]
+    if state == "waits":
+        try:
+            settle(gh, step)
+            line = mention(gh, cfg, step)
+        except GitHubError as exc:
+            line = f"Could not mention anyone on #{step['number']}: {exc}"
+        return [line] if line else []
+    return []
+
+
+def step(gh, cfg, number, workflow, ref):
+    """Carry out one issue's step as a sweep does, in the issue's own queue and without
+    `autopilot.max_parallel`, which only a sweep that sees every issue can keep. An issue
+    that is closed, is a pull request or is out of scope, and a step that has nothing to
+    write, change nothing. After a split, starts a sweep so that the parts start."""
+    issue = gh.issue(number)
+    where = locate(gh, cfg)
+    if issue.get("state") != "open" or "pull_request" in issue or not in_scope(where, issue):
+        return [f"Autopilot: #{number} is closed, a pull request or out of scope; nothing to do."]
+    one = assess(gh, cfg, issue, nexkit_pulls(gh), where=where)
+    lines = carry_out(gh, cfg, one, workflow, ref)
+    if one["state"] == "split":
+        lines += request_safely(gh, cfg, workflow, ref)
+    if lines:
+        return lines
+    return [f"Autopilot: #{number} {one['state']}: {one.get('reason', '')}; nothing to do."]
+
+
 def sweep(gh, cfg, workflow, ref, closed=None, busy=None, alerts=None):
     """Start what moves each issue in scope on. Returns lines for the job log. Parts that
     a split creates are in scope at once, so the sweep looks again after a split. A CI
@@ -3672,43 +3732,13 @@ def sweep(gh, cfg, workflow, ref, closed=None, busy=None, alerts=None):
         for step in steps:
             if step["state"] in ("start", "merge", "close"):
                 busy.update(n for n in (step.get("target"), step.get("pull")) if n)
-            try:
-                if step["state"] == "split":
-                    lines.append(split(gh, step))
-                elif step["state"] == "close":
-                    lines += close(gh, cfg, step, workflow, ref)
-                elif step["state"] == "start":
-                    lines.append(start(gh, step, workflow, ref))
-                elif step["state"] == "merge":
-                    # `report` holds what a merge leads to; it imports this module.
-                    from .report import merge_waiting
-
-                    lines.append(merge_waiting(gh, cfg, step, workflow, ref))
-            except GitHubError as exc:
-                what = {
-                    "split": "split",
-                    "merge": "merge the pull request of",
-                    "close": "close",
-                }.get(step["state"], f"start /nexkit {step.get('command')} on")
-                target = step.get("target") or step.get("pull") or step["number"]
-                lines.append(f"Could not {what} #{target}: {exc}")
+            if step["state"] in ("split", "close", "start", "merge"):
+                lines += carry_out(gh, cfg, step, workflow, ref)
         if not splits:
             break
     for step in steps:
-        if step["state"] == "active" and step.get("stale"):
-            # A run that ended without a report, which starts again later.
-            try:
-                settle(gh, step)
-            except GitHubError as exc:
-                lines.append(f"Could not show the run on #{step['number']} as ended: {exc}")
-        if step["state"] != "waits":
-            continue
-        try:
-            settle(gh, step)
-            line = mention(gh, cfg, step)
-        except GitHubError as exc:
-            line = f"Could not mention anyone on #{step['number']}: {exc}"
-        lines += [line] if line else []
+        if step["state"] == "waits" or (step["state"] == "active" and step.get("stale")):
+            lines += carry_out(gh, cfg, step, workflow, ref)
     # A sweep that a closed issue started names it in its note, but what it says comes
     # from what GitHub shows, so a sweep that replaced it in the queue says it too.
     lines += done(gh, cfg, where)

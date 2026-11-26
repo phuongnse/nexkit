@@ -995,7 +995,7 @@ class ScenarioTests(unittest.TestCase):
                 pipe.issue(8)
             return done()
 
-        pipe = Pipeline(self, config(autopilot={"last_in_milestone_label": "last"}), script)
+        pipe = Pipeline(self, config(autopilot={"labels": {"last": {"wave": 1}}}), script)
         pipe.issue(5, labels=("last",))
         pipe.issue(6)
         played = pipe.play()
@@ -1015,7 +1015,7 @@ class ScenarioTests(unittest.TestCase):
             big = inputs["number"] == "6"
             return plan(too_large=big, split=parts if big else [])
 
-        settings = {"last_in_milestone_label": "last"}
+        settings = {"labels": {"last": {"wave": 1}}}
         pipe = Pipeline(self, config(autopilot=settings, close_parent_issues=True), script)
         pipe.issue(5, labels=("last",))
         pipe.issue(6)
@@ -1029,7 +1029,7 @@ class ScenarioTests(unittest.TestCase):
                 return plan(questions=[{"question": "Which?", "options": ["a", "b"]}])
             return plan() if inputs["command"] == "plan" else done()
 
-        pipe = Pipeline(self, config(autopilot={"last_in_milestone_label": "last"}), script)
+        pipe = Pipeline(self, config(autopilot={"labels": {"last": {"wave": 1}}}), script)
         pipe.issue(5, labels=("last",))
         pipe.issue(6)
         self.assertEqual(pipe.play(), [("plan", 6)])
@@ -1139,7 +1139,7 @@ class ScenarioTests(unittest.TestCase):
             big = inputs["number"] == "5"
             return plan(too_large=big, split=parts if big else [])
 
-        settings = {"last_in_milestone_label": "last"}
+        settings = {"labels": {"last": {"wave": 1}}}
         pipe = Pipeline(self, config(autopilot=settings, close_parent_issues=True), script)
         pipe.issue(5, labels=("last",))
         pipe.issue(6, labels=("last",))

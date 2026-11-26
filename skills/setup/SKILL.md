@@ -214,8 +214,7 @@ files or repository settings, and wait for confirmation.
    `autopilot.labels` and creates it; for more steps, such as a journey before the docs
    sweep, offer labels of waves 1 and 2. When a person's `bug` issues must not wait behind
    the milestone, offer `"priority": ["nexkit:ci", "nexkit:dependabot", "bug",
-   "nexkit:flaky"]`, and a label with `"hold": true` to hold an issue back. On a repository
-   that sets `autopilot.last_in_milestone_label`, replace it as `nexkit doctor` says.
+   "nexkit:flaky"]`, and a label with `"hold": true` to hold an issue back.
    When the repository relays Dependabot alerts to issues by a script of its own, or wants
    them worked on, offer `"autopilot": {"dependabot": "high"}` instead: each sweep opens one
    issue per advisory at or above that severity. Say that the App then needs the *Dependabot

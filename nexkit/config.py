@@ -69,9 +69,6 @@ DEFAULTS = {
         # What a label does: {"wave": N} holds an issue until every issue of a lower wave in
         # its milestone is closed; {"hold": true} starts nothing for it.
         "labels": {},
-        # Before `labels`: the label of an issue that runs only once the rest of its
-        # milestone is closed, now as if it were `labels: {"<label>": {"wave": 1}}`.
-        "last_in_milestone_label": None,
         # The lowest severity of Dependabot alert that gets an issue, or None for none.
         "dependabot": None,
     },
@@ -603,9 +600,6 @@ def _autopilot(settings):
     if settings["answer"] not in AUTOPILOT_ANSWERS:
         _fail(f"autopilot.answer must be one of {', '.join(AUTOPILOT_ANSWERS)}")
     _positive_int(settings["lost_after_minutes"], "autopilot.lost_after_minutes", 1440, minimum=5)
-    label = settings["last_in_milestone_label"]
-    if label is not None and not _label(label):
-        _fail(f"autopilot.last_in_milestone_label must be null or a label of {MAX_LABEL} or fewer")
     priority = settings["priority"]
     if not isinstance(priority, list) or not all(_label(name) for name in priority):
         _fail(f"autopilot.priority must be a list of labels of {MAX_LABEL} characters or fewer")
@@ -636,13 +630,8 @@ def _label(name):
 
 
 def autopilot_labels(cfg):
-    """`autopilot.labels`, with `autopilot.last_in_milestone_label` as a label of wave 1
-    unless `labels` names it too."""
-    found = dict(cfg["autopilot"]["labels"])
-    last = cfg["autopilot"]["last_in_milestone_label"]
-    if last and last not in found:
-        found[last] = {"wave": 1}
-    return found
+    """A copy of `autopilot.labels`."""
+    return dict(cfg["autopilot"]["labels"])
 
 
 def _workflow_files(workflows, where):
@@ -762,6 +751,17 @@ def validate(raw, *, layered=False):
                     )
                 # `"label": null`, as the full example of NexKit 4.x showed, set nothing.
                 value = {k: v for k, v in value.items() if k != "label"}
+            if key == "autopilot" and "last_in_milestone_label" in value:
+                old = value["last_in_milestone_label"]
+                if old is not None:
+                    name = old if isinstance(old, str) else "<label>"
+                    replacement = json.dumps({"labels": {name: {"wave": 1}}})[1:-1]
+                    _fail(
+                        "autopilot.last_in_milestone_label was removed in NexKit 7.0; "
+                        f"in autopilot, replace it with {replacement}"
+                    )
+                # `null`, as the full example of 6.x showed, sets nothing.
+                value = {k: v for k, v in value.items() if k != "last_in_milestone_label"}
             extra = set(value) - set(DEFAULTS[key])
             if extra:
                 _fail(f"Unknown keys in {key}: {', '.join(sorted(extra))}")

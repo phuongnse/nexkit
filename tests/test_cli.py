@@ -417,20 +417,12 @@ class InitDoctorTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("spells the label `Last`", found)
 
-    def test_doctor_names_the_replacement_of_the_label_to_run_last(self):
-        found = self.label_findings({"last_in_milestone_label": "last"}, {"labels/last": "last\n"})
-        self.assertEqual(
-            found,
-            [
-                (
-                    True,
-                    "Deprecated: autopilot.last_in_milestone_label still works as a label of "
-                    'wave 1, but NexKit 7.0 removes it: in autopilot, replace it with "labels": '
-                    '{"last": {"wave": 1}}',
-                ),
-                (True, "autopilot.last_in_milestone_label: acme/app has the label `last`"),
-            ],
+    def test_doctor_says_nothing_of_the_removed_label_to_run_last(self):
+        found = self.label_findings(
+            {"last_in_milestone_label": None, "labels": {"last": {"wave": 1}}},
+            {"labels/last": "last\n"},
         )
+        self.assertEqual(found, [(True, "autopilot.labels: acme/app has the label `last`")])
 
     def test_doctor_asks_about_no_label_without_the_setting(self):
         cli.main(["init", "--repo", str(self.root), "--check", "test=true"])

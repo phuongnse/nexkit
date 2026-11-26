@@ -158,6 +158,7 @@ class FakeGitHub:
         self.issues = {}
         self.issue_comments = defaultdict(list)
         self.pulls = {}
+        self.events = defaultdict(list)  # issue number -> its events, as the issue events API lists
         self.pr_reviews = defaultdict(list)
         self.pr_review_comments = defaultdict(list)
         self.created_reviews = []
@@ -261,16 +262,30 @@ class FakeGitHub:
         }
         return self.comment(number, render_run(run, text))
 
-    def human_comment(self, number, body, login="alice", association="COLLABORATOR"):
+    def human_comment(
+        self, number, body, login="alice", association="COLLABORATOR", at="2026-01-01T00:00:00Z"
+    ):
         comment = {
             "id": self._id(),
             "body": body,
             "user": {"login": login, "type": "User"},
             "author_association": association,
-            "created_at": "2026-01-01T00:00:00Z",
+            "created_at": at,
         }
         self.issue_comments[number].append(comment)
         return comment
+
+    def label_event(self, number, label, action="labeled", at="2026-01-01T00:00:00Z"):
+        """A `labeled` or `unlabeled` event of an issue, as the issue events API lists it."""
+        event = {
+            "id": self._id(),
+            "event": action,
+            "label": {"name": label},
+            "created_at": at,
+            "actor": {"login": "alice", "type": "User"},
+        }
+        self.events[number].append(event)
+        return event
 
     def add_pull(self, number, issue, head_sha="a" * 40, branch=None, state="open", repo=None):
         branch = branch or f"nexkit/issue-{issue}"
@@ -315,6 +330,9 @@ class FakeGitHub:
 
     def comments(self, number):
         return list(self.issue_comments[number])
+
+    def issue_events(self, number):
+        return list(self.events[number])
 
     def issue_comment(self, comment_id):
         for number, comments in self.issue_comments.items():

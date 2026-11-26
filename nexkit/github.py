@@ -394,6 +394,10 @@ class GitHub:
     def sub_issues(self, number):
         return self.paginate(f"{self._repo}/issues/{number}/sub_issues")
 
+    def issue_events(self, number):
+        """The events of an issue or pull request (labels, renames, closes), oldest first."""
+        return self.paginate(f"{self._repo}/issues/{number}/events")
+
     def issue_edits(self, number):
         """(login, time) of each change to an issue's text or title, its author's too, as
         REST writes logins. "" stands for someone GitHub cannot name: a deleted account, or,
@@ -410,7 +414,7 @@ class GitHub:
             changes.append((login, (node or {}).get("editedAt")))
         if (edits.get("pageInfo") or {}).get("hasNextPage"):
             changes.append(("", None))
-        for event in self.paginate(f"{self._repo}/issues/{number}/events"):
+        for event in self.issue_events(number):
             if event.get("event") == "renamed":
                 login = (event.get("actor") or {}).get("login") or ""
                 changes.append((login, event.get("created_at")))

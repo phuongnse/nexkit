@@ -180,7 +180,8 @@ request, the item is the number itself.
 Only commands, *Request changes* reviews, dispatches and the short run for a closed issue
 wait in this queue; other comments do not. GitHub keeps one waiting run, so a command
 posted while another waits replaces it, also one on the issue that waits behind a round of
-its pull request. A command that never got 👀 did not run; post it again.
+its pull request. A command that never got 👀 did not run; post it again. How the engine's
+host will take such a command from its comment instead is in [Hosts](engine.md#hosts).
 
 Four kinds of run keep a group of their own, so they never replace a command that waits:
 sweeps and the issue and milestone events that bring issues into scope share

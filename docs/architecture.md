@@ -27,8 +27,8 @@ engine's calls as a program that reads JSON on standard input.
 | `state.py` | Pipeline state, kept in comments that the App writes |
 | `progress.py` | Each run in its own comment, posted where the run started |
 | `refusal.py` | Why GitHub refused a merge, and what a person does about it |
-| `item_state.py`, `first_state.py` | Work items' state documents, in App comments; the first one, from NexKit 6's markers |
-| `host.py` | The GitHub host's calls of the engine's `step` |
+| `item_state.py`, `first_state.py` | Work items' state documents, in App comments, with the cursor of what the host took; the first one, from NexKit 6's markers |
+| `host.py` | The GitHub host's calls of the engine's `step`, and its taking of an item's events from their sources |
 | `maintain.py`, `usage.py`, `autopilot.py` | Work after other events; runs paused at a usage limit; autopilot sweeps |
 | `config.py`, `globs.py`, `scaffold.py`, `app.py` | Config schema and path globs; `nexkit init` and `doctor`; the GitHub App |
 | `status.py`, `snapshot.py`, `pin.py`, `github.py`, `gitutil.py` | `nexkit status` and its batched reads; the pinned release; REST, GraphQL and git helpers |
@@ -133,8 +133,10 @@ each comment holds, and [the state document](engine.md#the-state-document) descr
 engine decides from.
 
 Three modules read and write it. `state.py` keeps the pipeline's state in the App's comments,
-`item_state.py` keeps each work item's state document in one App comment, and `first_state.py`
-reads the first state document from NexKit 6's markers.
+`item_state.py` keeps each work item's state document in one App comment, together with the cursor
+that names the newest source the host took from GitHub, and `first_state.py` reads the first state
+document from NexKit 6's markers. `host.py` takes an item's events from their sources after that
+cursor and stores the engine's answers through `item_state.py`.
 
 ## The engine and its hosts
 

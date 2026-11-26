@@ -26,8 +26,9 @@ ENV = {"GITHUB_REPOSITORY": "acme/app", "GITHUB_RUN_ID": "4242"}
 TS = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)?")
 MARK = re.compile(r"<!-- nexkit:([a-z-]+) ([A-Za-z0-9+/=]+) -->")
 HUMAN = re.compile(r"\d\d:\d\d UTC on \d{4}-\d\d-\d\d|\d{4}-\d\d-\d\d \d\d:\d\d UTC")
-# What a fake GitHub keeps that is no state of GitHub: the reads it saw.
-SKIP = {"calls", "_next"}
+# What a fake GitHub keeps that is no state of GitHub: the reads it saw, and the issue events
+# that a test lists for it, which only the engine's host reads and NexKit 6's fake lacks.
+SKIP = {"calls", "_next", "events"}
 
 
 def enter(root):

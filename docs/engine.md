@@ -6,7 +6,8 @@ at a time, and its `prompt` call, which writes each stage's prompt as NexKit 6 d
 `nexkit-engine step` and `nexkit-engine prompt` and over HTTP as `nexkit-engine serve`; its
 `sweep` call, which orders and limits the items that start, as `nexkit-engine sweep`, which
 NexKit 6's autopilot takes its starts from; the
-GitHub host's state comment and its import of NexKit 6's open work, which nothing calls yet; and
+GitHub host's state comment, its import of NexKit 6's open work and its taking of an item's events
+from their sources (`host.take`), which nothing calls yet; and
 the decisions that follow a plan, a blocked `/nexkit go` and a round on a pull request, its
 review, diagnosis and conflict rounds, the end of a round's wait and which rounds count, and the
 start of a new issue's first plan, which
@@ -162,9 +163,11 @@ needed.
   restarts, scales and fails over without the engine.
 - **It has a revision.** Each answer that changes the state raises the revision by one, and the
   host stores it only if the revision it read is still the stored one, as a compare-and-set. A
-  host whose write loses reads the state again and sends the event again. An answer that changes
-  nothing, such as to a duplicate result, says so and gives the state back as it came, with no
-  actions, so the host writes nothing.
+  host whose write loses reads the state again and sends the event again. A host whose every try
+  loses leaves the event at its source, past the host's cursor, so that the next run takes it
+  (see [Events and actions arrive more than once](#events-and-actions-arrive-more-than-once)). An
+  answer that changes nothing, such as to a duplicate result, says so and gives the state back as it
+  came, with no actions, so the host writes nothing.
 - **It holds decisions and the history that the prompts show, not other prose.** The state keeps
   what the engine decides from: the state name, the change, questions, criteria and checklist
   outcomes, findings in short, failure signatures, counts, and the tokens, time and money its
@@ -223,6 +226,12 @@ The protocol is built for delivery at least once, in any order a host's queues g
   agent's result, so the report job and the sweep give one result the same id. An id is built
   only from GitHub's number, never from a text, and its kind keeps a comment and a review with
   one number apart.
+  The state comment also keeps the host's own cursor, a hidden line before the state marker with the
+  time and the event id of the newest source that the host took. The host answers only the sources
+  after it, since `recentEvents` keeps the ids of events that changed the state, and run results
+  would push a comment's id out of it. The cursor moves past a source even when its answer changed
+  nothing, in a write of its own on the same revision, so that an old remark is never answered later
+  on a state that moved on. Another writer's write keeps it.
 - **A person's decision names what it decides on.** `planApproved`, and a `go`, name the plan by
   its text's ref; `answered` names the questions by the ref that asked them, as the state's
   attention has it: a plan's text ref, or a round's agent action; `changeApproved` names the change
@@ -243,7 +252,8 @@ The protocol is built for delivery at least once, in any order a host's queues g
   - It handles one item's events one at a time, in the order it handles them, and stores each
     answer with the revision's compare-and-set. When its write loses, it reads the state again and
     handles the event again, reading the change again for an observation rather than sending the
-    old one.
+    old one. When every try loses, the run fails and the event stays at its source, past the
+    cursor, for the next run to take once.
   - It reads an observation while it handles the event, never from a payload that waited in a
     queue, and from a read that sees every write the host made itself, such as the branch's ref
     rather than a cached pull request. A stale read would take the change back to a version it
@@ -716,7 +726,7 @@ count as its own words say, such as "4 issues are in progress".
 | Observed as empty | No file differs between the base and the head | The draft changes nothing any more |
 | Observes on | `pull_request` synchronize, closed and reopened; a push to the base, for each open change; each sweep | A change of the draft or of the release; its worker, from time to time |
 | A change closed unmerged | Not an observation: the host tells a person, who drops the item or asks for the work again | The draft was discarded: the same |
-| One event at a time | An issue's commands and its NexKit pull request's rounds share one concurrency group keyed by the issue, which the workflow's `item` job derives with `nexkit item` and passes on (a person's pull request is its own item). Planned in [#332](https://github.com/phuongnse/nexkit/issues/332): every run that writes an item's state shares such a group; the sweep sends one event into each item's group rather than writing states itself. A run that waits may be replaced by a newer one, so a run takes the item's events from their sources (comments, reviews, labels) and each already has a stable id from its source, such as the comment's id (see [Events and actions arrive more than once](#events-and-actions-arrive-more-than-once)). The run is then the state comment's only writer, which stands for the compare-and-set. The sweep's one event per item is a criterion of #332. Today the `autopilot`, `resume` and `approved-N` groups stay apart from the items' (`nexkit/templates/workflow.yml`), and the sweep writes many items in one run | The request's row, locked while its event is handled |
+| One event at a time | An issue's commands and its NexKit pull request's rounds share one concurrency group keyed by the issue, which the workflow's `item` job derives with `nexkit item` and passes on (a person's pull request is its own item). A run that waits may be replaced by a newer one, so a run in the item's group takes every event of the item that is still at its source (`host.take`): comments, reviews and hold-label changes after the state comment's cursor, oldest first, each with its stable id from its source, such as the comment's id (see [Events and actions arrive more than once](#events-and-actions-arrive-more-than-once)). A command whose run was replaced is answered by the run that ran, and a run whose writes keep losing fails and leaves its event for the next run. The live pipeline does not call `host.take` yet. Planned in [#332](https://github.com/phuongnse/nexkit/issues/332): every run that writes an item's state shares such a group, and the sweep and an approval send one event into each item's group rather than writing states themselves, so that the run is the state comment's only writer, which stands for the compare-and-set. Today the `autopilot`, `resume` and `approved-N` groups stay apart from the items' (`nexkit/templates/workflow.yml`), and the sweep writes many items in one run | The request's row, locked while its event is handled |
 
 What exists only because of GitHub stays in the GitHub host: the GitHub App, statuses, branch
 clean-up, watching CI and flaky runs, Dependabot, artifacts, carrying a review over a base merge,
@@ -729,8 +739,8 @@ read, and reads the comment again by its id just before it edits it, making no w
 stored revision moved. GitHub has no compare-and-set, so a write by anyone else between that
 read and the edit is still overwritten: the check narrows the race to that moment and does not
 close it. A write that loses reads the state again and handles the event again, after a short
-wait of random length, a few times; then the event goes back to its run, which fails so that
-it is sent again, never dropped.
+wait of random length, a few times; then the run fails, and the event stays at its source, past
+the cursor, so that the next run takes it, never dropped.
 
 ## Conformance
 

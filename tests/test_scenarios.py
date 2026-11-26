@@ -24,7 +24,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
-from nexkit import autopilot, progress, state
+from nexkit import autopilot, host, item_state, progress, state
 from nexkit.checks import check_matrix
 from nexkit.github import GitHubError
 from nexkit.maintain import maintain, paused_runs, within_reach
@@ -42,6 +42,8 @@ from nexkit.state import (
 )
 from nexkit.status import collect
 from tests.support import BOT_LOGIN, FakeGitHub, make_config
+from tests.test_item_state import CREATED, HELD, RELEASED
+from tests.test_item_state import step as engine_step
 
 WORKFLOW = "acme/app/.github/workflows/nexkit.yml@refs/heads/main"
 # The jobs of a run in each stage, as GitHub lists them while it runs there.
@@ -483,6 +485,94 @@ class Pipeline:
         )
         self.test.assertLessEqual(state["auto_fixes"], self.cfg["fix"]["max_auto_rounds"])
         self.test.assertEqual(state["auto_fixes"], len(ran) + waiting, f"#{pull}: {self.played}")
+
+
+class ItemGroup:
+    """One work item's concurrency group, as GitHub keeps it: one run runs and one waits, and a
+    run queued while another waits replaces it, so its event is never answered by its own run.
+    Each run takes the item's events from their sources with `host.take`
+    (docs/engine.md#hosts), on a state comment that is already stored."""
+
+    NUMBER = 5
+
+    def __init__(self, test):
+        self.test = test
+        self.gh = FakeGitHub()
+        self.cfg = make_config(autopilot={"enabled": True})
+        self.gh.add_issue(self.NUMBER)
+        first, _, _ = engine_step(None, {**CREATED, "item": str(self.NUMBER)})
+        test.assertTrue(item_state.write(self.gh, self.NUMBER, first, (None, None)))
+        self.running = None
+        self.waiting = None
+        self.replaced = []  # the runs that a newer one replaced, which never ran
+        self.failed = []  # the runs that failed because every write lost
+        self.answered = []  # the id of each event that a run sent to the engine, in order
+        self.clock = itertools.count(1)
+
+    def post(self, body, login="alice"):
+        """A person's comment on the item, one second after the one before."""
+        at = f"2026-01-02T00:00:{next(self.clock):02d}Z"
+        return self.gh.human_comment(self.NUMBER, body, login=login, at=at)
+
+    def queue(self, run):
+        """A run of the item's group starts when none runs, and otherwise waits, replacing
+        the one that waits."""
+        if self.running is None:
+            self._start(run)
+            return
+        if self.waiting is not None:
+            self.replaced.append(self.waiting)
+        self.waiting = run
+
+    def finish(self):
+        """The run that runs ends, and the one that waits starts."""
+        self.running, run, self.waiting = None, self.waiting, None
+        if run is not None:
+            self._start(run)
+
+    def _start(self, run):
+        """A run starts by taking the item's events, and fails when every try to store an
+        answer lost."""
+        self.running = run
+        real = host.step
+
+        def spy(state, event, found):
+            self.answered.append(event["id"])
+            return real(state, event, found)
+
+        with mock.patch.object(host, "step", spy):
+            try:
+                host.take(self.gh, self.cfg, self.NUMBER, sleep=lambda seconds: None)
+            except item_state.Moved:
+                self.failed.append(run)
+                self.finish()
+
+    def state(self):
+        return item_state.read(self.gh, self.NUMBER)[1]
+
+    def cursor(self):
+        return item_state.since(item_state.read(self.gh, self.NUMBER)[0])
+
+    def losing(self):
+        """Every write of a run loses: another job stores its answer to a hold, as the
+        group's other writers would, between a write's read and its edit."""
+        return mock.patch.object(self.gh, "issue_comment", self._other_first(self.gh.issue_comment))
+
+    def _other_first(self, real):
+        busy = []
+
+        def read(comment_id):
+            if not busy:
+                busy.append(True)
+                found = item_state.read(self.gh, self.NUMBER)
+                other = {**(RELEASED if found[1]["hold"] else HELD), "item": str(self.NUMBER)}
+                other["id"] = f"other-{found[1]['revision']}"
+                new, _, _ = engine_step(found[1], other)
+                self.test.assertTrue(item_state.write(self.gh, self.NUMBER, new, found))
+                busy.clear()
+            return real(comment_id)
+
+        return read
 
 
 def review_state(gh, head):
@@ -3120,6 +3210,56 @@ class ScenarioTests(unittest.TestCase):
         # Two merges, and NexKit started no workflow after either.
         self.assertEqual(len(pipe.gh.merged), 2)
         self.assertEqual({d["workflow"] for d in pipe.gh.dispatches}, {"nexkit.yml"})
+
+    def test_a_run_whose_writes_all_lose_fails_and_the_next_run_answers_the_event_once(self):
+        group = ItemGroup(self)
+        asked = group.post("/nexkit plan Keep it short")
+        with group.losing():
+            group.queue("first")
+        # The run fails, and stores nothing of the event, which stays at its source.
+        self.assertEqual(
+            (group.failed, group.answered), (["first"], [f"comment-{asked['id']}"] * 4)
+        )
+        self.assertNotIn(f"comment-{asked['id']}", group.state()["recentEvents"])
+        self.assertEqual(group.state()["state"], "new")
+        self.assertIsNone(group.cursor())
+        # A later comment starts the next run, which answers the event once, and the new one.
+        remark = group.post("Thanks, that helps", login="bob")
+        group.answered.clear()
+        group.queue("second")
+        self.assertEqual(group.failed, ["first"])
+        self.assertEqual(group.answered, [f"comment-{asked['id']}", f"comment-{remark['id']}"])
+        self.assertEqual(group.state()["state"], "planning")
+        self.assertEqual(group.state()["recentEvents"].count(f"comment-{asked['id']}"), 1)
+        self.assertEqual(group.cursor()[1], f"comment-{remark['id']}")
+        # And a third run finds nothing.
+        group.finish()
+        group.answered.clear()
+        group.queue("third")
+        self.assertEqual(group.answered, [])
+
+    def test_a_command_whose_run_a_newer_one_replaced_is_answered_by_the_run_that_ran(self):
+        group = ItemGroup(self)
+        group.queue("running")
+        # While it runs, two commands are posted, and the second one's run replaces the first's.
+        self.assertEqual(group.answered, [])
+        first = group.post("/nexkit plan Start with the tests")
+        group.queue("first")
+        second = group.post("/nexkit plan Start with the docs")
+        group.queue("second")
+        self.assertEqual((group.replaced, group.waiting), (["first"], "second"))
+        group.finish()
+        # The run that came before both took neither, and the one that ran after it answered
+        # both, in the order they were posted.
+        ids = [f"comment-{first['id']}", f"comment-{second['id']}"]
+        self.assertEqual(group.answered, ids)
+        self.assertEqual(group.failed, [])
+        state = group.state()
+        # The first command's effect is stored: it started the plan, so the second one, a
+        # plan while one runs, changed nothing.
+        self.assertEqual(state["state"], "planning")
+        self.assertEqual(state["recentEvents"][-1], ids[0])
+        self.assertEqual(group.cursor()[1], ids[1])
 
 
 if __name__ == "__main__":

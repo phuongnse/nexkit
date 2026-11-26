@@ -115,14 +115,21 @@ leaves each issue that would start waiting for a person.
 
 An item whose document or event the engine refuses waits for a person, and no other item is
 held up by it.
+
+Taking an item's events (`take`) is a building block that the live pipeline does not call yet: a
+run in an item's group answers every comment, review and hold-label change of the item after the
+cursor in its state comment, oldest first, so that a command whose run a newer one replaced is
+still answered, and a run whose writes keep losing fails and leaves its event for the next run.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
+import time
 
-from . import autopilot, engine, first_state, protocol, usage
+from . import autopilot, engine, first_state, item_state, protocol, usage
 from .checks import failing_signatures
 from .engine.machine import RUNS
 from .protocol.size import LONGEST, MOST
@@ -131,6 +138,7 @@ from .schema import filled
 from .state import (
     MAX_PARTS,
     asked_last,
+    by_bot,
     closing_answer,
     closing_option,
     latest_plan,
@@ -330,7 +338,7 @@ def _waiting(doc):
 
 # The kinds of source that name an event: a comment, a review, an event of the issue events API,
 # a dispatch (by its run) and an agent's result (by its run).
-SOURCES = ("comment", "review", "issue-event", "dispatch", "run")
+SOURCES = item_state.SOURCES
 
 
 def event_id(kind, source):
@@ -429,6 +437,160 @@ def _said(gh, number, comment, picked, doc):
     text = {"name": "comment", "ref": str(comment["id"])}
     by = _person(by, "reader")
     return _event("commented", number, at, event_id("comment", comment), by=by, text=text)
+
+
+# -- an item's events from their sources ---------------------------------------------------
+
+# What a writer's `/nexkit` comment can ask for on an item.
+COMMANDS = ("plan", "go", "fix", "review", "trust")
+# The form of a time that the cursor keeps.
+TIME = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ")
+
+
+class _Source:
+    """A comment, a review or an issue event of GitHub, with the id of the event it gives
+    (`event_id`) and the time it happened."""
+
+    def __init__(self, kind, raw):
+        self.kind, self.raw = kind, raw
+        self.name = event_id(kind, raw)
+        at = raw.get("submitted_at" if kind == "review" else "created_at") or ""
+        self.at = at if TIME.fullmatch(at) else NO_TIME
+
+    @property
+    def cursor(self):
+        return self.at, self.name
+
+    @property
+    def place(self):
+        return item_state.order(self.cursor)
+
+
+def _pull(doc):
+    """The number of the change of the document `doc`, or None when it has none."""
+    change = (doc.get("change") or {}).get("id") or ""
+    return int(change) if change.isdigit() else None
+
+
+def _sources(gh, number, pull, comments):
+    """The `_Source`s of work item `number`, whose change is the pull request `pull`, oldest
+    first, in the order the cursor keeps: its comments (`comments`) and those of its pull
+    request, the reviews of the pull request and the item's issue events."""
+    found = [("comment", raw) for raw in comments]
+    if pull:
+        found += [("comment", raw) for raw in gh.comments(pull)] if pull != number else []
+        found += [("review", raw) for raw in gh.reviews(pull)]
+    found += [("issue-event", raw) for raw in gh.issue_events(number)]
+    sources = []
+    for kind, raw in found:
+        try:
+            sources.append(_Source(kind, raw))
+        except ValueError:
+            # No number of GitHub's names it, so no event can.
+            continue
+    return sorted(sources, key=lambda one: one.place)
+
+
+def _newer(one, cursor, stored):
+    """Whether the source `one` is after the cursor, or, while there is none, after the state
+    comment `stored`: the import that built the first document read what came before, and of
+    the comment's own second only a comment with a higher id follows."""
+    if cursor:
+        return one.place > item_state.order(cursor)
+    at = stored.get("created_at") or NO_TIME
+    return one.at > at or (one.at == at and one.kind == "comment" and one.raw["id"] > stored["id"])
+
+
+def _taken_event(gh, number, pull, comments, holds, one):
+    """The event that the source `one` gives work item `number`, or None for a source that
+    gives none: a comment of a bot, a review that is not a writer's approval or request for
+    changes, any other event of an issue. `pull` is the item's change, `comments` the item's
+    comments and `holds` the labels that hold. What each event does is the engine's to decide."""
+    raw, name, at = one.raw, one.name, one.at
+    user = raw.get("user") or {}
+    login = user.get("login") or ""
+    if one.kind == "issue-event":
+        label = (raw.get("label") or {}).get("name")
+        if raw.get("event") not in ("labeled", "unlabeled") or label not in holds:
+            return None
+        if raw["event"] == "labeled":
+            return _event("held", number, at, name, label=label)
+        return _event("released", number, at, name)
+    if user.get("type") == "Bot" or by_bot(raw):
+        return None
+    if one.kind == "review":
+        state = str(raw.get("state") or "").upper()
+        if state not in ("APPROVED", "CHANGES_REQUESTED") or not login or not gh.can_write(login):
+            return None
+        by = _person(login, "writer")
+        if state == "CHANGES_REQUESTED":
+            note = {"name": "review", "ref": str(raw["id"])}
+            return _event("changesRequested", number, at, name, by=by, note=note)
+        version = raw.get("commit_id")
+        if not pull or not isinstance(version, str) or not version:
+            return None
+        fields = {"by": by, "changeId": str(pull), "changeVersion": version}
+        return _event("changeApproved", number, at, name, **fields)
+    from .route import parse_command
+
+    command, note = parse_command(raw.get("body"))
+    if command in COMMANDS and login and gh.can_write(login):
+        plan = None
+        if command == "go":
+            # The plan the person saw: the latest one posted before their command.
+            before = [other for other in comments if other["id"] < raw["id"]]
+            found = latest_plan(before)
+            plan = str(found["id"]) if found else None
+        fields = {"what": command, "by": _person(login, "writer"), "note": note, "plan": plan}
+        return _event("requested", number, at, name, **fields)
+    text = {"name": "comment", "ref": str(raw["id"])}
+    return _event("commented", number, at, name, by=_person(login, "reader"), text=text)
+
+
+def take(gh, cfg, number, tries=item_state.TRIES, sleep=time.sleep):
+    """Answer every event of work item `number` that is still at its source after the state
+    comment's cursor, oldest first, and give [(event, actions)] of those whose answer was
+    stored. A run of an item's concurrency group calls it, so that a command whose run GitHub
+    replaced with a newer one is answered by the run that ran, not lost
+    (docs/engine.md#hosts). The sources are a writer's `/nexkit` comments, other people's
+    comments, a writer's approving or *Request changes* review of the change, and the adding
+    and removing of a label of `autopilot.labels` that holds the item. Each is answered by
+    `item_state.apply`, which moves the cursor past it, even when the answer changes nothing,
+    so that an old remark is never answered on a state that moved on. A work item with no
+    state comment has nothing to take.
+
+    Raises `item_state.Moved` when every try to store an answer lost to other writes: the run
+    fails, and that event, and those after it, stay at their source for the next run. Raises
+    `Refused` when the engine refuses an event or the state."""
+    comment, doc = item_state.read(gh, number)
+    if doc is None:
+        return []
+    cursor = item_state.since(comment)
+    comments = gh.comments(number)
+    pull = _pull(doc)
+    sources = [one for one in _sources(gh, number, pull, comments) if _newer(one, cursor, comment)]
+    holds = {name for name, does in autopilot.autopilot_labels(cfg).items() if does.get("hold")}
+    found_policies = policies(cfg)
+    taken = []
+    for one in sources:
+        event = _taken_event(gh, number, pull, comments, holds, one)
+        if event is not None and protocol.check(event, "event.schema.json", "event"):
+            event = None
+        if event is None:
+            continue
+        stored = []
+
+        def answer(state, event=event, stored=stored):
+            found = step(state, event, found_policies)
+            stored[:] = [found["changed"]]
+            return found["state"], found["actions"], found["changed"]
+
+        _, actions = item_state.apply(
+            gh, number, answer, tries=tries, sleep=sleep, since=one.cursor
+        )
+        if stored and stored[0]:
+            taken.append((event, actions))
+    return taken
 
 
 # -- what follows a plan -------------------------------------------------------------------

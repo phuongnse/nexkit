@@ -3,6 +3,7 @@ autopilot and `route` carry out in NexKit 6's words, storing no state
 (docs/engine.md#getting-there)."""
 
 import base64
+import copy
 import json
 import os
 from datetime import UTC, datetime, timedelta
@@ -29,6 +30,8 @@ from nexkit.state import (
 )
 from tests.support import BOT_LOGIN, FakeGitHub, make_config
 from tests.test_autopilot import AutopilotCase, pilot, plan_output
+from tests.test_item_state import CREATED
+from tests.test_item_state import step as engine_step
 from tests.test_report import (
     HEAD,
     LIMIT,
@@ -356,6 +359,192 @@ class EventIdTest(HostCase):
         with mock.patch.dict(os.environ, clear=True):
             self.assertEqual(host._run_event_id(), "run-local")
             self.assertEqual(host._run_event_id("https://example.com/x"), "run-local")
+
+
+LATER = "2026-01-02T00:00:00Z"
+
+
+class TakeTest(TestCase):
+    """A run takes its item's events from their sources, after the state comment's cursor
+    (docs/engine.md#hosts)."""
+
+    CFG = make_config(autopilot={"enabled": True, "labels": {"on-hold": {"hold": True}}})
+
+    def setUp(self):
+        self.gh = FakeGitHub()
+        self.gh.add_issue(42)
+        self.gh.add_pull(6, 42)
+        change = {"id": "6", "version": HEAD}
+        state, _, _ = engine_step(None, {**CREATED, "change": change})
+        self.assertTrue(item_state.write(self.gh, 42, state, (None, None)))
+
+    def state(self):
+        return item_state.read(self.gh, 42)[1]
+
+    def cursor(self):
+        return item_state.since(item_state.read(self.gh, 42)[0])
+
+    def review(self, login, state, at=LATER, commit=HEAD):
+        review = {
+            "id": self.gh._id(),
+            "user": {"login": login, "type": "User"},
+            "state": state,
+            "commit_id": commit,
+            "submitted_at": at,
+            "body": "Looks right.",
+        }
+        self.gh.pr_reviews[6].append(review)
+        return review
+
+    def taken_events(self):
+        """The events that `take` sends to the engine, which stands still, and the cursor."""
+        events = []
+
+        def step(state, event, found_policies):
+            events.append(event)
+            return {"state": state, "actions": [], "changed": False}
+
+        with mock.patch.object(host, "step", step):
+            self.assertEqual(host.take(self.gh, self.CFG, 42), [])
+        return events
+
+    def test_a_writer_s_command_a_remark_a_review_and_a_hold_label_each_give_an_event(self):
+        gh = self.gh
+        plan = gh.comment(42, f"{PLAN_MARKER}\n## Plan\n\nAdd it.")
+        gh.comment(42, "A comment of NexKit's own, which is no event")
+        asked = gh.human_comment(42, "/nexkit plan Keep it short", at=LATER)
+        gone = gh.human_comment(42, "/nexkit go", at=LATER)
+        remark = gh.human_comment(42, "Why not a cache?", login="bob", at=LATER)
+        pretend = gh.human_comment(42, "/nexkit go", login="bob", at=LATER)
+        fix = gh.human_comment(6, "/nexkit fix the test", at=LATER)
+        robot = gh.human_comment(42, "Tests are green", login="some-app[bot]", at=LATER)
+        robot["user"]["type"] = "Bot"
+        approved = self.review("alice", "APPROVED")
+        asked_changes = self.review("alice", "CHANGES_REQUESTED")
+        self.review("bob", "APPROVED")
+        self.review("alice", "COMMENTED")
+        held = gh.label_event(42, "on-hold", "labeled", at=LATER)
+        freed = gh.label_event(42, "on-hold", "unlabeled", at=LATER)
+        gh.label_event(42, "bug", "labeled", at=LATER)
+        events = self.taken_events()
+        shown = [(e["kind"], e["id"]) for e in events]
+        self.assertEqual(
+            shown,
+            [
+                ("requested", f"comment-{asked['id']}"),
+                ("requested", f"comment-{gone['id']}"),
+                ("commented", f"comment-{remark['id']}"),
+                ("commented", f"comment-{pretend['id']}"),
+                ("requested", f"comment-{fix['id']}"),
+                ("changeApproved", f"review-{approved['id']}"),
+                ("changesRequested", f"review-{asked_changes['id']}"),
+                ("held", f"issue-event-{held['id']}"),
+                ("released", f"issue-event-{freed['id']}"),
+            ],
+        )
+        by_id = {e["id"]: e for e in events}
+        one = by_id[f"comment-{asked['id']}"]
+        self.assertEqual((one["what"], one["note"], one["plan"]), ("plan", "Keep it short", None))
+        self.assertEqual(one["by"], {"id": "alice", "role": "writer"})
+        # A `go` names the plan that came before it, which is what the person saw.
+        self.assertEqual(by_id[f"comment-{gone['id']}"]["plan"], str(plan["id"]))
+        self.assertEqual(by_id[f"comment-{fix['id']}"]["what"], "fix")
+        pretended = by_id[f"comment-{pretend['id']}"]
+        self.assertEqual(pretended["by"], {"id": "bob", "role": "reader"})
+        self.assertEqual(pretended["text"], {"name": "comment", "ref": str(pretend["id"])})
+        sure = by_id[f"review-{approved['id']}"]
+        self.assertEqual((sure["changeId"], sure["changeVersion"]), ("6", HEAD))
+        note = by_id[f"review-{asked_changes['id']}"]["note"]
+        self.assertEqual(note, {"name": "review", "ref": str(asked_changes["id"])})
+        self.assertEqual(by_id[f"issue-event-{held['id']}"]["label"], "on-hold")
+        # Each is the engine's to check, and each carries its time from the source.
+        self.assertEqual({e["at"] for e in events}, {LATER})
+
+    def test_a_command_is_answered_and_the_cursor_names_the_source_taken(self):
+        asked = self.gh.human_comment(42, "/nexkit plan", at=LATER)
+        [(event, actions)] = host.take(self.gh, self.CFG, 42)
+        self.assertEqual(event["id"], f"comment-{asked['id']}")
+        self.assertEqual([a["kind"] for a in actions], ["runAgent"])
+        self.assertEqual(self.state()["state"], "planning")
+        self.assertEqual(self.cursor(), (LATER, f"comment-{asked['id']}"))
+
+    def test_taking_again_after_the_events_were_taken_changes_nothing(self):
+        self.gh.human_comment(42, "/nexkit plan", at=LATER)
+        self.gh.human_comment(42, "Thanks", login="bob", at=LATER)
+        self.gh.label_event(42, "on-hold", "labeled", at=LATER)
+        self.assertEqual(len(host.take(self.gh, self.CFG, 42)), 2)
+        before = copy.deepcopy(self.gh.issue_comments[42])
+        with mock.patch.object(host.engine, "answer") as answer:
+            with mock.patch.object(self.gh, "update_comment") as update:
+                self.assertEqual(host.take(self.gh, self.CFG, 42), [])
+        answer.assert_not_called()
+        update.assert_not_called()
+        self.assertEqual(self.gh.issue_comments[42], before)
+
+    def test_another_writer_s_write_keeps_the_cursor(self):
+        asked = self.gh.human_comment(42, "/nexkit plan", at=LATER)
+        host.take(self.gh, self.CFG, 42)
+        read = item_state.read(self.gh, 42)
+        other, _, _ = engine_step(read[1], {**CREATED, "kind": "held", "id": "h1", "label": "x"})
+        self.assertTrue(item_state.write(self.gh, 42, other, read))
+        self.assertTrue(self.state()["hold"])
+        self.assertEqual(self.cursor(), (LATER, f"comment-{asked['id']}"))
+        self.assertEqual(host.take(self.gh, self.CFG, 42), [])
+
+    def test_a_source_whose_answer_changed_nothing_is_not_answered_after_the_state_moved(self):
+        # A remark on an item that is not waiting for a plan changes nothing.
+        remark = self.gh.human_comment(42, "Why not a cache?", login="bob", at=LATER)
+        self.assertEqual(host.take(self.gh, self.CFG, 42), [])
+        self.assertEqual(self.cursor(), (LATER, f"comment-{remark['id']}"))
+        revision = self.state()["revision"]
+        # The state moves on, as a plan that waits for a person would take the remark.
+        read = item_state.read(self.gh, 42)
+        other, _, _ = engine_step(read[1], {**CREATED, "kind": "held", "id": "h1", "label": "x"})
+        self.assertTrue(item_state.write(self.gh, 42, other, read))
+        calls = []
+        with mock.patch.object(host, "step", side_effect=lambda *a: calls.append(a)):
+            self.assertEqual(host.take(self.gh, self.CFG, 42), [])
+        self.assertEqual(calls, [])
+        self.assertEqual(self.state()["revision"], revision + 1)
+
+    def test_what_is_older_than_the_state_comment_counts_as_taken(self):
+        # The import that built the first document read a command that came before it, so
+        # of the comment's own second only a later comment is taken.
+        gh = FakeGitHub()
+        gh.add_issue(42)
+        second = "2026-01-01T00:00:00Z"
+        before = gh.human_comment(42, "/nexkit plan", at=second)
+        state, _, _ = engine_step(None, CREATED)
+        self.assertTrue(item_state.write(gh, 42, state, (None, None)))
+        after = gh.human_comment(42, "/nexkit plan", at=second)
+        # Listed late, though from before: it is not taken either.
+        gh.human_comment(42, "/nexkit plan", at="2025-12-31T23:59:59Z")
+        [(event, _)] = host.take(gh, self.CFG, 42)
+        self.assertEqual(event["id"], f"comment-{after['id']}")
+        self.assertLess(before["id"], after["id"])
+
+    def test_a_work_item_with_no_state_comment_has_nothing_to_take(self):
+        gh = FakeGitHub()
+        gh.human_comment(7, "/nexkit plan", at=LATER)
+        self.assertEqual(host.take(gh, self.CFG, 7), [])
+
+    def test_a_cursor_only_counts_on_the_line_before_the_state_marker(self):
+        asked = self.gh.human_comment(42, "/nexkit plan", at=LATER)
+        host.take(self.gh, self.CFG, 42)
+        [state_comment] = [c for c in self.gh.comments(42) if "nexkit:item-since" in c["body"]]
+        line = f"{item_state.SINCE_PREFIX}{LATER} comment-{asked['id']} -->"
+        self.assertIn(f"{line}\n{item_state.PREFIX}", state_comment["body"])
+        for body in (
+            state_comment["body"].replace(f"{line}\n", f"{line}\n\n"),
+            f"{line}\n" + state_comment["body"].replace(f"{line}\n", ""),
+            state_comment["body"]
+            .replace(f"{line}\n", "")
+            .replace("### NexKit state", f"### NexKit state\n\n{line}"),
+        ):
+            changed = {**state_comment, "body": body}
+            self.assertIsNone(item_state.since(changed), body)
+        edited = {**state_comment, "editors": ["mallory"]}
+        self.assertIsNone(item_state.since(edited))
 
 
 class RefusedTest(HostCase):

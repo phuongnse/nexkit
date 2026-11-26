@@ -186,6 +186,23 @@ def planned_issue(gh, number=5, labels=()):
     gh.comment(number, render_run(go, "D."))
 
 
+def sweep(gh, cfg):
+    """A sweep and the `step` runs it sent, as the pipeline plays them, and its log. NexKit 6
+    sends no `step`, so there it is the plain sweep. The `step` dispatches leave `gh`, so
+    what the two trees compare is what the sweeps and their steps wrote."""
+    from nexkit import autopilot
+
+    if not hasattr(autopilot, "request_step"):
+        return autopilot.sweep(gh, cfg, "nexkit.yml", "main")
+    from tests.support import play_sweep
+
+    return play_sweep(gh, cfg)
+
+
+# `after` has an argument that hides `sweep`.
+_sweep = sweep
+
+
 def after(gh, cfg, res, tag="", sweep=True, status=True):
     """The preview of issue 5's step, a sweep's log, GitHub after it, and `nexkit status`,
     into `res` under keys ending in `tag`."""
@@ -197,7 +214,7 @@ def after(gh, cfg, res, tag="", sweep=True, status=True):
 
     res["step" + tag] = attempt(preview)
     if sweep:
-        res["lines" + tag] = attempt(autopilot.sweep, gh, cfg, "nexkit.yml", "main")
+        res["lines" + tag] = attempt(_sweep, gh, cfg)
         res["gh" + tag] = snapshot(gh)
     if status:
         from nexkit.status import collect

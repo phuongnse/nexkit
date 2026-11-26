@@ -55,8 +55,10 @@ def jobs_in(stage):
     return [*jobs[: STAGES.index(stage)], {"name": f"nexkit / {stage}", "status": "in_progress"}]
 
 
-# More dispatches than this in one scenario is a loop.
+# More dispatches than this in one scenario is a loop. `step` runs count apart: each writing
+# issue gets one in every sweep.
 MAX_DISPATCHES = 60
+MAX_STEPS = 200
 TOKENS = {"input": 10, "cached": 0, "output": 10}
 
 
@@ -126,6 +128,12 @@ class Pipeline:
         # What a dispatch of another workflow, such as CI after a merge, leads to.
         self.workflow = workflow
         self.handled = 0
+        self.step_dispatches = 0  # `step` dispatches handled, which MAX_DISPATCHES leaves out
+        self.steps = 0  # `step` runs played
+        # The places in `gh.dispatches` of the sweeps that a `step` run started after a split.
+        self.split_sweeps = set()
+        # How many `step` runs GitHub drops from the queue before they run.
+        self.lose_steps = 0
         self.runs = itertools.count(100)
         self.heads = itertools.count(1)
         self.played = []  # (command, number, outcome) for each run
@@ -139,6 +147,10 @@ class Pipeline:
             sleep = mock.patch(patched)
             sleep.start()
             test.addCleanup(sleep.stop)
+        # The sweep job waits for the `step` runs it sent: they run, in the issue's queue.
+        waits = mock.patch("nexkit.maintain.wait_for_ends", self.wait_for_ends)
+        waits.start()
+        test.addCleanup(waits.stop)
         self.gh.add_milestone(1)
         self.dispatch = self.gh.dispatch
         self.gh.dispatch = self.dispatched
@@ -208,10 +220,15 @@ class Pipeline:
 
     def drain_one(self):
         """Run the next dispatch."""
-        self.test.assertLess(self.handled, MAX_DISPATCHES, f"a loop: {self.played}")
         dispatch = self.gh.dispatches[self.handled]
         inputs = dispatch["inputs"]
         self.handled += 1
+        if dispatch["workflow"] == "nexkit.yml" and inputs["command"] == "step":
+            self.step_dispatches += 1
+            self.play_step(dispatch)
+            return
+        handled = self.handled - self.step_dispatches
+        self.test.assertLess(handled, MAX_DISPATCHES, f"a loop: {self.played}")
         if dispatch["workflow"] != "nexkit.yml":
             if self.workflow:
                 self.workflow(self, dispatch["workflow"])
@@ -231,6 +248,45 @@ class Pipeline:
             self.check()
         else:
             self.run(dispatch)
+
+    def play_step(self, dispatch):
+        """A `step` run, in the issue's queue: it runs the issue's step, unless a sweep's wait
+        played it already, or GitHub dropped it (`lose_steps`)."""
+        run_id = dispatch["run_id"]
+        if self.gh.runs[run_id]["status"] == "completed":
+            return
+        if self.lose_steps:
+            self.lose_steps -= 1
+            self.gh.runs[run_id] = {"status": "completed", "conclusion": "cancelled"}
+            return
+        self.steps += 1
+        self.test.assertLess(self.steps, MAX_STEPS, f"a loop: {self.played}")
+        before = len(self.gh.dispatches)
+        decision = route(self.gh, "workflow_dispatch", {}, dispatch["inputs"])
+        lines = maintain(
+            self.gh, decision, self.cfg, workflow="nexkit.yml", ref="main", alerts=self.alerts
+        )
+        # A split that GitHub refused in part still starts the sweep.
+        if any(line.startswith(("Split #", "Could not split #")) for line in lines):
+            self.split_sweeps.update(
+                place
+                for place in range(before, len(self.gh.dispatches))
+                if self.gh.dispatches[place]["inputs"].get("command") == "autopilot"
+            )
+        self.gh.runs[run_id] = {"status": "completed"}
+
+    def wait_for_ends(self, gh, run_ids, tries=0, delay=0):
+        """The sweep job's wait for its `step` runs: they run while it waits."""
+        for dispatch in self.gh.dispatches:
+            if dispatch.get("run_id") in run_ids:
+                self.play_step(dispatch)
+        return f"The {len(run_ids)} step runs ended."
+
+    def sweep(self):
+        """A sweep and its `step` runs, in the order the sweep job plays them."""
+        sent = []
+        lines = autopilot.sweep(self.gh, self.cfg, "nexkit.yml", "main", sent=sent)
+        return lines + [self.wait_for_ends(self.gh, sent)]
 
     def waited(self, inputs):
         """The run that waits for paused commands: time passes until the first one within
@@ -438,6 +494,8 @@ class Pipeline:
         data = collect(self.gh, self.cfg, workers=1)
         listed = {(item["number"], item["reason"]) for item in data["needs_person"]}
         people = {s["number"] for s in steps if s["state"] == "waits" and s.get("person")}
+        # A `step` run that splits an issue starts a sweep, which sends the mention.
+        sweeping = any(place >= self.handled for place in self.split_sweeps)
         for step in steps:
             where = f"#{step['number']} {step['state']}: {step['reason']} after {self.played}"
             if step["state"] == "waits" and step.get("person"):
@@ -445,7 +503,7 @@ class Pipeline:
                 self.test.assertTrue(
                     any((n, step["reason"]) in listed for n in numbers), f"not listed: {where}"
                 )
-                if self.cfg["notify"]:
+                if self.cfg["notify"] and not sweeping:
                     self.test.assertTrue(step.get("mentioned"), f"nobody mentioned: {where}")
             if quiet:
                 # Or it waits for an issue that waits for a person, who hears about that one.
@@ -660,6 +718,36 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
         self.assertEqual(pipe.gh.issues[5]["state"], "closed")
         self.assertTrue(pipe.gh.comments_matching(5, "NexKit autopilot finished milestone M1"))
+
+    def test_a_sweep_and_its_step_runs_take_a_plan_that_needs_nobody_to_its_merge(self):
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+        self.assertEqual(pipe.gh.merged, [(6, pipe.gh.pulls[6]["head"]["sha"], "squash")])
+        # The sweeps wrote none of it: each start and the close came from a `step` run.
+        steps = [d["inputs"] for d in pipe.gh.dispatches if d["inputs"]["command"] == "step"]
+        self.assertTrue(steps)
+        self.assertEqual({step["number"] for step in steps}, {"5"})
+        self.assertTrue(pipe.gh.comments_matching(5, "NexKit autopilot finished milestone M1"))
+
+    def test_a_step_dispatch_that_never_ran_is_sent_again_by_a_later_sweep(self):
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.lose_steps = 1
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
+        steps = [d for d in pipe.gh.dispatches if d["inputs"]["command"] == "step"]
+        lost, *later = steps
+        self.assertEqual(pipe.gh.runs[lost["run_id"]]["conclusion"], "cancelled")
+        # Nothing on the issue changed, so the next sweep found the same step and sent it.
+        self.assertEqual(lost["inputs"], later[0]["inputs"])
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
 
     def test_a_round_that_blocks_after_autopilots_answer_waits(self):
         # Every go blocks, recommending that a person download the artifacts.
@@ -1489,7 +1577,7 @@ class ScenarioTests(unittest.TestCase):
             if inputs["command"] == "plan":
                 # Hours pass while its run waits in the queue, and the schedule sweeps.
                 pipe.later(timedelta(hours=2))
-                autopilot.sweep(pipe.gh, pipe.cfg, "nexkit.yml", "main")
+                pipe.sweep()
                 return plan()
             return done()
 
@@ -1590,9 +1678,8 @@ class ScenarioTests(unittest.TestCase):
             pipe.drain()
         self.assertEqual(pipe.gh.merged, [])
         self.assertEqual([command for command, *_ in pipe.played], ["plan", "go"])
-        self.assertEqual(
-            [d["inputs"]["command"] for d in pipe.gh.dispatches[started:]], ["autopilot"] * 3
-        )
+        commands = [d["inputs"]["command"] for d in pipe.gh.dispatches[started:]]
+        self.assertEqual([c for c in commands if c != "step"], ["autopilot"] * 3)
         self.assertEqual(pipe.gh.issues[5]["state"], "open")
         [mention] = [c for n in (5, 6) for c in pipe.gh.comments_matching(n, "a person is needed")]
         self.assertIn("`@mallory` changed a comment of NexKit's", mention["body"])
@@ -2781,7 +2868,11 @@ class ScenarioTests(unittest.TestCase):
         pipe.issue(5)
         played = pipe.play()
         self.assertEqual(played[:3], [("plan", 5), ("plan", 5), ("plan", 6)])
-        notes = [d["inputs"]["note"] for d in pipe.gh.dispatches if d["inputs"]["number"] == "5"]
+        notes = [
+            d["inputs"]["note"]
+            for d in pipe.gh.dispatches
+            if d["inputs"]["number"] == "5" and d["inputs"]["command"] != "step"
+        ]
         note = autopilot.FEWER_NOTE.format(parts=len(many), most=state.MAX_PARTS)
         self.assertEqual(notes, ["", note])
         self.assertEqual(issues(pipe), [5, 6, 7])  # the long split filed nothing
@@ -2934,7 +3025,7 @@ class ScenarioTests(unittest.TestCase):
             pipe.gh.close_pull(pull["number"])
         before = len(pipe.gh.issues)
         records = len(pipe.gh.comments(flaky["number"]))
-        autopilot.sweep(pipe.gh, pipe.cfg, "nexkit.yml", "main")
+        pipe.sweep()
         self.assertEqual(len(pipe.gh.issues), before)
         self.assertEqual(len(pipe.gh.comments(flaky["number"])), records)
 
@@ -3041,7 +3132,7 @@ class ScenarioTests(unittest.TestCase):
             # opens its bug issue. The three issues in progress fill `max_parallel`.
             if "ci.yml" not in pipe.gh.workflow_history:
                 red_main(pipe.gh)
-                autopilot.sweep(pipe.gh, pipe.cfg, "nexkit.yml", "main")
+                pipe.sweep()
 
         def script(pipe, inputs):
             if inputs["command"] == "plan":

@@ -8,7 +8,7 @@ sweep and GitHub after it, and `nexkit status`."""
 import random
 from unittest import mock
 
-from common import HEAD, WAIT, attempt, quiet, snapshot
+from common import HEAD, WAIT, attempt, quiet, snapshot, sweep
 
 from nexkit import autopilot
 from nexkit.state import PLAN_MARKER, render_run
@@ -104,7 +104,7 @@ def run(sc):
 
     with over, quiet():
         res["steps"] = attempt(preview)
-        res["lines"] = attempt(autopilot.sweep, gh, cfg, "nexkit.yml", "main")
+        res["lines"] = attempt(sweep, gh, cfg)
         res["gh"] = snapshot(gh)
         from nexkit.status import collect
 

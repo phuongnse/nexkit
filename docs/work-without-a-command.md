@@ -27,10 +27,11 @@ sub-issue, NexKit looks at its parent's sub-issues:
 A merge by a person closes the issue through GitHub, and the `issues: closed` event starts
 the check. When NexKit closes the issue itself after an automatic merge, `report` runs the
 same check in that run, for its comment, and the event's run finds nothing left. With
-[autopilot](#autopilot), each sweep also closes an open parent in scope whose sub-issues
-are all closed, one of them completed, by the same rules, in case that check did not run or
-failed: it never asks a person to close it. A parent missing parts of its plan waits for a
-person from the sweep that finds it, even while its other parts are open. Whichever comes first closes the parent, with
+[autopilot](#autopilot), each sweep also sends a `step` run that closes an open parent in
+scope whose sub-issues are all closed, one of them completed, by the same rules, in case
+that check did not run or failed: it never asks a person to close it. A parent missing
+parts of its plan waits for a person from the sweep that finds it, even while its other
+parts are open. Whichever comes first closes the parent, with
 one comment, posted after its close; a run whose close another request beat leaves the
 parent, and the comment, to it.
 
@@ -46,8 +47,8 @@ a head that moved gets `/nexkit review`. The run has a concurrency group of its 
 time](how-it-works.md#one-run-at-a-time)), and an approval while a round runs, or of a pull request whose round ended otherwise, starts
 nothing. Nor does one of a pull request that a person merged or closed first, as an owner
 who approves and merges in the same minute does: its round comment stays as it was, and
-nobody is mentioned. With autopilot, each sweep also merges a `merge_refused` pull request that GitHub
-reports as mergeable (see [Automatic merge](merges-and-waits.md#automatic-merge)).
+nobody is mentioned. With autopilot, each sweep also sends a `step` run that merges a
+`merge_refused` pull request that GitHub reports as mergeable (see [Automatic merge](merges-and-waits.md#automatic-merge)).
 
 **Resolving conflicts** (`conflicts.auto_resolve`). When the base branch moves, NexKit
 checks its open pull requests into it. GitHub's own mergeability check decides, so no
@@ -135,7 +136,8 @@ it still runs, and decides by itself.
 
 With `autopilot.enabled` (see [Autopilot](autopilot.md#autopilot)), NexKit posts no
 commands on its own behalf; it starts them the way it starts automatic rounds, with a
-dispatch of the workflow. A *sweep* decides which:
+dispatch of the workflow. A *sweep* decides which, and sends a `step` for each issue whose
+next step writes, which carries it out:
 
 1. It finds the scope: the open issues of the earliest open milestone, oldest first, or
    with `autopilot.scope: null` every open issue, by milestone in the same order and then
@@ -146,9 +148,13 @@ dispatch of the workflow. A *sweep* decides which:
    request, the latest plan, the issue's *blocked by* relationships and whether it
    has sub-issues. From these alone it decides: start `/nexkit plan`, start `/nexkit go`,
    leave it to a run or pull request that carries it on, or leave it to a person.
-3. It starts what it decided, in that order, while fewer than `autopilot.max_parallel`
-   issues are in progress, and records each start on the issue. A `bug` issue about the
-   default branch that pull requests wait for starts even when they fill the limit.
+3. It sends a `step` for each issue whose step writes, in that order, while fewer than
+   `autopilot.max_parallel` issues are in progress: a start, a split, a close, a merge, a
+   run that ended without a report to show as ended, or a person to mention. It writes none
+   of these itself. The `step` run carries the step out in the issue's group, and records
+   each start on the issue. A `bug` issue about the default branch that pull requests wait
+   for starts even when they fill the limit. After sending its steps, the sweep waits for
+   those runs to end, within a limit (`END_POLL` and `END_TRIES` in `maintain.py`).
 4. With `conflicts.auto_resolve`, it then starts the conflict round of each open NexKit
    pull request that conflicts with its base branch, as described in *Resolving
    conflicts* under [Work without a command](#work-without-a-command). With
@@ -173,10 +179,15 @@ starts a sweep, even one that changes nothing in scope, such as a milestone even
 the `null` scope, since it may have replaced a sweep that waited.
 
 A `workflow_dispatch` with the command `step` and an issue's number carries out that one
-issue's step, as a sweep would. Its `number` is the issue, so `nexkit item` gives it the
-issue's group, together with the issue's commands and the rounds on its pull request. It
-reads the issue again and changes nothing when the issue is closed, out of scope or has no
-step to take. It applies no `autopilot.max_parallel`. After a split, it starts a sweep.
+issue's step, which a sweep sends it. Its `number` is the issue, so `nexkit item` gives it
+the issue's group, together with the issue's commands and the rounds on its pull request.
+It reads the issue again and changes nothing when the issue is closed, out of scope or has
+no step to take. It applies no `autopilot.max_parallel`, which only a sweep that sees every
+issue can keep; a start still goes through the engine's sweep, so an engine that refuses it
+leaves the issue waiting for a person, who is mentioned. After a split, it starts a sweep,
+and that sweep sends the parts their steps: they start one sweep after the split. A `step`
+that GitHub replaced or never ran leaves the issue as it was, so the next sweep finds the
+same step and sends it again.
 
 - **What starts a sweep.** The end of every NexKit run, except one that waits for a usage
   limit, and one that started the next automatic round itself while no finished run on
@@ -206,8 +217,10 @@ step to take. It applies no `autopilot.max_parallel`. After a split, it starts a
   replaced that one in the queue says it as well.
 - **A command starts once.** The record on the issue holds the command, the issue or pull
   request it runs on, and the newest NexKit run comment on both when it started. A run
-  that starts posts a new run comment, so the next sweep sees that the command ran.
-  Until then, the issue counts as in progress and nothing else starts on it. A command
+  that starts posts a new run comment, so the next sweep sees that the command ran. The
+  `step` run that starts it records it, and the sweep waits for its `step` runs to end,
+  so the next sweep sees that record and sends no second `step` that would replace a
+  command waiting in the issue's queue. Until then, the issue counts as in progress and nothing else starts on it. A command
   that has posted no run comment and whose workflow run, which the dispatch names, ended
   did not run, for example because `route` refused it, a newer run in its concurrency
   group replaced it in the queue, or GitHub created no job for it. It starts again with
@@ -225,8 +238,8 @@ step to take. It applies no `autopilot.max_parallel`. After a split, it starts a
 - **Runs that never end.** A sweep reads the workflow run behind each run comment that
   still says running. When that run has ended, its `report` never wrote the outcome. The
   run's own `finish` job starts a sweep that waits for the run to end, so this is handled
-  within minutes; any later sweep handles it too. The sweep marks the comment as ended
-  without a report and sets the round's pending statuses to errors (the `maintain` job
+  within minutes; any later sweep handles it too. The sweep sends a `step` run, which marks
+  the comment as ended without a report and sets the round's pending statuses to errors (the `maintain` job
   has `statuses: write` for this). A command autopilot started, or an automatic round,
   starts again, as the same kind of round, so one after failing checks merges a base
   branch that moved first, as for a command that did not run. When its agent or review job ran to its end, so that
@@ -292,8 +305,8 @@ step to take. It applies no `autopilot.max_parallel`. After a split, it starts a
   order: every part it lists, or none. A plan that is too large but suggests no parts is planned once more, with a note
   that asks for parts that each fit one session; a second such plan waits for a person. Each part of the plan names the earlier parts it needs (`depends_on`); NexKit
   keeps only earlier parts, so the parts cannot wait for each other in a cycle, and records
-  each as a *blocked by* relationship on GitHub. Parts that need no other part start at
-  once. Each part is reviewed only against its own acceptance criteria, so the plan
+  each as a *blocked by* relationship on GitHub. Parts that need no other part start
+  together, in the sweep that the `step` run that splits the issue starts. Each part is reviewed only against its own acceptance criteria, so the plan
   prompt asks that a part that later parts depend on has criteria that prove end to end
   the behaviour they rely on, such as a request that goes through every service a later
   part calls, not only that the part starts or answers. The plan of a part that needs

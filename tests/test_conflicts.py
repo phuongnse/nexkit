@@ -26,7 +26,16 @@ from nexkit.state import (
     setup_fingerprint,
 )
 from nexkit.usage import iso
-from tests.support import BOT_LOGIN, CALC, SUB, FakeGitHub, GitRepos, git, make_config
+from tests.support import (
+    BOT_LOGIN,
+    CALC,
+    SUB,
+    FakeGitHub,
+    GitRepos,
+    git,
+    make_config,
+    play_sweep,
+)
 from tests.test_report import HEAD, ReportCase, decision
 from tests.test_route import comment_event
 
@@ -1032,8 +1041,6 @@ class MergeRefusalTests(ReportCase):
         self.assertFalse(rounds_started(self.gh))
 
     def test_a_merge_waiting_for_required_checks_is_merged_by_a_later_sweep(self):
-        from nexkit import autopilot
-
         self.gh.add_milestone(1)
         self.gh.issues[5]["milestone"] = {"number": 1}
         self.candidate()
@@ -1045,7 +1052,7 @@ class MergeRefusalTests(ReportCase):
         self.assertIn("The next autopilot sweep merges it", outcome["summary"])
         # The checks pass: the next sweep merges and closes the issue.
         self.gh.merge_error = None
-        lines = autopilot.sweep(self.gh, self.cfg, "nexkit.yml", "main")
+        lines = play_sweep(self.gh, self.cfg)
         self.assertIn("#6: merged.", lines)
         self.assertEqual(self.gh.issues[5]["state"], "closed")
         row = self.gh.run_comments(6)[-1]
@@ -1067,15 +1074,13 @@ class MergeRefusalTests(ReportCase):
             self.assertTrue(outcome["attention"])
 
     def test_a_failed_merge_step_says_so_and_the_sweep_goes_on(self):
-        from nexkit import autopilot
-
         self.gh.add_milestone(1)
         self.gh.issues[5]["milestone"] = {"number": 1}
         self.candidate()
         self.gh.merge_error = [GitHubError(405, 'Required status check "e2e" is expected.')]
         self.run_report(cfg=self.cfg)
         with mock.patch("nexkit.report.merge_pull", side_effect=GitHubError(502, "Bad")):
-            lines = autopilot.sweep(self.gh, self.cfg, "nexkit.yml", "main")
+            lines = play_sweep(self.gh, self.cfg)
         self.assertIn("Could not merge the pull request of #6: GitHub API 502: Bad", lines)
 
     def waiting_merge(self):
@@ -1100,14 +1105,13 @@ class MergeRefusalTests(ReportCase):
         self.gh.merge_error = GitHubError(405, 'Required status check "e2e" is failing.')
 
     def test_a_merge_waiting_whose_required_check_fails_gets_an_automatic_fix_round(self):
-        from nexkit import autopilot
         from nexkit.context import _after_failed_checks
         from nexkit.state import read_state
         from tests.support import feedback as _feedback
 
         self.waiting_merge()
         self.e2e_fails()
-        lines = autopilot.sweep(self.gh, self.cfg, "nexkit.yml", "main")
+        lines = play_sweep(self.gh, self.cfg)
         self.assertIn("#6: auto_fix.", lines)
         row = self.gh.run_comments(6)[-1]
         self.assertEqual((row["run"]["outcome"], row["run"]["status"]), ("auto_fix", "success"))
@@ -1177,7 +1181,7 @@ class MergeRefusalTests(ReportCase):
         self.assertFalse(rounds_started(self.gh))
 
     def test_a_merge_waiting_whose_required_check_fails_without_rounds_left_waits(self):
-        from nexkit import autopilot, progress
+        from nexkit import progress
         from nexkit.state import read_state
 
         self.waiting_merge()
@@ -1186,7 +1190,7 @@ class MergeRefusalTests(ReportCase):
         state["auto_fixes"] = 2
         progress.save_state(self.gh, 6, comment_id, state, read)
         self.e2e_fails()
-        autopilot.sweep(self.gh, self.cfg, "nexkit.yml", "main")
+        play_sweep(self.gh, self.cfg)
         row = self.gh.run_comments(6)[-1]["run"]
         self.assertEqual(row["outcome"], "needs_human")
         self.assertIn("no automatic fix rounds remain", row["attention"])
@@ -1246,11 +1250,9 @@ class MergeRefusalTests(ReportCase):
         self.assertIn("have not passed for six hours", step_["reason"])
 
     def test_a_new_commit_on_a_merge_waiting_pull_request_is_reviewed(self):
-        from nexkit import autopilot
-
         self.waiting_merge()
         self.gh.pulls[6]["head"]["sha"] = "e" * 40
-        lines = autopilot.sweep(self.gh, self.cfg, "nexkit.yml", "main")
+        lines = play_sweep(self.gh, self.cfg)
         self.assertIn(
             "Started /nexkit review on #6: pull request #6 got the new commit `eeeeeee` while "
             "its merge waited for required checks.",
@@ -1262,7 +1264,7 @@ class MergeRefusalTests(ReportCase):
         )
         self.assertFalse(self.gh.merged)
         # It starts once: the next sweep waits for it, and nobody is mentioned.
-        autopilot.sweep(self.gh, self.cfg, "nexkit.yml", "main")
+        play_sweep(self.gh, self.cfg)
         self.assertEqual(len(rounds_started(self.gh)), 1)
         self.assertFalse(self.gh.comments_matching(5, "@olivia"))
         self.assertFalse(self.gh.comments_matching(6, "@olivia"))
@@ -1331,7 +1333,7 @@ class MergeRefusalTests(ReportCase):
         self.assertEqual(step["state"], "merge")
         expected = "2 of 2 required status checks are expected."
         self.gh.merge_error = [GitHubError(405, expected)]
-        lines = autopilot.sweep(self.gh, self.cfg, "nexkit.yml", "main")
+        lines = play_sweep(self.gh, self.cfg)
         self.assertIn("#6: branch_updated.", lines)
         self.assertEqual(self.gh.updated, [(6, HEAD)])
         [review] = rounds_started(self.gh)

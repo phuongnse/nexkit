@@ -117,6 +117,8 @@ PROVIDERS_HEADER = "| Provider | Settings | Secret |"
 # have no such name.
 FIELD_NAME = re.compile(r"`([a-z][a-z0-9_]*)`")
 LIMITS = re.compile(r"((?:`[\w-]+`(?:, | and )?)+) reports? usage limits")
+# Run on text with its whitespace collapsed, since the sentence wraps across lines.
+ONE_BY_ONE = re.compile(r"lists secrets one by one can pass only ((?:`\w+`(?:, | and )?)+)")
 DECISIONS = DOCS / "decisions"
 DECISIONS_INDEX = DOCS / "decisions.md"
 HOW_IT_WORKS = (
@@ -842,6 +844,27 @@ class ConfigurationTests(unittest.TestCase):
         for key in sorted(listed - config.CACHE_KEYS):
             with self.subTest(key=key):
                 self.fail(f"docs/configuration.md lists {key}, which CACHE_KEYS does not define")
+
+    def test_the_pages_list_each_secret_an_older_workflow_can_pass_and_no_other(self):
+        code = {*runtimes.DECLARED_SECRETS, *config.APP_SECRETS.values()}
+        for page in (CONFIG_PAGE, TROUBLESHOOTING_PAGE):
+            with self.subTest(page=page.name):
+                text = " ".join(page.read_text().split())
+                match = ONE_BY_ONE.search(text)
+                self.assertIsNotNone(
+                    match,
+                    f"{page.name} does not list the secrets an older workflow can pass one by one",
+                )
+                listed = set(re.findall(r"`(\w+)`", match.group(1)))
+                for name in sorted(listed - code):
+                    with self.subTest(secret=name):
+                        self.fail(
+                            f"{page.name} lists {name}, which DECLARED_SECRETS and APP_SECRETS "
+                            "do not define"
+                        )
+                for name in sorted(code - listed):
+                    with self.subTest(secret=name):
+                        self.fail(f"{page.name} does not list the secret {name}")
 
     def test_each_key_row_gives_the_code_default_and_range(self):
         seen = recorded_ranges()

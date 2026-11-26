@@ -1004,7 +1004,7 @@ class Walker:
         self.trust(state, event, pol, answer, given, flag, info)
         self.accept_conflict(state, event, answer, done, given, flag, info)
         self.accept_behind(state, event, answer, done, given, flag, info)
-        self.accept_again(state, answer, flag, info)
+        self.accept_again(state, event, answer, flag, info)
         self.behind_checks(state, event, answer, {**self.defaults, **eff}, flag, info)
         # automatic: a round that its checks or its review judged keeps its count, so only a
         # fix round issued in the same step is automatic after it.
@@ -1214,12 +1214,13 @@ class Walker:
         if new["rounds"]["conflicts"] != state["rounds"]["conflicts"]:
             flag("accept-behind", "a branch behind counted a conflict round", info)
 
-    def accept_again(self, state, answer, flag, info):
+    def accept_again(self, state, event, answer, flag, info):
         """The invariant of an accept refused for a reason that waits for a person: the engine
         asks for it again only when the observation that the step ends with says that the
         version is acceptable and not conflicting, nothing holds it, the item is not review-only
-        and the version was not refused while it was acceptable (`refusedAcceptable`)."""
-        if state is None or state["state"] != "ready":
+        and the version was not refused while it was acceptable (`refusedAcceptable`). A person's
+        approval accepts as it says, and the `approvals` invariant judges it."""
+        if state is None or state["state"] != "ready" or event["kind"] == "changeApproved":
             return
         if (state["attention"] or {}).get("reason") != "acceptRefused":
             return

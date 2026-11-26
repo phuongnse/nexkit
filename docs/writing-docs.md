@@ -265,9 +265,11 @@ when a list of what the code defines misses an entry. These rules close each of 
    [agents and profiles](agents-and-profiles.md#agents) give the
    plan and review stages are those of `READ_ONLY_TOOLS`; that the outcomes after which a writer's
    approval merges, which [work without a command](work-without-a-command.md#work-without-a-command)
-   lists, are those of `APPROVABLE`; that no doc, the README, AGENTS.md or a
-   skill repeats a pinned version: each pin that [D9](decisions/d9-pins-live-in-one-place.md)
-   governs, or a lint tool's version from `scripts/lint.sh`; that each test the security page
+   lists, are those of `APPROVABLE`; that the issue states
+   [the status skill](../skills/status/SKILL.md) lists are those that `issue_item` in
+   `nexkit/status.py` sets; that no doc, the README, AGENTS.md or a skill repeats a pinned version:
+   each pin that [D9](decisions/d9-pins-live-in-one-place.md) governs, or a lint tool's version from
+   `scripts/lint.sh`; that each test the security page
    names exists; that the refusals of `unaffected_by` that
    [the checks page](checks.md#checks-that-a-change-cannot-affect) lists are
    the code's, and that the code refuses each one; that the outcome table of

@@ -71,6 +71,9 @@ INVARIANTS = {
     "`resolve` with one left, in `fixing`, or makes the change again only under `redo` with one "
     "left; otherwise, and for a conflict found only at the end (`needsPerson`), it needs a person, "
     "in `ready` with `acceptRefused`",
+    "sweep": "a sweep answers every item once, starts within `maxParallel` except an awaited item "
+    "(always started, flagged beyond the limit), none on a limited account, in the order of "
+    "priority, milestone, wave and place, and each wait counts those running before it",
     "required-checks": "a start of the wait for required checks lives only in `accepting`, on "
     "the change's version; a refusal for them that have not passed leaves one wait, a tick and "
     "the first start of that version; a tick more than six hours after it needs a person",
@@ -966,7 +969,103 @@ class Walker:
 
     # -- a walk ---------------------------------------------------------------------------------
 
+    def sweep_check(self, w, seed):
+        """Send the sweep call a random request, once for the walk, on a generator of its own so
+        that the walk's events stay as they were, and check the answer against the sweep's
+        rules."""
+        rng = random.Random(f"sweep-{seed}-{w}")
+        labels = ["urgent", "later", "docs", "x"]
+        items = [
+            {
+                "item": str(number),
+                "labels": rng.sample(labels, rng.randrange(3)),
+                "milestone": rng.choice([None, 0, 1, 2]),
+                "wave": rng.randrange(3),
+                "awaited": rng.random() < 0.2,
+                "account": rng.choice([None, None, "a", "b"]),
+            }
+            for number in range(1, rng.randrange(9) + 1)
+        ]
+        request = {
+            "protocol": 1,
+            "call": "sweep",
+            "policies": {
+                "maxParallel": rng.choice([None, 1, 2, 3, 4]),
+                "priority": rng.sample(labels, rng.randrange(4)),
+            },
+            "running": rng.randrange(5),
+            "limited": rng.sample(["a", "b"], rng.randrange(3)),
+            "items": items,
+        }
+        info = {"walk": w, "step": 0, "trail": [("sweep", len(items), "")], "event": request}
+        answer = self.engine.answer(json.loads(json.dumps(request)))
+        self.events += 1
+        flag = functools.partial(self.flag, "sweep")
+        found = self.protocol.check(answer, "calls/sweep.answer.schema.json", "answer")
+        if found:
+            flag(f"the answer does not fit its schema: {found[0]}", info)
+            return
+        by_item = {item["item"]: item for item in items}
+        starts, waits = answer["starts"], answer["waits"]
+        named = sorted(entry["item"] for entry in starts + waits)
+        if named != sorted(by_item):
+            flag("an item is not answered exactly once", info)
+            return
+        limit = request["policies"]["maxParallel"]
+        running = request["running"]
+        within = [entry for entry in starts if not entry["beyondLimit"]]
+        if limit is not None and running + len(within) > limit and within:
+            flag("starts that are not beyond the limit pass `maxParallel`", info)
+        for entry in starts:
+            item = by_item[entry["item"]]
+            if entry["beyondLimit"] and not item["awaited"]:
+                flag("an item that is not awaited starts beyond the limit", info)
+            if item["account"] in request["limited"] and item["account"] is not None:
+                flag("an item on a limited account starts", info)
+        for entry in waits:
+            item = by_item[entry["item"]]
+            limited = item["account"] is not None and item["account"] in request["limited"]
+            if entry["for"] == "place" and (item["awaited"] or limited):
+                flag("an awaited item, or one on a limited account, waits for a place", info)
+            if entry["for"] == "usageLimit" and not limited:
+                flag("an item waits for a usage limit that is not its account's", info)
+        priority = request["policies"]["priority"]
+        position = {item["item"]: n for n, item in enumerate(items)}
+
+        def key(name):
+            item = by_item[name]
+            labels_ = set(item["labels"])
+            rank = next((n for n, label in enumerate(priority) if label in labels_), len(priority))
+            milestone = item["milestone"]
+            wave = item["wave"] if milestone is not None else 0
+            return (rank, milestone is None, milestone or 0, wave, position[name])
+
+        everyone = sorted(by_item, key=key)
+        order = [entry["item"] for entry in starts]
+        if order != [name for name in everyone if name in set(order)]:
+            flag("starts are not in the order of priority, milestone, wave and place", info)
+        # Each wait counts the items running at its turn: those that ran and the starts before it.
+        before = {}
+        count = running
+        for name in everyone:
+            before[name] = count
+            if name in set(order):
+                count += 1
+        for entry in waits:
+            if entry["running"] != before[entry["item"]]:
+                flag("a wait counts other items than those running before it", info)
+        # An awaited item on an account that is not at a usage limit always starts.
+        free = [
+            name
+            for name, item in by_item.items()
+            if item["awaited"]
+            and (item["account"] is None or item["account"] not in request["limited"])
+        ]
+        if any(name not in set(order) for name in free):
+            flag("an awaited item on a free account does not start", info)
+
     def walk(self, w, seed, steps, show=False):
+        self.sweep_check(w, seed)
         rng = random.Random(seed * 100003 + w)
         pol = self.policies(rng)
         state = None

@@ -37,7 +37,7 @@ These features make up NexKit 6, released from 1.0.0 (2026-10-05) to 6.12.2 (202
 Built so far: the protocol's schemas, `nexkit-engine step`, `prompt`, `sweep` and `serve`, the state
 document and its import from NexKit 6's markers, the differential check against NexKit 6, and the
 decisions that follow a plan, a blocked `/nexkit go` and a round on a pull request. Left: the
-accept, the waits, autopilot's use of the sweep, the runner and the rest that
+accept, the waits, the runner and the rest that
 [Getting there](engine.md#getting-there) lists.
 
 ## Later

@@ -366,9 +366,21 @@ nexkit init --check "integration=scripts/integration.sh" --check-unaffected "int
   matches a path decides, as in the `paths` filters of GitHub Actions; a path that no
   pattern matches is one the check reads. The example lists everything under `web/`
   except `web/package.json`.
-- NexKit refuses, and `nexkit doctor` says why, a pattern that is empty, starts or ends
-  with `/`, has `**` inside a segment, an unclosed or empty `[`, or a `.` or `..` segment,
-  and a list whose first pattern starts with `!`.
+- NexKit refuses, and `nexkit doctor` says why:
+  - a pattern that is empty
+  - a pattern that is only `!`
+  - a pattern that starts with `/`
+  - a pattern that ends with `/`
+  - `**` inside a segment
+  - an empty, `.` or `..` segment
+  - a `[` without its `]`
+  - a `]` without its `[`
+  - an empty `[]`
+  - a range that runs backwards, such as `[z-a]`
+  - a pattern longer than 200 characters
+  - a list whose first pattern starts with `!`
+  - a list that names a pattern twice
+  - a list of more than 50 patterns
 
 Only an **automatic `/nexkit review`** skips a check: the one after NexKit
 [brought the branch up to date](merges-and-waits.md#conflicts-with-the-base-branch), after a new commit while

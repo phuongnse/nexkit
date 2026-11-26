@@ -14,9 +14,11 @@ ranges the code has. The runtime table of that page lists each runtime the code 
 other, with its providers, effort levels and budget support, and which runtimes report usage limits.
 The trigger table of its workflow file section lists each trigger of the workflow template and no
 other. The table of the App's permissions matches the permissions and levels of the App manifest.
-The plan and review layouts of stages match the sections the code writes, and the values the pages
-repeat match their constants. The README's table of supported versions is compared with the pins in
-nexkit/__init__.py, and each ubuntu-NN.NN in the README with the pinned runner. The local commands
+The refusals of `unaffected_by` that the checks page lists name each refusal of the code and no
+other, and the code refuses each one. The plan and review layouts of stages match the sections
+the code writes, and the values the pages repeat match their constants. The README's table of
+supported versions is compared with the pins in nexkit/__init__.py, and each ubuntu-NN.NN in the
+README with the pinned runner. The local commands
 table of the README lists each command the CLI defines for people and no other, and each option a
 row names exists. The configuration example of the README is what `nexkit init` writes for the
 README's own setup command. The decisions index matches the decision files, and each decision is
@@ -24,8 +26,10 @@ linked, as
 docs/writing-docs.md#how-the-docs-stay-correct says."""
 
 import argparse
+import ast
 import contextlib
 import copy
+import inspect
 import io
 import json
 import re
@@ -51,7 +55,7 @@ from nexkit import (
     state,
 )
 from nexkit.engine import prompt, textutil
-from tests.support import make_config
+from tests.support import make_config, with_claude
 from tests.test_cli import jobs_of, permissions_of
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -816,6 +820,109 @@ class ConfigurationTests(unittest.TestCase):
         for trigger in sorted(workflow_triggers() - listed):
             with self.subTest(trigger=trigger):
                 self.fail(f"the trigger table of docs/configuration.md has no row for {trigger}")
+
+
+CHECKS_PAGE = DOCS / "checks.md"
+REFUSALS_LEAD = "- NexKit refuses, and `nexkit doctor` says why:"
+# Each refusal of a check's `unaffected_by` as docs/checks.md words it, a fragment of the code's
+# message, and a list of patterns that the code refuses with that message.
+REFUSALS = [
+    ("a pattern that is empty", "is empty", [""]),
+    ("a pattern that is only `!`", "is only `!`", ["!"]),
+    ("a pattern that starts with `/`", "starts with `/`", ["/docs/**"]),
+    ("a pattern that ends with `/`", "ends with `/`", ["docs/"]),
+    ("`**` inside a segment", "inside a segment", ["docs/a**"]),
+    ("an empty, `.` or `..` segment", "empty, `.` or `..` segment", ["docs//a"]),
+    ("a `[` without its `]`", "without its `]`", ["a[bc"]),
+    ("a `]` without its `[`", "without its `[`", ["a]"]),
+    ("an empty `[]`", "empty `[]`", ["a[]"]),
+    ("a range that runs backwards, such as `[z-a]`", "is not a valid glob", ["[z-a]"]),
+    ("a pattern longer than 200 characters", "at most 200 characters", ["a" * 201]),
+    ("a list whose first pattern starts with `!`", "starts with `!` but is first", ["!docs/**"]),
+    ("a list that names a pattern twice", "lists a pattern twice", ["docs/**", "docs/**"]),
+    (
+        "a list of more than 50 patterns",
+        "must be a list of at most",
+        [f"d{i}/**" for i in range(config.MAX_UNAFFECTED + 1)],
+    ),
+]
+
+
+def refusal_entries():
+    """The entries under the refusal lead-in of docs/checks.md, one nested line each."""
+    lines = CHECKS_PAGE.read_text().splitlines()
+    start = next((i + 1 for i, line in enumerate(lines) if line == REFUSALS_LEAD), len(lines))
+    entries = []
+    for line in lines[start:]:
+        if not line.startswith("  - "):
+            break
+        entries.append(line[4:])
+    return entries
+
+
+def fixed_text(node):
+    """The text of a message argument: a string, or an f-string with `{}` for each value."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.JoinedStr):
+        return "".join(
+            part.value if isinstance(part, ast.Constant) else "{}" for part in node.values
+        )
+    return None
+
+
+def refusal_messages():
+    """The messages of the refusals the code makes: the first argument of each GlobError in
+    nexkit/globs.py and each _fail in config._unaffected_by. A re-raise such as "'{}' {}" holds
+    no text of its own, so it is left out."""
+    sources = [
+        (ast.parse((ROOT / "nexkit/globs.py").read_text()), "GlobError"),
+        (ast.parse(inspect.getsource(config._unaffected_by)), "_fail"),
+    ]
+    found = []
+    for tree, name in sources:
+        for node in ast.walk(tree):
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == name
+                and node.args
+            ):
+                continue
+            text = fixed_text(node.args[0])
+            if text is None:  # not a string the test can read: it names the expression
+                found.append(ast.unparse(node.args[0]))
+            elif text.replace("{}", "").strip(" '\":"):
+                found.append(text)
+    return found
+
+
+class UnaffectedByTests(unittest.TestCase):
+    def test_the_page_lists_each_refusal_of_the_code_and_no_other(self):
+        entries = refusal_entries()
+        self.assertTrue(entries, f"docs/checks.md has no list under {REFUSALS_LEAD!r}")
+        tabled = [entry for entry, _, _ in REFUSALS]
+        for entry in entries:
+            with self.subTest(entry=entry):
+                self.assertIn(
+                    entry, tabled, f"docs/checks.md lists {entry}, which the code does not refuse"
+                )
+        for entry in tabled:
+            with self.subTest(entry=entry):
+                self.assertIn(entry, entries, f"docs/checks.md has no entry for {entry}")
+        for message in refusal_messages():
+            with self.subTest(message=message):
+                self.assertTrue(
+                    any(fragment in message for _, fragment, _ in REFUSALS),
+                    f'the code refuses "{message}", which docs/checks.md does not list',
+                )
+
+    def test_the_code_refuses_each_listed_pattern(self):
+        for entry, fragment, patterns in REFUSALS:
+            with self.subTest(entry=entry):
+                raw = {"checks": [{"name": "e2e", "run": "x", "unaffected_by": patterns}]}
+                with self.assertRaisesRegex(config.ConfigError, re.escape(fragment)):
+                    config.validate(with_claude(raw))
 
 
 class ArchitectureTests(unittest.TestCase):

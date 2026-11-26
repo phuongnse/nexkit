@@ -92,6 +92,13 @@ conflicts with its base branch starts the round that resolves it, within
 `conflicts.max_rounds`, unless a label holds the issue, which keeps it back until the sweep
 finds the label gone (`conflicting`, `conflicts_released`).
 
+It decides the start of the first plan of a new issue too (`first_plan`, called by
+`autopilot._first_plan`): the host builds the document that the import builds for an issue with
+no plan, `new` and waiting to start, sends a `requested` start with no person, and dispatches
+`/nexkit plan` only when the engine answers with a plan run. NexKit 6's checks of a hold, trust,
+blockers and waves come first, so the engine is never asked for a held or blocked issue, and
+the other starts that autopilot makes stay its own.
+
 An item whose document or event the engine refuses waits for a person, and no other item is
 held up by it.
 """
@@ -617,6 +624,29 @@ def plan_waits_for(output):
 
 
 _NO_CHANGE = {"changeVersion": None}
+
+
+def new_document(issue, record):
+    """The document of `issue` as the import builds it for an issue with no plan: `new`, waiting
+    to start (`first_state.Item.place`)."""
+    doc = _document(issue, record)
+    doc["waits"] = [{"id": "w1.1", "for": "start", "until": None, "on": None}]
+    return doc
+
+
+def first_plan(cfg, issue, record, start):
+    """The step that starts the first plan of `issue`, which has none yet, as the engine decides
+    it: autopilot's `requested` start of the plan, with no person behind it, on the new item's
+    document. The plan runs only when the engine answers with a plan run; `start` is the step's
+    fields. Raises `Refused`."""
+    number = issue["number"]
+    doc = new_document(issue, record)
+    fields = {"what": "start", "by": None, "note": "", "plan": None, "title": doc["title"]}
+    event = _event("requested", number, None, f"start-{number}", **fields)
+    actions = step(doc, event, policies(cfg))["actions"]
+    if any(a["kind"] == "runAgent" and a["stage"] == "plan" for a in actions):
+        return autopilot._step(issue, "start", "no plan yet", command="plan", **start)
+    raise Refused("The engine starts no plan for a new issue.")
 
 
 # -- a blocked round ------------------------------------------------------------------

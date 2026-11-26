@@ -1695,6 +1695,17 @@ def _after_stop(gh, cfg, issue, run, record, start, comments, pull=None, pull_co
         return _step(issue, "waits", refused_reason(error))
 
 
+def _first_plan(cfg, issue, record, start):
+    """The step that starts the plan of an issue that has none, which the engine decides
+    (`host.first_plan`). An issue whose start the engine refuses waits for a person, alone."""
+    from .host import Refused, first_plan, refused_reason
+
+    try:
+        return first_plan(cfg, issue, record, start)
+    except Refused as error:
+        return _step(issue, "waits", refused_reason(error))
+
+
 def _after_plan(gh, cfg, issue, plan, last, record, start, comments, pull=None):
     """The step after the latest plan, which the engine decides (`host.after_plan`). An
     issue whose next step the engine refuses to decide waits for a person, alone."""
@@ -1909,7 +1920,7 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
             return _step(issue, "start", "a writer vouched for it again", command="plan", **start)
         return _step(issue, "waits", last.get("attention") or UNTRUSTED_REASON)
     if last is None or plan is None:
-        return _step(issue, "start", "no plan yet", command="plan", **start)
+        return _first_plan(cfg, issue, record, start)
     if last["command"] == "go":
         if last.get("outcome") == "issue_closed":
             # Reopened after it closed while the round ran: nothing changed for the plan.

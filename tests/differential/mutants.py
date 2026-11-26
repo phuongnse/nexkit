@@ -412,6 +412,36 @@ MUTANTS = {
         "seen": ("walker",),
         "families": ("failure",),
     },
+    # A new item's start plans nothing, so the issue waits for a person on GitHub, where
+    # NexKit 6 plans it (#438).
+    "new-start-plans-nothing": {
+        "path": MACHINE,
+        "old": """            if state == "new" and not self.s["hold"]:
+                self.start_plan()""",
+        "new": """            if state == "new" and not self.s["hold"]:
+                return False""",
+        "seen": ("harness", "walker"),
+        "families": ("new",),
+    },
+    # A held new item starts too (#438). The GitHub host never sends a held document, as
+    # NexKit 6's checks stop a held issue first, so only the walker sees it.
+    "held-new-item-starts": {
+        "path": MACHINE,
+        "old": """if state == "new" and not self.s["hold"]:""",
+        "new": """if state == "new":""",
+        "seen": ("walker",),
+        "families": ("new",),
+    },
+    # A start ignores a blocker wait, so a blocked new item plans (#438). The GitHub host never
+    # sends a blocked document, as NexKit 6's checks stop a blocked issue first, so only the
+    # walker sees it.
+    "start-ignores-a-blocker-wait": {
+        "path": MACHINE,
+        "old": """ or not self.waiting("start") or self.waiting("blocker"):""",
+        "new": """ or not self.waiting("start"):""",
+        "seen": ("walker",),
+        "families": ("new",),
+    },
 }
 
 

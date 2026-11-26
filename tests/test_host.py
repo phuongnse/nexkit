@@ -393,6 +393,90 @@ class RefusedTest(HostCase):
         self.assertEqual(route(self.gh, "issue_comment", event)["task"], "close_answer")
 
 
+class FirstPlanTest(HostCase):
+    """The first plan of a new issue starts when the engine answers with a plan run."""
+
+    HOLD = make_config(autopilot={"enabled": True, "labels": {"on-hold": {"hold": True}}})
+
+    def test_the_engine_hears_a_start_and_the_plan_runs_on_its_plan_run(self):
+        self.issue(5)
+        [request] = self.requests(5)
+        event, doc = request["event"], request["state"]
+        self.assertEqual((event["kind"], event["what"], event["by"]), ("requested", "start", None))
+        self.assertEqual(doc["state"], "new")
+        self.assertEqual(doc["title"], "Issue 5")
+        self.assertEqual([wait["for"] for wait in doc["waits"]], ["start"])
+        self.assertFalse(doc["hold"])
+        step = self.step(5)
+        self.assertEqual((step["state"], step["command"]), ("start", "plan"))
+        self.assertEqual(step["reason"], "no plan yet")
+        self.sweep()
+        self.assertEqual(self.started(), [("plan", 5)])
+
+    def test_a_failed_plan_without_a_plan_starts_through_the_engine_too(self):
+        self.issue(5)
+        self.run_comment(5, "plan", status="failure", outcome="agent_error")
+        [request] = self.requests(5)
+        self.assertEqual(request["event"]["what"], "start")
+        self.assertEqual(self.step(5)["state"], "start")
+
+    def test_an_engine_that_refuses_or_starts_no_plan_leaves_the_issue_to_a_person(self):
+        self.issue(5)
+        self.issue(6)
+        answers = {
+            "refuses": {"protocol": 1, "error": "The state document passes the limit."},
+            "no action": {"protocol": 1, "actions": [], "state": {}},
+            "other stage": {
+                "protocol": 1,
+                "actions": [{"kind": "runAgent", "stage": "implement"}],
+                "state": {},
+            },
+        }
+        for name, found in answers.items():
+
+            def answer(request, found=found):
+                return found if request["event"]["item"] == "5" else ANSWER(request)
+
+            with self.subTest(name), mock.patch.object(host.engine, "answer", side_effect=answer):
+                step = self.step(5)
+                self.assertEqual(step["state"], "waits")
+                self.assertTrue(step["person"])
+                self.assertIn("engine refused", step["reason"])
+                self.sweep()
+                self.assertNotIn(5, [number for _, number in self.started()])
+        # The other issue carries on.
+        self.assertEqual(self.started(), [("plan", 6)])
+
+    def test_a_held_or_blocked_new_issue_sends_the_engine_no_start(self):
+        self.issue(5, labels=["on-hold"])
+        self.issue(6)
+        self.issue(7)
+        self.gh.blockers[6] = [7]
+        held = self.step(5, self.HOLD)
+        self.assertEqual(held["state"], "held")
+        self.assertEqual(self.step(6)["state"], "waits")
+        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+            autopilot.preview(self.gh, self.HOLD)
+        asked = [call.args[0]["event"]["item"] for call in answer.call_args_list]
+        self.assertEqual(asked, ["7"])
+
+    def test_a_document_with_a_hold_or_a_blocker_wait_gets_no_action(self):
+        issue = self.issue(5)
+        event = host._event(
+            "requested", 5, None, "start-5", what="start", by=None, note="", plan=None, title=""
+        )
+        blocker = {"id": "w1.2", "for": "blocker", "until": None, "on": "7"}
+        for name, change in {
+            "hold": {"hold": True},
+            "blocker": {"waits": [*host.new_document(issue, {})["waits"], blocker]},
+        }.items():
+            with self.subTest(name):
+                doc = {**host.new_document(issue, {}), **change}
+                answer = host.step(doc, event, host.policies(self.cfg))
+                self.assertEqual(answer["actions"], [])
+                self.assertEqual(answer["state"]["state"], "new")
+
+
 class CarriesOnTest(HostCase):
     def carries_on(self, number, output, cfg):
         decision = {"issue": number, "pr": None, "action": "plan"}

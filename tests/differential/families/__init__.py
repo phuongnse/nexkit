@@ -26,5 +26,6 @@ FAMILIES = {
     "failure": "#415",
     "lost": "#399",
     "replan": "#413",
+    "new": "#438",
     "conflicted": "#423",
 }

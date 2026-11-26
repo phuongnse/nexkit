@@ -21,3 +21,4 @@ can change.
 | [D9](decisions/d9-pins-live-in-one-place.md) | Pins live in one place | Agreed |
 | [D10](decisions/d10-an-engine-decides-hosts-carry-out.md) | An engine decides, hosts carry out | Agreed |
 | [D11](decisions/d11-nexkit-works-its-own-issues-on-a-release.md) | NexKit works its own issues on a release | Agreed |
+| [D12](decisions/d12-a-host-runs-the-engine-as-a-program-or-over-http.md) | A host runs the engine as a program or over HTTP | Agreed |

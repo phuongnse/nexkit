@@ -138,13 +138,14 @@
   ],
   "review": {
     "checklist": [
-      "The change keeps every rule of docs/writing-docs.md: read the page and check the diff, code included, against each of its rules, and the plan's and the review's answers to this item name every doc section the change makes false, each fixed",
-      "A setting, command, label, status or prompt contract that the change adds, renames or removes changes with its tests, docs and skills in the same change, and a search of docs/, skills/ and AGENTS.md finds no old name",
-      "Every behaviour the change adds or changes has a test that fails without it; a new automatic rule has a scenario in tests/test_scenarios.py, and a new engine rule a case in tests/conformance/",
-      "A job that runs an agent or repository code keeps a read-only token and no App key, and text from an agent, a comment or CI is validated, passed through redact.py and never read as a marker, as AGENTS.md's Rules say",
-      "A decision about what happens next to a work item that the engine holds is made only in nexkit/engine/, and a change that moves one keeps NexKit 6's behaviour as docs/testing.md's Moving decisions into the engine says",
+      "The change keeps every rule of docs/writing-docs.md, read section by section with the diff, code included, and the plan's and the review's answers name every doc section the change makes false, each fixed, as its How the docs stay correct says",
+      "A setting, command, label, status or prompt contract that the change adds, renames or removes changes with its tests, docs and skills, as docs/writing-docs.md#how-the-docs-stay-correct says, and a search of docs/, skills/ and AGENTS.md finds no old name",
+      "Every behaviour the change adds or changes has a test that fails without it, in the check that docs/testing.md#which-check-covers-what names for it: a new automatic rule a scenario in tests/test_scenarios.py, a new engine rule a case in tests/conformance/",
+      "A job that runs an agent or repository code keeps a read-only token and no App key, as docs/security.md#repository-code-and-ci says, and text from an agent, a comment or CI is validated, redacted and never read as a marker, as docs/security.md#agent-output and #comments-and-markers say",
+      "A decision about what happens next to a work item that the engine holds is made only in nexkit/engine/, and a change that moves one keeps NexKit 6's behaviour, as docs/testing.md#moving-decisions-into-the-engine says",
+      "A change other than a release sets no version and adds no CHANGELOG.md entry, as docs/delivery.md#releases says",
       {
-        "text": "The change adds no exception to a check and loosens none",
+        "text": "The change adds no exception to a check that docs/testing.md#which-check-covers-what lists and loosens none",
         "person": true
       }
     ]

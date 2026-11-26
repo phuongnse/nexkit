@@ -44,7 +44,6 @@ A complete configuration with every key at its default, except `agents`, `setup`
     "trusted_workflows": [],
     "priority": ["nexkit:ci", "nexkit:dependabot", "nexkit:flaky"],
     "labels": {},
-    "last_in_milestone_label": null,
     "dependabot": null
   },
   "notify": [],
@@ -105,7 +104,6 @@ Checks, autopilot, and merges and waits have pages of their own: [Configuring ch
 | `autopilot.answer` | `"never"` | `"recommended"` answers each question of a plan or a blocked round with the option NexKit recommends, when every question has one; `"never"` leaves every question to a person. |
 | `autopilot.priority` | `["nexkit:ci", "nexkit:dependabot", "nexkit:flaky"]` | Labels, highest first, whose issues go before the others, and are in scope also without a milestone or outside the scope's milestone. See *Labels* under [Autopilot](autopilot.md#autopilot). |
 | `autopilot.labels` | `{}` | What a label does: `{"wave": N}` holds an issue until every issue of a lower wave in its milestone is closed; `{"hold": true}` makes autopilot start nothing for it. See *Labels* under [Autopilot](autopilot.md#autopilot). |
-| `autopilot.last_in_milestone_label` | `null` | Replaced by `autopilot.labels`: the label counts as `{"<label>": {"wave": 1}}`, and `nexkit doctor` shows the replacement. See *Labels* under [Autopilot](autopilot.md#autopilot). |
 | `autopilot.trusted_workflows` | `[]` | Workflow files, such as `["docs-audit.yml"]`, whose issues autopilot takes when their marker names a run that checks out. See [Issues from a workflow](autopilot.md#issues-from-a-workflow). |
 | `autopilot.dependabot` | `null` | The lowest severity of Dependabot alert that gets an issue: `"low"`, `"medium"`, `"high"` or `"critical"`. `null` opens none. It needs an extra permission of the App. See *Dependabot advisories* under [Autopilot](autopilot.md#autopilot). |
 | `autopilot.watch_workflows` | `[]` | Workflow files, such as `["ci.yml"]`, whose runs on the default branch autopilot watches as it watches `merge.after_workflows`, whatever started them, but which NexKit does not start after its merges. File names only, each listed once, none also in `merge.after_workflows`. See *Watching CI that NexKit does not start* under [Autopilot](autopilot.md#autopilot). |

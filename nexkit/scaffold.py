@@ -1170,22 +1170,6 @@ def _unheard(cfg):
     ]
 
 
-def _deprecated_label(cfg):
-    """Findings: `autopilot.last_in_milestone_label` works through 6.x, as a label of wave
-    1, and 7.0 removes it."""
-    label = cfg["autopilot"]["last_in_milestone_label"]
-    if not label:
-        return []
-    replacement = json.dumps({"labels": {label: {"wave": 1}}})
-    return [
-        (
-            True,
-            "Deprecated: autopilot.last_in_milestone_label still works as a label of wave 1, "
-            f"but NexKit 7.0 removes it: in autopilot, replace it with {replacement[1:-1]}",
-        )
-    ]
-
-
 def _labels(cfg, repo):
     """Findings: the repository has each label that autopilot's settings name. NexKit
     compares labels exactly, so another spelling carries nothing either. NexKit's own
@@ -1196,9 +1180,6 @@ def _labels(cfg, repo):
         named.setdefault(label, "autopilot.priority")
     for label in cfg["autopilot"]["labels"]:
         named.setdefault(label, "autopilot.labels")
-    last = cfg["autopilot"]["last_in_milestone_label"]
-    if last:
-        named.setdefault(last, "autopilot.last_in_milestone_label")
     findings = []
     for label, setting in named.items():
         if label in own:
@@ -1374,7 +1355,6 @@ def doctor(root, key_file=None, app_id=None):
         if problem:
             findings.append((False, problem))
         findings += _unheard(cfg)
-        findings += _deprecated_label(cfg)
     except configuration.ConfigError as exc:
         findings.append((False, str(exc)))
 

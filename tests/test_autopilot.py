@@ -4602,7 +4602,7 @@ class WaveTests(unittest.TestCase):
         self.assertIsNone(self.wait())
 
     def test_the_label_to_run_last_is_wave_1(self):
-        cfg = make_config(autopilot={"enabled": True, "last_in_milestone_label": "last"})
+        cfg = make_config(autopilot={"enabled": True, "labels": {"last": {"wave": 1}}})
         self.gh.issues[5]["labels"] = [{"name": "last"}]
         self.gh.add_issue(6, milestone=1)
         self.gh.add_issue(7, milestone=1, labels=("last",))

@@ -15,7 +15,6 @@ This page of the [configuration reference](configuration.md) says how to set aut
   "trusted_workflows": [],
   "priority": ["nexkit:ci", "nexkit:dependabot", "nexkit:flaky"],
   "labels": {},
-  "last_in_milestone_label": null,
   "dependabot": null
 }
 ```
@@ -135,11 +134,6 @@ every open issue in scope, in order, and starts the one command that moves it on
   - `nexkit doctor` reports a label in `priority` or `labels` that the repository lacks,
     since no issue can carry it, and one spelled otherwise, since NexKit compares labels
     exactly; GitHub creates NexKit's own labels the first time NexKit uses them.
-  - **From `last_in_milestone_label`.** A label set there counts as a label of wave 1, so
-    two such issues run side by side; give one a higher wave to keep them in order.
-    `nexkit doctor` shows the replacement, `"labels": {"<label>": {"wave": 1}}`, and
-    `nexkit init --last-in-milestone-label LABEL` writes the replacement and creates the
-    label.
 - **Trust.** Autopilot skips a person's approval of the plan, so the issue text drives an
   implement session, which can read the secrets of its job. It takes only issues opened by
   someone with write access to the repository; only they and other writers can edit them.

@@ -1177,27 +1177,6 @@ def engine_round(run):
     return blocked and bool(run.get("questions") or run.get("protected_paths"))
 
 
-def _since_stop(gh, issue, comments, stop):
-    """Why autopilot plans again after a `/nexkit go` that stopped, or None when nothing
-    changed since that round started: `stop` is its run comment. Collaborators commented
-    after it, other than with commands, or an issue that blocks it closed after it started,
-    such as one a person marked as a blocker after the round asked to wait for it. A
-    blocker that closed earlier was closed while the round ran, so it changes nothing."""
-    if _commented_after(comments, stop):
-        return "collaborators commented after the stopped `/nexkit go`, so autopilot plans again"
-    started = parse_iso(stop.get("created_at"))
-    closed = sorted(
-        blocker["number"]
-        for blocker in gh.blocked_by(issue["number"])
-        if blocker.get("state") == "closed" and _later(blocker.get("closed_at"), started)
-    )
-    if closed:
-        listed = ", ".join(f"#{n}" for n in closed)
-        reason = f"{listed}, which blocked it, closed after the stopped `/nexkit go`"
-        return f"{reason}, so autopilot plans again"
-    return None
-
-
 def _meaningful(rounds):
     """(comment, round) for the latest round that says something about the pull request:
     a round that found nothing to merge does not."""
@@ -1689,7 +1668,8 @@ def _replanned(gh, cfg, issue, plan, last, record, start, comments, pull):
 
 def _after_go(gh, cfg, issue, comment, last, record, start, comments):
     """The step after a `/nexkit go` that stopped as blocked, with questions, protected paths
-    or nothing to answer, which the engine decides (`host.after_go`). An issue whose next step
+    or nothing to answer, or that failed on an error and not on time, which the engine decides
+    (`host.after_go`). An issue whose next step
     the engine refuses to decide waits for a person, alone."""
     from .host import Refused, after_go, refused_reason
 
@@ -1956,10 +1936,7 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
             return _after_go(gh, cfg, issue, *found[-1], record, start, comments)
         if last.get("timed_out"):
             return _after_stop(gh, cfg, issue, last, record, start, comments)
-        changed = _since_stop(gh, issue, comments, found[-1][0])
-        if changed:
-            return _step(issue, "start", changed, command="plan", **start)
-        return _step(issue, "waits", last.get("attention") or failed_reason("go"))
+        return _after_go(gh, cfg, issue, *found[-1], record, start, comments)
     if last.get("status") != SUCCESS:
         return _step(issue, "waits", last.get("attention") or failed_reason("plan"))
     return _after_plan(gh, cfg, issue, plan, last, record, start, comments)

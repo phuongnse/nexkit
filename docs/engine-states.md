@@ -72,7 +72,11 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   wait. One whose change needs paths only a person changes waits for that person
   (`handMadeChange`), whatever it asks, and one that neither asks nor needs such paths fails, for
   a person. Under `afterFailure` `replan`, a person's comment, or the end of an item that blocks
-  it, plans such an item again when it has no change. Under `autoWhenClean`, with `answers`
+  it, plans such an item again when it has no change. An implement round on an item with no
+  change that fails on an error, gives no result, gives one that does not fit, or cannot
+  publish its change, fails with `roundFailed` and is planned again in the same way. A
+  time-out, a usage limit with no reset and a plan that fails stay `failed`, and a comment does
+  not plan them again. Under `autoWhenClean`, with `answers`
   `recommended` and a recommended option for every question, the engine answers, once in a row
   as for a plan:
   - An implement round whose one question recommends only closing the item, with its finding
@@ -190,7 +194,8 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
 - **An agent that stops on a transient error**, without a usage limit, runs the same stage again
   after each wait of `retryWaits` in turn, as the same round, which counts nothing again and
   diagnoses again if it did. A wait of 0 runs it again in the same step. After the last wait,
-  the next transient stop goes to `failed` for a person. The count of runs again goes on through
+  the next transient stop goes to `failed` for a person, or to `roundFailed` for an implement
+  round on an item with no change. The count of runs again goes on through
   the stages of one round, so a review handed on keeps it, and starts afresh when a request is
   taken or a new plan, implement or fix run starts.
 - **An accept refused because required checks have not passed yet** (`waitingForChecks`) keeps
@@ -250,7 +255,8 @@ Three things sit beside the state, never in place of it:
   (`acceptRefused`, about the change version for a conflict, and for required checks that did not
   pass in time), fix rounds used up
   (`roundsUsedUp`), a split that is not complete (`splitIncomplete`), a round that was blocked
-  (`blocked`), a step that failed (`failed`), a final item opened again (`reopened`), or an
+  (`blocked`), a step that failed (`failed`), an implement round with no change that failed on an error
+  (`roundFailed`), a final item opened again (`reopened`), or an
   action the host lost (`outage`).
 - **Hold:** nothing new starts by itself: the sweep's start waits, while a person's own request
   still runs, as NexKit 6's hold label does. A step that runs finishes and records what it held

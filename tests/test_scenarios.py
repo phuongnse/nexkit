@@ -2992,6 +2992,31 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(played[2:], [("plan", 7), ("go", 7), ("plan", 5), ("go", 5)])
         self.assertTrue(all(pipe.gh.issues[n]["state"] == "closed" for n in (5, 7)))
 
+    def test_a_go_that_ended_in_an_agent_error_plans_again_only_after_a_comment(self):
+        def script():
+            gos = itertools.count()
+
+            def play(pipe, inputs):
+                if inputs["command"] == "plan":
+                    return plan()
+                # The first go of #5 ends in an agent error.
+                if inputs["number"] == "5" and next(gos) < 1:
+                    return error()
+                return done()
+
+            return play
+
+        pipe = Pipeline(self, config(), script())
+        pipe.issue(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
+        # Nothing changed since the error: hours of sweeps start nothing, and the issue stays open.
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
+        self.assertEqual(pipe.gh.issues[5]["state"], "open")
+        pipe.gh.human_comment(5, "The cause is fixed; try again.")
+        played = pipe.play()
+        self.assertEqual(played, [("plan", 5), ("go", 5), ("plan", 5), ("go", 5)])
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+
     def test_the_null_scope_runs_two_milestones_at_once_with_a_blocker_across_them(self):
         # Issue 6 keeps failing its checks, so it waits for a person; the others go on.
         def script(pipe, inputs):

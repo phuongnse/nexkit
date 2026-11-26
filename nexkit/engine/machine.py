@@ -1184,14 +1184,21 @@ class Step:
     def on_textChanged(self, event):
         return False
 
+    def failure_reason(self):
+        """`roundFailed` for an implement round on an item with no change, else `failed`. Call
+        it before the item moves to `failed`."""
+        return "roundFailed" if self.state == "working" and not self.s["change"] else "failed"
+
     def fails_for_nothing(self):
-        """Whether the item failed because its round was blocked with nothing to answer, on no
-        change, and `afterFailure` plans it again: the item waits in `failed` with attention
-        `blocked`, which only that round gives (`autopilot._since_stop`)."""
+        """Whether the item failed because its round was blocked with nothing to answer, or
+        failed on an error, on no change, and `afterFailure` plans it again: the item waits in
+        `failed` with attention `blocked` or `roundFailed`, which only those rounds give. A
+        time-out, a usage limit, a failed plan and an untrusted stop keep `failed`, which a
+        comment does not plan again."""
         return (
             self.state == "failed"
             and not self.s["change"]
-            and (self.s["attention"] or {}).get("reason") == "blocked"
+            and (self.s["attention"] or {}).get("reason") in ("blocked", "roundFailed")
             and self.p["afterFailure"] == "replan"
         )
 
@@ -1227,7 +1234,7 @@ class Step:
         On an item with no change, questions the engine could not answer are planned again,
         since the round stopped where the plan did not say what the comment says; questions
         it answered once in a row are answered again, since a person acted
-        (`autopilot._stopped`, `_since_stop`). Whether it did either."""
+        (`autopilot._stopped`). Whether it did either."""
         if self.p["planApproval"] != "autoWhenClean":
             return False
         if self.round_waits("question") and not self.s["change"]:
@@ -1242,7 +1249,7 @@ class Step:
         """An item that blocks this one ended, or the bug issue of a failure that the base
         branch has: the waits on it end. With automatic approval, the questions of a round on
         an item with no change, which the engine could not answer, are planned again: the
-        round may have stopped for that work (`autopilot._since_stop`). An item that failed for
+        round may have stopped for that work. An item that failed for
         nothing is planned again whether or not it waited on that blocker
         (`fails_for_nothing`)."""
         ends = ("blocker", "baseFailure")
@@ -1423,9 +1430,10 @@ class Step:
         output = result["output"]
         found = [] if output is None else self.misfits(output, stage)
         if result["error"] or result["noResult"] or output is None or found:
+            reason = self.failure_reason()
             self.move("failed")
             text = "; ".join(found[:3])
-            self.need("failed", result["error"] or f"The agent gave no result that fits. {text}")
+            self.need(reason, result["error"] or f"The agent gave no result that fits. {text}")
             return
         getattr(self, f"finished_{stage}")(output, action["id"])
 
@@ -1449,9 +1457,10 @@ class Step:
         waits = self.p["retryWaits"]
         count = self.s.get("again", {}).get("transient", 0)
         if count >= len(waits):
+            reason = self.failure_reason()
             self.move("failed")
             self.need(
-                "failed", "The agent stopped on a transient error after every wait to run it again."
+                reason, "The agent stopped on a transient error after every wait to run it again."
             )
             return
         self.s.setdefault("again", {})["transient"] = count + 1
@@ -1735,8 +1744,9 @@ class Step:
 
     def finished_publish(self, result, action):
         if result["change"] is None:
+            reason = self.failure_reason()
             self.move("failed")
-            self.need("failed", result["refused"] or "The change could not be published.")
+            self.need(reason, result["refused"] or "The change could not be published.")
             return
         before = self.version
         self.took_change(result)

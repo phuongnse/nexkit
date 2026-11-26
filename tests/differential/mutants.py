@@ -499,9 +499,18 @@ MUTANTS = {
     "failure-ignores-change": {
         "path": MACHINE,
         "old": """            and not self.s["change"]
-            and (self.s["attention"] or {}).get("reason") == "blocked\"""",
-        "new": """            and (self.s["attention"] or {}).get("reason") == "blocked\"""",
+            and (self.s["attention"] or {}).get("reason") in (""",
+        "new": """            and (self.s["attention"] or {}).get("reason") in (""",
         "seen": ("walker",),
+        "families": ("failure",),
+    },
+    # An implement round that failed on an error is no longer planned again by a comment or a
+    # blocker's close (#537). NexKit 6 plans it again, so both checks see it.
+    "failure-round-failed-ignored": {
+        "path": MACHINE,
+        "old": """.get("reason") in ("blocked", "roundFailed")""",
+        "new": """.get("reason") == "blocked\"""",
+        "seen": ("harness", "walker"),
         "families": ("failure",),
     },
     # A new item's start plans nothing, so the issue waits for a person on GitHub, where

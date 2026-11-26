@@ -59,8 +59,8 @@ INVARIANTS = {
     "`autoWhenClean` with `answers: recommended`",
     "questions": "a round's questions are kept only while they wait",
     "after-failure": "an item leaves `failed` for `planning` on a comment or a blocker's close "
-    "only under `afterFailure: replan`, with no change and attention `blocked`, and a "
-    "collaborator's comment on such an item always plans it again",
+    "only under `afterFailure: replan`, with no change and attention `blocked` or "
+    "`roundFailed`, and a collaborator's comment on such an item always plans it again",
     "split": "an item with a change is split only with `withdrawChange` naming it, and only from "
     "a plan that a round which ran out of time asked for (`supersede`)",
     "parent-end": "a split ends as accepted only when every part ended, one was accepted and "
@@ -459,7 +459,10 @@ class Walker:
         flag = self.flag
         old, rounds = state["rounds"], new["rounds"]
         if again >= len(waits):
-            if new["state"] != "failed" or (new["attention"] or {}).get("reason") != "failed":
+            # An implement round on an item with no change fails for `roundFailed`.
+            round_failed = state["state"] == "working" and not state["change"]
+            reason = "roundFailed" if round_failed else "failed"
+            if new["state"] != "failed" or (new["attention"] or {}).get("reason") != reason:
                 flag("retry", "a transient stop after every wait is not for a person", info)
             return
         if new["state"] != state["state"]:
@@ -650,7 +653,7 @@ class Walker:
             replans = (
                 given["afterFailure"] == "replan"
                 and not state["change"]
-                and (state["attention"] or {}).get("reason") == "blocked"
+                and (state["attention"] or {}).get("reason") in ("blocked", "roundFailed")
             )
             if event["kind"] in ("commented", "blockerClosed") and new["state"] == "planning":
                 if not replans:

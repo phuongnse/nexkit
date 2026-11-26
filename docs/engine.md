@@ -175,7 +175,7 @@ needed.
   came, with no actions, so the host writes nothing.
 - **It holds decisions and the history that the prompts show, not other prose.** The state keeps
   what the engine decides from: the state name, the change, questions, criteria and checklist
-  outcomes, findings in short, failure signatures, counts, and the tokens, time and money its
+  outcomes, findings in short, failure signatures, counts, and the tokens and time its
   agents spent. It also keeps the history that the next fix and review prompts show: the latest
   fix rounds' records, each with its number, who started it, whether it diagnosed, its note, the
   agent's summary and cause, and the checks that still failed after it with their failure
@@ -377,7 +377,8 @@ host runs it through its own adapter. A new rule of the engine comes with a case
   and so does every check of `schema.problems`, the agents' results included.
 - **Two versions.** The protocol has a version, and the state document has a schema version of its
   own. The engine moves an older state document to the current schema when it reads one, and
-  refuses one that is newer than it knows, so an engine rolled back never guesses.
+  refuses one that is newer than it knows, so an engine rolled back never guesses. Before 1.0, a
+  document of schema version 1 that still holds `used.usd` is read without it.
 - **Major and minor.** Every message carries the protocol's major version, `"protocol": 1`.
   Version 1 may change freely until NexKit 7.0 ships; at that release it is 1.0. From then on,
   each additive change raises the minor version, and every field it adds carries
@@ -517,7 +518,7 @@ host runs it through its own adapter. A new rule of the engine comes with a case
    due resume comes from `maintain.resume_one`, which the `step` that `maintain.resume_paused`
    sends into the item's group runs. The host carries out the run, the wait or the
    person. Which reset the host gives stays the host's. After a plan, a stopped round and a review, `report` also sends the tokens,
-   seconds, money and session that the runner's `run.json` gives. It checks the file against the
+   seconds and session that the runner's `run.json` gives. It checks the file against the
    protocol first. The rest of the result stays NexKit 6's, so the engine decides as before, and
    a file that is missing or does not fit sends none. It also decides what follows a command that
    autopilot started and lost, when its run never started, ended without a report, or handed the work on to a run that never

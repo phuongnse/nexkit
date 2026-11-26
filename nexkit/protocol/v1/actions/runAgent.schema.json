@@ -89,18 +89,11 @@
             "integer",
             "null"
           ]
-        },
-        "usd": {
-          "type": [
-            "number",
-            "null"
-          ]
         }
       },
       "required": [
         "tokens",
-        "seconds",
-        "usd"
+        "seconds"
       ]
     },
     "session": {

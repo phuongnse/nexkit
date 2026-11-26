@@ -35,8 +35,7 @@
             "cached": 0,
             "output": 200
           },
-          "seconds": 60,
-          "usd": 0.5
+          "seconds": 60
         }
       },
       "state": "dropped",
@@ -44,8 +43,7 @@
       "actions": [],
       "expect": {
         "used.tokens.input": 1500,
-        "used.seconds": 700,
-        "used.usd": 2.87
+        "used.seconds": 700
       }
     }
   ]

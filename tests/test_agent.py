@@ -577,16 +577,15 @@ class PromptTests(unittest.TestCase):
         return RUNTIMES["claude-code"].launch(cfg["agents"]["claude"], spec, {}).argv
 
     def test_command_restricts_read_only_stages(self):
-        cfg = make_config(
-            effort="high", stages={"implement": {"max_budget_usd": 5, "model": "opus"}}
-        )
+        cfg = make_config(effort="high", stages={"implement": {"model": "opus"}})
         plan = self.argv("plan", cfg)
         self.assertIn("Read,Grep,Glob", plan)
         self.assertNotIn("bypassPermissions", plan)
         fix = self.argv("fix", cfg)
         self.assertIn("bypassPermissions", fix)
         self.assertEqual(fix[fix.index("--model") + 1], "opus")
-        self.assertEqual(fix[fix.index("--max-budget-usd") + 1], "5")
+        for stage in ("implement", "fix", "plan", "review"):
+            self.assertNotIn("--max-budget-usd", self.argv(stage, cfg), stage)
         self.assertEqual(fix[fix.index("--effort") + 1], "high")
         schema = json.loads(fix[fix.index("--json-schema") + 1])
         self.assertIn("status", schema["required"])
@@ -600,12 +599,12 @@ class PromptTests(unittest.TestCase):
         self.assertNotIn("--add-dir", self.argv("plan", cfg))
 
     def test_triage_command_has_no_tools_and_names_the_profiles(self):
-        cfg = profile_config(stages={"triage": {"model": "fable", "max_budget_usd": 1}})
+        cfg = profile_config(stages={"triage": {"model": "fable"}})
         cmd = self.argv("triage", cfg)
         self.assertEqual(cmd[cmd.index("--tools") + 1], "")
         self.assertNotIn("bypassPermissions", cmd)
         self.assertEqual(cmd[cmd.index("--model") + 1], "fable")
-        self.assertEqual(cmd[cmd.index("--max-budget-usd") + 1], "1")
+        self.assertNotIn("--max-budget-usd", cmd)
         schema = json.loads(cmd[cmd.index("--json-schema") + 1])
         self.assertEqual(schema["properties"]["profile"]["enum"], ["standard", "hard"])
         self.assertNotIn("enum", agent.SCHEMAS["triage"]["properties"]["profile"])
@@ -613,7 +612,7 @@ class PromptTests(unittest.TestCase):
 
 class InterpretTests(unittest.TestCase):
     def test_outcomes(self):
-        ok = {"subtype": "success", "structured_output": DONE, "total_cost_usd": 1.5}
+        ok = {"subtype": "success", "structured_output": DONE}
         self.assertEqual(interpret_claude("implement", ok)["status"], "done")
         blocked = {**ok, "structured_output": {**DONE, "status": "blocked", "blocker": "No spec"}}
         result = interpret_claude("implement", blocked)
@@ -624,8 +623,8 @@ class InterpretTests(unittest.TestCase):
         self.assertEqual(
             missing["error"], "Claude exited with code 1 without a result. auth failed"
         )
-        budget = interpret_claude("plan", {"subtype": "error_max_budget_usd", "is_error": True})
-        self.assertIn("Claude stopped (error_max_budget_usd).", budget["error"])
+        budget = interpret_claude("plan", {"subtype": "error_max_turns", "is_error": True})
+        self.assertIn("Claude stopped (error_max_turns).", budget["error"])
         unstructured = interpret_claude("review", {"subtype": "success"})
         self.assertIn("structured result", unstructured["error"])
 
@@ -667,7 +666,7 @@ class InterpretTests(unittest.TestCase):
         result = interpret_claude("implement", event, schema=agent.SCHEMAS["implement"])
         self.assertEqual(result["unfit"], "result.testing is missing")
         # Other errors are not.
-        budget = {"subtype": "error_max_budget_usd", "is_error": True}
+        budget = {"subtype": "error_max_turns", "is_error": True}
         self.assertNotIn("unfit", interpret_claude("implement", budget))
 
     def test_the_result_must_fit_the_schema(self):
@@ -853,28 +852,6 @@ class RunStageTests(StageCase):
         self.assertTrue(result["asked_again"])
         self.assertIn("error_max_structured_output_retries", result["error"])
         self.assertTrue(result["error"].endswith(agent.NO_RESULT_AGAIN))
-
-    def test_the_request_for_the_result_spends_only_what_the_budget_left(self):
-        cfg = make_config(stages={"implement": {"max_budget_usd": 2}})
-        self.claude.configure(
-            **self.NO_RESULT,
-            is_error=True,
-            write={"calc.py": "x\n"},
-            resumed={"result": DONE, "events": []},
-        )
-        result, _ = self.run_quietly("implement", cfg)
-        self.assertEqual(result["status"], "done")
-        first, second = self.claude.calls()
-        self.assertEqual(first["args"][first["args"].index("--max-budget-usd") + 1], "2")
-        # The fake reports a cost of 0.5 for each run.
-        self.assertEqual(second["args"][second["args"].index("--max-budget-usd") + 1], "1.5")
-        # A first run that used the whole budget is not asked again.
-        cfg = make_config(stages={"implement": {"max_budget_usd": 0.5}})
-        before = len(self.claude.calls())
-        result, _ = self.run_quietly("implement", cfg)
-        self.assertEqual((result["status"], result["transient"]), ("error", True))
-        self.assertNotIn("asked_again", result)
-        self.assertEqual(len(self.claude.calls()), before + 1)
 
     def test_a_runtime_that_cannot_resume_stops_as_transient_at_once(self):
         self.claude.configure(**self.NO_RESULT, is_error=True, write={"calc.py": "x\n"})

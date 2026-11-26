@@ -806,7 +806,7 @@ class ProfileTests(unittest.TestCase):
             decision, cfg = self.resolve(command, number)
             self.assertEqual(decision["profile"], "hard", command)
             self.assertEqual(config.stage(cfg, "review")["model"], "fable", command)
-            self.assertEqual(config.stage(cfg, "fix")["max_budget_usd"], 20, command)
+            self.assertEqual(config.stage(cfg, "fix")["model"], "opus", command)
 
     def test_rounds_without_a_profile_use_the_default(self):
         decision, cfg = self.resolve("go")

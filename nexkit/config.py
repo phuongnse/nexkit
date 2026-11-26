@@ -32,9 +32,9 @@ DEFAULTS = {
     "parallel_checks": False,
     "cache": [],
     "stages": {
-        "plan": {"timeout_minutes": 15, "max_budget_usd": None},
-        "implement": {"timeout_minutes": 45, "max_budget_usd": None},
-        "review": {"timeout_minutes": 20, "max_budget_usd": None},
+        "plan": {"timeout_minutes": 15},
+        "implement": {"timeout_minutes": 45},
+        "review": {"timeout_minutes": 20},
     },
     "profiles": {},
     "default_profile": None,
@@ -114,10 +114,10 @@ RENAMED = {
     "auto_merge": "merge.auto",
     "after_merge_workflows": "merge.after_workflows",
 }
-STAGE_KEYS = {"agent", "model", "effort", "timeout_minutes", "max_budget_usd"}
+STAGE_KEYS = {"agent", "model", "effort", "timeout_minutes"}
 AGENT_KEYS = {"runtime", "provider", "fallback"}
 PROFILE_KEYS = {"when", "stages"}
-TRIAGE_DEFAULTS = {"timeout_minutes": 5, "max_budget_usd": None}
+TRIAGE_DEFAULTS = {"timeout_minutes": 5}
 CHECK_KEYS = {
     "name",
     "run",
@@ -191,13 +191,6 @@ def _bool(value, where):
         _fail(f"{where} must be true or false")
 
 
-def _optional_budget(value, where):
-    if value is None:
-        return
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
-        _fail(f"{where} must be a positive number or null")
-
-
 def _model(value, where):
     if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9._\-\[\]]+", value):
         _fail(f"{where} must be a model name, such as 'sonnet' or a deployment name")
@@ -212,6 +205,11 @@ def _effort(value, where):
 def _stage_keys(settings, where):
     if not isinstance(settings, dict):
         _fail(f"{where} must be an object")
+    if "max_budget_usd" in settings:
+        _fail(
+            f"{where}.max_budget_usd was removed: NexKit sets no money limit, and "
+            f"timeout_minutes limits each agent's run. Remove it from {CONFIG_PATH}"
+        )
     extra = set(settings) - STAGE_KEYS
     if extra:
         _fail(f"Unknown keys in {where}: {', '.join(sorted(extra))}")
@@ -249,7 +247,6 @@ def _stage_values(settings, where, max_minutes, cfg):
     if "effort" in settings:
         _effort(settings["effort"], f"{where}.effort")
     _positive_int(settings.get("timeout_minutes"), f"{where}.timeout_minutes", max_minutes)
-    _optional_budget(settings.get("max_budget_usd"), f"{where}.max_budget_usd")
 
 
 def _patterns(value, where, what):
@@ -925,7 +922,6 @@ def stage(cfg, name):
         "model": settings.get("model") or cfg["model"],
         "effort": settings.get("effort", cfg["effort"]),
         "timeout_minutes": settings["timeout_minutes"],
-        "max_budget_usd": settings.get("max_budget_usd"),
     }
 
 

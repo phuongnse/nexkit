@@ -24,6 +24,29 @@ def validate(raw, **kw):
 
 
 class ConfigTests(unittest.TestCase):
+    def test_max_budget_usd_was_removed(self):
+        profiles = {"hard": {"when": "Security."}}
+        for where, raw in (
+            ("stages.implement", {"stages": {"implement": {"max_budget_usd": 5}}}),
+            (
+                "stages.triage",
+                {"profiles": profiles, "stages": {"triage": {"max_budget_usd": None}}},
+            ),
+            (
+                "profiles.hard.stages.plan",
+                {
+                    "profiles": {
+                        "hard": {"when": "Security.", "stages": {"plan": {"max_budget_usd": 1}}}
+                    }
+                },
+            ),
+        ):
+            with self.subTest(where=where):
+                with self.assertRaisesRegex(
+                    ConfigError, rf"{where}\.max_budget_usd was removed.*timeout_minutes"
+                ):
+                    validate(raw)
+
     def test_defaults_are_applied(self):
         cfg = validate({"checks": [{"name": "unit", "run": "make test"}]})
         self.assertNotIn("runner", cfg)
@@ -347,7 +370,7 @@ class ConfigTests(unittest.TestCase):
                     "easy": {"when": "Small changes."},
                     "hard": {
                         "when": "Security.",
-                        "stages": {"implement": {"model": "opus", "max_budget_usd": 20}},
+                        "stages": {"implement": {"model": "opus"}},
                     },
                 },
             }
@@ -364,7 +387,6 @@ class ConfigTests(unittest.TestCase):
                 "model": "opus",
                 "effort": "high",
                 "timeout_minutes": 60,
-                "max_budget_usd": 20,
             },
         )
         self.assertEqual(config.stage(hard, "plan")["model"], "sonnet")

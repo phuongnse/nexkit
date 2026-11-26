@@ -80,7 +80,7 @@ Checks, autopilot, and merges and waits have pages of their own: [Configuring ch
 | `parallel_checks` | `false` | Run the checks in parallel jobs, each check, or each `group` of checks, in a job of its own, so a round takes about as long as its slowest job. See [Parallel checks](checks.md#parallel-checks). |
 | `cache` | `[]` | Caches to restore before `setup`, which the base branch's own workflow saves. See [Caches](#caches). |
 | `evidence.artifacts` | `[]` | Names of the CI artifacts that NexKit downloads for the plan, implement and fix agents, from the CI runs an issue names. A name ending in `*` matches every artifact that starts with the rest. See [Evidence from CI runs](checks.md#evidence-from-ci-runs). |
-| `stages` | see [Stages](#stages) | Per-stage agent, model, effort, timeout and budget. |
+| `stages` | see [Stages](#stages) | Per-stage agent, model, effort and timeout. |
 | `profiles` | `{}` | Stage settings for kinds of issues, chosen for each issue. See [Profiles](#profiles). |
 | `default_profile` | `null` | The profile to use when no plan chose one. Required with `profiles`. |
 
@@ -292,9 +292,9 @@ The runtimes and providers NexKit supports and tests today. Each is a module in
 `nexkit/runtimes/`, so more can be added; a runtime is supported only with a live smoke
 test in CI.
 
-| Runtime | Providers | `effort` | `max_budget_usd` |
-|---|---|---|---|
-| `claude-code` | `anthropic` | `low`, `medium`, `high`, `xhigh`, `max` | yes |
+| Runtime | Providers | `effort` |
+|---|---|---|
+| `claude-code` | `anthropic` | `low`, `medium`, `high`, `xhigh`, `max` |
 
 Every runtime reports the tokens of its runs in the same form, which the run summary and
 the run comments show; see [Logs, summary and
@@ -341,10 +341,8 @@ Anthropic API key behind a Claude subscription:
 - Fallback agents use the same runtime as the agent, because the stage's `model` and
   `effort` are meant for it. Only the stage's agent's own list counts: when `claude-api`
   has a `fallback` too, it applies to the stages that choose `claude-api`.
-- `timeout_minutes` and `max_budget_usd` apply to each agent's run, and the job allows
-  for every agent of the list, up to 340 minutes for a stage. The stage's tokens add up
-  every agent's run. An API key is billed per token, so set `max_budget_usd` if a
-  fallback should not spend more than a limit.
+- `timeout_minutes` applies to each agent's run, and the job allows for every agent of
+  the list, up to 340 minutes for a stage. The stage's tokens add up every agent's run.
 - A fallback agent's secrets count like any agent's: the job that may run it receives
   them, they count toward the 8 per job, and `nexkit doctor` checks them. A fallback
   whose secret is not set is skipped, and the run summary says so.
@@ -373,7 +371,7 @@ set and that the repository's NexKit workflow passes it.
 ```json
 "stages": {
   "plan":      {"timeout_minutes": 15},
-  "implement": {"model": "opus", "timeout_minutes": 45, "max_budget_usd": 10},
+  "implement": {"model": "opus", "timeout_minutes": 45},
   "review":    {"model": "opus", "effort": "high", "timeout_minutes": 20}
 }
 ```
@@ -387,7 +385,6 @@ Fix rounds use the `implement` settings. `triage` is a fourth stage, allowed onl
 | `model` | Overrides the top-level `model`. |
 | `effort` | Overrides the top-level `effort`. |
 | `timeout_minutes` | Stop the agent after this long (plan 15, implement 45, review 20 and triage 5 by default; triage at most 30, other stages at most 340). With [fallback agents](#fallback-agents), each agent's run gets this long. |
-| `max_budget_usd` | A spending limit for each agent's run, for runtimes that have one (Claude Code's `--max-budget-usd`); `null` means no limit. |
 
 ## Profiles
 
@@ -426,7 +423,7 @@ ones, without choosing by hand on every issue.
   `stages.<stage>`, then `profiles.<profile>.stages.<stage>`. What a profile leaves out
   comes from `stages`. A profile can also run a stage on another agent, such as a second
   Claude account.
-- `stages.triage` sets the agent, model, effort, timeout and budget of the triage call. It
+- `stages.triage` sets the agent, model, effort and timeout of the triage call. It
   takes the top-level `agent`, `model` and `effort` unless it sets its own. A profile
   cannot set it, because triage runs before there is a profile.
 - `default_profile` is used when no plan chose a profile: `/nexkit go` without a plan, a

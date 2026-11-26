@@ -181,7 +181,6 @@ def blank(item):
         "used": {
             "tokens": {"input": 0, "cached": 0, "output": 0},
             "seconds": 0,
-            "usd": 0,
             "since": None,
         },
         "asked": [],
@@ -371,7 +370,6 @@ class Step:
         for key in ("input", "cached", "output"):
             used["tokens"][key] += tokens.get(key, 0)
         used["seconds"] += source.get("seconds") or 0
-        used["usd"] += source.get("usd") or 0
 
     def run(self, stage, again=False, diagnose=False, by=None, note=""):
         """Run `stage`'s agent. A fix round names the checks it looks into first: with
@@ -408,7 +406,7 @@ class Step:
             agent=None,
             model=None,
             effort=None,
-            budget={"tokens": None, "seconds": None, "usd": None},
+            budget={"tokens": None, "seconds": None},
             session=None,
             resume=False,
             **fields,

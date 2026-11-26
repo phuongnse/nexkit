@@ -314,9 +314,6 @@ class ClaudeReader(Reader):
     def outcome(self, returncode, stderr):
         event = self.result or {}
         outcome = Outcome(tokens=tokens(event))
-        cost = event.get("total_cost_usd")
-        if isinstance(cost, (int, float)) and not isinstance(cost, bool):
-            outcome.cost_usd = float(cost)
         if not self.result:
             outcome.error = (
                 f"exited with code {returncode} without a result. {stderr.strip()[-1500:]}"
@@ -356,7 +353,6 @@ class ClaudeCode(Runtime):
     release_url = "https://downloads.claude.ai/claude-code-releases/stable"
     program = "claude"
     efforts = ("low", "medium", "high", "xhigh", "max")
-    supports_budget = True
     reports_limits = True
     resumes = True
     providers = {"anthropic": anthropic}
@@ -380,8 +376,6 @@ class ClaudeCode(Runtime):
         ]
         if spec.effort:
             cmd += ["--effort", spec.effort]
-        if spec.budget_usd:
-            cmd += ["--max-budget-usd", str(spec.budget_usd)]
         for folder in spec.dirs:
             # Read-only tools reach only the working directory and the ones added to it.
             cmd += ["--add-dir", str(folder)]

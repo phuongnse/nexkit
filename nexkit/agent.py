@@ -540,7 +540,6 @@ def stage_spec(stage, cfg, home, dirs=(), session=None, schema=None):
         stage=stage,
         model=settings["model"],
         effort=settings["effort"],
-        budget_usd=settings["max_budget_usd"],
         schema=schema or stage_schema(stage, cfg),
         home=Path(home),
         dirs=tuple(Path(d) for d in dirs),
@@ -792,19 +791,15 @@ def _run_one(
             # NexKit's own schema: triage names an unknown profile in its error, not here.
             schema=schema or with_checklist(SCHEMAS[stage], stage, cfg),
         )
-        return found, outcome.cost_usd
+        return found
 
     with tempfile.TemporaryDirectory(dir=os.environ.get("RUNNER_TEMP") or None) as home:
         spec = stage_spec(stage, cfg, home, dirs, session=session, schema=schema)
-        result, cost = launch_once(spec, prompt, log, seconds)
+        result = launch_once(spec, prompt, log, seconds)
         calls = log.calls
         if unfit(result):
             left = min(RESULT_SECONDS, seconds - (result.get("seconds") or 0))
-            # The request runs within the stage's spending limit: what the first run left.
-            budget = spec.budget_usd
-            if budget and cost is not None:
-                budget = round(budget - cost, 2)
-            if runtime.resumes and left >= 60 and (budget is None or budget > 0):
+            if runtime.resumes and left >= 60:
                 print(
                     f"! {runtime.label} gave no result that fits the {stage} schema; asking the "
                     "same session for its result alone.",
@@ -822,9 +817,7 @@ def _run_one(
                     tool_output=cfg["log"]["tool_output"],
                     transcript_dir=folder if cfg["transcript"] else None,
                 )
-                second, _ = launch_once(
-                    replace(spec, resume=True, budget_usd=budget), text, again, left
-                )
+                second = launch_once(replace(spec, resume=True), text, again, left)
                 result = asked_again(result, second)
                 calls = calls + again.calls
             if unfit(result):
@@ -1198,16 +1191,14 @@ def action_for(stage, cfg, version=None):
         "budget": {
             "tokens": None,
             "seconds": configuration.stage_minutes(cfg, stage) * 60,
-            "usd": settings["max_budget_usd"],
         },
     }
 
 
 def finished(result, stage):
     """The protocol's `runAgent` result for NexKit 6's `result` of `stage`. It reads only a
-    result that is already redacted. The session, the change version and the cost are null:
-    the publish job makes the commit, no job asks the same session again, and NexKit 6's
-    result does not keep the cost."""
+    result that is already redacted. The session and the change version are null: the
+    publish job makes the commit, and no job asks the same session again."""
     status = result.get("status")
     if stage == "triage":
         chosen = result.get("chosen_by") == "triage"
@@ -1234,7 +1225,6 @@ def finished(result, stage):
         "changeVersion": None,
         "timedOut": bool(result.get("timed_out")),
         "seconds": round(seconds) if isinstance(seconds, (int, float)) else None,
-        "usd": None,
     }
 
 

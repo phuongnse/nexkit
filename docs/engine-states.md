@@ -29,7 +29,7 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
 | `split` | The work is carried by its parts | `accepted`, `dropped` |
 | `noChange` | Nothing needs to change, and the item says why | `new`, when a person reopens it |
 | `dropped` | A person ended the work | `new`, when a person reopens it |
-| `failed` | A step failed in a way that waiting does not help, or a token, time or money budget ran out. The change is kept, and the item waits for a person whatever is observed of it, but a merge or an emptied change | `planning` when a person asks, or when the failure policy plans an item with no change again; `fixing` and `checking` only when a person asks; `dropped` |
+| `failed` | A step failed in a way that waiting does not help, or a token or time budget ran out. The change is kept, and the item waits for a person whatever is observed of it, but a merge or an emptied change | `planning` when a person asks, or when the failure policy plans an item with no change again; `fixing` and `checking` only when a person asks; `dropped` |
 
 - **Approval leads to the change that exists.** An approved plan goes to `working` when the item
   has no change, and to `fixing` when it has one, such as after a re-plan or a question in a fix

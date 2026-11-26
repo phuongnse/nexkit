@@ -41,7 +41,7 @@ round on a pull request. It also sends the accept of a merge and most of GitHub'
 waits for required checks and for the base branch, the retries after a transient stop, the resumes
 after a usage limit, and the runner's `run.json`. The sweep sends its lost commands, released
 conflicts, first plans and order of starts. Left: the merge itself, conflicts that `maintain` finds
-after the base branch moves, a transient stop of publish, a `/nexkit go` that ended in an agent
+after the base branch moves, a `/nexkit go` that ended in an agent
 error, autopilot's other starts and the rest that [Getting there](engine.md#getting-there) lists.
 
 ## Later

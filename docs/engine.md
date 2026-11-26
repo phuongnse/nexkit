@@ -496,7 +496,8 @@ host runs it through its own adapter. A new rule of the engine comes with a case
    under `parentEnd` `whenPartAccepted`, which the GitHub host gives with `close_parent_issues`
    and a parent of at most as many parts as a state document holds. `report`
    sends every round's checks and review to `step`: a review that paused at a usage limit,
-   with the reset when NexKit 6 resumes it, a review that failed, a person's own pull request
+   with the reset when NexKit 6 resumes it, a review that stopped on a transient error, a review
+   that failed, a person's own pull request
    as an item that is only reviewed, and a round whose commit conflicts with its base branch,
    whose conflict round a hold keeps back until the sweep sends the hold's end
    (`autopilot._conflicts_released`). The engine finds the checks that failed the same way
@@ -504,10 +505,10 @@ host runs it through its own adapter. A new rule of the engine comes with a case
    them the fix round it starts diagnoses. The engine decides the runs again after a
    transient stop, under `retryWaits`, and lets a paused run go on under a hold as NexKit 6 does.
    `report` sends it a plan, implement or fix stage whose agent stopped at a usage limit or on a
-   transient error, and `maintain.resume_paused` sends the tick of each due resume; the host
-   carries out the wait, or leaves the run to a person. Which reset the host gives stays the
-   host's, and so do a review that NexKit 6 runs again after a transient error and a transient
-   stop of publish. After a plan, a stopped round and a review, `report` also sends the tokens,
+   transient error, and one whose publish stopped on a transient error, as a transient stop of
+   the stage's agent. It sends a review that stopped on a transient error too. The tick of each
+   due resume comes from `maintain.resume_paused`. The host carries out the run, the wait or the
+   person. Which reset the host gives stays the host's. After a plan, a stopped round and a review, `report` also sends the tokens,
    seconds, money and session that the runner's `run.json` gives. It checks the file against the
    protocol first. The rest of the result stays NexKit 6's, so the engine decides as before, and
    a file that is missing or does not fit sends none. It also decides what follows a command that

@@ -974,35 +974,14 @@ def _automatic(decision):
     return bool(decision.get("auto") or decision.get("autopilot"))
 
 
-def _retries_left(cfg, decision):
-    """How many runs again after a transient error `retry.wait_minutes` still allows."""
-    return max(0, len(cfg["retry"]["wait_minutes"]) - int(decision.get("retry") or 0))
-
-
-def _agent_transient(agent, needs):
-    """Whether the agent itself stopped on a transient error: its job ended without a result,
-    or its result says so. A stop of `publish` is NexKit's own retry."""
-    if (needs.get("agent") or {}).get("result") in ("cancelled", "skipped"):
-        return False
-    return agent is None or (agent.get("status") == "error" and bool(agent.get("transient")))
-
-
-def _retry(gh, cfg, decision, command, number, workflow_ref, default_branch, now=None, answer=None):
+def _retry(gh, decision, command, number, workflow_ref, default_branch, answer):
     """Start `command` again after a transient error, with the same note for the same
-    command, after the next wait of `retry.wait_minutes`: at once when it is 0, otherwise
-    later, by `maintain.resume_paused`. `answer` is the engine's (`host.stage_transient`)
-    for a stop of the agent itself. Returns the inputs of the run it started, for the
-    run's `next` (see `autopilot._handed_on`), or for one that waits, its resume record
-    with `at` and `retry`, its number. None when the waits are used up, or the run could
-    not start."""
-    if answer:
-        count, until = answer[-1], answer[1] if answer[0] == "later" else None
-    elif _retries_left(cfg, decision):
-        count = int(decision.get("retry") or 0) + 1
-        wait = cfg["retry"]["wait_minutes"][count - 1]
-        until = iso((now or datetime.now(UTC)) + timedelta(minutes=wait)) if wait else None
-    else:
-        return None
+    command, as the engine answers (`answer`, from `host.stage_transient` or
+    `host.round_ended`, never `("failed",)`): at once, or later after the next wait of
+    `retry.wait_minutes`, by `maintain.resume_paused`. Returns the inputs of the run it
+    started, for the run's `next` (see `autopilot._handed_on`), or for one that waits, its
+    resume record with `at` and `retry`, its number. None when the run could not start."""
+    count, until = answer[-1], answer[1] if answer[0] == "later" else None
     same = command == progress.COMMANDS[decision["action"]]
     note = (decision.get("note") or "") if same else ""
     if same:
@@ -2430,8 +2409,9 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             error = _transient(decision, agent, publish, needs)
             command = progress.COMMANDS[action]
             now, answer, refused = datetime.now(UTC), None, None
-            if error and _agent_transient(agent, needs):
-                # The engine decides when the agent runs again, and when a person does.
+            if error:
+                # The engine decides when the stage runs again, and when a person does, after a
+                # stop of the agent or of publish alike.
                 from . import host
 
                 try:
@@ -2440,20 +2420,15 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
                 except host.Refused as exc:
                     refused = host.refused_reason(exc)
             failed = answer == ("failed",)
-            if answer is None and not refused:
-                # A stop of publish is NexKit's own retry, by `retry.wait_minutes`.
-                failed = bool(error) and not _retries_left(cfg, decision)
             again = None
-            if error and not refused and not failed:
+            if answer and not failed:
                 again = _retry(
                     gh,
-                    cfg,
                     decision,
                     command,
                     decision["target"],
                     workflow_ref,
                     default_branch,
-                    now,
                     answer,
                 )
             if again:
@@ -2609,11 +2584,12 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
 
     from .host import Refused, after_round, round_ended
 
-    def ended(given):
+    def ended(given, now=None):
         """What the engine answers to this round's checks and a review that is not a
         verdict on a NexKit pull request (`host.round_ended`), with the checks that failed
         the same way before and after a fix round, which the next automatic fix round
-        diagnoses first, kept in the state comment."""
+        diagnoses first, kept in the state comment. `now` is when a review stopped on a
+        transient error."""
         found_end, repeated = round_ended(
             cfg,
             decision,
@@ -2625,6 +2601,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             given,
             recheck,
             ran=review_ran,
+            now=now,
         )
         state["feedback"] = _with_repeated(state["feedback"], repeated)
         return found_end
@@ -2682,11 +2659,18 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         outcome = "review_failed"
         found["error"], message = review_failure(reviewed)
         error = _transient(decision, reviewed, {}, needs, "review")
-        again = error and _retry(gh, cfg, decision, "review", pr, workflow_ref, default_branch)
+        answer, again, failed = None, None, False
         try:
-            # A review that runs again after a transient error is the host's own retry, which
-            # the engine does not see end; one that failed otherwise waits for a person.
-            ended(("again", None) if again else ("failed", found["error"]))
+            if error:
+                # The engine decides when the review runs again, and when a person does.
+                answer = ended(("transient", error), datetime.now(UTC))
+                failed = answer == ("failed",)
+                if not failed:
+                    again = _retry(gh, decision, "review", pr, workflow_ref, default_branch, answer)
+            if not again and not failed:
+                # A review that failed otherwise, or whose run again GitHub refused to start,
+                # waits for a person.
+                ended(("failed", found["error"]))
         except Refused as error_:
             refused = error_
         if again:
@@ -2697,7 +2681,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
                 # The review runs again later; until then it is neither passed nor failed.
                 waits = f"Runs again after {shown(resume['at'])} after a transient error"
                 gh.set_status(head, "nexkit/review", "pending", waits[:STATUS_LIMIT], url)
-        elif error and not _retries_left(cfg, decision):
+        elif failed:
             outcome, message = "retry_failed", _retried(gh, decision, error, message)
             found.update(error=error, stops=int(decision.get("retry") or 0) + 1)
     else:

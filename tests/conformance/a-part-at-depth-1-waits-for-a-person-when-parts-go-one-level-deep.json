@@ -1,0 +1,44 @@
+{
+  "policies": {
+    "planApproval": "autoWhenClean",
+    "splits": true,
+    "splitDepth": 1
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "created",
+        "depth": 1
+      },
+      "state": "new",
+      "changed": true,
+      "expect": {
+        "depth": 1
+      }
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "plan"
+      },
+      "state": "planning",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:planSplit"
+      },
+      "state": "awaitingApproval",
+      "changed": true,
+      "actions": [
+        "show",
+        "needPerson"
+      ],
+      "expect": {
+        "attention.reason": "splitDepth"
+      }
+    }
+  ]
+}

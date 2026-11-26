@@ -225,8 +225,10 @@ when a list of what the code defines misses an entry. These rules close each of 
    whose close on GitHub and roadmap row disagree. It also points each broken link of an open issue
    at its new home. The [docs audit skill](../.claude/skills/nexkit-docs-audit/SKILL.md) says how a
    page is read and what each issue holds.
-9. **Checks catch what a machine can.** `tests/test_docs.py` checks that [the map](README.md) lists every doc, that the links of the map,
-   of this page, of the architecture page and of [AGENTS.md](../AGENTS.md) resolve, that AGENTS.md
-   keeps within its word limits, and that the job and module tables of the architecture page match
-   the workflows and `nexkit/`. A docs check is added only once the whole tree passes
+9. **Checks catch what a machine can.** `tests/test_docs.py` checks that [the map](README.md) lists
+   every doc, that the links of the map, of this page, of the architecture page, of
+   [AGENTS.md](../AGENTS.md) and of the maintenance skills under `.claude/skills/` resolve, that
+   each task of the `nexkit-maintain` skill links a section of [Delivery](delivery.md), that
+   AGENTS.md keeps within its word limits, and that the job and module tables of the architecture
+   page match the workflows and `nexkit/`. A docs check is added only once the whole tree passes
    it: there are no lists of exceptions.

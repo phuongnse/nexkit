@@ -4,8 +4,8 @@ _Planned for NexKit 7. Built so far: the protocol's schemas, in `nexkit/protocol
 `step` call with its states, whose decisions are a frame that takes NexKit 6's own rules one group
 at a time, and its `prompt` call, which writes each stage's prompt as NexKit 6 does, as
 `nexkit-engine step` and `nexkit-engine prompt` and over HTTP as `nexkit-engine serve`; its
-`sweep` call, which orders and limits the items that start, as `nexkit-engine sweep`, which no host
-calls yet; the
+`sweep` call, which orders and limits the items that start, as `nexkit-engine sweep`, which
+NexKit 6's autopilot takes its starts from; the
 GitHub host's state comment and its import of NexKit 6's open work, which nothing calls yet; and
 the decisions that follow a plan, a blocked `/nexkit go` and a round on a pull request, its
 review, diagnosis and conflict rounds, the end of a round's wait and which rounds count, and the
@@ -876,7 +876,12 @@ adapter. A new rule of the engine comes with a case.
    `/nexkit plan` only when the engine answers with a plan run. Otherwise the issue waits for a
    person. NexKit 6's checks of a hold, trust, blockers and waves come first, so the engine is
    never asked for a held or blocked issue, and the other starts that autopilot makes stay
-   NexKit 6's. Every existing test
+   NexKit 6's. Which of the issues that may start do, and in what order, is the engine's too
+   (`host.sweep`, called by `autopilot.preview`): the host sends the start steps without a pull
+   request as a `sweep` call, with the busy count as `running`, the index of each issue's
+   milestone, its wave and whether pull requests wait for it as a bug issue about the default
+   branch, and says each answer in NexKit 6's words. It names no account at a usage limit, so
+   that rule shows only in the conformance cases. Every existing test
    passes after each step, and the engine's part of `tests/test_scenarios.py` becomes the
    conformance suite as it goes.
 2. NexKit 7 is released when the GitHub host runs only through the engine. Repositories on

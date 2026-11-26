@@ -11,6 +11,9 @@ transcript, and checks the structured result against the stage's schema itself b
 anything is published. Everything specific to one CLI lives in `nexkit/runtimes/`, and no other
 code branches on a runtime's name.
 
+Claude Code is the one runtime that NexKit supports. The reasons are in
+[D7](decisions/d7-one-tested-runtime-claude-code.md).
+
 **What a stage may affect** is the same for every runtime:
 
 | Stage | Access | Claude Code |

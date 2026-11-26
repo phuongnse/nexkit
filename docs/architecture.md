@@ -41,6 +41,9 @@ engine's calls as a program that reads JSON on standard input.
 `scripts/` holds the smoke test, the pin updates, the release notes, the docs audit and
 `lint.sh`. `tests/` holds the checks that [Testing](testing.md) describes.
 
+The reasons for the package's use of the standard library only are in
+[D8](decisions/d8-standard-library-only.md).
+
 ## The workflows and their jobs
 
 Each repository that uses NexKit runs one caller workflow, `nexkit/templates/workflow.yml`, which
@@ -118,6 +121,9 @@ a commit. Several rules follow from that:
 - `report` needs `contents: write` only to merge when `merge.auto` is on. Its token holds that
   permission in every run, but it never pushes, and with `merge.auto: false` it never merges.
 
+The reasons for the rule that the agent's session never holds a write token are in
+[D3](decisions/d3-agent-jobs-hold-no-write-token.md).
+
 ## State
 
 NexKit keeps no state outside GitHub. A run can start again, or start beside another run, so the state
@@ -173,6 +179,9 @@ A runner runs one agent session for one stage. For agent CLIs such as Claude Cod
 
 [The parts](engine.md#the-parts) lists each part and where it lives. [Hosts](engine.md#hosts)
 compares the GitHub host with the other hosts that the design names.
+
+The reasons for splitting the engine from its hosts are in
+[D10](decisions/d10-an-engine-decides-hosts-carry-out.md).
 
 ## The plugin
 

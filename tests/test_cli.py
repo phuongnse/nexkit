@@ -11,7 +11,7 @@ from unittest import mock
 
 import nexkit
 import nexkit.config
-from nexkit import app, cli, maintain, scaffold
+from nexkit import app, cli, maintain, route, scaffold
 from nexkit.globs import branch_matches
 from nexkit.runtimes import DECLARED_SECRETS, RUNTIMES, SECRET_SLOTS
 from nexkit.state import (
@@ -435,16 +435,61 @@ class InitDoctorTests(unittest.TestCase):
             "(github.event_name == 'issues' && github.event.action != 'closed')) && "
             "'autopilot' || (github.event_name == 'pull_request_review' && "
             "github.event.review.state == 'approved') && format('approved-{0}', "
-            "github.event.pull_request.number) || github.event.issue.number || "
-            "github.event.pull_request.number || inputs.number || github.event_name }}\n"
+            "github.event.pull_request.number) || needs.item.outputs.item || "
+            "github.event_name }}\n"
         )
         self.assertIn("\n    " + group, text.split("\n  nexkit:\n", 1)[1])
         self.assertNotRegex(text, r"(?m)^concurrency:|cancel-in-progress")
-        ok = (True, "Commands on one issue or pull request run one at a time")
+        ok = (True, "Commands on an issue and rounds on its pull request run one at a time")
         self.assertIn(ok, scaffold.doctor(self.root))
         # A workflow from NexKit 1.7 or earlier sets it for the whole workflow.
         path.write_text(text.replace("    " + group, "").replace("jobs:", "concurrency: x\njobs:"))
         self.assertNotIn(ok, scaffold.doctor(self.root))
+
+    def test_doctor_reports_a_workflow_without_the_item_job(self):
+        cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
+        path = self.root / ".github/workflows/nexkit.yml"
+        text = path.read_text()
+        self.assertIn("\n  item:\n", text)
+        old = (
+            "Commands on an issue and rounds on its pull request may run at once: "
+            ".github/workflows/nexkit.yml has no 'item' job for the concurrency group; add it "
+            "as 'nexkit init' writes it (see docs/troubleshooting.md)"
+        )
+        self.assertNotIn((False, old), scaffold.doctor(self.root))
+        # NexKit 6.3 and earlier: two groups, one for the issue and one for its pull request.
+        before = re.sub(r"(?s)\n  item:\n.*?\n  nexkit:\n    needs: item\n", "\n  nexkit:\n", text)
+        before = before.replace("needs.item.outputs.item", "github.event.issue.number")
+        path.write_text(before)
+        self.assertIn((False, old), scaffold.doctor(self.root))
+        # The group of the old workflow, with the job left in.
+        path.write_text(text.replace("needs.item.outputs.item", "github.event.issue.number"))
+        self.assertIn((False, old), scaffold.doctor(self.root))
+
+    def test_doctor_reports_an_item_job_at_another_release(self):
+        cli.main(["init", "--repo", str(self.root), "--check", "test=true", "--kit-ref", "v3.0.0"])
+        path = self.root / ".github/workflows/nexkit.yml"
+        self.assertFalse(any("'item' job" in m for _, m in scaffold.doctor(self.root)))
+        text = path.read_text()
+        path.write_text(
+            text.replace("ref: v3.0.0\n          path: kit", "ref: v2.9.0\n          path: kit")
+        )
+        problem = (
+            False,
+            ".github/workflows/nexkit.yml calls the pipeline at v3.0.0, but its 'item' job "
+            "checks out v2.9.0, so it runs another release's code; check out the same tag",
+        )
+        self.assertIn(problem, scaffold.doctor(self.root))
+        path.write_text(
+            text.replace("          ref: v3.0.0\n          path: kit\n", "          path: kit\n")
+        )
+        self.assertTrue(
+            any(
+                "'item' job checks out no ref" in m
+                for ok, m in scaffold.doctor(self.root)
+                if not ok
+            )
+        )
 
     def test_doctor_checks_the_permissions_the_pipeline_needs(self):
         cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
@@ -467,6 +512,20 @@ class InitDoctorTests(unittest.TestCase):
         # Reading is all it needs: NexKit writes as its App.
         path.write_text(text.replace("permissions:\n", "permissions: read-all\nunused:\n"))
         self.assertIn(ok, scaffold.doctor(self.root))
+
+    def test_the_permissions_granted_are_those_of_the_job_that_calls_the_pipeline(self):
+        text = scaffold.workflow_text("acme/kit", "v1.0.0")
+        item = jobs_of(text)["item"]
+        self.assertEqual(
+            permissions_of(item), {"contents": "read", "issues": "read", "pull-requests": "read"}
+        )
+        # The `item` job has a block of its own, and the workflow's gives more.
+        self.assertEqual(scaffold.granted(text)["checks"], "read")
+        self.assertEqual(scaffold.granted(text)["actions"], "read")
+        self.assertNotEqual(scaffold.granted(text), permissions_of(item))
+        # The job that calls the pipeline has a block of its own too.
+        called = text.replace("    uses:", "    permissions:\n      contents: write\n    uses:")
+        self.assertEqual(scaffold.granted(called), {"contents": "write"})
 
     def test_doctor_checks_the_trigger_for_parent_issues(self):
         cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
@@ -728,7 +787,7 @@ class InitDoctorTests(unittest.TestCase):
         findings = scaffold.doctor(self.root)
         self.assertTrue(any("has no 'push' trigger" in m for ok, m in findings if not ok))
 
-    def test_doctor_checks_that_both_refs_match(self):
+    def test_doctor_checks_that_the_refs_match(self):
         cli.main(["init", "--repo", str(self.root), "--check", "test=true", "--kit-ref", "v3.0.0"])
         path = self.root / ".github/workflows/nexkit.yml"
         self.assertFalse(any("nexkit_ref" in m for _, m in scaffold.doctor(self.root)))
@@ -738,7 +797,7 @@ class InitDoctorTests(unittest.TestCase):
         problem = (
             False,
             ".github/workflows/nexkit.yml calls the pipeline at v3.1.0, but nexkit_ref is "
-            "v3.0.0; set both to the same tag",
+            "v3.0.0; set them to the same tag",
         )
         self.assertIn(problem, scaffold.doctor(self.root))
         path.write_text(text.replace("      nexkit_ref: v3.0.0\n", ""))
@@ -2425,6 +2484,227 @@ class WorkflowSafetyTests(unittest.TestCase):
 
     def test_config_comes_from_default_branch(self):
         self.assertIn("ref: ${{ github.event.repository.default_branch }}", self.jobs["route"])
+
+
+def evaluate(expression, context):
+    """The value of a GitHub Actions expression of the kind the workflow template uses:
+    `||`, `&&`, `==`, `!=`, parentheses, quoted strings, `format` and dotted names. As in
+    GitHub, `||` and `&&` give one of their operands, and '' and null are false."""
+    tokens = re.findall(r"'[^']*'|\|\||&&|==|!=|[(),]|[\w.-]+", expression)
+    position = 0
+
+    def peek():
+        return tokens[position] if position < len(tokens) else None
+
+    def take(expected=None):
+        nonlocal position
+        token = tokens[position]
+        assert expected is None or token == expected, (token, expected)
+        position += 1
+        return token
+
+    def truthy(value):
+        return value not in (None, "", 0, False)
+
+    def either():
+        value = both()
+        while peek() == "||":
+            take()
+            other = both()
+            value = value if truthy(value) else other
+        return value
+
+    def both():
+        value = equal()
+        while peek() == "&&":
+            take()
+            other = equal()
+            value = other if truthy(value) else value
+        return value
+
+    def equal():
+        value = primary()
+        while peek() in ("==", "!="):
+            operator = take()
+            other = primary()
+            value = (value == other) if operator == "==" else (value != other)
+        return value
+
+    def primary():
+        token = take()
+        if token == "(":
+            value = either()
+            take(")")
+            return value
+        if token.startswith("'"):
+            return token[1:-1]
+        if token == "format" and peek() == "(":
+            take("(")
+            template = primary()
+            arguments = []
+            while peek() == ",":
+                take()
+                arguments.append(primary())
+            take(")")
+            return re.sub(r"\{(\d+)\}", lambda m: str(arguments[int(m.group(1))]), template)
+        value = context
+        for part in token.split("."):
+            value = value.get(part) if isinstance(value, dict) else None
+        return value
+
+    value = either()
+    assert position == len(tokens), tokens[position:]
+    return value
+
+
+class WorkItemGroupTests(unittest.TestCase):
+    """The concurrency group of the installed workflow, with the item that `nexkit item`
+    names for the event. GitHub's own queueing is not shown here, only the group."""
+
+    @classmethod
+    def setUpClass(cls):
+        text = scaffold.workflow_text("acme/kit", "v1.0.0")
+        job = jobs_of(text)["nexkit"]
+        cls.group = re.search(r"^      group: nexkit-\$\{\{ (.*) \}\}$", job, re.M).group(1)
+
+    def setUp(self):
+        self.gh = FakeGitHub()
+        self.gh.add_issue(5)
+        self.gh.add_pull(11, 5)
+        self.gh.add_pull(10, 5, branch="upgrade/nexkit")
+        self.gh.add_pull(12, 5, repo="someone/fork")
+
+    def group_of(self, event_name, event):
+        """The group GitHub gives the `nexkit` job for the event: `item` runs first."""
+        item = route.work_item(self.gh, event_name, event)
+        context = {
+            "github": {"event_name": event_name, "event": event},
+            "needs": {"item": {"outputs": {"item": item or ""}}},
+        }
+        return "nexkit-" + str(evaluate(self.group, context) or "")
+
+    def comment(self, number, body="/nexkit go", on_pull=False):
+        issue = {"number": number, **({"pull_request": {}} if on_pull else {})}
+        return self.group_of(
+            "issue_comment",
+            {"action": "created", "issue": issue, "comment": {"id": 1, "body": body}},
+        )
+
+    def review(self, number, state="changes_requested"):
+        event = {
+            "action": "submitted",
+            "pull_request": self.gh.pulls[number],
+            "review": {"state": state},
+        }
+        return self.group_of("pull_request_review", event)
+
+    def dispatch(self, number, command="fix"):
+        inputs = {"command": command, "number": str(number), "note": "", "auto": "false"}
+        return self.group_of("workflow_dispatch", {"inputs": inputs})
+
+    def test_an_issue_and_its_pull_request_share_one_group(self):
+        self.assertEqual(self.comment(5), "nexkit-5")
+        self.assertEqual(self.comment(5, "/nexkit plan"), "nexkit-5")
+        self.assertEqual(self.comment(11, "/nexkit fix", on_pull=True), "nexkit-5")
+        self.assertEqual(self.review(11), "nexkit-5")
+        self.assertEqual(self.dispatch(11), "nexkit-5")
+        self.assertEqual(self.dispatch(5, "go"), "nexkit-5")
+        self.assertEqual(
+            self.group_of("issues", {"action": "closed", "issue": {"number": 5}}), "nexkit-5"
+        )
+
+    def test_a_persons_pull_request_and_a_forks_have_a_group_of_their_own(self):
+        self.assertEqual(self.comment(10, "/nexkit review", on_pull=True), "nexkit-10")
+        self.assertEqual(self.dispatch(10, "review"), "nexkit-10")
+        # A fork cannot join an issue's queue by naming its branch like NexKit's.
+        self.assertEqual(self.comment(12, "/nexkit review", on_pull=True), "nexkit-12")
+        self.assertEqual(self.dispatch(12, "review"), "nexkit-12")
+        self.assertEqual(self.review(12), "nexkit-12")
+
+    def test_sweeps_the_waiting_run_and_approvals_keep_their_groups(self):
+        self.assertEqual(self.dispatch("autopilot", "autopilot"), "nexkit-autopilot")
+        self.assertEqual(self.dispatch("resume", "resume"), "nexkit-resume")
+        self.assertEqual(self.review(11, "approved"), "nexkit-approved-11")
+        for event_name, event in (
+            ("issues", {"action": "opened", "issue": {"number": 5}}),
+            ("milestone", {"action": "closed"}),
+        ):
+            self.assertEqual(self.group_of(event_name, event), "nexkit-autopilot")
+
+    def test_other_events_form_a_group_per_event(self):
+        for event_name in ("schedule", "push", "workflow_run"):
+            self.assertEqual(self.group_of(event_name, {}), f"nexkit-{event_name}")
+
+    def test_the_group_is_the_number_when_github_cannot_be_read(self):
+        del self.gh.pulls[11]  # GitHub answers 404 for the pull request
+        self.gh.pull = mock.Mock(side_effect=nexkit.github.GitHubError(502, "Bad Gateway"))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(self.comment(11, "/nexkit fix", on_pull=True), "nexkit-11")
+        self.assertIn("::warning::GitHub answered 502 reading #11", out.getvalue())
+
+    def test_a_dispatch_with_a_number_that_is_no_item_names_none(self):
+        self.assertIsNone(
+            route.work_item(self.gh, "workflow_dispatch", {"inputs": {"number": "x"}})
+        )
+        self.assertIsNone(route.work_item(self.gh, "workflow_dispatch", {}))
+
+    def test_the_item_command_writes_the_item_to_the_step_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            event, output = Path(tmp, "event.json"), Path(tmp, "output")
+            event.write_text(json.dumps({"action": "created", "issue": {"number": 7}}))
+            env = {"GITHUB_EVENT_PATH": str(event), "GITHUB_OUTPUT": str(output)}
+            with (
+                mock.patch.object(cli, "_gh", return_value=self.gh),
+                mock.patch.dict(os.environ, {**env, "GITHUB_EVENT_NAME": "issue_comment"}),
+            ):
+                self.assertEqual(cli.main(["item"]), 0)
+                self.assertRegex(output.read_text(), r"^item<<(EOF_\w+)\n7\n\1\n$")
+                output.unlink()
+                event.write_text("{}")
+                with mock.patch.dict(os.environ, {"GITHUB_EVENT_NAME": "schedule"}):
+                    self.assertEqual(cli.main(["item"]), 0)
+                self.assertFalse(output.exists())
+
+
+class ItemJobTests(unittest.TestCase):
+    """The template's `item` job runs NexKit's code with a token that only reads."""
+
+    @classmethod
+    def setUpClass(cls):
+        text = scaffold.workflow_text("acme/kit", "v1.0.0")
+        cls.item = jobs_of(text)["item"]
+        cls.nexkit = jobs_of(text)["nexkit"]
+        cls.route = jobs_of((ROOT / ".github/workflows/pipeline.yml").read_text())["route"]
+
+    def test_it_holds_only_read_permissions_and_no_secrets(self):
+        self.assertEqual(
+            permissions_of(self.item),
+            {"contents": "read", "issues": "read", "pull-requests": "read"},
+        )
+        for text in ("secrets", "create-github-app-token", "private-key", "github_app", "write"):
+            self.assertNotIn(text, self.item)
+        self.assertNotIn("persist-credentials: true", self.item)
+        self.assertIn("GITHUB_TOKEN: ${{ github.token }}", self.item)
+
+    def test_it_checks_out_only_nexkits_code(self):
+        self.assertEqual(self.item.count("actions/checkout@"), 1)
+        self.assertEqual(self.item.count("path: kit"), 1)
+        self.assertIn("repository: acme/kit\n", self.item)
+        self.assertIn("ref: v1.0.0\n", self.item)
+        self.assertIn("persist-credentials: false", self.item)
+        self.assertNotIn("sparse-checkout", self.item)
+        self.assertIn("kit/bin/nexkit item", self.item)
+
+    def test_its_actions_are_those_of_the_pipelines_route_job(self):
+        for action in ("actions/checkout@", "actions/setup-python@"):
+            pinned = re.search(rf"uses: {action}.*", self.route).group(0)
+            self.assertIn(pinned, self.item)
+
+    def test_the_job_that_calls_the_pipeline_waits_for_it_and_has_no_condition_of_its_own(self):
+        self.assertIn("    needs: item\n", self.nexkit)
+        self.assertNotIn("    if:", self.nexkit)
+        self.assertIn("    if: >-\n", self.item)
 
 
 class UpdateImageWorkflowTests(unittest.TestCase):

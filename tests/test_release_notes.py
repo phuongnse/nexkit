@@ -47,9 +47,9 @@ class ReleaseNotesTests(unittest.TestCase):
         )
         self.assertEqual(
             upgrade,
-            "1. In `.github/workflows/nexkit.yml`, change both the `uses:` ref and "
-            "`nexkit_ref` to `v2.0.0`. Or run `nexkit init --force --kit-ref v2.0.0` and "
-            "restore your config.\n"
+            "1. In `.github/workflows/nexkit.yml`, change the `uses:` ref, `nexkit_ref` and "
+            "the `ref:` of the `item` job's checkout to `v2.0.0`. Or run `nexkit init --force "
+            "--kit-ref v2.0.0` and restore your config.\n"
             "2. Rename the settings:\n\n"
             "   ```json\n"
             '   "fix": {"max_auto_rounds": 2}\n'

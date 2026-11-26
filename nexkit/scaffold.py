@@ -797,20 +797,42 @@ def kit_pin(workflow):
     return (_input(workflow, "nexkit_repository") or KIT_REPOSITORY, ref) if ref else None
 
 
+def _item_job(workflow):
+    """The text of the workflow's `item` job, which names the work item for the concurrency
+    group, or None without one."""
+    found = re.search(
+        r"^  item:[ \t]*\n((?:    .*\n|[ \t]*\n)*)", _uncommented(workflow) + "\n", re.M
+    )
+    return found.group(1) if found else None
+
+
 def _same_ref(workflow, ref):
-    """Findings: `nexkit_ref` names the ref the pipeline is called at. The jobs check out
-    NexKit's code at `nexkit_ref`, so with another ref they run another release's code."""
+    """Findings: `nexkit_ref` and the `item` job's checkout name the ref the pipeline is
+    called at. The jobs check out NexKit's code at those refs, so with another ref they run
+    another release's code."""
+    findings = []
     pinned = _input(workflow, "nexkit_ref")
-    if pinned == ref:
-        return []
-    found = f"is {pinned}" if pinned else "is not set"
-    return [
-        (
-            False,
-            f"{WORKFLOW_PATH} calls the pipeline at {ref}, but nexkit_ref {found}; set both "
-            "to the same tag",
+    if pinned != ref:
+        found = f"is {pinned}" if pinned else "is not set"
+        findings.append(
+            (
+                False,
+                f"{WORKFLOW_PATH} calls the pipeline at {ref}, but nexkit_ref {found}; set "
+                "them to the same tag",
+            )
         )
-    ]
+    item = _item_job(workflow)
+    checked = re.search(r"^\s+ref:\s*['\"]?([^'\"\s]+)", item or "", re.M)
+    if item is not None and (checked.group(1) if checked else None) != ref:
+        found = f"checks out {checked.group(1)}" if checked else "checks out no ref"
+        findings.append(
+            (
+                False,
+                f"{WORKFLOW_PATH} calls the pipeline at {ref}, but its 'item' job {found}, so "
+                "it runs another release's code; check out the same tag",
+            )
+        )
+    return findings
 
 
 def _version(ref):
@@ -835,26 +857,42 @@ def _newer_release(kit_repo, ref):
 
 
 def _concurrency(workflow):
-    """A finding: the concurrency group must be on the job, so plain comments never join it."""
-    if re.search(r"^    concurrency:", workflow, re.M) and not re.search(
-        r"^concurrency:", workflow, re.M
+    """A finding: the concurrency group must be on the job, so plain comments never join it,
+    and keyed by the work item that the `item` job names, so the commands on an issue and
+    the rounds on its pull request wait in one queue."""
+    if not (
+        re.search(r"^    concurrency:", workflow, re.M)
+        and not re.search(r"^concurrency:", workflow, re.M)
     ):
-        return (True, "Commands on one issue or pull request run one at a time")
-    return (
-        False,
-        f"Set 'concurrency' on the 'nexkit' job in {WORKFLOW_PATH}, as 'nexkit init' writes "
-        "it (see docs/troubleshooting.md)",
-    )
+        return (
+            False,
+            f"Set 'concurrency' on the 'nexkit' job in {WORKFLOW_PATH}, as 'nexkit init' "
+            "writes it (see docs/troubleshooting.md)",
+        )
+    if _item_job(workflow) is None or "needs.item.outputs.item" not in _uncommented(workflow):
+        return (
+            False,
+            "Commands on an issue and rounds on its pull request may run at once: "
+            f"{WORKFLOW_PATH} has no 'item' job for the concurrency group; add it as "
+            "'nexkit init' writes it (see docs/troubleshooting.md)",
+        )
+    return (True, "Commands on an issue and rounds on its pull request run one at a time")
 
 
 LEVELS = {"none": 0, "read": 1, "write": 2}
 
 
 def granted(workflow):
-    """The token permissions the workflow gives its job: the job's own block, else the
-    workflow's. `read-all` and `write-all` give every permission, under the name `*`."""
+    """The token permissions the workflow gives its job that calls the pipeline: the job's
+    own block, else the workflow's. `read-all` and `write-all` give every permission, under
+    the name `*`."""
     text = _uncommented(workflow)
     job = text.split("\njobs:", 1)[1] if "\njobs:" in text else ""
+    # Not the permissions of another job, such as `item`, which asks for less.
+    for found in re.finditer(r"^  \w+:[ \t]*\n(?:    .*\n|[ \t]*\n)*", job + "\n", re.M):
+        if ".github/workflows/pipeline.yml@" in found.group(0):
+            job = found.group(0)
+            break
     for found in (
         re.search(r"^    permissions:[ \t]*(\S*)[ \t]*\n((?:      .*\n|[ \t]*\n)*)", job, re.M),
         re.search(r"^permissions:[ \t]*(\S*)[ \t]*\n((?:  .*\n|[ \t]*\n)*)", text, re.M),

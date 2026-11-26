@@ -5,14 +5,19 @@ pages split from it resolves, each task of the nexkit-maintain skill links a sec
 page, AGENTS.md keeps within its word limits, the architecture page's job and module tables match
 the workflows and nexkit/, the how-it-works page's job table matches the jobs of pipeline.yml, the
 permissions its rows name and the number in its heading, each test the security page names exists,
-and the outcome table of how it works lists each outcome the code defines and no other. The plan
-and review layouts of stages match the sections the code writes, and the values the pages repeat
-match their constants. The decisions index matches the decision files, and each decision is
-linked, as docs/writing-docs.md#how-the-docs-stay-correct says."""
+and the outcome table of how it works lists each outcome the code defines and no other. The key
+tables and the complete configuration of the configuration reference list each key the code
+defines and no other, with the defaults and ranges the code has. The plan and review layouts of
+stages match the sections the code writes, and the values the pages repeat match their constants.
+The decisions index matches the decision files, and each decision is linked, as
+docs/writing-docs.md#how-the-docs-stay-correct says."""
 
+import copy
+import json
 import re
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from nexkit import autopilot, checks, config, context, github, publish, report, runtimes, state
 from nexkit.engine import prompt, textutil
@@ -29,6 +34,8 @@ HOW_IT_WORKS_PAGE = DOCS / "how-it-works.md"
 STAGES = DOCS / "stages.md"
 SECURITY = DOCS / "security.md"
 OUTCOMES_HEADER = "| Outcome | Meaning |"
+CONFIG_PAGE = DOCS / "configuration.md"
+KEYS_HEADER = "| Key | Default | Meaning |"
 DECISIONS = DOCS / "decisions"
 DECISIONS_INDEX = DOCS / "decisions.md"
 HOW_IT_WORKS = (
@@ -243,6 +250,21 @@ def table(path, header):
     """The rows under the table line that starts with `header`, as lists of stripped cells."""
     lines = path.read_text().splitlines()
     start = next((i + 1 for i, line in enumerate(lines) if line.startswith(header)), len(lines))
+    return rows_from(lines, start)
+
+
+def tables(path, header):
+    """The rows of every table whose header line is `header`, as lists of stripped cells."""
+    lines = path.read_text().splitlines()
+    rows = []
+    for i, line in enumerate(lines):
+        if line == header:
+            rows += rows_from(lines, i + 1)
+    return rows
+
+
+def rows_from(lines, start):
+    """The table rows from `lines[start]` on, as lists of stripped cells."""
     rows = []
     for line in lines[start:]:
         if not line.startswith("|"):
@@ -274,6 +296,131 @@ class OutcomesTests(unittest.TestCase):
                     name,
                     code,
                     f"docs/how-it-works.md lists {name}, which the code does not define",
+                )
+
+
+def complete_configuration():
+    """The complete configuration of the configuration reference: its first ```json block
+    after 'A complete configuration'."""
+    text = CONFIG_PAGE.read_text()
+    start = text.index("```json\n", text.index("A complete configuration")) + len("```json\n")
+    return json.loads(text[start : text.index("\n```", start)])
+
+
+def key_rows():
+    """The rows of the three key tables of the configuration reference, by their key."""
+    return {cells[0].strip("`"): cells for cells in tables(CONFIG_PAGE, KEYS_HEADER)}
+
+
+def is_key(key):
+    """Whether config.DEFAULTS defines `key`, top-level or `group.sub` of a group."""
+    head, _, sub = key.partition(".")
+    if head not in config.DEFAULTS:
+        return False
+    return not sub or (head in config.GROUPS and sub in config.DEFAULTS[head])
+
+
+def recorded_ranges():
+    """The (minimum, maximum) pairs that validate() checks, by the setting each one is for.
+
+    validate() runs on the complete configuration, with a value in each list that may hold
+    several. Checks have limits of their own, outside the tables, so the sample has none."""
+    seen = {}
+    real = config._positive_int
+
+    def record(value, where, maximum, minimum=1):
+        key = re.sub(r"\[\d+\].*", "", where.removeprefix("each wait in "))
+        seen.setdefault(key, set()).add((minimum, maximum))
+        return real(value, where, maximum, minimum)
+
+    sample = complete_configuration()
+    sample["checks"] = []
+    sample["autopilot"]["max_parallel"] = 1
+    sample["merge"]["after_workflows"] = [{"workflow": "ci.yml", "every": 1}]
+    with mock.patch.object(config, "_positive_int", record):
+        config.validate(sample)
+    return seen
+
+
+class ConfigurationTests(unittest.TestCase):
+    def test_the_key_tables_list_each_key_the_code_defines_and_no_other(self):
+        rows = key_rows()
+        self.assertTrue(rows, "docs/configuration.md has no key tables")
+        for key in sorted(rows):
+            with self.subTest(row=key):
+                self.assertTrue(
+                    is_key(key),
+                    f"docs/configuration.md has a row for {key}, which the code does not define",
+                )
+        listed = set(rows)
+        for key, value in config.DEFAULTS.items():
+            if key in listed:  # a table may list an object whole, as it lists `log`
+                continue
+            names = [f"{key}.{sub}" for sub in value] if key in config.GROUPS else [key]
+            for name in names:
+                with self.subTest(key=name):
+                    self.assertIn(name, listed, f"docs/configuration.md has no row for {name}")
+
+    def test_each_key_row_gives_the_code_default_and_range(self):
+        seen = recorded_ranges()
+        rows = key_rows()
+        for key, cells in sorted(rows.items()):
+            if not is_key(key):  # the test above names it
+                continue
+            with self.subTest(row=key):
+                code = config.setting(config.DEFAULTS, key)
+                span = re.fullmatch(r"`([^`]+)`", cells[1])
+                if span:
+                    self.assertEqual(
+                        json.loads(span.group(1)),
+                        code,
+                        f"the default of {key} in docs/configuration.md differs from the code",
+                    )
+                else:  # `agents`, `stages` and `github_app` have no single default
+                    self.assertIsInstance(code, dict, f"the default of {key} is not an object")
+                found = {(int(a), int(b)) for a, b in re.findall(r"(\d+) to (\d+)", cells[2])}
+                self.assertEqual(
+                    found,
+                    seen.get(key, set()),
+                    f"the range of {key} in docs/configuration.md differs from validate()",
+                )
+        retry = rows["retry.wait_minutes"][2]
+        self.assertIn(
+            f"at most {config.MAX_RETRIES} waits",
+            retry,
+            "the retry.wait_minutes row differs from validate()",
+        )
+
+    def test_the_complete_configuration_lists_each_key_the_code_defines_and_no_other(self):
+        block = complete_configuration()
+        sections = [("", config.DEFAULTS, block)]
+        sections += [(f"{g}.", config.DEFAULTS[g], block.get(g, {})) for g in config.GROUPS]
+        for where, defined, listed in sections:
+            for key in sorted(set(defined) | set(listed)):
+                with self.subTest(key=where + key):
+                    if key in defined:
+                        self.assertIn(
+                            key, listed, f"the complete configuration has no {where}{key}"
+                        )
+                    else:
+                        self.fail(
+                            f"the complete configuration lists {where}{key}, "
+                            "which the code does not define"
+                        )
+
+    def test_the_complete_configuration_holds_each_default_it_says_it_does(self):
+        block = complete_configuration()
+        full = config.validate(copy.deepcopy(block))
+        # `agents` and `github_app` are the block's own, as `nexkit init` writes them.
+        base = config.validate({"agents": block["agents"], "github_app": block["github_app"]})
+        for key in config.DEFAULTS:
+            if key in ("setup", "checks"):  # `nexkit init` writes these too
+                continue
+            with self.subTest(key=key):
+                self.assertEqual(
+                    full[key],
+                    base[key],
+                    f"the complete configuration sets {key} to something but its default",
                 )
 
 

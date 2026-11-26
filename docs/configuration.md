@@ -8,8 +8,8 @@ The runner (`ubuntu-24.04`), the version of each agent runtime and NexKit's Pyth
 version are set by the NexKit release and are not configurable. See
 [supported versions](../README.md#supported-versions).
 
-A complete configuration with every key at its default, except `agents`, `setup` and
-`checks`, which `nexkit init` writes:
+A complete configuration with every key at its default, except `agents`, `setup`, `checks` and
+`github_app`, which `nexkit init` writes:
 
 ```json
 {
@@ -27,6 +27,7 @@ A complete configuration with every key at its default, except `agents`, `setup`
   "stages": {},
   "profiles": {},
   "default_profile": null,
+  "review": {"checklist": []},
   "fix": {"max_auto_rounds": 2},
   "merge": {"auto": false, "after_workflows": []},
   "conflicts": {"auto_resolve": false, "max_rounds": 3},
@@ -38,7 +39,12 @@ A complete configuration with every key at its default, except `agents`, `setup`
     "scope": "milestone",
     "max_parallel": null,
     "answer": "never",
+    "lost_after_minutes": 30,
     "watch_workflows": [],
+    "trusted_workflows": [],
+    "priority": ["nexkit:ci", "nexkit:dependabot", "nexkit:flaky"],
+    "labels": {},
+    "last_in_milestone_label": null,
     "dependabot": null
   },
   "notify": [],
@@ -50,7 +56,8 @@ A complete configuration with every key at its default, except `agents`, `setup`
     "slug": "nexkit-acme",
     "app_id_secret": "NEXKIT_APP_ID",
     "private_key_secret": "NEXKIT_APP_PRIVATE_KEY"
-  }
+  },
+  "evidence": {"artifacts": []}
 }
 ```
 
@@ -72,6 +79,7 @@ Checks, autopilot, and merges and waits have pages of their own: [Configuring ch
 | `checks` | `[]` | Commands that decide whether a change is acceptable, and the files where each writes its results. See [Checks](checks.md#checks). |
 | `parallel_checks` | `false` | Run the checks in parallel jobs, each check, or each `group` of checks, in a job of its own, so a round takes about as long as its slowest job. See [Parallel checks](checks.md#parallel-checks). |
 | `cache` | `[]` | Caches to restore before `setup`, which the base branch's own workflow saves. See [Caches](#caches). |
+| `evidence.artifacts` | `[]` | Names of the CI artifacts that NexKit downloads for the plan, implement and fix agents, from the CI runs an issue names. A name ending in `*` matches every artifact that starts with the rest. See [Evidence from CI runs](checks.md#evidence-from-ci-runs). |
 | `stages` | see [Stages](#stages) | Per-stage agent, model, effort, timeout and budget. |
 | `profiles` | `{}` | Stage settings for kinds of issues, chosen for each issue. See [Profiles](#profiles). |
 | `default_profile` | `null` | The profile to use when no plan chose one. Required with `profiles`. |

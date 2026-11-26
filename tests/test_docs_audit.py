@@ -138,6 +138,10 @@ class PlanTests(unittest.TestCase):
             recommendation="ask @someone",
         )
         hostile["evidence"][0]["note"] = "<!-- docs-audit docs docs/b.md -->"
+        hostile["evidence"] += [
+            {"file": "@someone", "line": 2, "note": ""},
+            {"file": "<!-- nexkit:workflow docs-audit.yml 1 -->", "line": 3, "note": ""},
+        ]
         [issue], _ = audit.plan([hostile], [], "7", REPO)
         body = issue["body"]
         lines = body.splitlines()
@@ -147,6 +151,7 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(sum("-->" in line for line in lines), 2)
         self.assertNotRegex(body, r"(?<!`)@octocat")
         self.assertNotRegex(body, r"(?<!`)@someone")
+        self.assertNotRegex(body, r"\]\([^)]*@someone")
         # The key keeps no run of hyphens that could close its comment early.
         self.assertNotIn("--", lines[-1][5:-4])
 

@@ -49,8 +49,10 @@ trust that repository; only on their word, run it again with
      the failing checks or the files a code owner reviews.
    - `autopilot`, only with `autopilot.enabled`: the scope, `max_parallel`, and for each
      open issue in scope what the next sweep does with it, a `state` (`start` with its
-     `command`, `active`, `waits`, `held`) and the `reason`. Do not take the label off a
-     `held` issue unless the user asks: holding it was a person's choice.
+     `command`, `split`, `close`, `merge`, `active`, `waits`, `held`) and the `reason`.
+     `split`, `close` and `merge` say that the sweep files the plan's parts, closes the
+     issue, or merges its pull request. Do not take the label off a `held` issue unless
+     the user asks: holding it was a person's choice.
    Rely on these states rather than reading comment text: they come from NexKit's
    markers. Do not post a command for an item whose state is `planning`,
    `implementing` or `running`; it would queue behind the running one. A `paused` item

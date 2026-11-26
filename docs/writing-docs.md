@@ -267,7 +267,9 @@ when a list of what the code defines misses an entry. These rules close each of 
    approval merges, which [work without a command](work-without-a-command.md#work-without-a-command)
    lists, are those of `APPROVABLE`; that the issue states
    [the status skill](../skills/status/SKILL.md) lists are those that `issue_item` in
-   `nexkit/status.py` sets; that no doc, the README, AGENTS.md or a skill repeats a pinned version:
+   `nexkit/status.py` sets; that the autopilot states [the status skill](../skills/status/SKILL.md)
+   lists are those that autopilot's steps take in `nexkit/autopilot.py` and `nexkit/host.py`; that
+   no doc, the README, AGENTS.md or a skill repeats a pinned version:
    each pin that [D9](decisions/d9-pins-live-in-one-place.md) governs, or a lint tool's version from
    `scripts/lint.sh`; that each test the security page
    names exists; that the refusals of `unaffected_by` that

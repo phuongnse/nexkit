@@ -11,7 +11,12 @@ agent that cannot fix a problem with its inputs will not fix it by trying again.
 
 - An agent error or a `blocked` result stops the round. NexKit starts no automatic round after it,
   apart from what autopilot answers or splits.
-- Automatic rounds follow only check failures and review findings, up to `fix.max_auto_rounds`.
+- After a failure, automatic rounds follow only check failures and review findings, up to
+  `fix.max_auto_rounds`.
+- With `conflicts.auto_resolve`, NexKit also starts a round by itself when a pull request conflicts
+  with its base branch. That round follows a change of the base branch, not a failure of the work.
+  It counts against its own limit, `conflicts.max_rounds`. See [Conflicts with the base
+  branch](../merges-and-waits.md#conflicts-with-the-base-branch).
 - A transient error before publishing runs again after the waits of `retry.wait_minutes`. The stop
   came from outside the work, so a repeat can succeed.
 

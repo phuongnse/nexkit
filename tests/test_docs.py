@@ -1487,12 +1487,23 @@ class DecisionsTests(unittest.TestCase):
         self.assertTrue(rows, "docs/decisions.md has no table of decisions")
         listed = set()
         for cells in rows:
+            if len(cells) == 3 and cells[2].startswith("Superseded by"):
+                # A superseded decision has no file: its row names the live decisions that
+                # replaced it and links its last text in git (docs/writing-docs.md#decisions).
+                self.assertRegex(cells[0], r"^D\d+$", f"a superseded row links its file: {cells}")
+                for _, name in DECISION_LINK.findall(cells[2]) or [(None, None)]:
+                    self.assertIsNotNone(name, f"a superseded row names no decision: {cells}")
+                    self.assertTrue((DECISIONS / name).exists(), f"{cells[0]} names {name}")
+                self.assertRegex(
+                    cells[2],
+                    rf"\[last text\]\(https://github\.com/phuongnse/nexkit/blob/[0-9a-f]{{40}}/"
+                    rf"docs/decisions/d{cells[0][1:]}-[a-z0-9-]+\.md\)$",
+                )
+                continue
             link = DECISION_LINK.fullmatch(cells[0]) if len(cells) == 3 else None
             self.assertIsNotNone(link, f"a row of docs/decisions.md links no decision: {cells}")
             number, name = link.groups()
             listed.add(name)
-            if cells[2].startswith("Superseded by"):
-                continue
             file = DECISIONS / name
             self.assertTrue(file.exists(), f"docs/decisions.md links {name}, which does not exist")
             self.assertEqual(

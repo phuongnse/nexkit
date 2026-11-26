@@ -100,4 +100,4 @@ over the version or the changelog.
   the image the same way, without publishing it. Its `publish` job pushes the image with
   `github.token` and `packages: write`, since a GitHub App gets no access to packages. Like
   NexKit's other maintenance jobs, it runs no repository code, as
-  [D2](decisions/d2-nexkit-writes-only-as-the-app.md) says.
+  [D13](decisions/d13-the-pipeline-writes-as-the-app-and-maintenance-jobs-with-the-actions-token.md) says.

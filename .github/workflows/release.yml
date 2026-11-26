@@ -92,7 +92,7 @@ jobs:
 
   publish:
     # Writes with github.token like NexKit's other maintenance jobs: GHCR takes no GitHub App
-    # token (D2).
+    # token (D13).
     if: github.event_name == 'release'
     needs: build
     runs-on: ubuntu-24.04

@@ -6,9 +6,10 @@ page, AGENTS.md keeps within its word limits, the architecture page's job and mo
 the workflows and nexkit/, its job diagram shows each job of pipeline.yml and the order each job's
 needs: set, the how-it-works page's job table matches the jobs of pipeline.yml, the permissions its
 rows name and the number in its heading, each test the security page names exists,
-and the outcome table of how it works lists each outcome the code defines and no other. The table
-of a stage's keys under `## Stages` in the configuration reference lists each stage key the code
-accepts and no other. The mention
+and the outcome table of how it works lists each outcome the code defines and no other. The label
+table of the delivery page lists each label the code creates and, besides the labels of a kind, no
+other. The table of a stage's keys under `## Stages` in the configuration reference lists each
+stage key the code accepts and no other. The mention
 table of the troubleshooting page lists each outcome that needs a person and no other, with the
 code's text for what to do and why. The command table of the README lists each comment command the
 code accepts, where it accepts it, and no other. The key tables and the complete configuration of
@@ -43,6 +44,7 @@ import argparse
 import ast
 import contextlib
 import copy
+import importlib.util
 import inspect
 import io
 import json
@@ -93,6 +95,10 @@ MENTIONS_HEADER = "| Outcome | `@owner a person is needed: …` | It also names 
 STAGES = DOCS / "stages.md"
 SECURITY = DOCS / "security.md"
 OUTCOMES_HEADER = "| Outcome | Meaning |"
+DELIVERY = DOCS / "delivery.md"
+LABELS_HEADER = "| Label | Kind |"
+# The labels of a kind, from the bullet of the delivery page that names them.
+KIND_LABELS = re.compile(r"label of its kind \(((?:`[\w-]+`(?:, | or )?)+)\)")
 COMMANDS_HEADER = "| Where | Comment | What happens |"
 # The README's *Where* cells, by the place where route.decide reads the command.
 PLACES = {"Issue": "issue", "NexKit PR": "pull request", "Your PR": "pull request"}
@@ -620,6 +626,43 @@ class OutcomesTests(unittest.TestCase):
                     name,
                     code,
                     f"docs/how-it-works.md lists {name}, which the code does not define",
+                )
+
+
+# Loaded as tests/test_docs_audit.py loads it, since that module imports this one.
+spec = importlib.util.spec_from_file_location("docs_audit", ROOT / "scripts" / "docs_audit.py")
+docs_audit = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(docs_audit)
+
+
+class DeliveryLabelsTests(unittest.TestCase):
+    def test_the_label_table_lists_each_label_the_code_creates_and_no_other(self):
+        code = {autopilot.CI_LABEL, autopilot.FLAKY_LABEL, autopilot.DEPENDABOT_LABEL}
+        code.add(docs_audit.LABEL)
+        # The table is indented in a list item, so its lines are stripped first.
+        lines = [line.strip() for line in DELIVERY.read_text().splitlines()]
+        start = next(
+            (i + 1 for i, line in enumerate(lines) if line.startswith(LABELS_HEADER)),
+            len(lines),
+        )
+        rows = rows_from(lines, start)
+        self.assertTrue(rows, "docs/delivery.md has no table of labels")
+        bullet = KIND_LABELS.search(" ".join(DELIVERY.read_text().split()))
+        self.assertIsNotNone(
+            bullet, "docs/delivery.md has no bullet that names the labels of a kind"
+        )
+        kinds = set(re.findall(r"`([\w-]+)`", bullet.group(1)))
+        self.assertTrue(kinds, "docs/delivery.md's bullet names no labels of a kind")
+        listed = {name for row in rows for name in re.findall(r"`([\w:-]+)`", row[0])}
+        for name in sorted(code):
+            with self.subTest(label=name):
+                self.assertIn(name, listed, f"docs/delivery.md's label table has no row for {name}")
+        for name in sorted(listed - kinds):
+            with self.subTest(row=name):
+                self.assertIn(
+                    name,
+                    code,
+                    f"docs/delivery.md's label table lists {name}, which the code does not create",
                 )
 
 

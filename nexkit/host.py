@@ -89,7 +89,7 @@ that fails to start after a stop (`stop_failed`) stay the host's.
 
 It decides when a plan, implement or fix stage runs again after its agent stopped at a usage
 limit or on a transient error (`stage_limited`, `stage_transient`, called by `report`), and when
-a paused or waiting run starts at its time (`resumes`, called by `maintain.resume_paused`), a hold
+a paused or waiting run starts at its time (`resumes`, called by `maintain.resume_one`), a hold
 on the issue included. A transient stop of publish goes as a transient stop of the stage's agent.
 A reset stays the host's to give.
 
@@ -2186,7 +2186,7 @@ def _transient_answer(state, actions, stage):
 def resumes(cfg, run, number, now, label=None):
     """Whether the engine runs again the command of the resume record of `run`, which `number`
     paused at the usage limit or which waits to run again after a transient error, at `now`
-    (`maintain.resume_paused`): True to start it, which a hold on the issue, the `label`, does
+    (`maintain.resume_one`): True to start it, which a hold on the issue, the `label`, does
     not stop. Raises `Refused`, for a command that NexKit never writes too."""
     resume = run["resume"]
     command = str(resume.get("command") or "")

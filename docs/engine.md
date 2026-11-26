@@ -7,7 +7,8 @@ at a time, and its `prompt` call, which writes each stage's prompt as NexKit 6 d
 `sweep` call, which orders and limits the items that start, as `nexkit-engine sweep`, which
 NexKit 6's autopilot takes its starts from; the
 GitHub host's state comment, its import of NexKit 6's open work and its taking of an item's events
-from their sources (`host.take`), which nothing calls yet; and
+from their sources (`host.take`), which `route` calls at the start of each run in an item's
+concurrency group; and
 the decisions that follow a plan, a blocked `/nexkit go` and a round on a pull request, its
 review, diagnosis and conflict rounds, the end of a round's wait and which rounds count, and the
 start of a new issue's first plan, which
@@ -513,7 +514,8 @@ host runs it through its own adapter. A new rule of the engine comes with a case
    `report` sends it a plan, implement or fix stage whose agent stopped at a usage limit or on a
    transient error, and one whose publish stopped on a transient error, as a transient stop of
    the stage's agent. It sends a review that stopped on a transient error too. The tick of each
-   due resume comes from `maintain.resume_paused`. The host carries out the run, the wait or the
+   due resume comes from `maintain.resume_one`, which the `step` that `maintain.resume_paused`
+   sends into the item's group runs. The host carries out the run, the wait or the
    person. Which reset the host gives stays the host's. After a plan, a stopped round and a review, `report` also sends the tokens,
    seconds, money and session that the runner's `run.json` gives. It checks the file against the
    protocol first. The rest of the result stays NexKit 6's, so the engine decides as before, and

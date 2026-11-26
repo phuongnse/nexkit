@@ -12,6 +12,8 @@ end or published.
 from __future__ import annotations
 
 import base64
+import contextlib
+import copy
 import io
 import itertools
 import json
@@ -24,13 +26,13 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
-from nexkit import autopilot, host, item_state, progress, state
+from nexkit import autopilot, cli, host, item_state, progress, state
 from nexkit.checks import check_matrix
 from nexkit.github import GitHubError
 from nexkit.maintain import maintain, paused_runs, within_reach
 from nexkit.publish import issue_closed, publish_plan
 from nexkit.report import report
-from nexkit.route import auto_kinds, issue_from_branch, route, skip_unaffected
+from nexkit.route import auto_kinds, issue_from_branch, queue_item, route, skip_unaffected
 from nexkit.state import (
     ACTIONS_BOT,
     STATE_PREFIX,
@@ -573,8 +575,8 @@ class Pipeline:
 class ItemGroup:
     """One work item's concurrency group, as GitHub keeps it: one run runs and one waits, and a
     run queued while another waits replaces it, so its event is never answered by its own run.
-    Each run takes the item's events from their sources with `host.take`
-    (docs/engine-hosts.md#hosts), on a state comment that is already stored."""
+    Each run takes the item's events from their sources as `nexkit route` does at its start
+    (`cli._take`, docs/engine-hosts.md#hosts), on a state comment that is already stored."""
 
     NUMBER = 5
 
@@ -617,15 +619,24 @@ class ItemGroup:
         """A run starts by taking the item's events, and fails when every try to store an
         answer lost."""
         self.running = run
-        real = host.step
+        real, take = host.step, host.take
 
         def spy(state, event, found):
             self.answered.append(event["id"])
             return real(state, event, found)
 
-        with mock.patch.object(host, "step", spy):
+        def quick(gh, cfg, number):
+            return take(gh, cfg, number, sleep=lambda seconds: None)
+
+        # The event of a run in the item's group: a comment on the item.
+        event = {"action": "created", "issue": {"number": self.NUMBER}, "comment": {"id": 1}}
+        with (
+            mock.patch.object(host, "step", spy),
+            mock.patch.object(host, "take", quick),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
             try:
-                host.take(self.gh, self.cfg, self.NUMBER, sleep=lambda seconds: None)
+                cli._take(self.gh, self.cfg, "issue_comment", event)
             except item_state.Moved:
                 self.failed.append(run)
                 self.finish()
@@ -1471,6 +1482,57 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(replaced["status"], "continued")
         self.assertNotIn("resume", replaced)
         self.assertEqual([c for c, _ in played].count("go"), 2, played)
+
+    def test_a_resume_is_started_by_a_step_in_the_items_queue_and_the_waiting_run_writes_nothing(
+        self,
+    ):
+        pauses = itertools.count()
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            if inputs["command"] == "go" and next(pauses) < 1:
+                at = autopilot.iso(datetime.now(UTC) + timedelta(minutes=30))
+                limit = "You've hit your session limit"
+                return {
+                    "agent": {
+                        "status": "paused",
+                        "error": f"Claude hit the account's usage limit: {limit}",
+                        "limit": limit,
+                        "resume_at": at,
+                        "reset_known": True,
+                    }
+                }
+            return done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        autopilot.request(pipe.gh, "nexkit.yml", "main")
+        while pipe.gh.dispatches[pipe.handled]["inputs"]["command"] != "resume":
+            pipe.drain_one()
+        paused = pipe.gh.run_comments(5)[-1]
+        self.assertEqual(paused["run"]["status"], "paused")
+        self.assertEqual(paused["run"]["resume"]["command"], "go")
+        waiting = pipe.gh.dispatches[pipe.handled]
+        pipe.handled += 1
+        # Time passes until the resume is due, and then the waiting run starts.
+        pipe.later(timedelta(minutes=31))
+        comments = copy.deepcopy(pipe.gh.issue_comments)
+        sent = len(pipe.gh.dispatches)
+        pipe.waited(waiting["inputs"])
+        # It changed no comment, and sent a step into the item's group and nothing else.
+        self.assertEqual(pipe.gh.issue_comments, comments)
+        new = pipe.gh.dispatches[sent:]
+        self.assertEqual([d["inputs"]["command"] for d in new], ["step"])
+        [step] = [d["inputs"] for d in new]
+        self.assertEqual(step["note"], f"resume {paused['id']}")
+        self.assertEqual(queue_item(pipe.gh, "workflow_dispatch", {"inputs": step}), 5)
+        self.assertEqual([c for c, _, _ in pipe.played].count("go"), 1)
+        # The step starts the command, once, and marks the paused run as continued.
+        pipe.drain()
+        self.assertEqual([c for c, _, _ in pipe.played].count("go"), 2)
+        self.assertEqual(pipe.gh.run_comments(5)[1]["run"]["status"], "continued")
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
 
     def test_a_command_that_never_runs_starts_again_later_then_waits_naming_the_outage(self):
         def script(pipe, inputs):
@@ -3380,6 +3442,8 @@ class ScenarioTests(unittest.TestCase):
         # both, in the order they were posted.
         ids = [f"comment-{first['id']}", f"comment-{second['id']}"]
         self.assertEqual(group.answered, ids)
+        # Each command is answered once, and by the run that ran, not by the one replaced.
+        self.assertEqual([group.answered.count(i) for i in ids], [1, 1])
         self.assertEqual(group.failed, [])
         state = group.state()
         # The first command's effect is stored: it started the plan, so the second one, a

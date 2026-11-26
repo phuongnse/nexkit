@@ -634,15 +634,20 @@ def wait_for_paused(gh, cfg, now=datetime.now, sleep=time.sleep):
     """Wait until a paused command comes due, for up to the longest `reach`. It only reads,
     with the job's own token: the App's token lasts an hour, and this can last hours, so
     the job mints that token after it. Looks again every `POLL`, so a run that pauses
-    meanwhile counts too. Returns at once when nothing comes due within its reach."""
-    deadline = now(UTC) + timedelta(minutes=longest_reach(cfg))
+    meanwhile counts too. Returns at once when nothing comes due within its reach.
+
+    A command that was already due when this run started does not count: the run that
+    started this one sent its step, and that step may wait in the item's queue for hours.
+    Waiting on it would return at once and send the step again, once a minute."""
+    started = now(UTC)
+    deadline = started + timedelta(minutes=longest_reach(cfg))
     while True:
         current = now(UTC)
         upcoming = min(
             (
                 at
                 for _, _, run, at in paused_runs(gh, current, cfg)
-                if within_reach(cfg, run, at, current)
+                if at > started and within_reach(cfg, run, at, current)
             ),
             default=None,
         )

@@ -744,6 +744,29 @@ class PausedRunTests(unittest.TestCase):
         # The App's token comes after this wait, so it writes nothing.
         self.assertFalse(self.gh.dispatches)
 
+    def test_the_waiting_run_leaves_a_command_whose_step_was_sent_before_it_started(self):
+        # The resume run sent the step of 5 and started this wait for 7. The step may wait in
+        # the item's queue for hours, so 5 being due must not end this wait at once, which
+        # would send its step again, and start yet another wait, every minute.
+        clock = [datetime(2026, 10, 11, 4, 41, tzinfo=UTC)]
+        slept = []
+
+        def sleep(seconds):
+            slept.append(seconds)
+            clock[0] += timedelta(seconds=seconds)
+
+        self.paused(5, 1)  # due at 04:40, its step sent
+        self.gh.add_issue(7)
+        self.paused(7, 2, at="2026-10-11T04:50:00Z")
+        wait_for_paused(self.gh, make_config(), now=lambda tz: clock[0], sleep=sleep)
+        self.assertEqual(slept, [540])
+        self.assertEqual(clock[0], datetime(2026, 10, 11, 4, 50, tzinfo=UTC))
+        # A wait that starts with both due has nothing to wait for.
+        later = mock.Mock()
+        wait_for_paused(self.gh, make_config(), now=lambda tz: clock[0], sleep=later)
+        later.assert_not_called()
+        self.assertFalse(self.gh.dispatches)
+
     def test_the_waiting_run_does_not_wait_for_what_comes_too_late(self):
         now = datetime(2026, 10, 11, 0, 0, tzinfo=UTC)
         sleep = mock.Mock()

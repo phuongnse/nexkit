@@ -64,11 +64,15 @@ without a change to any host, as long as the conformance suite passes.
   answer names at most 20 ways in which a request breaks the protocol. `serve` answers each
   request on its own and keeps nothing between them. On `SIGTERM` it exits at once: a request
   in flight gets no answer, and its host sends it again, which the engine allows since it keeps
-  no state and answers a request the same each time. It refuses a body over 1 MiB, or 16 MiB
-  for `prompt`, without one `Content-Length` or that stops coming, a method other than `POST`, a
-  call it does not know and a request that HTTP does not allow. Each refusal is an error answer
-  (`calls/error.schema.json`) with its own status. It listens on `127.0.0.1:8080` unless
-  `--host` and `--port` say otherwise.
+  no state and answers a request the same each time. It refuses a body over the limit of its
+  call, `MAX_BODY` or for `prompt` the larger `MAX_BODIES`, without one `Content-Length` (zeros
+  before its number do not count) or that stops coming, a method other than `POST`, a call it
+  does not know and a request that HTTP does not allow. A host whose `prompt` request is over its
+  limit sends the same request to `nexkit-engine prompt` on standard input, which has no limit
+  and answers it the same. Such a request holds only the input kinds `runAgent` names, with
+  diffs and outputs cut, so only whole texts and many comments make it large. Each refusal is an
+  error answer (`calls/error.schema.json`) with its own status. It listens on `127.0.0.1:8080`
+  unless `--host` and `--port` say otherwise.
 - **Only for its host.** `serve` asks no one who they are, and does not limit how many clients
   connect or how slowly they send. Put it where only its host reaches it, such as the host's
   own machine or a private network beside it.
@@ -127,10 +131,14 @@ running round started with, but `lostWaits`, which applies as the host gives it 
 - **Limits.** The engine applies them: how much of each text and block a prompt keeps, how many
   comments, and in what order. A text that a prompt keeps only the start of, or leaves out, goes
   whole to a file in the folder that `texts` names, an absolute path outside the working tree,
-  where the agent reads it. So the texts come whole, but a diff and a check's output come cut to
-  what a prompt shows of them, and the schema refuses more.
+  POSIX or Windows, where the agent reads it. The engine names each file from the host's id,
+  and adds a short hash of the id when the id holds a character a file name cannot, so two ids
+  never share a file. So the texts come whole, but a diff and a check's output come cut to what
+  a prompt shows of them, and the schema refuses more.
 - **The answer** holds the prompt, the texts it shortened or left out, the links it lists as not
-  read, and the files with their texts, which the host writes before the agent runs.
+  read, and the files with their texts, which the host writes before the agent runs. A host
+  that writes them first checks that each path is inside its `texts` folder, and writes none
+  when one is not.
 - **Policies.** Beside the host's policies, the call reads three that the protocol does not hold
   yet, as its schema names them: `checklist`, the items the plan and the review answer;
   `profiles`, the profiles triage chooses from, each with its `when` as a string; and `budgets`,

@@ -652,9 +652,15 @@ def fetch(gh, decision, stage, fix_result=None, results=None, ci=None, cfg=None,
     return inputs, host
 
 
-def keep_texts(files):
+def keep_texts(files, folder):
     """Write the whole texts that a prompt names, each `{path, text}`, before the agent
-    reads them."""
+    reads them. Each path must be inside `folder`, the prompt's folder for texts, or none is
+    written (docs/engine.md#the-prompt)."""
+    files = list(files)
+    root = Path(folder).resolve()
+    for item in files:
+        if not Path(item["path"]).resolve().is_relative_to(root):
+            raise ValueError(f"{item['path']} is not in {folder}")
     for item in files:
         path = Path(item["path"])
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -685,7 +691,10 @@ def gather(
     inputs, host = fetch(gh, decision, stage, fix_result, results, ci, cfg, workflow)
     shelf = prompt.Shelf(Path(texts).resolve() if texts else None)
     context = prompt.texts(stage, inputs, shelf)
-    keep_texts({"path": path, "text": text} for path, text in shelf.files.items())
+    if shelf.folder:
+        keep_texts(
+            ({"path": path, "text": text} for path, text in shelf.files.items()), shelf.folder
+        )
     if host.get("untrusted"):
         context["untrusted"] = host["untrusted"]
     if context.get("linked") is not None:

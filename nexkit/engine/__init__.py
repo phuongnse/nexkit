@@ -136,7 +136,7 @@ def _prompt(request, found):
     if not found and request.get("unfit") is None:
         found = prompt.refusals(request["stage"], request["inputs"], request["policies"])
         texts = request.get("texts")
-        if texts is not None and not texts.startswith("/"):
+        if texts is not None and not prompt.absolute(texts):
             found.append("request.texts must be an absolute path")
     if found:
         raise EngineError("; ".join(found))

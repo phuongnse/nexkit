@@ -28,9 +28,10 @@ other, and the code refuses each one. The plan and review layouts of stages matc
 the code writes, and the values the pages repeat match their constants. The words that the agents
 and profiles and the failure handling pages list as marking a failing line match FAILURE_LINE.
 The tools that the access table of agents and profiles gives the plan and review stages match
-READ_ONLY_TOOLS. The README's table of
-supported versions is compared with the pins in nexkit/__init__.py, and each ubuntu-NN.NN in the
-README with the pinned runner. The local commands
+READ_ONLY_TOOLS. The jobs that the autopilot page lists as those in which a round can be stopped
+are CHECK_JOBS, and those in which it never is are jobs of pipeline.yml outside it. The README's
+table of supported versions is compared with the pins in nexkit/__init__.py, and each ubuntu-NN.NN
+in the README with the pinned runner. The local commands
 table of the README lists each command the CLI defines for people and no other, and each option a
 row names exists. The configuration example of the README is what `nexkit init` writes for the
 README's own setup command. No doc, the README, AGENTS.md or a skill repeats a pinned version:
@@ -63,6 +64,7 @@ from nexkit import (
     config,
     context,
     github,
+    maintain,
     publish,
     report,
     route,
@@ -1593,6 +1595,11 @@ VALUES = (
 # The pages that list the words which mark a failing line, and the regex that finds each list.
 FAILURE_WORDS_PAGES = ("agents-and-profiles.md", "failure-handling.md")
 FAILURE_WORDS = re.compile(r"contains? (`[^`]+`(?:(?:, | or )`[^`]+`)*), in any case")
+# The autopilot page, and the regexes that find its two job lists: the jobs in which a round can
+# be stopped, and those in which it never is.
+STOP_PAGE = DOCS / "work-without-a-command.md"
+STOPPED_JOBS = re.compile(r"so that only ((?:`[\w-]+`(?:, |,? or )?)+) jobs still run")
+KEPT_JOBS = re.compile(r"A round in ((?:`[\w-]+`(?:, |,? or )?)+) is never stopped")
 # The page and the row of its access table that give the tools of the plan and review stages.
 ACCESS_PAGE = DOCS / "agents-and-profiles.md"
 READ_ACCESS_ROW = "| plan, review |"
@@ -1669,6 +1676,34 @@ class FailureWordsTests(unittest.TestCase):
             for word in sorted(set(listed) - set(code)):
                 with self.subTest(page=name, word=word):
                     self.fail(f"docs/{name} lists {word!r}, which FAILURE_LINE does not match")
+
+
+class StopJobsTests(unittest.TestCase):
+    def test_the_page_lists_the_check_jobs_and_no_other(self):
+        # Lines are wrapped, so the page is searched with its spaces made one each.
+        text = " ".join(STOP_PAGE.read_text().split())
+        page = f"docs/{STOP_PAGE.name}"
+        stopped = STOPPED_JOBS.search(text)
+        if stopped is None:
+            self.fail(f"{page} has no list of the jobs in which a round can be stopped")
+        kept = KEPT_JOBS.search(text)
+        if kept is None:
+            self.fail(f"{page} has no list of the jobs in which a round is never stopped")
+        listed = set(re.findall(r"`([^`]+)`", stopped.group(1)))
+        never = set(re.findall(r"`([^`]+)`", kept.group(1)))
+        jobs = jobs_of((ROOT / ".github/workflows/pipeline.yml").read_text())
+        for job in sorted(listed - maintain.CHECK_JOBS):
+            with self.subTest(job=job):
+                self.fail(f"{page} lists {job!r}, which maintain.CHECK_JOBS lacks")
+        for job in sorted(maintain.CHECK_JOBS - listed):
+            with self.subTest(job=job):
+                self.fail(f"{page} does not list {job!r}, which maintain.CHECK_JOBS has")
+        for job in sorted(never & maintain.CHECK_JOBS):
+            with self.subTest(job=job):
+                self.fail(f"{page} lists {job!r} as never stopped, but it is in CHECK_JOBS")
+        for job in sorted((never | maintain.CHECK_JOBS) - set(jobs)):
+            with self.subTest(job=job):
+                self.fail(f"pipeline.yml has no job {job!r}, which {page} or CHECK_JOBS names")
 
 
 class ReadOnlyToolsTests(unittest.TestCase):

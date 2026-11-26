@@ -291,6 +291,8 @@ when a list of what the code defines misses an entry. These rules close each of 
    lists each command the CLI defines for people and no other, and that each option a row names
    exists; that the files [Releases](delivery.md#releases) lists as holding the version are those
    that hold it, and no other; that the README's configuration example is what `nexkit init`
-   writes for the README's own setup command; and that the index matches the decision files, each
-   of which follows the template and is linked from a rule or a page. A docs check is added only
-   once the whole tree passes it: there are no lists of exceptions.
+   writes for the README's own setup command; that the jobs in which
+   [autopilot](work-without-a-command.md#autopilot) stops a round are those of `CHECK_JOBS`, and
+   that those in which it never does are other jobs of `pipeline.yml`; and that the index matches
+   the decision files, each of which follows the template and is linked from a rule or a page. A
+   docs check is added only once the whole tree passes it: there are no lists of exceptions.

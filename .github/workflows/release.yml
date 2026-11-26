@@ -103,7 +103,7 @@ jobs:
 
   publish:
     # Writes with github.token like NexKit's other maintenance jobs: GHCR takes no GitHub App
-    # token (D2).
+    # token (D13).
     if: github.event_name == 'release'
     needs: build
     runs-on: ubuntu-24.04
@@ -170,7 +170,7 @@ jobs:
   attach:
     # Attaches the suite the image passed, once the image is published, so a host plays the
     # suite of the version it pins. Writes with github.token like NexKit's other maintenance
-    # jobs (D2): the upload starts no workflow, so no App key is needed on this runner.
+    # jobs (D13): the upload starts no workflow, so no App key is needed on this runner.
     if: github.event_name == 'release'
     needs: [build, publish]
     runs-on: ubuntu-24.04

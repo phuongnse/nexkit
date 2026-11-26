@@ -3082,7 +3082,7 @@ def can_write(text, job):
 
 class WriteJobsTests(unittest.TestCase):
     """AGENTS.md: jobs with write tokens never run repository code, in every workflow, and only
-    the jobs that maintain NexKit's own repository write with github.token (D2)."""
+    the jobs that maintain NexKit's own repository write with github.token (D13)."""
 
     def test_no_job_that_can_write_runs_repository_code(self):
         checked = 0
@@ -3100,7 +3100,7 @@ class WriteJobsTests(unittest.TestCase):
         self.assertGreaterEqual(checked, 4)
 
     def test_only_maintenance_jobs_write_with_the_actions_token(self):
-        """D2: the pipeline writes only as the App; a job whose github.token writes maintains
+        """D13: the pipeline writes only as the App; a job whose github.token writes maintains
         NexKit's own repository and holds no secret and no App token."""
         paths = [
             *sorted((ROOT / ".github/workflows").glob("*.yml")),

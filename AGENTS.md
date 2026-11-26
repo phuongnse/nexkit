@@ -27,7 +27,7 @@ job holds, and the plugin are described in [Architecture](docs/architecture.md).
   write must leave the run it starts nothing to do. The exception is the jobs that maintain
   NexKit's own repository: they run no repository code, hold no secret and write with
   `github.token`. See [Releases](docs/delivery.md#releases) and
-  [D2](docs/decisions/d2-nexkit-writes-only-as-the-app.md).
+  [D13](docs/decisions/d13-the-pipeline-writes-as-the-app-and-maintenance-jobs-with-the-actions-token.md).
 - Agent output is untrusted: validate it before publishing, redact what a session prints or stores
   with `redact.py`, and print tool output with workflow commands stopped. Markers count only in the
   App's comments that no one else changed, never the Actions bot, and only at the position NexKit

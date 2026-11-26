@@ -102,4 +102,5 @@ over the version or the changelog.
   `github.token` and `packages: write`, since a GitHub App gets no access to packages, and its
   `attach` job then uploads the suite with `github.token` and `contents: write`. Like NexKit's
   other maintenance jobs, they run no repository code, as
-  [D2](decisions/d2-nexkit-writes-only-as-the-app.md) says.
+  [D13](decisions/d13-the-pipeline-writes-as-the-app-and-maintenance-jobs-with-the-actions-token.md)
+  says.

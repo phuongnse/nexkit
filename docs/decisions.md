@@ -11,7 +11,7 @@ can change.
 | Decision | Title | Status |
 | --- | --- | --- |
 | [D1](decisions/d1-state-lives-only-on-github.md) | State lives only on GitHub | Agreed |
-| [D2](decisions/d2-nexkit-writes-only-as-the-app.md) | NexKit writes only as the App | Agreed |
+| [D2](decisions/d2-nexkit-writes-only-as-the-app.md) | NexKit's pipeline writes only as the App | Agreed |
 | [D3](decisions/d3-agent-jobs-hold-no-write-token.md) | Agent jobs hold no write token | Agreed |
 | [D4](decisions/d4-outside-text-is-untrusted.md) | Outside text is untrusted | Agreed |
 | [D5](decisions/d5-agents-cannot-change-the-pipeline.md) | Agents cannot change the pipeline | Agreed |

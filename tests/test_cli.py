@@ -3117,7 +3117,8 @@ class WriteJobsTests(unittest.TestCase):
                 checked += 1
                 with self.subTest(job=f"{path.name}:{name}"):
                     self.assertFalse(shipped)
-                    self.assertNotIn("secrets.", job)
+                    # `secrets.NAME`, `secrets[...]` and `secrets: inherit` alike.
+                    self.assertNotRegex(job, r"\bsecrets\b")
                     self.assertNotIn("app-token", job)
         # The pipeline's three workflows, this repository's caller and the template's.
         self.assertGreaterEqual(pipeline, 5)

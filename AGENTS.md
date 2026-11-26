@@ -4,35 +4,21 @@ NexKit turns GitHub issues into reviewed, tested pull requests with Claude Code.
 workflow `.github/workflows/pipeline.yml`, the package `nexkit/` that each job runs through
 `bin/nexkit` (standard library only, Python 3.12+), and the plugin (`.claude-plugin/`, `skills/`)
 that sets up repositories. Read [How it works](docs/how-it-works.md) before changing behaviour,
-[Delivery](docs/delivery.md) before taking an issue, and [Testing](docs/testing.md) for the checks.
+[Architecture](docs/architecture.md) for how the parts are built, [Delivery](docs/delivery.md) before taking an issue, and [Testing](docs/testing.md) for the checks.
 
 ## Layout
 
-| Module | Purpose |
-|---|---|
-| `__init__.py` | Version and pins |
-| `cli.py` | Every command, local and pipeline |
-| `route.py` | `route`: event → action, authorization, `verified_sha` |
-| `context.py`, `evidence.py`, `agent.py` | `agent` and `review`: prompt texts, CI evidence, agent run, patch |
-| `runtimes/` | Everything specific to one CLI or provider |
-| `schema.py`, `redact.py`, `runlog.py` | Result validation, secret removal, run log |
-| `protocol/` | The engine's protocol as JSON Schemas, with examples; `size.py` bounds its state document; [The engine](docs/engine.md) |
-| `engine/` | The engine: states and moves in `machine.py`; prompts in `prompt.py`, `textutil.py` and `prompts/`; `sweep.py` (starts); `cli.py` (`nexkit-engine`) and `serve.py` |
-| `publish.py` | `publish`: plan comment, commit, push, pull request |
-| `checks.py`, `cache.py` | Setup and checks; the keys of cache restore |
-| `report.py`, `state.py`, `progress.py`, `refusal.py` | Statuses, reviews, run and state comments; why GitHub refused a merge |
-| `item_state.py`, `first_state.py` | Work items' state documents, in App comments; the first one, from NexKit 6's markers |
-| `host.py` | The GitHub host's calls of the engine's `step`, storing nothing; [Getting there](docs/engine.md#getting-there) |
-| `maintain.py`, `usage.py`, `autopilot.py` | Work after other events; runs paused at a usage limit; autopilot sweeps |
-| `config.py`, `globs.py`, `scaffold.py`, `app.py`, `templates/` | Config schema, path globs; `nexkit init` and `doctor`; the GitHub App |
-| `status.py`, `snapshot.py`, `pin.py`, `github.py`, `gitutil.py` | `nexkit status` and its batched reads; the pinned release; REST, GraphQL and git helpers |
-| `scripts/` | Smoke test, pin updates, release notes, docs audit; `lint.sh` |
+The package `nexkit/`, the reusable workflows and their jobs, the tokens and secrets that each
+job holds, and the plugin are described in [Architecture](docs/architecture.md). Read
+[the package](docs/architecture.md#the-package) to find a module, and
+[the workflows and their jobs](docs/architecture.md#the-workflows-and-their-jobs) before you change a job.
 
 ## Rules
 
 - Jobs that run an agent or repository code have read-only tokens and no App key. Jobs with write
   tokens never run repository code or get an agent credential. `tests/test_cli.py` checks every
-  workflow; extend it for new jobs. See [One run, ten jobs](docs/how-it-works.md#one-run-ten-jobs).
+  workflow; extend it for new jobs. See [Tokens and secrets](docs/architecture.md#tokens-and-secrets) and
+  [Repository code and CI](docs/security.md#repository-code-and-ci).
 - NexKit writes on GitHub only as the App. Each writing job mints its own token. Each write must
   leave the run it starts nothing to do. The exception is `release.yml`'s `publish` job, which runs
   no repository code and pushes the image with `github.token`. See
@@ -40,7 +26,8 @@ that sets up repositories. Read [How it works](docs/how-it-works.md) before chan
 - Agent output is untrusted: validate it before publishing, redact what a session prints or stores
   with `redact.py`, and print tool output with workflow commands stopped. Markers count only in the
   App's comments that no one else changed, never the Actions bot, and only at the position NexKit
-  writes them. See [Security notes](docs/how-it-works.md#security-notes).
+  writes them. See [Agent output](docs/security.md#agent-output) and
+  [Comments and markers](docs/security.md#comments-and-markers).
 - State lives only on GitHub: comments, pull requests and statuses. See
   [State](docs/how-it-works.md#state).
 - Agent errors and `blocked` results never retry automatically. Only check failures and review
@@ -68,8 +55,7 @@ that sets up repositories. Read [How it works](docs/how-it-works.md) before chan
   fields. See [Agents](docs/how-it-works.md#agents).
 - NexKit reads only the secrets the configuration names, and a job that runs an agent never indexes
   `secrets` itself, since that puts every secret on its runner. Agent secret names may not start
-  with `GITHUB_` or `NEXKIT_`. See [Settings and
-  secrets](docs/configuration.md#settings-and-secrets).
+  with `GITHUB_` or `NEXKIT_`. See [Secrets](docs/security.md#secrets).
 - A session outside NexKit takes only `hand-made` issues, and never merges, pushes a tag or
   releases. See [NexKit on this repository](docs/delivery.md#nexkit-on-this-repository).
 - A change that moves a decision of NexKit 6 into the engine keeps GitHub's behaviour, as [Moving

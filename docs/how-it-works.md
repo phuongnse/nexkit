@@ -70,39 +70,23 @@ Every command starts one run of the reusable workflow
 Some other events start a run too; they run only `route` and `maintain` (see
 [Work without a command](#work-without-a-command)).
 
-| Job | Runs for | Token permissions | Secrets | Does |
-|---|---|---|---|---|
-| `route` | every event | the App's: read; comments, reactions, statuses; workflow runs (`actions: read`) | the App's, for its token | Checks the command and the author's write access, reads the config from the default branch, and on a person's pull request that changes `.nexkit/config.json` loads that file from its head through the API, picks the action, and shows that the run started. In an automatic review, leaves out of the check matrix the checks whose [`unaffected_by`](configuration.md#checks-that-a-change-cannot-affect) lists every path changed since they passed, from GitHub's comparison. Never executes repository code. |
-| `agent` | plan, go, fix | read only | its stage's agents and their fallbacks | Installs the pinned runtimes the configuration uses; for go and fix, restores the [caches](configuration.md#caches) and runs `setup`; for fix, downloads the [result files](configuration.md#result-files-of-failing-checks) that the last round's failing checks kept (`actions: read`); for go and fix, downloads the [evidence of the CI runs](configuration.md#evidence-from-ci-runs) the issue names (`actions: read`, `checks: read`). Then one agent session, and at a usage limit the stage's [fallback agents](configuration.md#fallback-agents) in turn; with profiles, a plan starts with a triage call. Uploads the result and a patch. |
-| `publish` | plan, go, fix | the App's: write, also workflow files | the App's, for its token | Posts the plan, or applies the patch, rejects protected paths, commits, pushes and opens the pull request. When the base branch moved while the agent worked, it merges the base branch's tip after the round's commit if the base branch's rules want pull requests up to date, and finds with git whether that tip conflicts with the commit (see [Stages](#stages)). Never executes repository code. |
-| `shards` | go, fix, review, with [sharded checks](configuration.md#parallel-checks) | read only | none | Runs the `count` of each sharded check on the published commit, before `setup`, and gives `verify` the matrix of its shards, each a check of its own with `NEXKIT_SHARD=k/N`. In an automatic review, also leaves out the shards whose `unaffected_by` lists every path changed since they passed with the same N, from git. A `count` that fails or prints no number from 1 to `max` fails its check, and no shard of it runs. |
-| `verify` | go, fix, review | read only | none | Restores the [caches](configuration.md#caches), then runs `setup` and the checks on the published commit, and keeps the result files of the checks that failed. With [`parallel_checks`](configuration.md#parallel-checks), one such job runs for each check job, at once. Skipped, with the review, for a published commit that conflicts with the base branch, and by itself when `route` skipped every check. |
-| `combine` | go, fix, review, with `parallel_checks` | read only; workflow runs (`actions: read`) | none | Joins the results of the check jobs into the one `nexkit-checks` artifact that the review, `report` and the next fix round read, and writes each check job's time to the [run summary](#logs-summary-and-artifacts), from the Actions API. Never checks out or executes repository code. |
-| `review` | go, fix, review | read only | the review's agent and its fallbacks | A fresh agent session with read-only access reviews the diff against the plan, the discussion, the check results and the previous review round. After NexKit brought an approved pull request up to date with its base branch, it first checks with git whether the approval [carries over](#stages), and then runs no agent. |
-| `report` | every action | the App's: write | the App's, for its token | Sets commit statuses, posts the review, shows the outcome in the run's comment, starts the next automatic round or asks for a person. With `merge.auto`, merges an approved pull request, closes its issue, deletes its branch when the repository deletes head branches on merge, and starts the `merge.after_workflows` that are due on the base branch. Never checks out or executes repository code. |
-| `maintain` | issue and milestone events, pushes to the default branch, finished runs of other workflows, the schedule, the `resume` and `autopilot` dispatches, `/nexkit trust` | the App's: contents (to merge); issues, comments, workflows, statuses; check annotations; with `autopilot.dependabot`, a second token that reads Dependabot alerts | the App's, for its token | Work that follows an event rather than a command: closing a parent issue, resuming a command paused at the usage limit or one that waits to run again after a transient error, starting a round for a pull request that conflicts with its base branch, stopping a round whose checks a move of the base branch left without a purpose, an [autopilot](#autopilot) sweep. Runs no agent, and never checks out or executes repository code. |
-| `finish` | a command whose `report` did not finish | the App's: starting workflows | the App's, for its token | When `report` failed, was cancelled or lost its runner, starts a sweep that waits for the run to end and then handles its run comment ([autopilot](#autopilot)) and the conflict round held back while it ran ([Resolving conflicts](#work-without-a-command)). Not for a round NexKit stopped in its checks after the base branch moved: that round's `report` and `finish` do not run, and the next round has started already. Runs no agent, and never checks out or executes repository code. |
+| Job | Runs for | Does |
+|---|---|---|
+| `route` | every event | Checks the command and the author's write access, reads the config from the default branch, and on a person's pull request that changes `.nexkit/config.json` loads that file from its head through the API, picks the action, and shows that the run started. In an automatic review, leaves out of the check matrix the checks whose [`unaffected_by`](configuration.md#checks-that-a-change-cannot-affect) lists every path changed since they passed, from GitHub's comparison. Never executes repository code. |
+| `agent` | plan, go, fix | Installs the pinned runtimes the configuration uses; for go and fix, restores the [caches](configuration.md#caches) and runs `setup`; for fix, downloads the [result files](configuration.md#result-files-of-failing-checks) that the last round's failing checks kept (`actions: read`); for go and fix, downloads the [evidence of the CI runs](configuration.md#evidence-from-ci-runs) the issue names (`actions: read`, `checks: read`). Then one agent session, and at a usage limit the stage's [fallback agents](configuration.md#fallback-agents) in turn; with profiles, a plan starts with a triage call. Uploads the result and a patch. |
+| `publish` | plan, go, fix | Posts the plan, or applies the patch, rejects protected paths, commits, pushes and opens the pull request. When the base branch moved while the agent worked, it merges the base branch's tip after the round's commit if the base branch's rules want pull requests up to date, and finds with git whether that tip conflicts with the commit (see [Stages](#stages)). Never executes repository code. |
+| `shards` | go, fix, review, with [sharded checks](configuration.md#parallel-checks) | Runs the `count` of each sharded check on the published commit, before `setup`, and gives `verify` the matrix of its shards, each a check of its own with `NEXKIT_SHARD=k/N`. In an automatic review, also leaves out the shards whose `unaffected_by` lists every path changed since they passed with the same N, from git. A `count` that fails or prints no number from 1 to `max` fails its check, and no shard of it runs. |
+| `verify` | go, fix, review | Restores the [caches](configuration.md#caches), then runs `setup` and the checks on the published commit, and keeps the result files of the checks that failed. With [`parallel_checks`](configuration.md#parallel-checks), one such job runs for each check job, at once. Skipped, with the review, for a published commit that conflicts with the base branch, and by itself when `route` skipped every check. |
+| `combine` | go, fix, review, with `parallel_checks` | Joins the results of the check jobs into the one `nexkit-checks` artifact that the review, `report` and the next fix round read, and writes each check job's time to the [run summary](#logs-summary-and-artifacts), from the Actions API. Never checks out or executes repository code. |
+| `review` | go, fix, review | A fresh agent session with read-only access reviews the diff against the plan, the discussion, the check results and the previous review round. After NexKit brought an approved pull request up to date with its base branch, it first checks with git whether the approval [carries over](#stages), and then runs no agent. |
+| `report` | every action | Sets commit statuses, posts the review, shows the outcome in the run's comment, starts the next automatic round or asks for a person. With `merge.auto`, merges an approved pull request, closes its issue, deletes its branch when the repository deletes head branches on merge, and starts the `merge.after_workflows` that are due on the base branch. Never checks out or executes repository code. |
+| `maintain` | issue and milestone events, pushes to the default branch, finished runs of other workflows, the schedule, the `resume` and `autopilot` dispatches, `/nexkit trust` | Work that follows an event rather than a command: closing a parent issue, resuming a command paused at the usage limit or one that waits to run again after a transient error, starting a round for a pull request that conflicts with its base branch, stopping a round whose checks a move of the base branch left without a purpose, an [autopilot](#autopilot) sweep. Runs no agent, and never checks out or executes repository code. |
+| `finish` | a command whose `report` did not finish | When `report` failed, was cancelled or lost its runner, starts a sweep that waits for the run to end and then handles its run comment ([autopilot](#autopilot)) and the conflict round held back while it ran ([Resolving conflicts](#work-without-a-command)). Not for a round NexKit stopped in its checks after the base branch moved: that round's `report` and `finish` do not run, and the next round has started already. Runs no agent, and never checks out or executes repository code. |
 
-The agent does not commit or push. It edits the working tree, and NexKit turns those edits
-into a commit in a different job. As a result:
-
-- The session that runs the agent never holds a token that can write to the repository.
-- Jobs that hold write tokens never run code from the repository or from the agent.
-- Each job that writes mints its own token from the App, with only what it needs. Of the
-  steps, only the one that mints it gets the key, and the token expires within an hour. So
-  the run that waits for paused commands waits with the job's read-only token and mints the
-  App's token after the wait.
-- GitHub gives a job that reads a secret by a name known only at run time every secret on
-  its runner. The jobs that write do that for the App's key and run only NexKit, so nothing
-  reads the rest. The `agent` and `review` jobs must not: they are reusable workflows of
-  their own, and `pipeline.yml` reads their secrets in the call, off the runner, into
-  numbered slots.
-- Checks run in a job with no secrets at all, and so does each of the parallel check jobs.
-- Jobs that run the agent's code restore caches but never save one, so nothing they
-  produce reaches later runs.
-
-`report` needs `contents: write` only to merge when `merge.auto` is on. Its token holds that
-permission in every run, but it never pushes, and with `merge.auto: false` it never merges.
+The agent does not commit or push. It edits the working tree, and another job turns those edits
+into a commit. So no job that runs an agent or repository code holds a token that can write.
+[Tokens and secrets](architecture.md#tokens-and-secrets) says which job holds which token and
+secret, and why.
 
 Since NexKit writes as an App, what it does starts workflows, as a person's actions do: a
 merge starts `push` workflows, a pull request starts `pull_request` workflows, and a run it
@@ -1569,10 +1553,8 @@ after an automatic merge each started `merge.after_workflows` run. A round's mar
 holds its commit, whether its checks passed, and which of them passed on that commit,
 each with a digest of its `run` command, and a digest of its `setup` commands. `nexkit status` reads these markers, not
 the text people read, to list the open NexKit work and what each item waits for. NexKit
-reads a marker only from a comment by its App, and only where it ends the comment:
-text before it can quote agent output. Every other marker, too, counts only where NexKit
-writes it (see [Security notes](#security-notes)). The latest commit whose checks passed becomes the
-next round's `NEXKIT_VERIFIED_SHA`, and for each check the latest commit on which it passed
+reads a marker only where [Comments and markers](security.md#comments-and-markers) says. The
+latest commit whose checks passed becomes the next round's `NEXKIT_VERIFIED_SHA`, and for each check the latest commit on which it passed
 with its current command and the current `setup` becomes its `NEXKIT_CHECK_VERIFIED_SHA`
 (see [Skipping work that a change cannot
 affect](configuration.md#skipping-work-that-a-change-cannot-affect)). In an automatic
@@ -1589,7 +1571,7 @@ Names a person meets in run comments and in that output:
 | `conflicting` | The round's commit conflicts with the base branch, so its checks and review did not run, and NexKit started no conflict round, because `conflicts.max_rounds` are used up. |
 | `branch_updated` | GitHub refused the automatic merge because the branch was behind its base branch; NexKit merged the base branch into it and started `/nexkit review` on the new commit. |
 | `carried` | The round carried over the approval of that commit, after a branch update that left the pull request's change as it was. |
-| `head_moved` | GitHub refused the automatic merge because the branch moved after the round checked it; NexKit started `/nexkit review` on the new head. |
+| `head_moved` | GitHub refused the automatic merge because the branch moved after the round checked it; NexKit started `/nexkit review` on the new head. When GitHub says it moved and the pull request still shows the head the round checked, or NexKit cannot read the head, the outcome is `merge_refused` and a person decides. |
 | `superseded` | NexKit stopped the round in its checks because the base branch moved so that they could not lead to a merge, and started the conflict round, or an update of the branch and `/nexkit review`. See *Stopping a round in its checks* under [Work without a command](#work-without-a-command). |
 | `stop_failed` | NexKit stopped the round in its checks for the same reason, but the next round could not start; a person starts it. |
 | `merge_waiting` | The automatic merge waits for required checks; see [Failure handling](#failure-handling). |
@@ -1716,61 +1698,21 @@ for a reason outside the work, before it published anything.
 
 ## Security notes
 
-- Only collaborators with write, maintain or admin access can start runs. Prompts include
-  issue text from anyone but mark it as untrusted; discussion and review feedback come only
-  from collaborators.
-- The implement session can run any command on the runner, so it can read the secrets
-  its job holds: the credentials of the agents that job may run, such as its fallback
-  agents (see [How secrets reach an agent](#agents)), and no other agent's. Treat `/nexkit go` like
-  running a script that the issue describes: approve plans only for issues whose content
-  you trust.
-- With profiles, an issue's text can steer triage towards a more expensive profile, for
-  example through prompt injection. Requests in the issue do not count as a person's
-  request, and the plan comment shows the profile before anyone comments `/nexkit go`.
-- Logs and artifacts can show anything the agent saw. NexKit redacts known secrets (see
-  [What is redacted](#what-is-redacted)), but on a public repository treat them as public.
-- Workflow and NexKit files (`.github/`, `.nexkit/`) are protected, so a NexKit change
-  cannot alter its own pipeline or configuration. The App may push workflow changes, but
-  only those a merge brings from the base branch, since `publish` rejects any such edit by
-  an agent.
-- Fork pull requests are never NexKit pull requests: commands on them are refused. Only a
-  writer's `/nexkit review` runs anything on a person's pull request, and only from a branch
-  of this repository, which only writers can push to.
-- Autopilot starts `/nexkit go` without a person's approval of the plan. It takes only
-  issues opened by people with write access, and anyone else's issues stay untouched, so
-  an outsider cannot start an implement session by opening or editing an issue. Issues
-  that NexKit opens itself, the parts of a split and the issues for CI failures, flaky
-  runs and Dependabot advisories, are trusted by a marker at the start of their text; such an issue opened by the
-  App is NexKit's, unless a workflow of the repository that holds the App's key writes
-  untrusted text there. The Actions bot proves nothing, since a pull request's CI can write
-  as it. An issue from a workflow in
-  `autopilot.trusted_workflows` is trusted only when GitHub's record of the run its marker
-  names confirms it: the listed file, the default branch, an event a writer or a schedule
-  controls, and a run that was running when the issue was opened (see [Issues from a
-  workflow](configuration.md#issues-from-a-workflow)). A writer can vouch for any other
-  issue with [`/nexkit trust`](configuration.md#vouching-for-an-issue). Autopilot reads that
-  comment itself, so nothing an agent wrote into a comment of NexKit's can stand in for it.
-  The issue's author may still edit such an issue, so an edit by anyone else after it ends
-  the trust, and each round NexKit starts looks for one right after it read the text, before
-  any agent or setup, and so does a merge.
-- GitHub lets anyone with write access, and any token, edit a comment of the App, which stays
-  the App's by author. So NexKit counts a marker only in a comment of the App that, by its
-  edit history, no one else ever changed, even if the App edited it again afterwards. A
-  changed comment's markers count for nothing, and autopilot leaves the issue and its pull
-  request to a person (see [A comment of NexKit was changed by someone
-  else](troubleshooting.md#a-comment-of-nexkit-was-changed-by-someone-else)). NexKit reads the
-  edit history only of the comments of bots that were edited, with the read-only token every
-  job holds.
-- NexKit's comments and issues quote text it does not trust: agent output, such as a plan,
-  a fix round's cause or a finding that no change is needed, and the output, test names
-  and annotations of CI runs. NexKit reads each of its markers only where it writes it, so
-  such text never passes for NexKit's own record: a record, such as the state of a pull
-  request, a run's or autopilot's record, a plan's record and the markers that end a CI
-  report, only where it ends the comment or issue; a marker that names what an issue or
-  comment is, and the people a mention names, only at the start of its text; a plan's
-  profile record and an advisory part's marker only on the line after the first marker.
-  Where agent text stands on both sides of a marker, as around a plan's profile lines,
-  follows a part's marker, or ends a comment of NexKit's, as the finding autopilot closes
-  an issue with, NexKit writes `<!-- nexkit:` in it as `‹!-- nexkit:`. That covers all
-  of a plan's agent text, so the plan text the agents read and the parts filed from a split
-  show it so too.
+What NexKit trusts, and the rule and test for each input it does not, are in [Security](security.md).
+These are the choices that remain with whoever runs NexKit on a repository.
+
+- Treat `/nexkit go` like running a script that the issue describes: approve plans only for issues
+  whose content you trust, since the implement session can read the secrets its job holds (see
+  [What the rules do not stop](security.md#what-the-rules-do-not-stop)).
+- With [profiles](configuration.md#profiles), an issue's text can steer triage towards a more
+  expensive profile. Requests in the issue do not count as a person's request, and the plan comment
+  shows the profile before anyone comments `/nexkit go`.
+- Logs and artifacts can show anything the agent saw, and redaction is best-effort (see
+  [What is redacted](#what-is-redacted)). On a public repository treat them as public, and consider
+  `transcript` and `log.tool_output` ([Logs and
+  transcripts](configuration.md#logs-and-transcripts)).
+- Add to `protected_paths` the paths no agent may change, beyond `.github/` and `.nexkit/`, which
+  are required (see the [configuration reference](configuration.md)).
+- List in `autopilot.trusted_workflows` only workflows whose output you would act on unread (see
+  [Issues from a workflow](configuration.md#issues-from-a-workflow)), and vouch for any other issue
+  that autopilot should take with [`/nexkit trust`](configuration.md#vouching-for-an-issue).

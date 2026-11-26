@@ -54,6 +54,13 @@ and `checks_waited` sends the sweep's tick, which tries the merge again or, once
 have not passed for `machine.CHECKS_END`, leaves it to a person. A merge whose issue no
 sweep looks at is the host's own refusal, since no tick would come for it.
 
+It decides what follows the other refusals of a merge (`report._refused`, `report._head_moved`,
+`report._guarded`): a head that moved, which the host sends as an observation of the new head
+first, so that the engine checks it, or a person decides when none was read or it is the head
+the round checked; the last refusal after the base branch kept moving through the host's quick
+tries; the checks before the merge, an issue closed, edited after a vouch or unreadable; and
+any other refusal GitHub gives that only a person clears.
+
 It decides what follows a merge that GitHub refused for a conflict (`report._refused`):
 `accept_answer` sends it as a `conflict` result with the conflict rounds used, and the engine
 answers a conflict round while `conflicts.max_rounds` has one left, or a person. The host starts
@@ -1656,6 +1663,14 @@ def required_failed(cfg, issue, pr, head, auto_fixes, wait):
     raise Refused(f"The engine answers {sorted(kinds)} after a required check failed.")
 
 
+def head_observed(issue, pr, head):
+    """The event that tells the engine the NexKit pull request `pr` has the head `head` now,
+    for `accept_answer`'s `before`."""
+    fields = {"changeId": str(pr), "version": str(head), "conflicts": False}
+    fields.update(merged=False, empty=False)
+    return _event("changeObserved", issue, None, f"head-{pr}-{head}", **fields)
+
+
 def accept_answer(
     cfg,
     issue,
@@ -1676,10 +1691,11 @@ def accept_answer(
     `head`, as NexKit 6's `waiting_since` says, and `at` the time of the events. `conflicts`
     is the conflict rounds used, which `conflicts.max_rounds` limits, and `updates` the updates of
     the branch from its base, which it limits apart from them. Returns `(end, state)`, `end`
-    being `accepted`, `waiting` while the required checks are awaited, `fix` or `redo` for the
-    round that follows, `update` for the update of a branch that is behind its base,
-    `base_failure` while a failure the base branch has is awaited, or `person`, whose reason
-    `state["attention"]` names. Raises `Refused`."""
+    being `accepted`, `waiting` while the required checks are awaited, `review` for the checks
+    and review of a newer head that `before` observed, `fix` or `redo` for the round that
+    follows, `update` for the update of a branch that is behind its base, `base_failure` while a
+    failure the base branch has is awaited, or `person`, whose reason `state["attention"]` names.
+    Raises `Refused`."""
     doc = _pull_doc(cfg, issue, pr, head, "accepting", auto_fixes)
     doc["rounds"]["conflicts"] = max(int(conflicts or 0), 0)
     if int(updates or 0) > 0:
@@ -1702,6 +1718,8 @@ def accept_answer(
         return "update", state
     if state["state"] == "accepting" and "requiredChecks" in waits:
         return "waiting", state
+    if "runChecks" in kinds:
+        return "review", state
     if stage == "fix":
         return "fix", state
     if stage == "implement":

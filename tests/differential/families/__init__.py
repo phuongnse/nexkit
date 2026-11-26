@@ -21,6 +21,7 @@ FAMILIES = {
     "chains": "#347",
     "released": "#347",
     "waits": "#390",
+    "refusals": "#391",
     "pause": "#398",
     "ended": "#393",
     "failure": "#415",

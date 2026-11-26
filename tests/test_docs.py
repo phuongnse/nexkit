@@ -80,7 +80,7 @@ from nexkit import (
     state,
     status,
 )
-from nexkit.engine import prompt, textutil
+from nexkit.engine import machine, prompt, textutil
 from nexkit.runtimes import claude_code
 from tests.support import make_config, with_claude
 from tests.test_cli import jobs_of, permissions_of
@@ -1680,6 +1680,13 @@ VALUES = (
     ("work-without-a-command.md", f"at most {autopilot.ISSUES_LIMIT:,} of each"),
     ("work-without-a-command.md", f"{restart_delays()} after its last start"),
     ("failure-handling.md", f"{restart_delays()} after its last start"),
+    ("autopilot.md", f"more than {NUMBERS[textutil.MAX_PARTS]} parts"),
+    ("autopilot.md", f"within {NUMBERS[machine.CHECKS_END // 3600]} hours"),
+    ("autopilot.md", f"more than {NUMBERS[autopilot.CI_NEW_ISSUES]} issues"),
+    ("autopilot.md", f"GitHub's {autopilot.CI_TITLE} characters"),
+    ("autopilot.md", f"up to {NUMBERS[autopilot.CI_TITLE_FAILURES]} of one kind"),
+    ("autopilot.md", f"A sweep opens at most {NUMBERS[autopilot.DEPENDABOT_NEW_ISSUES]}"),
+    ("autopilot.md", f"oldest {github.DEPENDABOT_ALERTS} alerts"),
 )
 # The pages that list the words which mark a failing line, and the regex that finds each list.
 FAILURE_WORDS_PAGES = ("agents-and-profiles.md", "failure-handling.md")

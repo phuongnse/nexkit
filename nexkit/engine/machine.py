@@ -1785,6 +1785,12 @@ class Step:
             until = self.later(CHECKS_RETRY)
             wait = self.wait("requiredChecks", until=until)
             self.do("wait", wait=wait["id"], until=until)
+        elif result["refusal"] in ("transient", "headMoved", "needsPerson"):
+            # A newer version observed first was already checked by the reconcile, which
+            # cancelled this accept: what is left waits for a person (`report._refused`,
+            # `report._head_moved`).
+            self.move("ready")
+            self.need("acceptRefused", result["text"] or "The accept was refused.")
         else:
             self.move("ready")
             self.need("acceptRefused", result["text"] or "The accept was refused.")

@@ -34,11 +34,11 @@ These features make up NexKit 6, released from 1.0.0 (2026-10-05) to 6.12.2 (202
 | [Foundation](https://github.com/phuongnse/nexkit/milestone/18) | NexKit's own docs, delivery and checks at the standard it asks of the repositories it runs on: a map of the docs, short agent instructions, architecture, security, decisions, CodeQL, a docs audit, the owner's maintenance skill, and NexKit working its own issues | In progress |
 | [Engine and hosts](https://github.com/phuongnse/nexkit/milestone/1) | The loop's decisions in one engine that any host runs, as [The engine](engine.md) describes. NexKit 7.0 ships when the GitHub host runs only through it (#320) | In progress |
 
-Built so far: the protocol's schemas, `nexkit-engine step`, `prompt` and `serve`, the state
+Built so far: the protocol's schemas, `nexkit-engine step`, `prompt`, `sweep` and `serve`, the state
 document and its import from NexKit 6's markers, the differential check against NexKit 6, and the
 decisions that follow a plan, a blocked `/nexkit go` and a round on a pull request. Left: the
-accept, the waits, the sweep, the runner and the rest that [Getting there](engine.md#getting-there)
-lists.
+accept, the waits, autopilot's use of the sweep, the runner and the rest that
+[Getting there](engine.md#getting-there) lists.
 
 ## Later
 

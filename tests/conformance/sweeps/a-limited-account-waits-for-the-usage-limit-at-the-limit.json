@@ -1,0 +1,53 @@
+{
+  "note": "At the limit an item on a limited account still waits for the usage limit, not for a place, and a limited awaited item does not start beyond the limit.",
+  "policies": {
+    "maxParallel": 1
+  },
+  "running": 1,
+  "limited": [
+    "acme"
+  ],
+  "items": [
+    {
+      "item": "1",
+      "account": "acme"
+    },
+    {
+      "item": "2",
+      "account": "acme",
+      "awaited": true
+    },
+    {
+      "item": "3",
+      "account": "other",
+      "awaited": true
+    },
+    {
+      "item": "4",
+      "account": "other"
+    }
+  ],
+  "starts": [
+    {
+      "item": "3",
+      "beyondLimit": true
+    }
+  ],
+  "waits": [
+    {
+      "item": "1",
+      "for": "usageLimit",
+      "running": 1
+    },
+    {
+      "item": "2",
+      "for": "usageLimit",
+      "running": 1
+    },
+    {
+      "item": "4",
+      "for": "place",
+      "running": 2
+    }
+  ]
+}

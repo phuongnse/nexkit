@@ -1,0 +1,68 @@
+{
+  "note": "The host's milestone order decides, an item with no milestone goes last and ignores its wave, and a priority item with no milestone goes first.",
+  "policies": {
+    "priority": [
+      "bug"
+    ]
+  },
+  "running": 0,
+  "limited": [],
+  "items": [
+    {
+      "item": "1",
+      "milestone": null,
+      "wave": 3
+    },
+    {
+      "item": "2",
+      "milestone": 2
+    },
+    {
+      "item": "3",
+      "milestone": 0
+    },
+    {
+      "item": "4",
+      "labels": [
+        "bug"
+      ],
+      "milestone": null
+    },
+    {
+      "item": "5",
+      "milestone": 1
+    },
+    {
+      "item": "6",
+      "milestone": null,
+      "wave": 0
+    }
+  ],
+  "starts": [
+    {
+      "item": "4",
+      "beyondLimit": false
+    },
+    {
+      "item": "3",
+      "beyondLimit": false
+    },
+    {
+      "item": "5",
+      "beyondLimit": false
+    },
+    {
+      "item": "2",
+      "beyondLimit": false
+    },
+    {
+      "item": "1",
+      "beyondLimit": false
+    },
+    {
+      "item": "6",
+      "beyondLimit": false
+    }
+  ],
+  "waits": []
+}

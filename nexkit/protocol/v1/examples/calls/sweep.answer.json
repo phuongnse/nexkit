@@ -1,0 +1,26 @@
+{
+  "protocol": 1,
+  "starts": [
+    {
+      "item": "12",
+      "beyondLimit": true
+    }
+  ],
+  "waits": [
+    {
+      "item": "11",
+      "for": "place",
+      "running": 3
+    },
+    {
+      "item": "13",
+      "for": "place",
+      "running": 3
+    },
+    {
+      "item": "14",
+      "for": "usageLimit",
+      "running": 3
+    }
+  ]
+}

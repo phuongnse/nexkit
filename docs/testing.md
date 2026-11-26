@@ -15,7 +15,7 @@ rounds on this repository run the commands that `checks` in `.nexkit/config.json
 | --- | --- | --- |
 | Unit tests | `tests/test_*.py`, run by `python3 -m unittest discover -s tests -t .` | Each module's behaviour, most of it against `FakeGitHub`, with the standard library only. `tests/test_cli.py` also reads the workflows and checks which job holds which token and secret |
 | Scenarios | `tests/test_scenarios.py` | Autopilot over many rounds and sweeps: every issue in scope is carried on or waits for a person, and budgets count as they should |
-| Conformance | `tests/conformance/` | Each rule of the engine, as a case of events and the actions and state they must give; each kind of import (`first_state.KINDS`) has a case in `tests/conformance/imports/` |
+| Conformance | `tests/conformance/` | Each rule of the engine, as a case of events and the actions and state they must give; each kind of import (`first_state.KINDS`) has a case in `tests/conformance/imports/`; the `sweep` call has its cases in `tests/conformance/sweeps/` |
 | Prompt goldens | `tests/prompts/` | The prompt each stage writes, compared with NexKit 6's own record of it. A change to a prompt changes its golden by hand and says why. Never write them again with `NEXKIT_WRITE_PROMPTS` from today's code: set it only to add a case's file from NexKit 6's code, or to change a prompt on purpose |
 | Agent schemas | `tests/golden/agent-schemas.json`, read by `tests/test_protocol.py` | The result schema each stage gives its agent, as NexKit 6 gave it |
 | Differential check | `tests/differential/`, run by `tests/differential/check.sh` | The engine against NexKit 6, with random walks of the engine and its mutants, as [its README](../tests/differential/README.md) says |

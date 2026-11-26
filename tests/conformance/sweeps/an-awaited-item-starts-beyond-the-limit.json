@@ -1,0 +1,53 @@
+{
+  "note": "An awaited item listed last starts at the limit and is flagged beyondLimit, and it takes a place: a later item waits with the higher running count.",
+  "policies": {
+    "maxParallel": 2
+  },
+  "running": 1,
+  "limited": [],
+  "items": [
+    {
+      "item": "1"
+    },
+    {
+      "item": "2"
+    },
+    {
+      "item": "3"
+    },
+    {
+      "item": "4",
+      "awaited": true
+    },
+    {
+      "item": "5"
+    }
+  ],
+  "starts": [
+    {
+      "item": "1",
+      "beyondLimit": false
+    },
+    {
+      "item": "4",
+      "beyondLimit": true
+    }
+  ],
+  "waits": [
+    {
+      "item": "2",
+      "for": "place",
+      "running": 2
+    },
+    {
+      "item": "3",
+      "for": "place",
+      "running": 2
+    },
+    {
+      "item": "5",
+      "for": "place",
+      "running": 3
+    }
+  ]
+}

@@ -150,6 +150,18 @@ whether pull requests wait for it as a bug issue about the default branch, and n
 usage limit. The host says each wait in NexKit 6's words, and an engine that refuses the sweep
 leaves each issue that would start waiting for a person.
 
+It decides whether a person's command starts its stage, too (`command`, called by
+`route._decide`): a `/nexkit` comment, a *Request changes* review and each dispatch of a
+command that NexKit sends. The host builds the small document that NexKit 6's `route` read the
+facts of, whether the issue or pull request is open, the latest plan, an open pull request for
+`/nexkit go` and a base branch that already holds the change, sends the command as `requested`
+(a review as `changesRequested`, as `take` sends it), and starts only the stage that the engine
+answers; a change that the engine ends as `noChange` goes to the `on_base` task. A closed issue
+or pull request and an open pull request for `/nexkit go` are the engine's to refuse, and the
+host says each in NexKit 6's words. An engine that refuses, or answers another stage, starts
+nothing, and the person gets a reply. A fork, a person's pull request, which takes no
+`/nexkit fix`, an unknown command and an implement round that still runs stay host checks.
+
 An item whose document or event the engine refuses waits for a person, and no other item is
 held up by it.
 
@@ -1443,6 +1455,90 @@ def closing_command(gh, decision, comments, command):
         "answer": picked[2],
         "asked": asked[0],
     }
+
+
+# What the engine's answer to a person's command names, by the stage it runs.
+STARTS = {"plan": "plan", "implement": "implement", "fix": "fix"}
+
+
+def command(
+    cfg,
+    item,
+    what,
+    *,
+    by=None,
+    note="",
+    closed=False,
+    change=None,
+    plan=None,
+    review_only=False,
+    empty=False,
+    review_id=None,
+    source_id=None,
+):
+    """What the engine answers to a person's command `what` (`plan`, `go`, `fix` or `review`)
+    on work item `item` (`route._decide`): `plan`, `implement`, `fix` or `review` for the stage
+    it runs (`runChecks` is a `review`), `noChange` when the item ends because its base branch
+    already holds the change, or `refused` when it runs nothing. It raises `Refused` when the
+    engine refuses the document or the event. It writes nothing and stores nothing.
+
+    The document holds only the facts that NexKit 6's `route` reads, as `closing_command` and
+    `_pull_doc` build theirs: `closed` is a closed issue or pull request (`dropped`); `change`,
+    `{"id", "version"}` of the open pull request, makes the item `ready`, or `new` for a person's
+    pull request (`review_only`); `plan` is the issue's latest plan comment, which makes the item
+    wait for its approval. `empty` says that the change's base branch already holds it. `by` is
+    the person, `note` their text, and `review_id` the id of a *Request changes* review, which is
+    sent as `changesRequested` as `take` sends it. `source_id` is the id of the comment or review
+    that gave the command, which names the event as `take` does."""
+    doc = first_state.empty(str(item))
+    if review_only:
+        doc["itemKind"], doc["actors"]["change"] = "reviewOnly", "person"
+    if closed:
+        doc["state"] = "dropped"
+    elif change:
+        doc["state"] = "new" if review_only else "ready"
+        doc["change"] = dict(change)
+        doc["observed"] = {
+            "changeId": change["id"],
+            "version": change["version"],
+            "conflicts": False,
+            "merged": False,
+            "empty": False,
+        }
+    elif plan:
+        doc = _waiting(_document({"number": item}, {}, plan, plan_data(plan)))
+    events = []
+    if empty and change and not closed:
+        seen = {"version": change["version"], "merged": False, "empty": True}
+        name = f"seen-{change['id']}-{change['version']}"
+        fields = {"changeId": change["id"], "conflicts": False, **seen}
+        events.append(_event("changeObserved", item, None, name, **fields))
+    kind = "review" if review_id is not None else "comment"
+    try:
+        name = event_id(kind, review_id if review_id is not None else source_id)
+    except ValueError:
+        name = f"command-{item}-{what}"
+    person = _person(by, "writer")
+    if review_id is not None:
+        found = {"by": person, "note": {"name": "review", "ref": str(review_id)}}
+        events.append(_event("changesRequested", item, None, name, **found))
+    else:
+        found = {
+            "what": what,
+            "by": person,
+            "note": note,
+            "plan": str(plan["id"]) if plan and what == "go" else None,
+        }
+        events.append(_event("requested", item, None, name, **found))
+    after, actions = _answers(doc, events, policies(cfg) if cfg else {})
+    if after["state"] == "noChange":
+        return "noChange"
+    for action in actions:
+        if action["kind"] == "runChecks":
+            return "review"
+        if action["kind"] == "runAgent" and action["stage"] in STARTS:
+            return STARTS[action["stage"]]
+    return "refused"
 
 
 # -- what follows a round's checks and review ------------------------------------------

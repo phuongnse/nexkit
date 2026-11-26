@@ -749,6 +749,19 @@ MUTANTS = {
         "seen": ("harness",),
         "families": ("approvals",),
     },
+    # A person's fix or review request is refused on a ready item, so no command starts a
+    # round on a NexKit pull request, where NexKit 6 starts it (#568).
+    "request-refused-on-a-ready-item": {
+        "path": MACHINE,
+        "old": """        if self.state in states:
+            return True
+        busy =""",
+        "new": """        if self.state in states and self.state != "ready":
+            return True
+        busy =""",
+        "seen": ("harness",),
+        "families": ("command",),
+    },
 }
 
 

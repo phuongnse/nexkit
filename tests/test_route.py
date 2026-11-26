@@ -4,6 +4,7 @@ from unittest import mock
 
 from nexkit import config
 from nexkit.github import GitHubError
+from nexkit.host import Refused
 from nexkit.route import (
     COMPARE_FILES,
     auto_input,
@@ -775,6 +776,183 @@ class RouteTests(unittest.TestCase):
 
     def test_other_events_are_ignored(self):
         self.assertEqual(route(self.gh, "push", {})["action"], "none")
+
+
+class EngineStartsTests(unittest.TestCase):
+    """A person's command, a *Request changes* review and NexKit's own dispatch start a stage
+    only as the engine answers it (`host.command`); route keeps the facts only GitHub shows."""
+
+    def setUp(self):
+        self.gh = FakeGitHub()
+        # Issue 7 has no pull request, issue 5 has the open one, number 6.
+        self.gh.add_issue(5)
+        self.gh.add_issue(7)
+        self.gh.add_pull(6, 5)
+        self.gh.add_pull(10, 8, branch="upgrade/nexkit")
+        self.gh.add_issue(8)
+
+    def comment(self, number, command, on_pull=False):
+        return route(self.gh, "issue_comment", comment_event(number, command, on_pull=on_pull))
+
+    def review(self, number=6):
+        event = {
+            "action": "submitted",
+            "review": {
+                "id": 31,
+                "state": "changes_requested",
+                "body": "Handle None",
+                "user": {"login": "olivia"},
+            },
+            "pull_request": {"number": number},
+        }
+        return route(self.gh, "pull_request_review", event)
+
+    def dispatch(self, command, number, auto="false"):
+        inputs = {"command": command, "number": str(number), "auto": auto}
+        return route(self.gh, "workflow_dispatch", {"sender": {"login": "bot"}}, inputs)
+
+    def every_start(self):
+        """(name, how to ask, the action it starts) for each way a command starts a stage."""
+        return [
+            ("plan", lambda: self.comment(7, "/nexkit plan"), "plan"),
+            ("go", lambda: self.comment(7, "/nexkit go"), "implement"),
+            ("fix", lambda: self.comment(6, "/nexkit fix", on_pull=True), "fix"),
+            ("review", lambda: self.comment(6, "/nexkit review", on_pull=True), "review"),
+            ("a person's review", lambda: self.comment(10, "/nexkit review", True), "review"),
+            ("a request for changes", self.review, "fix"),
+            ("a plan dispatch", lambda: self.dispatch("plan", 7), "plan"),
+            ("a go dispatch", lambda: self.dispatch("go", 7), "implement"),
+            ("a fix dispatch", lambda: self.dispatch("fix", 6, "true"), "fix"),
+            ("a conflicts dispatch", lambda: self.dispatch("fix", 6, "conflicts"), "fix"),
+            ("a review dispatch", lambda: self.dispatch("review", 6, "true,carry"), "review"),
+            ("a person's review dispatch", lambda: self.dispatch("review", 10), "review"),
+        ]
+
+    @staticmethod
+    def engine(actions, final=None):
+        """An engine that answers `actions` to every event and keeps the state as it got it,
+        or ends it in `final`."""
+
+        def step(state, event, policies):
+            found = {**state, "state": final or state["state"]}
+            return {"state": found, "actions": actions, "changed": True}
+
+        return mock.patch("nexkit.host.step", side_effect=step)
+
+    def test_each_command_starts_the_stage_the_engine_names(self):
+        for name, ask, action in self.every_start():
+            with self.subTest(name):
+                self.assertEqual(ask()["action"], action)
+
+    def test_an_engine_that_runs_nothing_gives_a_reply_and_no_start(self):
+        for name, ask, _ in self.every_start():
+            with self.subTest(name), self.engine([]):
+                found = ask()
+                self.assertEqual(found["action"], "none")
+                self.assertIsNotNone(found["reply_to"])
+                self.assertIn("engine", found["reason"])
+
+    def test_an_engine_that_names_another_stage_gives_a_reply_and_no_start(self):
+        other = {
+            "plan": {"kind": "runAgent", "stage": "implement"},
+            "implement": {"kind": "runAgent", "stage": "plan"},
+            "fix": {"kind": "runChecks"},
+            "review": {"kind": "runAgent", "stage": "fix"},
+        }
+        for name, ask, action in self.every_start():
+            with self.subTest(name), self.engine([other[action]]):
+                found = ask()
+                self.assertEqual((found["action"], found["reply_to"] is None), ("none", False))
+
+    def test_an_engine_that_refuses_gives_a_reply_and_no_start(self):
+        for name, ask, _ in self.every_start():
+            with self.subTest(name), mock.patch("nexkit.host.step", side_effect=Refused("No.")):
+                found = ask()
+                self.assertEqual(found["action"], "none")
+                self.assertIsNotNone(found["reply_to"])
+                self.assertIn("No.", found["reason"])
+
+    def test_the_engine_is_asked_what_the_person_asked(self):
+        asked = []
+
+        def step(state, event, policies):
+            asked.append((event["kind"], event.get("what"), state["state"], state["itemKind"]))
+            return {"state": state, "actions": [], "changed": False}
+
+        with mock.patch("nexkit.host.step", side_effect=step):
+            self.comment(7, "/nexkit go")
+            self.comment(6, "/nexkit fix", on_pull=True)
+            self.comment(10, "/nexkit review", on_pull=True)
+            self.review()
+        self.assertEqual(
+            asked,
+            [
+                ("requested", "go", "new", "change"),
+                ("requested", "fix", "ready", "change"),
+                ("requested", "review", "new", "reviewOnly"),
+                ("changesRequested", None, "ready", "change"),
+            ],
+        )
+
+    def test_the_engine_refuses_a_closed_issue_or_pull_request_in_nexkit_6_s_words(self):
+        self.gh.close_issue(7)
+        for command in ("plan", "go"):
+            found = self.comment(7, f"/nexkit {command}")
+            self.assertEqual((found["action"], found["reason"]), ("none", "The issue is closed"))
+            self.assertEqual(found["reply_to"], 7)
+        self.gh.close_pull(6)
+        for command in ("fix", "review"):
+            found = self.comment(6, f"/nexkit {command}", on_pull=True)
+            self.assertEqual(found["reason"], "The pull request is closed")
+        self.assertEqual(self.review()["reason"], "The pull request is closed")
+
+    def test_the_engine_refuses_a_go_while_the_pull_request_is_open(self):
+        self.assertEqual(self.comment(7, "/nexkit go")["action"], "implement")
+        found = self.comment(5, "/nexkit go")
+        self.assertEqual(found["action"], "none")
+        self.assertIn("Pull request #6 is already open for this issue", found["reason"])
+        # A plan starts over beside the pull request, as in NexKit 6.
+        self.assertEqual(self.comment(5, "/nexkit plan")["action"], "plan")
+
+    def test_a_pull_request_the_base_holds_ends_only_as_the_engine_ends_the_item(self):
+        self.gh.on_base.add("a" * 40)
+        for command in ("fix", "review"):
+            found = self.comment(6, f"/nexkit {command}", on_pull=True)
+            self.assertEqual((found["action"], found["task"]), ("maintain", "on_base"), command)
+            self.assertEqual((found["issue"], found["pr"]), (5, 6))
+            self.assertEqual(found["merge_base"], "c" * 40)
+            with self.engine([]):
+                found = self.comment(6, f"/nexkit {command}", on_pull=True)
+            self.assertEqual(found["action"], "none")
+            self.assertEqual(found["reply_to"], 6)
+
+    def test_a_persons_pull_request_the_base_holds_has_nothing_to_review(self):
+        self.gh.on_base.add("a" * 40)
+        found = self.comment(10, "/nexkit review", on_pull=True)
+        self.assertEqual(found["action"], "none")
+        self.assertIn("changes no file against `main`", found["reason"])
+        with self.engine([]):
+            found = self.comment(10, "/nexkit review", on_pull=True)
+        self.assertEqual(found["action"], "none")
+        self.assertIn("engine", found["reason"])
+
+    def test_a_fork_a_persons_pull_request_and_an_unknown_command_stay_host_checks(self):
+        self.gh.add_pull(11, 5, repo="mallory/app")
+        self.gh.add_pull(12, 9, branch="upgrade/two")
+        with mock.patch("nexkit.host.step", side_effect=AssertionError("asked")):
+            self.assertIn("fork", self.comment(11, "/nexkit review", on_pull=True)["reason"])
+            self.assertIn("acts only", self.comment(12, "/nexkit fix", on_pull=True)["reason"])
+            self.assertIn("not an issue", self.comment(5, "/nexkit fix")["reason"])
+            self.assertIn("not a pull", self.comment(6, "/nexkit go", on_pull=True)["reason"])
+            self.assertIn("not a pull", self.comment(6, "/nexkit nope", on_pull=True)["reason"])
+
+    def test_a_running_implement_round_is_still_checked_after_the_engine_answers(self):
+        url = "https://github.com/acme/app/actions/runs/9"
+        self.gh.comment(5, render_run({"url": url, "command": "go", "status": "running"}, "Go."))
+        self.gh.runs[9] = {"status": "in_progress"}
+        found = self.comment(6, "/nexkit fix", on_pull=True)
+        self.assertEqual(found["action"], "none")
+        self.assertIn("still checks and reviews", found["reason"])
 
 
 class ProfileTests(unittest.TestCase):

@@ -1,4 +1,4 @@
-# D2. NexKit writes only as the App
+# D2. NexKit's pipeline writes only as the App
 
 Status: **Agreed**
 

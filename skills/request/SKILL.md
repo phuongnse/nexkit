@@ -49,8 +49,13 @@ succeeds. Help the user write issues that one session can finish and test.
 4. **Check autopilot.** Read `.nexkit/config.json`. When `autopilot.enabled` is true,
    NexKit takes the open issues of the earliest open milestone (`autopilot.scope`
    `"milestone"`, the default), or every open issue (`null`), by milestone in due-date
-   order, then those without one. Give each issue its milestone; ask the user which
-   milestone when that is not clear
+   order, then those without one. It takes only the issues it trusts: those opened by
+   someone with write access, by NexKit's App or by a trusted workflow, and others only
+   after a writer comments `/nexkit trust`
+   ([Vouching for an issue](../../docs/autopilot.md#vouching-for-an-issue)). It starts
+   nothing for an issue with a label that `autopilot.labels` gives `"hold": true`
+   ([Autopilot](../../docs/autopilot.md#autopilot)). Give each issue its milestone; ask the
+   user which milestone when that is not clear
    (`gh api repos/{owner}/{repo}/milestones --jq '.[].title'`). With `null`, an issue
    starts as soon as it is open and nothing open blocks it, so open only the issues that
    may start, and give each the *blocked by* relationships it needs. With or without
@@ -72,8 +77,11 @@ succeeds. Help the user write issues that one session can finish and test.
    docs sweep take waves 1 and 2. A label of `autopilot.priority`, such as `bug`, puts an
    issue first, also without a milestone.
 
-   Touching the same files, or a tidier order, is no reason to wait: NexKit merges the
-   base branch and resolves conflicts by itself. Nor is adding a new case of something
+   Touching the same files, or a tidier order, is no reason to wait: a fix round merges the
+   base branch and resolves the conflict. NexKit starts that round itself only with
+   `conflicts.auto_resolve`. Otherwise a person comments `/nexkit fix` on the pull request
+   ([Conflicts with the base branch](../../docs/merges-and-waits.md#conflicts-with-the-base-branch)).
+   Nor is adding a new case of something
    that another issue covers in every case: that issue's test finds the new case, so
    whichever of the two merges last fails its checks until it covers it. Keep the marks
    this narrow because a mark that is not needed only slows the work, while a missing one
@@ -122,16 +130,26 @@ succeeds. Help the user write issues that one session can finish and test.
      gh api -X POST repos/{owner}/{repo}/issues/<issue>/dependencies/blocked_by -F issue_id="$id"
      ```
 
-   If either endpoint returns 404, the `gh` version is too old for it: upgrade `gh`.
+   If either endpoint returns 404, check the issue number and the database id. When both are
+   right, the GitHub server has no such API, as on older GitHub Enterprise Server versions.
+   NexKit then reads no *blocked by* marks there, so open a waiting issue only after the
+   issue it waits for has merged.
 
    Write the `Depends on #N: …` line next to the relationship, never in place of it:
    NexKit reads only the relationship. Do not block a part only because it comes later
    in the list. These are guidelines for good issues; NexKit does not check how issues
    are written.
 
-9. **Start the pipeline.** With autopilot on, do nothing: autopilot plans each issue as
-   soon as nothing blocks it, starts `/nexkit go` on a plan that needs nobody, and the
-   user does not comment `/nexkit plan`. Without autopilot, and only if the user wants to,
+9. **Start the pipeline.** With autopilot on, the user does nothing for an issue that
+   autopilot takes: it plans the issue as soon as nothing blocks it, starts `/nexkit go` on
+   a plan that needs nobody, and the user does not comment `/nexkit plan`. Autopilot leaves
+   two kinds of issue alone, and a person starts each:
+   - one that someone without write access opened: `nexkit status` lists it under
+     *Needs a person*. A writer who has read it comments `/nexkit trust`
+     ([Vouching for an issue](../../docs/autopilot.md#vouching-for-an-issue));
+   - one with a label that `autopilot.labels` gives `"hold": true`: a person removes the label.
+
+   Without autopilot, and only if the user wants to,
    comment `/nexkit plan` on each issue that nothing blocks
    (`gh issue comment <n> --body "/nexkit plan"`). The plan appears as a comment; a
    collaborator reviews it and comments `/nexkit go` to implement it.

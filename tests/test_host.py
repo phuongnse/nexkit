@@ -1484,7 +1484,7 @@ class ManyChecksTest(ReportCase):
         self.assertEqual(self.route_diagnoses(), [f"c{n:03}" for n in range(10)])
 
     def test_the_configuration_names_the_bounds(self):
-        text = (ROOT / "docs" / "configuration.md").read_text(encoding="utf-8")
+        text = (ROOT / "docs" / "checks.md").read_text(encoding="utf-8")
         text = text.split("\n## Checks\n", 1)[1].split("\n## ", 1)[0]
         self.assertIn(f"{MOST['failing']} failing", text)
         self.assertIn(f"{MOST['repeated']} checks", text)

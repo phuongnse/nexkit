@@ -125,7 +125,7 @@ run `nexkit init`; see [The GitHub App](docs/configuration.md#the-github-app).
 |---|---|---|
 | Issue | `/nexkit plan [notes]` | The agent reads the code and posts a plan for you to approve: what changes, the decisions it made, risks and acceptance criteria, with the implementation notes collapsed. Run it again after answering questions or asking for changes: it revises the latest plan and says what changed. |
 | Issue | `/nexkit go [notes]` | The agent implements the latest plan. NexKit opens a pull request, runs the checks and reviews it. |
-| Issue | `/nexkit trust` | Vouch for an issue that [autopilot](docs/configuration.md#autopilot) leaves alone, such as one a workflow or someone without write access opened. Autopilot then takes it, and the parts of its split, until someone without write access edits it. |
+| Issue | `/nexkit trust` | Vouch for an issue that [autopilot](docs/autopilot.md#autopilot) leaves alone, such as one a workflow or someone without write access opened. Autopilot then takes it, and the parts of its split, until someone without write access edits it. |
 | NexKit PR | `/nexkit fix [instructions]` | Another implementation round using the failing checks, review findings and your instructions. When the pull request conflicts with its base branch, the round merges the base branch and resolves the conflicts, or asks you to decide the ones that need a choice. |
 | NexKit PR | `/nexkit review` | Re-run the checks and the AI review, for example after you pushed a commit. |
 | NexKit PR | *Request changes* review | Same as `/nexkit fix`, with your review as the instructions. |
@@ -141,7 +141,7 @@ the tokens its agents used and the next step. Pull requests also get `nexkit/che
 
 Merging is up to you unless you set `"merge": {"auto": true}`. NexKit then merges approved
 pull requests itself, closes their issues and can start your CI on the base branch
-afterwards; see [Automatic merge](docs/configuration.md#automatic-merge). With
+afterwards; see [Automatic merge](docs/merges-and-waits.md#automatic-merge). With
 `"conflicts": {"auto_resolve": true}` it also merges the base branch into its pull requests
 that start to conflict. When an agent hits its account's usage limit, NexKit moves the
 stage to the agent's [fallback agents](docs/configuration.md#fallback-agents), if it has
@@ -150,7 +150,7 @@ any, or pauses and continues after the reset.
 With `"autopilot": {"enabled": true}`, nobody needs to post the commands: NexKit plans each
 ready issue of the current milestone, or every open issue with `"scope": null`, starts
 `/nexkit go` on a plan that needs nobody and moves on when an issue closes, driven by
-GitHub events. It stops where a person is needed, such as a plan with questions; see [Autopilot](docs/configuration.md#autopilot).
+GitHub events. It stops where a person is needed, such as a plan with questions; see [Autopilot](docs/autopilot.md#autopilot).
 
 ## Local commands
 

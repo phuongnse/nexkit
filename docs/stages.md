@@ -47,7 +47,7 @@ files are what the comment shows. A plan that does not fit even with each text c
 500 characters is not posted: its run fails and a person decides.
 
 A plan for an issue that names CI runs gets the same [evidence of those
-runs](configuration.md#evidence-from-ci-runs) as the implement round: the end of the
+runs](checks.md#evidence-from-ci-runs) as the implement round: the end of the
 failed jobs' logs, their annotations, and whether a newer run of the workflow passed on
 the default branch since. So the plan starts from the cause the logs show. The plan
 prompt lists the protected paths: a plan whose change must modify them lists them in
@@ -102,7 +102,7 @@ plan, however small, goes into the plan or the round that implements it:
 the plan, the issue, the discussion from collaborators, and for fix rounds the failing
 check output, blocking review findings and collaborators' review comments on the current
 commit. It asks the agent to run the checks before it finishes; of a
-[slow check](configuration.md#slow-checks), only the tests that cover the change or that
+[slow check](checks.md#slow-checks), only the tests that cover the change or that
 failed, since NexKit runs every check after the round. The agent must return `done` or
 `blocked`. A blocked or failed session publishes nothing.
 
@@ -125,7 +125,7 @@ it in the round's comment as a note from the implement agent, and keeps the issu
 Only a round that changed no file closes the issue with its finding.
 
 When the failing checks of the last round kept
-[result files](configuration.md#result-files-of-failing-checks), `route` puts the id of the
+[result files](checks.md#result-files-of-failing-checks), `route` puts the id of the
 run that recorded them in the decision, and the fix round's `agent` job downloads that
 run's `nexkit-checks` artifact to a folder under `$RUNNER_TEMP`, outside the working
 tree. The prompt names the folder, and for each failing check its
@@ -270,7 +270,7 @@ default branch's failure. It waits instead:
     the same when the first line of its `run` is one of those commands, and is compared
     with the tests of the jobs that ran it.
   - The check names its failing tests from the JUnit XML files in its `results` (see
-    [Result files of failing checks](configuration.md#result-files-of-failing-checks)):
+    [Result files of failing checks](checks.md#result-files-of-failing-checks)):
     the `verify` job, which runs the check, reads the test cases that failed or erred and
     records their names with the check's result. The `report` job, which decides and
     holds a write token, reads only that record and parses no file the repository's code
@@ -361,7 +361,7 @@ When both hold, the review carries over: no agent runs, `nexkit/review` succeeds
 "AI review of `abc1234` carried over", the earlier findings stay the last review's, and
 the round's comment says that the review was carried over. The checks run on the new
 commit as after any round, but a check whose
-[`unaffected_by`](configuration.md#checks-that-a-change-cannot-affect) lists every path
+[`unaffected_by`](checks.md#checks-that-a-change-cannot-affect) lists every path
 that changed since it passed gets no runner and counts as passed. When they pass, NexKit
 merges it with the earlier approval; when they fail, an automatic fix round starts as after any failing checks, counted in
 `fix.max_auto_rounds`, and its own review runs as usual. Otherwise the review runs as

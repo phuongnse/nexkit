@@ -160,7 +160,7 @@ and statuses are still set, without that stage's results. See
 
 **"Artifact not found" on *Download check results* in the `agent` job.** A fix round
 downloads the `nexkit-checks` artifact of the run whose failing checks kept
-[result files](configuration.md#result-files-of-failing-checks). Artifacts expire after 14
+[result files](checks.md#result-files-of-failing-checks). Artifacts expire after 14
 days, so a round started later runs without those files; the step does not fail the round,
 and the *Collect issue context* log says that the prompt has no section about them.
 
@@ -247,7 +247,7 @@ another `/nexkit review` stops the same way: fix the review agent's secret first
 the review at another agent in `.nexkit/config.json`. A 403 that never reached the API,
 such as Cloudflare's challenge page for the runner's IP address, is not one: NexKit runs
 the review again after the waits of
-[`retry.wait_minutes`](configuration.md#transient-errors). A timeout or a review that returned
+[`retry.wait_minutes`](merges-and-waits.md#transient-errors). A timeout or a review that returned
 no verdict can be tried again with `/nexkit review`.
 
 **"The agent finished without changing any files".** The implement or fix agent found
@@ -277,12 +277,12 @@ stops the same way. The job's log has the traceback; please report it as a NexKi
 merges start your workflows, as a person's do. To save runners on the default branch, take
 a costly workflow's `push` trigger off for it and list it in `merge.after_workflows` with
 `every`, or give it a `schedule` and list it in `autopilot.watch_workflows` (see
-[Automatic merge](configuration.md#automatic-merge) and
-[Autopilot](configuration.md#autopilot)).
+[Automatic merge](merges-and-waits.md#automatic-merge) and
+[Autopilot](autopilot.md#autopilot)).
 
 **A check was skipped, or ran when it could have been skipped.** A round's comment says
 "`name` skipped: no path it reads changed since `abc1234`" for each check that its
-[`unaffected_by`](configuration.md#checks-that-a-change-cannot-affect) let NexKit skip,
+[`unaffected_by`](checks.md#checks-that-a-change-cannot-affect) let NexKit skip,
 and the `route` job's summary and notices say the same. A check that should have run
 means its list names a path the check reads: take that path out, and comment
 `/nexkit review`, which runs every check. A check runs in full in implement and fix
@@ -325,7 +325,7 @@ within `fix.max_auto_rounds`, and while the merge waits, a new commit on the bra
 is a rule that needs a person, such as a required approval, required checks that neither
 passed nor failed within six hours, or a required check that failed with no automatic fix
 round left. Merge the pull request yourself, comment `/nexkit fix` on it, or change the
-rule (see [Automatic merge](configuration.md#automatic-merge)).
+rule (see [Automatic merge](merges-and-waits.md#automatic-merge)).
 
 **"Could not start `ci.yml`" after an automatic merge.** The merge happened; only the
 workflow did not start. Check that `.github/workflows/ci.yml` exists on the base branch
@@ -551,7 +551,7 @@ so the round stopped before its agent (see [above](#pull-requests-and-merges)):
 ### An implement or fix round ran out of time again
 
 NexKit asked for one split plan already, and a part inherits the time-outs of the issues
-above it (see [Autopilot](configuration.md#autopilot)). Do not split it again blindly.
+above it (see [Autopilot](autopilot.md#autopilot)). Do not split it again blindly.
 Read the plan, the run log and the result files in the round's `nexkit-checks` artifact.
 When they show why the round did not finish, comment
 `/nexkit plan <the cause, with the evidence, and the smallest change that removes it>`.
@@ -563,7 +563,7 @@ does not split an issue three levels of parts deep again; split it by hand.
 
 Autopilot already planned once more after a plan that was too large and suggested no
 parts, suggested parts titled like the issue, or suggested more than ten parts (see
-[Autopilot](configuration.md#autopilot)), and the second plan did the same; or the issue is three levels of parts deep, where
+[Autopilot](autopilot.md#autopilot)), and the second plan did the same; or the issue is three levels of parts deep, where
 NexKit splits no further. Read the plan: its *What changes* and implementation notes
 usually show the steps. Split the issue by hand into parts that each fit one session, with
 the [`request` skill](../skills/request/SKILL.md), or make the issue smaller and comment
@@ -670,7 +670,7 @@ For any other rule, the round's comment and the mention say what unblocks the me
 **What unblocks it**. No merge by hand is needed after that: an approval by someone with
 write access merges the pull request at once, and with autopilot, each sweep merges it once
 GitHub reports it as mergeable, such as after a rule changed (see [Automatic
-merge](configuration.md#automatic-merge)). An approval starts nothing while the workflow's
+merge](merges-and-waits.md#automatic-merge)). An approval starts nothing while the workflow's
 `pull_request_review` trigger lets only *Request changes* reviews through: update it as
 `nexkit init` writes it, which `nexkit doctor` checks. NexKit reads the base branch's rules, the pull request's reviews,
 files and conversations, and the repository's merge settings, and names:
@@ -728,7 +728,7 @@ the cause is gone, post the command yourself, once.
 ### Evidence from a CI run is missing
 
 NexKit downloads the evidence of the CI runs that an issue names (see [Evidence from CI
-runs](configuration.md#evidence-from-ci-runs)), so never answer a question by
+runs](checks.md#evidence-from-ci-runs)), so never answer a question by
 downloading or attaching a run's files. Read the round's *Collect issue context* log:
 
 - When the run was not named, post the command again with the CI run's link in its note,
@@ -744,14 +744,14 @@ Run `nexkit status`, which gives the reason (see ["Autopilot does not start an
 issue"](#agents)). Autopilot never takes an issue opened by someone without write
 access by itself, because its text would drive an implement session. A person with write
 access reads it as untrusted text, and comments
-[`/nexkit trust`](configuration.md#vouching-for-an-issue) on it when they trust it.
+[`/nexkit trust`](autopilot.md#vouching-for-an-issue) on it when they trust it.
 
 An issue that a workflow opened needs its workflow in `autopilot.trusted_workflows` and a
 marker that checks out. The reason names what failed: a workflow that is not listed, a run
 that does not exist, ran on another branch, was started by a pull request or was not running
 when the issue was opened, or an edit by someone without write access. Fix the workflow or
 the setting for the issues it opens next, and comment `/nexkit trust` on this one once you
-have read it: see [Issues from a workflow](configuration.md#issues-from-a-workflow).
+have read it: see [Issues from a workflow](autopilot.md#issues-from-a-workflow).
 
 An issue that a writer vouched for is left alone again after an edit by someone without write
 access. Read what changed, and comment `/nexkit trust` again if you trust it.
@@ -776,7 +776,7 @@ Read the comment and its history. Then either:
 ### An issue in a later wave does not start
 
 `nexkit status` names the open issues of lower waves in its milestone that it waits for
-(see *Labels* under [Autopilot](configuration.md#autopilot)). Each carries on by itself or
+(see *Labels* under [Autopilot](autopilot.md#autopilot)). Each carries on by itself or
 waits for a person, listed under *Needs a person*; once they are closed it starts. Without a
 milestone it never starts: give it one, or take the label off.
 
@@ -796,7 +796,7 @@ blocker in another repository is outside the scope: finish it there. Or remove t
 ### A parent's parts all closed and none was completed
 
 NexKit leaves the parent open, since nothing it asked for was delivered (see [Parent
-issues](configuration.md#parent-issues)). Decide whether the parent is done: close it, or
+issues](merges-and-waits.md#parent-issues)). Decide whether the parent is done: close it, or
 open new parts for what is left.
 
 ### A parent has fewer sub-issues than its plan lists parts
@@ -825,7 +825,7 @@ protected.
 An issue for a run whose failures would open more than five issues, or one from an older
 release that holds every failure of a workflow, can hold records of several failures
 while its plan and pull request cover only some (see [Flaky
-runs](configuration.md#autopilot)). Before it closes, account for every record as one of:
+runs](autopilot.md#autopilot)). Before it closes, account for every record as one of:
 
 - fixed by a named commit, whose change matches the failure's message or log line;
 - tracked by an issue of its own. When no issue covers it, open one in the CI issue's

@@ -733,7 +733,7 @@ def _ci_trigger(root, cfg, workflow):
                 False,
                 f"autopilot is on, but the 'workflow_run' trigger in {WORKFLOW_PATH} does not "
                 f"name {listed} of {_watched_settings(cfg)}, {later}; add it as "
-                "docs/configuration.md#autopilot shows",
+                "docs/autopilot.md#autopilot shows",
             )
         ]
     if "types" in found and not re.search(r"\bcompleted\b", found):

@@ -38,8 +38,8 @@ engine's calls as a program that reads JSON on standard input.
 | `engine/` | The engine: states and moves in `machine.py`; prompts in `prompt.py`, `textutil.py` and `prompts/`; `sweep.py` (starts); `cli.py` (`nexkit-engine`) and `serve.py` |
 | `templates/` | The caller workflow that `nexkit init` installs in a repository |
 
-`scripts/` holds the smoke test, the pin updates, the release notes, the docs audit and
-`lint.sh`. `tests/` holds the checks that [Testing](testing.md) describes.
+`scripts/` holds the smoke test, the pin updates, the release notes, the docs audit, the
+conformance file and `lint.sh`. `tests/` holds the checks that [Testing](testing.md) describes.
 
 The reasons for the package's use of the standard library only are in
 [D8](decisions/d8-standard-library-only.md).
@@ -178,7 +178,8 @@ input and one answer on standard output. `nexkit-engine serve` answers the same 
 GitHub host runs neither. The protocol, in `nexkit/protocol/`, holds the JSON Schemas of the events,
 actions and state that pass between a host and the engine. The conformance suite in
 `tests/conformance/` holds cases, each an event with the answers it must give, and checks the engine
-against them.
+against them. `scripts/conformance.py` can also write the suite as one file for other engines and
+hosts, as [Conformance](engine.md#conformance) says.
 
 A runner runs one agent session for one stage. For agent CLIs such as Claude Code, the runner is
 `agent.run_action` in `nexkit/agent.py`.

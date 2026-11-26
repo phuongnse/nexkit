@@ -372,6 +372,26 @@ that table does not name for its policies and for whether the item had a change,
 dropped from every state that is not final. The engine passes the suite in this repository, and each
 host runs it through its own adapter. A new rule of the engine comes with a case.
 
+The cases are short forms that only the test runner reads. `python3 scripts/conformance.py build OUT`
+writes the cases of both folders as one JSON file that anyone can read. It names the protocol's
+version and NexKit's version. Each case has its name and its requests in order. A sweep case's name
+starts with `sweeps/`. Each request is whole and comes with the exact text of the engine's
+answer, a refusal's included. The cases in `tests/conformance/imports/` stay out, since an import is
+the GitHub host's work and not a call of the engine. The file fits
+`nexkit/protocol/v1/conformance.schema.json`. It is not committed, because it is large and carries
+NexKit's version. Build it when you need it.
+
+`python3 scripts/conformance.py check FILE` plays a file against an engine. With `--url URL` it sends
+each request to `POST URL/<call>`, as `nexkit-engine serve` answers. With `--program COMMAND` it runs
+`COMMAND <call>` and writes the request on its standard input, as `nexkit-engine` reads it. It prints
+each answer that differs from the file's, naming the case and the request's number, and exits 1. An
+answer differs when its text is not the file's, or when its status is not 200 or 0 for an answer and
+400 or 1 for a refusal. It exits 0 when every answer matches.
+
+An engine written again in another language passes when it gives the same answers: the same text for
+each request, refusals included, word for word. A host takes the requests as the inputs of its
+adapter's tests and the answers as what its adapter carries out.
+
 ## Versions
 
 - **Integers carry no fraction.** A field the protocol types as an integer refuses `60.0`, though

@@ -1,0 +1,29 @@
+{
+  "cases": [
+    {
+      "name": "sweeps/an-item-starts",
+      "requests": [
+        {
+          "answer": "{\"protocol\": 1, \"starts\": [{\"beyondLimit\": false, \"item\": \"1\"}], \"waits\": []}\n",
+          "call": "sweep",
+          "request": {
+            "call": "sweep",
+            "items": [
+              {
+                "item": "1"
+              }
+            ],
+            "policies": {},
+            "protocol": 1,
+            "running": 0
+          }
+        }
+      ]
+    }
+  ],
+  "nexkit": "6.0.0",
+  "protocol": {
+    "major": 1,
+    "minor": 0
+  }
+}

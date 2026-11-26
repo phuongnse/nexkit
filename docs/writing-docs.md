@@ -254,7 +254,9 @@ when a list of what the code defines misses an entry. These rules close each of 
    [how it works](how-it-works.md#one-run-ten-jobs) matches the jobs of `pipeline.yml`, the
    permissions its rows name, and the number in its heading; that the plan and review layouts of
    [stages](stages.md) list the sections the code writes, and that each value the pages repeat
-   matches its constant; that no doc, the README, AGENTS.md or a skill repeats a pinned version: each pin that
+   matches its constant, and that the words [agents and profiles](agents-and-profiles.md) and
+   [failure handling](failure-handling.md#failure-handling) list as marking a failing line are those
+   of `FAILURE_LINE`; that no doc, the README, AGENTS.md or a skill repeats a pinned version: each pin that
    [D9](decisions/d9-pins-live-in-one-place.md) governs, or a lint tool's version from
    `scripts/lint.sh`; that each test the security page names exists; that the refusals of
    `unaffected_by` that [the checks page](checks.md#checks-that-a-change-cannot-affect) lists are

@@ -76,8 +76,16 @@ host carries out the update with `maintain.update_branch(left=...)`, which start
 carries the approval over, and sends an update that GitHub refused back (`update_failed`), which
 the engine hands to a person. A sweep's merge that waits for required checks past six hours
 sends the observation that its branch is behind (`checks_waited`), and the engine keeps trying
-the merge while `conflicts.auto_resolve` is on. The update that `maintain.stop_superseded`
-starts after the base branch moved stays NexKit 6's.
+the merge while `conflicts.auto_resolve` is on.
+
+It decides what follows a move of the base branch under an open NexKit pull request
+(`base_moved`, called by `maintain.resolve_conflicts`, `maintain.stop_superseded` and
+`report._conflicts_after`): the host sends the conflict, and that the branch is behind its base
+when NexKit 6 would update it, with the conflict rounds and updates used, and starts the conflict
+round, updates the branch, stops the round's checks as `superseded` or waits for a person as the
+engine answers. A round that runs only its checks is in `checking`, any other pull request in
+`ready`. A hold, NexKit 6's other reasons not to start a round and a conflict round or update
+that fails to start after a stop (`stop_failed`) stay the host's.
 
 It decides when a plan, implement or fix stage runs again after its agent stopped at a usage
 limit or on a transient error (`stage_limited`, `stage_transient`, called by `report`), and when
@@ -1683,6 +1691,45 @@ def conflicts_released(cfg, issue, pull, run, head, conflicts, used):
     if (kinds.get("needPerson") or {}).get("reason") == "acceptRefused":
         return "waits"
     raise Refused(f"The engine answers {sorted(kinds)} after a held conflict, which it cannot do.")
+
+
+# -- a move of the base branch -----------------------------------------------------------
+
+
+def base_moved(cfg, issue, pr, head, conflicts, behind, checking, used, updates):
+    """What follows the move of the base branch under the NexKit pull request `pr` of `issue`,
+    whose head is `head`, as the engine decides it (`maintain.resolve_conflicts`,
+    `maintain.stop_superseded`, `report._conflicts_after`): `conflicts` says that the head
+    conflicts with the base branch's tip, and `behind` that it lacks the tip while the base
+    branch's rules want pull requests up to date, which only NexKit 6's reading of them says.
+    `checking` says that a round runs only its checks, so the pull request is in `checking`
+    with those checks pending; otherwise it is in `ready`. `used` is the conflict rounds used,
+    and `updates` the updates of the branch used, which `conflicts.max_rounds` limits apart from
+    each other. Returns `round`, the round that resolves the conflict; `update`, an update of
+    the branch; or `waits`, when a person decides or the checks that run go on to their end.
+    A hold is read before, as NexKit 6 does. Raises `Refused`."""
+    doc = _pull_doc(cfg, issue, pr, head, "checking" if checking else "ready", 0)
+    version = doc["change"]["version"]
+    doc["rounds"]["conflicts"] = max(int(used or 0), 0)
+    if int(updates or 0) > 0:
+        doc["rounds"]["updates"] = int(updates)
+    if checking:
+        run = {"id": first_state.RUN_ID, "next": None, "kind": "runChecks"}
+        doc["pending"] = [{**run, "changeVersion": version}]
+    seen = {"changeId": str(pr), "version": version, "conflicts": bool(conflicts)}
+    seen.update(merged=False, empty=False)
+    if behind:
+        seen["behind"] = True
+    event = _event("changeObserved", issue, None, f"base-{pr}-{version}", **seen)
+    answer = step(doc, event, policies(cfg))
+    kinds = {action["kind"]: action for action in answer["actions"]}
+    if (kinds.get("runAgent") or {}).get("stage") == "fix":
+        return "round"
+    if "updateChange" in kinds:
+        return "update"
+    if not kinds or "needPerson" in kinds:
+        return "waits"
+    raise Refused(f"The engine answers {sorted(kinds)} after a base branch moved.")
 
 
 # -- the checks a fix round diagnoses ------------------------------------------------------

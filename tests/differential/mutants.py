@@ -551,6 +551,62 @@ MUTANTS = {
         "seen": ("harness", "walker"),
         "families": ("start",),
     },
+    # Checks that run on a branch behind its base stop and update it past `conflictRounds`,
+    # where NexKit 6 leaves them to their end (#530).
+    "behind-in-checks-ignores-the-updates-left": {
+        "path": MACHINE,
+        "old": """            and self.update_left()
+            and any(a["kind"] == "runChecks" for a in self.s["pending"])""",
+        "new": """            and any(a["kind"] == "runChecks" for a in self.s["pending"])""",
+        "seen": ("harness", "walker"),
+        "families": ("moved",),
+    },
+    # Checks that run on a branch behind its base stop and update it under `person`, where
+    # NexKit 6 never starts one without `conflicts.auto_resolve` (#530).
+    "behind-in-checks-ignores-person": {
+        "path": MACHINE,
+        "old": """            and self.p["conflicts"] != "person"
+            and self.update_left()""",
+        "new": """            and self.update_left()""",
+        "seen": ("walker",),
+        "families": ("moved",),
+    },
+    # The updates used never reach the engine after the base branch moved, so it asks for an
+    # update past `conflicts.max_rounds` (#530).
+    "base-moved-ignores-updates": {
+        "path": HOST,
+        "old": """    if int(updates or 0) > 0:
+        doc["rounds"]["updates"] = int(updates)
+    if checking:""",
+        "new": """    if checking:""",
+        "seen": ("harness",),
+        "families": ("moved",),
+    },
+    # The conflict rounds used never reach the engine after the base branch moved, so it
+    # starts a round past `conflicts.max_rounds` (#530).
+    "base-moved-ignores-conflict-rounds": {
+        "path": HOST,
+        "old": """    doc["rounds"]["conflicts"] = max(int(used or 0), 0)
+    if int(updates or 0) > 0:
+        doc["rounds"]["updates"] = int(updates)
+    if checking:""",
+        "new": """    if int(updates or 0) > 0:
+        doc["rounds"]["updates"] = int(updates)
+    if checking:""",
+        "seen": ("harness",),
+        "families": ("moved",),
+    },
+    # The host never says that a branch is behind its base after the base branch moved, so the
+    # engine stops no checks for an update (#530).
+    "base-moved-never-says-behind": {
+        "path": HOST,
+        "old": """    if behind:
+        seen["behind"] = True
+""",
+        "new": "",
+        "seen": ("harness",),
+        "families": ("moved",),
+    },
 }
 
 

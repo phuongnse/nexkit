@@ -1,0 +1,77 @@
+{
+  "policies": {
+    "conflicts": "person",
+    "conflictRounds": 2
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "go"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:implement"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "publish"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "publish",
+        "result": {
+          "change": {
+            "id": "308",
+            "version": "v1"
+          },
+          "refused": null,
+          "observed": {
+            "changeId": "308",
+            "version": "v1",
+            "conflicts": false,
+            "merged": false,
+            "empty": false
+          }
+        }
+      },
+      "state": "checking",
+      "changed": true,
+      "actions": [
+        "runChecks"
+      ]
+    },
+    {
+      "event": {
+        "kind": "changeObserved",
+        "version": "v1",
+        "behind": true
+      },
+      "state": "checking",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "observed.behind": true
+      }
+    }
+  ]
+}

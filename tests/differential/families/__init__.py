@@ -31,4 +31,5 @@ FAMILIES = {
     "conflicted": "#423",
     "behind": "#424",
     "start": "#437",
+    "moved": "#530",
 }

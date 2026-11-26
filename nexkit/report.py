@@ -2088,9 +2088,24 @@ def _conflicts_after(gh, cfg, decision, pr, row, workflow, default_branch):
     Returns text for the round."""
     if _held(gh, cfg, decision["issue"]):
         return ""
+    from .host import Refused, base_moved, refused_reason
+
     try:
         if not is_conflicting(gh, pr):
             return ""
+        # The engine decides whether a conflict round is left, while NexKit 6's other
+        # reasons not to start one stay `start_conflict_round`'s.
+        answer = base_moved(
+            cfg,
+            decision["issue"],
+            pr,
+            row.get("head"),
+            True,
+            False,
+            False,
+            conflict_rounds_of(gh, pr, row),
+            0,
+        )
         started = start_conflict_round(
             gh,
             pr,
@@ -2099,7 +2114,10 @@ def _conflicts_after(gh, cfg, decision, pr, row, workflow, default_branch):
             default_branch,
             cfg["conflicts"]["max_rounds"],
             row=row,
+            left=answer == "round",
         )
+    except Refused as error:
+        return f"\n\n#{pr}: {refused_reason(error)}"
     except GitHubError as exc:
         return f"\n\nCould not check #{pr} for conflicts with `{decision['base']}`: {exc}"
     return f"\n\nIt conflicts with `{decision['base']}`. {started}" if started else ""

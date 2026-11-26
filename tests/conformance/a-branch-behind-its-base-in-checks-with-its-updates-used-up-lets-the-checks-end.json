@@ -1,0 +1,122 @@
+{
+  "policies": {
+    "conflicts": "resolve",
+    "conflictRounds": 1
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "go"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:implement"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "publish"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "publish",
+        "result": {
+          "change": {
+            "id": "308",
+            "version": "v1"
+          },
+          "refused": null,
+          "observed": {
+            "changeId": "308",
+            "version": "v1",
+            "conflicts": false,
+            "merged": false,
+            "empty": false
+          }
+        }
+      },
+      "state": "checking",
+      "changed": true,
+      "actions": [
+        "runChecks"
+      ]
+    },
+    {
+      "event": {
+        "kind": "changeObserved",
+        "version": "v1",
+        "behind": true
+      },
+      "state": "checking",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "updateChange"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "updateChange",
+        "result": {
+          "change": {
+            "id": "308",
+            "version": "v2"
+          },
+          "refused": null,
+          "observed": {
+            "changeId": "308",
+            "version": "v2",
+            "conflicts": false,
+            "merged": false,
+            "empty": false
+          }
+        }
+      },
+      "state": "checking",
+      "changed": true,
+      "actions": [
+        "runChecks"
+      ],
+      "expect": {
+        "rounds.updates": 1,
+        "rounds.conflicts": 0,
+        "change.version": "v2",
+        "observed.version": "v2"
+      }
+    },
+    {
+      "event": {
+        "kind": "changeObserved",
+        "version": "v2",
+        "behind": true
+      },
+      "state": "checking",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "observed.behind": true,
+        "rounds.updates": 1
+      }
+    }
+  ]
+}

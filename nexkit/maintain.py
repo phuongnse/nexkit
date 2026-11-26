@@ -18,7 +18,7 @@ from datetime import UTC, datetime, timedelta
 
 from . import autopilot, progress
 from .autopilot import in_repository
-from .config import setting
+from .config import DEFAULTS, setting
 from .github import GitHubError
 from .route import APPROVAL, BRANCH_PREFIX, RUN_ID, implementing, issue_from_branch, moved_head
 from .state import (
@@ -875,7 +875,7 @@ def _check_part(data):
     return results, checked.get("head")
 
 
-def stop_superseded(gh, pull, base, conflicting, strict, workflow, ref, max_rounds):
+def stop_superseded(gh, pull, base, conflicting, strict, workflow, ref, max_rounds, cfg):
     """Stop the round of `pull` that runs only its checks when the base branch moved under
     it so that they cannot lead to a merge, and start the round that can, at once:
 
@@ -904,12 +904,25 @@ def stop_superseded(gh, pull, base, conflicting, strict, workflow, ref, max_roun
         return ""
     comments = gh.comments(number)
     rounds = [r for _, r in run_comments(comments) if "round" in r]
-    if (
-        conflicting
-        and conflict_rounds_used([r for r in rounds if r.get("conflicts")]) >= max_rounds
-    ):
-        return ""
-    if not conflicting and updates_used(comments) >= max_rounds:
+    from . import host
+
+    try:
+        # The engine decides what the base branch's move leaves: the conflict round, the
+        # update, or checks that go on to their end.
+        answer = host.base_moved(
+            cfg,
+            issue_from_branch(pull["head"]["ref"]),
+            number,
+            head,
+            bool(conflicting),
+            not conflicting,
+            True,
+            conflict_rounds_used([r for r in rounds if r.get("conflicts")]),
+            updates_used(comments),
+        )
+    except host.Refused as error:
+        return f"#{number}: {host.refused_reason(error)}"
+    if answer == "waits":
         return ""
     # Before the stop, so only check jobs that finished count.
     passed = passed_before_stop(gh, run_id, head)
@@ -944,11 +957,15 @@ def stop_superseded(gh, pull, base, conflicting, strict, workflow, ref, max_roun
     else:
         run.pop("passed", None)
     if conflicting:
-        started = start_conflict_round(gh, number, base, workflow, ref, max_rounds, row=run)
+        started = start_conflict_round(
+            gh, number, base, workflow, ref, max_rounds, row=run, left=answer == "round"
+        )
         failed = "" if started.startswith("Started") else started or "No round started."
     else:
         target = {"pr": number, "head": head, "base": base}
-        failed = update_branch(gh, target, run, max_rounds, workflow, ref) or ""
+        failed = (
+            update_branch(gh, target, run, max_rounds, workflow, ref, left=answer == "update") or ""
+        )
         started = failed or (
             f"NexKit merged `{base}` into it and started `/nexkit review` on the new commit, "
             "which checks it and keeps an earlier approval when the pull request's own change "
@@ -1006,6 +1023,10 @@ def resolve_conflicts(
     or comment."""
     lines, rules = [], []
 
+    # What the engine is asked, whatever the caller read: the round it starts is automatic
+    # and within `max_rounds`, so it decides with those policies.
+    asked = {**(cfg or DEFAULTS), "conflicts": {"auto_resolve": True, "max_rounds": max_rounds}}
+
     def strict():
         # The rule of `base`, read once, and only for a round in its checks.
         if not rules:
@@ -1028,19 +1049,44 @@ def resolve_conflicts(
                 continue
             conflicting = is_conflicting(gh, number, delay=delay)
             stopped = stop_superseded(
-                gh, pull, base, conflicting, strict, workflow, ref, max_rounds
+                gh, pull, base, conflicting, strict, workflow, ref, max_rounds, asked
             )
             if stopped:
                 lines.append(stopped)
             elif conflicting is None:
                 lines.append(f"GitHub has not worked out yet whether #{number} conflicts.")
             elif conflicting:
-                lines.append(
-                    start_conflict_round(gh, number, base, workflow, ref, max_rounds, settle=settle)
-                )
+                lines.append(moved_round(gh, asked, pull, base, workflow, ref, max_rounds, settle))
         except GitHubError as exc:
             lines.append(f"Could not check #{number} for conflicts with `{base}`: {exc}")
     return [line for line in lines if line]
+
+
+def moved_round(gh, cfg, pull, base, workflow, ref, max_rounds, settle):
+    """The line for `pull`, which conflicts with `base` after it moved, when no round of it
+    runs only its checks: the conflict round that the engine answers (`host.base_moved`),
+    while NexKit 6's other reasons not to start one stay `start_conflict_round`'s. `cfg` is the
+    configuration for the engine's policies."""
+    from . import host
+
+    number = pull["number"]
+    try:
+        answer = host.base_moved(
+            cfg,
+            issue_from_branch(pull["head"]["ref"]),
+            number,
+            pull["head"]["sha"],
+            True,
+            False,
+            False,
+            conflict_rounds_of(gh, number),
+            0,
+        )
+    except host.Refused as error:
+        return f"#{number}: {host.refused_reason(error)}"
+    return start_conflict_round(
+        gh, number, base, workflow, ref, max_rounds, settle=settle, left=answer == "round"
+    )
 
 
 def close_answered(gh, decision):

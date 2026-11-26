@@ -17,11 +17,11 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
 | State | What happens | Next |
 | --- | --- | --- |
 | `new` | The item waits to be started | `planning`, `working`, `checking`, and `fixing` for an item reopened with its change |
-| `planning` | An agent writes a plan | `awaitingApproval`, `working` or `fixing`, `split`, `noChange` |
+| `planning` | An agent writes a plan | `awaitingApproval`, `working` or `fixing`, `split`, `noChange`, `failed` |
 | `awaitingApproval` | The plan, or a split, waits for its approval or for answers, or a round's questions wait for answers | `planning`, `working` or `fixing`, `split`, `noChange`, `dropped` |
 | `working` | An agent makes the change | `checking`, `awaitingApproval`, `planning`, `noChange`, `failed` |
-| `checking` | The host's checks run on the change | `reviewing`, `fixing`, `ready` |
-| `reviewing` | A second agent session, with no memory of the first, reviews the change | `ready`, `accepting`, `fixing` |
+| `checking` | The host's checks run on the change | `reviewing`, `fixing`, `ready`, `failed` |
+| `reviewing` | A second agent session, with no memory of the first, reviews the change | `ready`, `accepting`, `fixing`, `failed` |
 | `fixing` | An agent works on the failures and findings, in the same change, or its round waits to start | `checking`, `awaitingApproval`, `planning`, `working`, `ready`, `failed` |
 | `ready` | The change passed, or a person decides what is left | `accepting`, `fixing`, `checking` |
 | `accepting` | The host accepts the change | `accepted`, `ready`, `checking`, `fixing`, `working`, `failed` |
@@ -29,7 +29,7 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
 | `split` | The work is carried by its parts | `accepted`, `dropped` |
 | `noChange` | Nothing needs to change, and the item says why | `new`, when a person reopens it |
 | `dropped` | A person ended the work | `new`, when a person reopens it |
-| `failed` | A step failed in a way that waiting does not help, or a token, time or money budget ran out. The change is kept, and the item waits for a person whatever is observed of it, but a merge or an emptied change | `dropped`, and by the host's policy `planning` or `fixing` |
+| `failed` | A step failed in a way that waiting does not help, or a token, time or money budget ran out. The change is kept, and the item waits for a person whatever is observed of it, but a merge or an emptied change | `planning` when a person asks, or when the failure policy plans an item with no change again; `fixing` and `checking` only when a person asks; `dropped` |
 
 - **Approval leads to the change that exists.** An approved plan goes to `working` when the item
   has no change, and to `fixing` when it has one, such as after a re-plan or a question in a fix
@@ -274,7 +274,7 @@ Three things sit beside the state, never in place of it:
 | --- | --- |
 | `created` | A work item is made, with its kind, its title and text, how deep a part it is, who does each stage and, for an item made with a plan, the plan |
 | `textChanged`, `commented` | A work item's text is edited, or a person writes on it, with their role |
-| `requested` | A person or the sweep asks for something: `plan`, `planFromScratch`, `go`, `fix`, `review`, `retry`, `trust` or `start`, with a note, and the item's title and depth again when the host gives them |
+| `requested` | A person or the sweep asks for something: `plan`, `planFromScratch`, `go`, `fix`, `review`, `retry`, `trust` or `start`, with a note, and the item's title and depth again when the host gives them. The engine takes `trust` and changes nothing for it, since whom a host trusts is its own check, as [vouching for an issue](autopilot.md#vouching-for-an-issue) says |
 | `planApproved`, `answered`, `changesRequested`, `changeApproved`, `dropRequested` | A person decides: the plan, its questions, the change, a person-only checklist item or criterion on the change's version, or the end |
 | `actionFinished` | An action ended, with its id, the change version and its result |
 | `actionLost` | An action the host started never reported, with any tokens it is known to have used |
@@ -300,7 +300,7 @@ Three things sit beside the state, never in place of it:
 | `close` | Ends the work item with its outcome | Done |
 | `cancel` | Stops an action that runs | Done |
 | `needPerson` | Tells the people who decide, once, with the reason and what they decide on (`ref`) | Done |
-| `show` | Shows a plan, a round, a review or a stop where people read the work | Done |
+| `show` | Shows, where people read the work, a plan (`plan`), a round (`round`), a review (`review`), the answers the engine gave to a plan's or a round's questions (`answers`), a stop (`stop`) or a notice (`notice`) | Done |
 | `wait` | Sends a `tick` naming the wait at its time | Done |
 
 **A chain of actions.** An action may name the action that follows when it ends as expected,

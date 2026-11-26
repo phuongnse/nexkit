@@ -379,6 +379,13 @@ class ProtocolTest(unittest.TestCase):
         enum = next(option["enum"] for option in refusal["anyOf"] if "enum" in option)
         self.assertEqual(kinds, sorted(enum))
 
+    def test_the_page_lists_what_a_show_shows(self):
+        rows = [line for line in section("Actions").splitlines() if line.startswith("| `show` |")]
+        self.assertEqual(len(rows), 1)
+        kinds = sorted(set(re.findall(r"`(\w+)`", rows[0].split("|")[2])))
+        what = protocol.load("actions/show.schema.json")["properties"]["what"]["enum"]
+        self.assertEqual(kinds, sorted(what))
+
     def test_the_page_names_each_policy_and_its_default_fits(self):
         policies = protocol.load("policies.schema.json")["properties"]
         self.assertEqual(table_names("What a host decides", every_row=True), sorted(policies))

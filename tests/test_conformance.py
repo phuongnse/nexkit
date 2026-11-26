@@ -379,6 +379,11 @@ class ConformanceTest(unittest.TestCase):
         self.assertIn(("working", "ready"), allowed({"conflicts": "redo"}, True))
         # The table names the failed checks that go to a person, which no conflict explains.
         self.assertIn(("checking", "ready"), table_transitions())
+        # The table names the states a stage fails from, and a person's review of a failed item.
+        self.assertIn(("planning", "failed"), table_transitions())
+        self.assertIn(("checking", "failed"), table_transitions())
+        self.assertIn(("reviewing", "failed"), table_transitions())
+        self.assertIn(("failed", "checking"), table_transitions())
         # Nor one that only an item with a change makes.
         self.assertNotIn(("planning", "accepted"), allowed({}, False))
         self.assertNotIn(("new", "ready"), allowed({}, False))

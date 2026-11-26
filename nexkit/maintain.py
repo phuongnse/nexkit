@@ -20,7 +20,7 @@ from . import autopilot, progress
 from .autopilot import in_repository
 from .config import setting
 from .github import GitHubError
-from .route import BRANCH_PREFIX, RUN_ID, implementing, issue_from_branch
+from .route import APPROVAL, BRANCH_PREFIX, RUN_ID, implementing, issue_from_branch, moved_head
 from .state import (
     CONTINUED,
     FAILURE,
@@ -57,7 +57,7 @@ TASKS = {
     # The run that looks at every issue in scope (nexkit/autopilot.py) and at every pull
     # request that conflicts with its base branch.
     "sweep": ("autopilot.enabled", "conflicts.auto_resolve"),
-    # One issue's autopilot step, in the issue's queue (`autopilot.step`).
+    # One issue's step, in the issue's queue (`autopilot.step`).
     "step": ("autopilot.enabled",),
     # A run of another workflow finished, such as one of merge.after_workflows or
     # autopilot.watch_workflows.
@@ -72,7 +72,10 @@ TASKS = {
     # A writer's `/nexkit trust` on an issue.
     "trust": ("autopilot.enabled",),
     # A writer's approval of a NexKit pull request whose merge GitHub refused, or whose
-    # review found checklist items not met that a person decides.
+    # review found checklist items not met that a person decides: the run of the approval
+    # itself, which only sends a `step` into the item's queue.
+    "approval": ("merge.auto", "review.checklist"),
+    # The merge of that approval, in the item's queue: the `step` that carries its note.
     "approved": ("merge.auto", "review.checklist"),
 }
 UNDECIDED = "<!-- nexkit:parent-undecided -->"
@@ -1109,38 +1112,83 @@ def accept_decided(gh, comment, run, actor):
     gh.update_comment(comment["id"], with_run(comment["body"], run, line))
 
 
-def merge_approved(gh, cfg, decision, workflow, ref):
-    """Merge a NexKit pull request that a writer approved, when its latest round ended as
-    `merge_refused`, `ready`, or `pull_closed` before it was reopened, on the head that its
-    checks and review passed, with the guards of every merge (see `report.merge_pull`): a
-    head that moved since gets a review instead. A label that holds its issue, a round on
-    its way, any other outcome, or, for a `ready` round, an approval of another commit than
-    its head starts nothing. A round whose review found checklist items not met that a
-    person decides takes the approval as their decision, on its head only: `nexkit/review`
-    turns green, and the pull request merges with `merge.auto`. Returns lines for the log."""
-    # `report` imports this module.
-    from .report import READY, merge_waiting
-
-    pr, issue, actor = decision["pr"], decision["issue"], decision.get("actor") or "someone"
+def _unapprovable(gh, cfg, decision):
+    """Why a writer's approval starts nothing now, from what GitHub holds and without a
+    write: `(line, comment, run)`, where `line` is None when the approval may go on, and
+    `comment` and `run` are the latest round's comment and record. The checks of
+    `merge_approved`, which `send_approval` makes before it sends the approval's step, so
+    the message texts stay as NexKit 6's."""
+    pr = decision["pr"]
     rounds = _rounds(gh, pr)
     found = [(c, run) for c, run in rounds if run.get("outcome") != "up_to_date"]
     if not found:
-        return [f"#{pr} has no round to merge after the approval."]
+        return f"#{pr} has no round to merge after the approval.", None, None
     comment, run = found[-1]
     if run.get("status") != SUCCESS or run.get("outcome") not in APPROVABLE:
         state = run.get("outcome") or run.get("status")
-        return [f"#{pr}: its latest round is `{state}`, so the approval starts nothing."]
+        return (
+            f"#{pr}: its latest round is `{state}`, so the approval starts nothing.",
+            comment,
+            run,
+        )
     commit = decision.get("commit")
     decided = bool(run.get("decide"))
     if (run.get("outcome") == "ready" or decided) and commit and commit != run.get("head"):
         # A person confirms the criteria of the commit they approved, and no other.
-        return [
+        return (
             f"#{pr}: the approval is of `{commit[:7]}`, not of `{str(run.get('head'))[:7]}`, "
-            "whose review waits for a person; it starts nothing."
-        ]
+            "whose review waits for a person; it starts nothing.",
+            comment,
+            run,
+        )
+    if not cfg["merge"]["auto"] and not decided:
+        return f"#{pr}: nothing waits for an approval here, so it starts nothing.", comment, run
+    return None, comment, run
+
+
+def send_approval(gh, cfg, decision, workflow, ref):
+    """The run of a writer's approval of a NexKit pull request: it writes nothing on GitHub
+    but a `step` dispatch for the pull request's issue, so the merge runs in the issue's
+    queue behind the rounds and commands already there (`merge_approved`). It sends the step
+    only when the read-only checks of `merge_approved` pass, since GitHub keeps one waiting
+    run for the queue and a needless step could replace a command that waits. Returns lines
+    for the log."""
+    line, _, _ = _unapprovable(gh, cfg, decision)
+    if line:
+        return [line]
+    pr, issue = decision["pr"], decision["issue"]
+    actor = decision.get("actor") or "someone"
+    commit = decision.get("commit")
+    head = (gh.pull(pr).get("head") or {}).get("sha")
+    if commit and head and head != commit:
+        return [moved_head(pr, commit, head)]
+    note = APPROVAL.format(pr, decision["review"])
+    try:
+        autopilot.request_step(gh, workflow, ref, issue, note=note, auto="false")
+    except GitHubError as exc:
+        return [f"Could not send @{actor}'s approval of #{pr} to #{issue}'s queue: {exc}"]
+    return [f"#{pr}: sent @{actor}'s approval to #{issue}'s queue."]
+
+
+def merge_approved(gh, cfg, decision, workflow, ref):
+    """Merge a NexKit pull request that a writer approved, in the issue's queue (the `step`
+    that `send_approval` sent), when its latest round ended as `merge_refused`, `ready`, or
+    `pull_closed` before it was reopened, on the head that its checks and review passed, with
+    the guards of every merge (see `report.merge_pull`): a head that moved since gets a review
+    instead. A label that holds its issue, a round on its way, any other outcome, or, for a
+    `ready` round, an approval of another commit than its head starts nothing. A round whose
+    review found checklist items not met that a person decides takes the approval as their
+    decision, on its head only: `nexkit/review` turns green, and the pull request merges with
+    `merge.auto`. Returns lines for the log."""
+    # `report` imports this module.
+    from .report import READY, merge_waiting
+
+    pr, issue, actor = decision["pr"], decision["issue"], decision.get("actor") or "someone"
+    line, comment, run = _unapprovable(gh, cfg, decision)
+    if line:
+        return [line]
+    decided = bool(run.get("decide"))
     if not cfg["merge"]["auto"]:
-        if not decided:
-            return [f"#{pr}: nothing waits for an approval here, so it starts nothing."]
         # With `merge.auto` off, a person merges it now.
         run["attention"] = READY
         accept_decided(gh, comment, run, actor)
@@ -1166,6 +1214,8 @@ def maintain(gh, decision, cfg, *, workflow="", ref="", alerts=None):
         return answer_trust(gh, cfg, decision, workflow, ref)
     if task == "close_answer":
         return close_answered(gh, decision)
+    if task == "approval":
+        return send_approval(gh, cfg, decision, workflow, ref)
     if task == "approved":
         return merge_approved(gh, cfg, decision, workflow, ref)
     if task == "parents":

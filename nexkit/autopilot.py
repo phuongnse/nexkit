@@ -280,10 +280,11 @@ def request(gh, workflow, ref, closed=None, after=None):
     gh.dispatch(workflow, ref, {**SWEEP, "note": note})
 
 
-def request_step(gh, workflow, ref, number):
-    """Send a `step` dispatch for issue `number`. Returns the id of the run it starts, or
-    None when GitHub does not say."""
-    inputs = {**STEP_INPUTS, "number": str(number)}
+def request_step(gh, workflow, ref, number, note="", auto=AUTO):
+    """Send a `step` dispatch for issue `number`, with `note` (a writer's approval, see
+    `route.APPROVAL`) and the `auto` input. Returns the id of the run it starts, or None
+    when GitHub does not say."""
+    inputs = {**STEP_INPUTS, "number": str(number), "note": note, "auto": auto}
     return (gh.dispatch(workflow, ref, inputs, run_details=True) or {}).get("workflow_run_id")
 
 

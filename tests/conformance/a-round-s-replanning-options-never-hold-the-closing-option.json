@@ -1,0 +1,45 @@
+{
+  "policies": {
+    "planApproval": "autoWhenClean",
+    "answers": "recommended"
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "created"
+      },
+      "state": "new",
+      "changed": true
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "go"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:implementClosingReplans"
+      },
+      "state": "awaitingApproval",
+      "changed": true,
+      "actions": [
+        "needPerson"
+      ],
+      "expect": {
+        "questions.items.0.replans": [
+          2
+        ],
+        "questions.items.0.closes": 3,
+        "attention.reason": "closeRecommended"
+      }
+    }
+  ]
+}

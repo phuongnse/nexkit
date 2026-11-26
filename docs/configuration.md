@@ -541,9 +541,10 @@ it uses:
 | Workflows | write | Pushing and merging changes to `.github/workflows/` |
 | Dependabot alerts | read | Only with [`autopilot.dependabot`](autopilot.md#dependabot-advisories): reading open alerts. `nexkit init` leaves it out, so add it by hand. |
 
-**Who holds what.** Each job that writes, `route`, `publish`, `report`, `maintain` and
-`finish`, mints an installation token for this repository in a step of its own, with
-[`actions/create-github-app-token`](https://github.com/actions/create-github-app-token). A
+**Who holds what.** Each job that writes mints an installation token for this repository in a
+step of its own, with
+[`actions/create-github-app-token`](https://github.com/actions/create-github-app-token), and
+[Tokens and secrets](architecture.md#tokens-and-secrets) lists the token each job holds. A
 job that runs an agent or repository code holds neither the key nor a token: its runner gets
 only the secrets its stages need, which is why the `agent` and `review` jobs are reusable
 workflows of their own. Those jobs, and the run's wait for paused commands, read with the

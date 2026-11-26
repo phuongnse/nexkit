@@ -269,6 +269,7 @@ when a list of what the code defines misses an entry. These rules close each of 
    compared with the pins in `nexkit/__init__.py`, and each `ubuntu-NN.NN` in the README with the
    pinned runner; that the local commands table of [the README](../README.md#local-commands)
    lists each command the CLI defines for people and no other, and that each option a row names
-   exists; and that the index matches the decision files, each of which follows the template and
-   is linked from a rule or a page. A docs check is added only once the whole tree passes it:
-   there are no lists of exceptions.
+   exists; that the README's configuration example is what `nexkit init` writes for the README's
+   own setup command; and that the index matches the decision files, each of which follows the
+   template and is linked from a rule or a page. A docs check is added only once the whole tree
+   passes it: there are no lists of exceptions.

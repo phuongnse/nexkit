@@ -31,7 +31,8 @@ adds what is missing around the agent:
   agent session reviews the diff against the plan. Failures go back to the agent for a
   bounded number of fix rounds.
 - **Agents never hold a token that can write.** An agent edits a working tree. NexKit
-  validates the result and commits it in a separate job.
+  validates the result and commits it in a separate job, as
+  [Tokens and secrets](docs/architecture.md#tokens-and-secrets) explains.
 - **It keeps going without you.** With autopilot it works through the open issues by
   itself, and it stops only where a person must decide.
 
@@ -197,7 +198,12 @@ and running `nexkit status` would run whatever code it points at.
     {"name": "lint", "run": "npm run lint"}
   ],
   "fix": {"max_auto_rounds": 2},
-  "merge": {"auto": false}
+  "merge": {"auto": false},
+  "github_app": {
+    "slug": "nexkit-acme",
+    "app_id_secret": "NEXKIT_APP_ID",
+    "private_key_secret": "NEXKIT_APP_PRIVATE_KEY"
+  }
 }
 ```
 
@@ -228,6 +234,7 @@ covers. The live smoke test
 (`scripts/smoke.py`) costs a few cents and needs a Claude login. To try your working copy's
 `status` or `doctor` in a repository that pins another ref, such as `main`, pass
 `--own-release`: otherwise `bin/nexkit` runs the pinned release.
+[D8](docs/decisions/d8-standard-library-only.md) says why NexKit uses only the standard library.
 
 ## License
 

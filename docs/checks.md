@@ -39,6 +39,9 @@ This page of the [configuration reference](configuration.md) says how to set the
 - `unaffected_by`: globs of the paths the check never reads. Default `[]`, at most 50. In
   an automatic review, a check whose paths did not change since it passed runs on no
   runner. See [Checks that a change cannot affect](#checks-that-a-change-cannot-affect).
+- `shards`: with `parallel_checks`, a `count` command that prints how many shards the check
+  runs in when the round starts, and `max`, the most shards allowed. See
+  [Parallel checks](#parallel-checks).
 
 `nexkit init` writes each check from `--check NAME=COMMAND`, and its other fields from
 flags that name the check: `--check-timeout NAME=MINUTES`, `--check-slow NAME`,

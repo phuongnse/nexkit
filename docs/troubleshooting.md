@@ -636,7 +636,8 @@ not met, such as a change that accepts a risk. No fix round starts for it, since
 cannot meet it without undoing the change. Read the item and the review's evidence in the
 round's comment. To accept it, approve the pull request: NexKit turns `nexkit/review` green
 on that commit and, with `merge.auto`, merges it; with it off, merge it yourself. Approve
-the commit the round reviewed; after a new commit, wait for its review and approve again.
+the commit the round reviewed; after a new commit, wait for its review and approve again. An
+approval of a commit that is no longer the head merges nothing.
 To reject it, comment `/nexkit fix <what to change>`, or close the pull request.
 
 ### A review gave no answer for a checklist item
@@ -671,7 +672,8 @@ either. It waits for a person only:
 
 For any other rule, the round's comment and the mention say what unblocks the merge, under
 **What unblocks it**. No merge by hand is needed after that: an approval by someone with
-write access merges the pull request at once, and with autopilot, a sweep sends a `step` run
+write access sends a `step` run that merges the pull request in the issue's queue, after
+the rounds and commands already there, and with autopilot, a sweep sends a `step` run
 that merges it once GitHub reports it as mergeable, such as after a rule changed (see [Automatic
 merge](merges-and-waits.md#automatic-merge)). An approval starts nothing while the workflow's
 `pull_request_review` trigger lets only *Request changes* reviews through: update it as

@@ -263,6 +263,11 @@ class Pipeline:
         self.test.assertLess(self.steps, MAX_STEPS, f"a loop: {self.played}")
         before = len(self.gh.dispatches)
         decision = route(self.gh, "workflow_dispatch", {}, dispatch["inputs"])
+        if decision["action"] == "none":
+            # As `nexkit route` ends it: a step with nothing to do, such as an approval of a
+            # commit that is no longer the head.
+            self.gh.runs[run_id] = {"status": "completed"}
+            return
         lines = maintain(
             self.gh, decision, self.cfg, workflow="nexkit.yml", ref="main", alerts=self.alerts
         )
@@ -287,6 +292,26 @@ class Pipeline:
         sent = []
         lines = autopilot.sweep(self.gh, self.cfg, "nexkit.yml", "main", sent=sent)
         return lines + [self.wait_for_ends(self.gh, sent)]
+
+    def approve(self, commit=None, login="olivia"):
+        """A writer's approval of pull request 6 on `commit` (its head by default): the review
+        GitHub holds, and the run of the approval, which sends a `step` into the issue's
+        queue. Returns the lines of that run."""
+        pull = self.gh.pulls[6]
+        review = {
+            "id": 9000 + len(self.gh.pr_reviews[6]),
+            "state": "APPROVED",
+            "user": {"login": login},
+            "commit_id": commit or pull["head"]["sha"],
+        }
+        self.gh.pr_reviews[6].append(review)
+        event = {
+            "action": "submitted",
+            "review": {**review, "state": "approved"},
+            "pull_request": {**pull, "base": {"ref": "main", "repo": {"full_name": "acme/app"}}},
+        }
+        decision = route(self.gh, "pull_request_review", event)
+        return maintain(self.gh, decision, self.cfg, workflow="nexkit.yml", ref="main")
 
     def waited(self, inputs):
         """The run that waits for paused commands: time passes until the first one within
@@ -1055,23 +1080,18 @@ class ScenarioTests(unittest.TestCase):
         [round_] = [run for _, run in run_comments(pipe.gh.comments(6)) if "round" in run][-1:]
         self.assertEqual(round_["decide"], [accepted])
 
-        def approve(commit):
-            event = {
-                "action": "submitted",
-                "review": {"state": "approved", "user": {"login": "olivia"}, "commit_id": commit},
-                "pull_request": {
-                    **pipe.gh.pulls[6],
-                    "base": {"ref": "main", "repo": {"full_name": "acme/app"}},
-                },
-            }
-            decision = route(pipe.gh, "pull_request_review", event)
-            return maintain(pipe.gh, decision, pipe.cfg, workflow="nexkit.yml", ref="main")
-
         # An approval of an older head accepts nothing.
-        self.assertIn("it starts nothing", approve("0" * 40)[0])
+        sent = len(pipe.gh.dispatches)
+        self.assertIn("it starts nothing", pipe.approve("0" * 40)[0])
+        self.assertEqual(len(pipe.gh.dispatches), sent)
         self.assertEqual(pipe.gh.merged, [])
         self.assertEqual(review_state(pipe.gh, head), "failure")
-        self.assertEqual(approve(head), ["#6: merged."])
+        # The approval of the head only sends a step, which accepts and merges in the queue.
+        self.assertEqual(pipe.approve(head), ["#6: sent @olivia's approval to #5's queue."])
+        self.assertEqual(review_state(pipe.gh, head), "failure")
+        self.assertEqual(pipe.gh.merged, [])
+        pipe.drain()
+        self.assertEqual(pipe.gh.merged, [(6, head, "squash")])
         self.assertEqual(review_state(pipe.gh, head), "success")
         pipe.play()
         self.assertEqual(pipe.gh.issues[5]["state"], "closed")
@@ -1213,24 +1233,51 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(pipe.played[-1][2], "merge_refused")
         [mention] = pipe.gh.comments_matching(6, "a person is needed")
         self.assertIn("approve the pull request as a code owner (`@olivia`)", mention["body"])
-        # The owner approves; nothing else is needed.
+        # The owner approves; the approval's own run writes nothing, and the merge runs
+        # in the issue's queue, once its step is played.
         pipe.gh.merge_error = None
-        event = {
-            "action": "submitted",
-            "review": {"state": "approved", "user": {"login": "olivia"}},
-            "pull_request": {
-                **pipe.gh.pulls[6],
-                "base": {"ref": "main", "repo": {"full_name": "acme/app"}},
-            },
-        }
-        decision = route(pipe.gh, "pull_request_review", event)
+        written = len(pipe.gh.comments(6)), len(pipe.gh.comments(5))
+        self.assertEqual(pipe.approve(), ["#6: sent @olivia's approval to #5's queue."])
+        self.assertEqual((len(pipe.gh.comments(6)), len(pipe.gh.comments(5))), written)
+        self.assertEqual((pipe.gh.merged, pipe.gh.issues[5]["state"]), ([], "open"))
+        [step] = [
+            d for d in pipe.gh.dispatches if d["inputs"].get("note", "").startswith("approval")
+        ]
+        self.assertEqual(step["inputs"]["command"], "step")
         self.assertEqual(
-            maintain(pipe.gh, decision, pipe.cfg, workflow="nexkit.yml", ref="main"),
-            ["#6: merged."],
+            (step["inputs"]["number"], step["inputs"]["note"]), ("5", "approval 6 9000")
         )
+        pipe.drain()
+        self.assertEqual(len(pipe.gh.merged), 1)
         pipe.play()
         self.assertEqual(pipe.gh.issues[5]["state"], "closed")
         self.assertEqual(len(pipe.gh.comments_matching(6, "a person is needed")), 1)
+
+    def test_an_approval_of_a_commit_that_is_no_longer_the_head_merges_nothing(self):
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        pipe.gh.review_states[6] = {"decision": "REVIEW_REQUIRED"}
+        pipe.gh.files["CODEOWNERS"] = "* @olivia\n"
+        pipe.gh.pr_files[6] = [{"filename": "app.py", "additions": 3, "deletions": 1}]
+        pipe.gh.merge_error = GitHubError(405, "Waiting on code owner review from olivia.")
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
+        self.assertEqual(pipe.played[-1][2], "merge_refused")
+        # The owner approves the head, then a round ahead of the step moves the head and
+        # ends on a commit the owner never saw.
+        pipe.gh.merge_error = None
+        self.assertEqual(pipe.approve(), ["#6: sent @olivia's approval to #5's queue."])
+        pipe.gh.pulls[6]["head"]["sha"] = "e" * 40
+        pipe.gh.round_comment(6, 9, "e" * 40, "passed", outcome="merge_refused")
+        pipe.drain()
+        self.assertEqual(pipe.gh.merged, [])
+        self.assertEqual(pipe.gh.issues[5]["state"], "open")
+        # The approval of the new head merges it.
+        self.assertEqual(pipe.approve(), ["#6: sent @olivia's approval to #5's queue."])
+        pipe.drain()
+        self.assertEqual(pipe.gh.merged, [(6, "e" * 40, "squash")])
 
     def test_an_owner_who_approves_and_merges_at_once_gets_no_mention(self):
         def script(pipe, inputs):
@@ -1246,21 +1293,10 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(len(pipe.gh.comments_matching(6, "a person is needed")), 1)
         # The owner approves and merges in the same minute, before NexKit's merge reads
         # the issue, which the merge closed through the `Closes` line.
-        event = {
-            "action": "submitted",
-            "review": {"state": "approved", "user": {"login": "olivia"}},
-            "pull_request": {
-                **pipe.gh.pulls[6],
-                "base": {"ref": "main", "repo": {"full_name": "acme/app"}},
-            },
-        }
         pipe.gh.pulls[6].update(state="closed", merged=True, merged_by={"login": "olivia"})
         pipe.gh.issues[5].update(state="closed", state_reason="completed")
-        decision = route(pipe.gh, "pull_request_review", event)
-        self.assertEqual(
-            maintain(pipe.gh, decision, pipe.cfg, workflow="nexkit.yml", ref="main"),
-            ["#6: pull_closed; its round stays as it was."],
-        )
+        self.assertEqual(pipe.approve(), ["#6: sent @olivia's approval to #5's queue."])
+        pipe.drain()
         self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])  # nothing more ran
         self.assertEqual(pipe.gh.merged, [])
         self.assertEqual(len(pipe.gh.comments_matching(6, "a person is needed")), 1)

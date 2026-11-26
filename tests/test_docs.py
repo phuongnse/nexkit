@@ -10,7 +10,8 @@ table of the troubleshooting page lists each outcome that needs a person and no 
 code's text for what to do and why. The command table of the README lists each comment command the
 code accepts, where it accepts it, and no other. The key tables and the complete configuration of
 the configuration reference list each key the code defines and no other, with the defaults and
-ranges the code has. The runtime table of that page lists each runtime the code defines and no
+ranges the code has. The list of a check's fields on the checks page lists each key the code
+defines and no other. The runtime table of that page lists each runtime the code defines and no
 other, with its providers, effort levels and budget support, and which runtimes report usage limits.
 The trigger table of its workflow file section lists each trigger of the workflow template and no
 other. The table of the App's permissions matches the permissions and levels of the App manifest.
@@ -81,6 +82,9 @@ PLACES = {"Issue": "issue", "NexKit PR": "pull request", "Your PR": "pull reques
 LOCAL_COMMANDS_HEADER = "| Command | What it does |"
 COMMAND = re.compile(r"`nexkit ([\w-]+)`")
 CONFIG_PAGE = DOCS / "configuration.md"
+CHECKS_PAGE = DOCS / "checks.md"
+# A check's field, as the bullets under "## Checks" of the checks page name it.
+CHECK_FIELD = re.compile(r"^- `([a-z_]+)`:", re.M)
 PERMISSIONS_HEADER = "| Permission | Level | For |"
 # GitHub's names on an App's settings page, by the manifest's keys in nexkit/app.py.
 PERMISSION_NAMES = {
@@ -822,7 +826,6 @@ class ConfigurationTests(unittest.TestCase):
                 self.fail(f"the trigger table of docs/configuration.md has no row for {trigger}")
 
 
-CHECKS_PAGE = DOCS / "checks.md"
 REFUSALS_LEAD = "- NexKit refuses, and `nexkit doctor` says why:"
 # Each refusal of a check's `unaffected_by` as docs/checks.md words it, a fragment of the code's
 # message, and a list of patterns that the code refuses with that message.
@@ -923,6 +926,19 @@ class UnaffectedByTests(unittest.TestCase):
                 raw = {"checks": [{"name": "e2e", "run": "x", "unaffected_by": patterns}]}
                 with self.assertRaisesRegex(config.ConfigError, re.escape(fragment)):
                     config.validate(with_claude(raw))
+
+
+class ChecksPageTests(unittest.TestCase):
+    def test_the_field_list_names_each_check_key_the_code_defines_and_no_other(self):
+        section = CHECKS_PAGE.read_text().split("\n## Checks\n", 1)[1].split("\n### ", 1)[0]
+        listed = set(CHECK_FIELD.findall(section))
+        self.assertTrue(listed, "docs/checks.md has no list of a check's fields")
+        for key in sorted(config.CHECK_KEYS - listed):
+            with self.subTest(key=key):
+                self.fail(f"docs/checks.md does not list the check field {key}")
+        for key in sorted(listed - config.CHECK_KEYS):
+            with self.subTest(key=key):
+                self.fail(f"docs/checks.md lists {key}, which CHECK_KEYS does not define")
 
 
 class ArchitectureTests(unittest.TestCase):

@@ -269,7 +269,9 @@ when a list of what the code defines misses an entry. These rules close each of 
    permissions in [configuration](configuration.md#the-github-app) matches the permissions and
    levels `nexkit/app.py` asks for; that the trigger table of [the workflow
    file](configuration.md#workflow-file) lists each trigger of the workflow template and no
-   other; that the README's [table of supported versions](../README.md#supported-versions) is
+   other; that the list of a check's fields in [checks](checks.md#checks) names each field
+   `nexkit/config.py` accepts and no other; that the README's
+   [table of supported versions](../README.md#supported-versions) is
    compared with the pins in `nexkit/__init__.py`, and each `ubuntu-NN.NN` in the README with the
    pinned runner; that the local commands table of [the README](../README.md#local-commands)
    lists each command the CLI defines for people and no other, and that each option a row names

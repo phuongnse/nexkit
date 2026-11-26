@@ -45,10 +45,12 @@ require those two.
 No merge by hand is needed after a person's part. NexKit merges a pull request whose
 merge GitHub refused, on the head its checks and review passed:
 
-- **after an approval** by someone with write access: the *Approve* review starts the
-  merge at once, in a concurrency group of its own, so it never replaces a command that
-  waits on the issue or its pull request. For a round that left criteria to a person, only an approval
-  of the commit that round checked counts. It needs the workflow's `pull_request_review`
+- **after an approval** by someone with write access: the *Approve* review runs in a
+  concurrency group of its own, so it never replaces a command that waits on the issue or
+  its pull request, and sends a `step` run for the issue. That run merges in the issue's
+  group, after the rounds and commands already queued there, and only the approved commit:
+  a head that moved since merges nothing, and a person approves the new one. For a round that left criteria to a
+  person, only an approval of the commit that round checked counts. It needs the workflow's `pull_request_review`
   trigger and job condition to let approvals through, and that group, as `nexkit init`
   writes them; `nexkit doctor` says when they do not;
 - **at each sweep** with autopilot, once GitHub reports the pull request as mergeable

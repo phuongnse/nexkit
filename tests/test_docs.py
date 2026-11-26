@@ -30,20 +30,20 @@ and profiles and the failure handling pages list as marking a failing line match
 The retry delays that the failure handling page gives for `publish` and for every other GitHub API
 call match `publish.WAITS` and `github.GitHub.waits`, with their counts of tries.
 The tools that the access table of agents and profiles gives the plan and review stages match
-READ_ONLY_TOOLS. The issue states that the status skill lists match those `status.issue_item`
-sets. The outcomes after which a writer's approval merges, which the work-without-a-command page
-lists, match APPROVABLE. The jobs that the autopilot page lists as those in which a round can be
-stopped are CHECK_JOBS, and those in which it never is are jobs of pipeline.yml outside it. The
-README's table of supported versions is compared with the pins in nexkit/__init__.py, and each
-ubuntu-NN.NN in the README with the pinned runner. The local commands
+READ_ONLY_TOOLS. The issue states that the status skill lists match those `status.issue_item` sets.
+The pull request states that the status skill lists match those `status.pull_state` and
+`status.pull_item` give. The outcomes after which a writer's approval merges, which the
+work-without-a-command page lists, match APPROVABLE. The jobs that the autopilot page lists as those
+in which a round can be stopped are CHECK_JOBS, and those in which it never is are jobs of
+pipeline.yml outside it. The README's table of supported versions is compared with the pins in
+nexkit/__init__.py, and each ubuntu-NN.NN in the README with the pinned runner. The local commands
 table of the README lists each command the CLI defines for people and no other, and each option a
 row names exists. The configuration example of the README is what `nexkit init` writes for the
-README's own setup command. No doc, the README, AGENTS.md or a skill repeats a pinned version:
-each pin that D9 governs, or a lint tool's version from scripts/lint.sh. The decisions index
-matches the decision files, and each decision is linked, as
-docs/writing-docs.md#how-the-docs-stay-correct says. The list of files where a release sets the
-version, on the delivery page, names each file of the package, the plugin, pyproject.toml and the
-README that holds the version, and no other."""
+README's own setup command. No doc, the README, AGENTS.md or a skill repeats a pinned version: each
+pin that D9 governs, or a lint tool's version from scripts/lint.sh. The decisions index matches the
+decision files, and each decision is linked, as docs/writing-docs.md#how-the-docs-stay-correct says.
+The list of files where a release sets the version, on the delivery page, names each file of the
+package, the plugin, pyproject.toml and the README that holds the version, and no other."""
 
 import argparse
 import ast
@@ -1645,6 +1645,8 @@ READ_ACCESS_ROW = "| plan, review |"
 # lookahead keeps the match inside that bullet, so a bullet without the list is not read as another.
 STATUS_SKILL = ROOT / "skills" / "status" / "SKILL.md"
 ISSUE_STATES = re.compile(r"- `issues`: (?:(?!- `).)*?a `state` \(([^)]*)\)")
+# The status skill's list of pull request states, in its `pull_requests` bullet, read the same way.
+PULL_STATES = re.compile(r"- `pull_requests`: (?:(?!- `).)*?a `state` \(([^)]*)\)")
 LISTED_STATE = re.compile(r"(?:^|, )`(\w+)`")
 # The page and the sentence that list the outcomes after which a writer's approval merges. The
 # group keeps the word `as` before the first outcome, which the outcomes are found after.
@@ -1850,11 +1852,11 @@ def state_values(node):
     return []
 
 
-def issue_states_of_code():
-    """The states that `status.issue_item` sets: the value of each `state` key, subscript
-    assignment or keyword in its source."""
+def states_set_in(function):
+    """The states that a function sets: the value of each `state` key, subscript assignment or
+    keyword in its source."""
     states = set()
-    for node in ast.walk(ast.parse(inspect.getsource(status.issue_item))):
+    for node in ast.walk(ast.parse(inspect.getsource(function))):
         if isinstance(node, ast.Assign):
             for target in node.targets:
                 if (
@@ -1872,6 +1874,57 @@ def issue_states_of_code():
     return states
 
 
+def _allowed_by_enclosing_if(node, name, parents):
+    """The strings of the tuple in the nearest `if name in (...)` whose body holds the return
+    `node`, or [] when that tuple holds a value the test cannot read."""
+    child, parent = node, parents.get(node)
+    while parent is not None:
+        test = parent.test if isinstance(parent, ast.If) else None
+        if (
+            isinstance(test, ast.Compare)
+            and len(test.ops) == 1
+            and isinstance(test.ops[0], ast.In)
+            and isinstance(test.left, ast.Name)
+            and test.left.id == name
+            and isinstance(test.comparators[0], ast.Tuple)
+            and child in parent.body
+        ):
+            elts = test.comparators[0].elts
+            if all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in elts):
+                return [e.value for e in elts]
+            return []
+        child, parent = parent, parents.get(parent)
+    return []
+
+
+def _returned_states(node, value, parents):
+    """The states that a return's value can be: the strings of a conditional's branches, and
+    the strings that the `if` around the return allows for a name. Any other value fails."""
+    if isinstance(value, ast.IfExp):
+        return _returned_states(node, value.body, parents) | _returned_states(
+            node, value.orelse, parents
+        )
+    if isinstance(value, ast.Constant) and isinstance(value.value, str):
+        return {value.value}
+    if isinstance(value, ast.Name):
+        allowed = _allowed_by_enclosing_if(node, value.id, parents)
+        if allowed:
+            return set(allowed)
+    raise AssertionError(f"pull_state returns something the test cannot read at line {node.lineno}")
+
+
+def pull_states_of_code():
+    """The states that `status.pull_state` returns, and those that `status.pull_item` sets when
+    a pull request has no rounds."""
+    tree = ast.parse(inspect.getsource(status.pull_state))
+    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    states = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Return):
+            states.update(_returned_states(node, node.value, parents))
+    return states | states_set_in(status.pull_item)
+
+
 class StatusSkillTests(unittest.TestCase):
     def test_the_skill_lists_each_issue_state_the_code_sets_and_no_other(self):
         # The page wraps its lines, so the regex reads the text with one space between words.
@@ -1881,7 +1934,7 @@ class StatusSkillTests(unittest.TestCase):
         listed = set(LISTED_STATE.findall(match.group(1)))
         if not listed:
             self.fail("skills/status/SKILL.md lists no issue state")
-        code = issue_states_of_code()
+        code = states_set_in(status.issue_item)
         if not code:
             self.fail("status.issue_item sets no issue state that the test can read")
         for issue_state in sorted(code - listed):
@@ -1895,6 +1948,33 @@ class StatusSkillTests(unittest.TestCase):
                 self.fail(
                     f"skills/status/SKILL.md lists {issue_state!r}, "
                     "which status.issue_item does not set"
+                )
+
+    def test_the_skill_lists_each_pull_request_state_the_code_gives_and_no_other(self):
+        # The page wraps its lines, so the regex reads the text with one space between words.
+        match = PULL_STATES.search(" ".join(STATUS_SKILL.read_text().split()))
+        if not match:
+            self.fail(
+                "skills/status/SKILL.md has no list of pull request states in its "
+                "`pull_requests` bullet"
+            )
+        listed = set(LISTED_STATE.findall(match.group(1)))
+        if not listed:
+            self.fail("skills/status/SKILL.md lists no pull request state")
+        code = pull_states_of_code()
+        if not code:
+            self.fail("status.pull_state gives no pull request state that the test can read")
+        for pull_state in sorted(code - listed):
+            with self.subTest(state=pull_state):
+                self.fail(
+                    f"skills/status/SKILL.md does not list {pull_state!r}, "
+                    "which status.pull_state or status.pull_item gives"
+                )
+        for pull_state in sorted(listed - code):
+            with self.subTest(state=pull_state):
+                self.fail(
+                    f"skills/status/SKILL.md lists {pull_state!r}, "
+                    "which status.pull_state or status.pull_item does not give"
                 )
 
 

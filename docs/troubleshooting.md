@@ -33,10 +33,19 @@ repository's code only when you name it. If you trust it, set
 NexKit 1.8, a plain comment can cancel a waiting command. Move the `concurrency` block in
 `.github/workflows/nexkit.yml` into the `nexkit` job, as `nexkit init` writes it.
 
-**`nexkit doctor`: "calls the pipeline at …, but nexkit_ref is …".** Only one of the two
-refs was changed. The jobs check out NexKit's code at `nexkit_ref`, so they would run the
-code of another release than the pipeline. Set the `uses:` ref and `nexkit_ref` to the
-same tag.
+**`nexkit doctor`: "has no 'item' job for the concurrency group".** In workflows installed
+before NexKit 6.4, a command on an issue and a round on its pull request wait in two
+queues, so they can run at once. Copy the `item` job and the `nexkit` job's `needs: item`
+and concurrency group from the workflow `nexkit init` writes into
+`.github/workflows/nexkit.yml`, with all three refs at one tag. Do this only once the
+workflow pins a release that has `nexkit item`: with an older one the job fails and every
+run is skipped.
+
+**`nexkit doctor`: "calls the pipeline at …, but nexkit_ref is …" or "but its 'item' job
+checks out …".** Not all three refs were changed: the `uses:` ref, `nexkit_ref` and the
+`ref:` of the `item` job's checkout. The jobs check out NexKit's code at those refs, so
+they would run the code of another release than the pipeline. Set all three to the same
+tag.
 
 **`nexkit doctor`: "does not give the pipeline checks: read".** A pipeline job asks for a
 permission that `.github/workflows/nexkit.yml` does not give, and GitHub then starts no run
@@ -489,7 +498,8 @@ failure comes from the code after all, post `/nexkit fix` with that evidence.
 
 The command, or *Request changes* review, did not run. Post it again once the
 `/nexkit go` run that opened the pull request has ended (see [One run at a
-time](how-it-works.md#one-run-at-a-time)).
+time](how-it-works.md#one-run-at-a-time)). With the workflow's `item` job, the run waits in
+the queue instead, so this reply comes only from a workflow without it: run `nexkit doctor`.
 
 ### An issue closed as `no_change` that still needs a change
 

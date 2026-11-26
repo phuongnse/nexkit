@@ -63,9 +63,9 @@ from .state import (
 )
 from .usage import PAUSE_WINDOW, iso, parse_iso, shown
 
-# The dispatch that starts a sweep. Its `number` input is not a number, so callers'
-# concurrency groups give every sweep the group `nexkit-autopilot`: one runs at a time, and
-# GitHub keeps only the latest waiting one, which sees everything the others would.
+# The dispatch that starts a sweep. Its `number` input is not a number, so `nexkit item`
+# names it `autopilot`, which gives every sweep the group `nexkit-autopilot`: one runs at a
+# time, and GitHub keeps only the latest waiting one, which sees everything the others would.
 SWEEP = {"command": "autopilot", "number": "autopilot", "note": "", "auto": "false"}
 # The `auto` input of the commands autopilot starts.
 AUTO = "autopilot"

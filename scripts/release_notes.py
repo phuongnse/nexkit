@@ -4,7 +4,7 @@
     release_notes.py [VERSION]    default: the version in nexkit/__init__.py
 
 The notes are the version's CHANGELOG.md entry, with links made absolute at the tag, then
-`## Upgrade` and `## Install`. Upgrade always changes both refs of the caller workflow and
+`## Upgrade` and `## Install`. Upgrade always changes the three refs of the caller workflow and
 ends with `nexkit doctor`; the steps in between come from the entry's `### Upgrade`
 subsection, a list. An entry without one changes neither the configuration nor the
 caller's permissions.
@@ -81,7 +81,8 @@ def notes(version, text):
     tag = f"v{version}"
     changes, steps = upgrade_steps(entry(text, version))
     refs = (
-        f"In `{WORKFLOW_PATH}`, change both the `uses:` ref and `nexkit_ref` to `{tag}`. "
+        f"In `{WORKFLOW_PATH}`, change the `uses:` ref, `nexkit_ref` and the `ref:` of the "
+        f"`item` job's checkout to `{tag}`. "
         f"Or run `nexkit init --force --kit-ref {tag}` and restore your config."
     )
     items = [[refs], *steps, ["Run `nexkit doctor`."]]

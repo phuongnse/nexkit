@@ -410,6 +410,16 @@ def _show_skipped(decision):
     write_summary(f"### NexKit checks: skipped\n\n{text}\n", Redactor())
 
 
+def cmd_item(args):
+    from .route import work_item
+
+    event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
+    item = work_item(_gh(), os.environ["GITHUB_EVENT_NAME"], event)
+    if item is not None:
+        _output(item=item)
+    return 0
+
+
 def cmd_install_agents(args):
     import subprocess
 
@@ -951,6 +961,11 @@ def build_parser():
     p = sub.add_parser("route", help="(pipeline) Decide the action for the current event")
     p.add_argument("--repo", required=True, help="Checkout of the default branch")
     p.set_defaults(func=cmd_route)
+
+    p = sub.add_parser(
+        "item", help="(pipeline) Name the work item of this event, for the concurrency group"
+    )
+    p.set_defaults(func=cmd_item)
 
     p = sub.add_parser("install-agents", help="(pipeline) Install the runtimes the config uses")
     p.add_argument(

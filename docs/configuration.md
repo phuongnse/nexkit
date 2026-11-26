@@ -677,7 +677,7 @@ merge GitHub refused, on the head its checks and review passed:
 
 - **after an approval** by someone with write access: the *Approve* review starts the
   merge at once, in a concurrency group of its own, so it never replaces a command that
-  waits on the pull request. For a round that left criteria to a person, only an approval
+  waits on the issue or its pull request. For a round that left criteria to a person, only an approval
   of the commit that round checked counts. It needs the workflow's `pull_request_review`
   trigger and job condition to let approvals through, and that group, as `nexkit init`
   writes them; `nexkit doctor` says when they do not;
@@ -1803,11 +1803,18 @@ short runs that end at once; remove the triggers you do not use if you prefer. I
 milestone events other than a closed issue join the concurrency group
 `nexkit-autopilot`, so they never replace a command that waits for its issue. Each starts
 a sweep, even a milestone event with the `null` scope, since its run may have replaced a
-sweep that waited. To upgrade, change both the
-`uses:` ref and `nexkit_ref` to the new tag (or rerun `nexkit init --force --kit-ref
-vX.Y.Z` and restore your config); see [the upgrade steps](#upgrading-from-earlier-releases). `nexkit
-doctor` reports a problem when the two refs differ, and mentions a newer release without
-failing: staying on a release is your choice.
+sweep that waited.
+
+The workflow's first job, `item`, names the work item of each run for its concurrency
+group (see [One run at a time](how-it-works.md#one-run-at-a-time)). It checks out NexKit's
+code at the release tag and runs `nexkit item`, with a read-only token, no GitHub App key
+and no checkout of your repository. So the commands on an issue and the rounds on its
+NexKit pull request wait in one queue. `nexkit doctor` reports a workflow without the
+`item` job: its runs may overlap. To upgrade, change three refs to the new tag: the
+`uses:` ref, `nexkit_ref` and the `ref:` of the `item` job's checkout (or rerun `nexkit
+init --force --kit-ref vX.Y.Z` and restore your config); see [the upgrade
+steps](#upgrading-from-earlier-releases). `nexkit doctor` reports a problem when they
+differ, and mentions a newer release without failing: staying on a release is your choice.
 
 NexKit's pull requests come from branches named `nexkit/issue-<number>`. The job's `if:`
 in the workflow file lets a *Request changes* review start a run only on a branch that
@@ -1821,7 +1828,8 @@ pull request:
 
 1. Read the notes and the changelog of every release after the pinned one, not only the
    latest. Each release's notes list its own upgrade steps.
-2. Pin both the `uses:` ref and `nexkit_ref` in the workflow file to the new tag.
+2. Pin the `uses:` ref, `nexkit_ref` and the `ref:` of the `item` job's checkout in the
+   workflow file to the new tag.
 3. Compare this reference's key tables and sections at the old and the new ref. Set every
    new key, or new value of a key, that the repository has a value for, such as the
    names of its own CI workflows or artifacts.

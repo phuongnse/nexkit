@@ -173,16 +173,31 @@ reason.
 
 ### One run at a time
 
-Runs for one issue or pull request run one at a time, in order. Only commands, *Request
-changes* reviews, dispatches and the short run for a closed issue wait in this queue;
-other comments do not. GitHub keeps one waiting run, so a command posted while another
-waits replaces it. A command that
-never got 👀 did not run; post it again.
+Runs for one work item run one at a time, in order. A work item is an issue together with
+its NexKit pull request (`nexkit/issue-<n>`), or a person's pull request on its own. The
+installed workflow's first job, `item`, runs `nexkit item`, which names the item of the
+event: the issue's number for the issue, its NexKit pull request and a dispatch that names
+either, and the pull request's own number for a person's pull request, or one from a fork,
+which cannot join an issue's queue by naming its branch like NexKit's. The `nexkit` job
+puts its run in the group `nexkit-<item>`. If GitHub's API fails while `item` reads a pull
+request, the item is the number itself, as before.
+
+Only commands, *Request changes* reviews, dispatches and the short run for a closed issue
+wait in this queue; other comments do not. GitHub keeps one waiting run, so a command
+posted while another waits replaces it, also one on the issue that waits behind a round of
+its pull request. A command that never got 👀 did not run; post it again.
+
+Four kinds of run keep a group of their own, so they never replace a command that waits:
+sweeps and the issue and milestone events that bring issues into scope share
+`nexkit-autopilot`, the run that waits for paused commands is `nexkit-resume`, an approval
+of a pull request is `nexkit-approved-<pr>`, and each other event, such as the schedule, a
+push or a finished workflow run, forms a group per event.
 
 A pull request runs one NexKit round at a time. Its rounds (fix, review, automatic and
-conflict rounds) share the pull request's queue, and the `/nexkit go` run that opened it is
-one of its rounds too, until that run has checked, reviewed and, with `merge.auto`, merged
-it. That run waits in the issue's queue, so NexKit orders the two itself:
+conflict rounds) share the item's queue with the issue's commands, and the `/nexkit go` run
+that opened it is one of its rounds too, until that run has checked, reviewed and, with
+`merge.auto`, merged it. The queue already orders them, and NexKit orders them itself as a
+backstop, for workflows installed before the `item` job, whose runs may overlap:
 
 - A conflict round does not start while the implement round runs. When the implement
   round ends and the pull request conflicts, that round starts the conflict round, on the
@@ -191,7 +206,7 @@ it. That run waits in the issue's queue, so NexKit orders the two itself:
 - A person's command or *Request changes* review on the pull request meanwhile gets a
   reply that the implement round still runs; comment it again once it ends.
 - The rounds that a run starts as it ends, such as an automatic fix round or the one more
-  try, run after it in the pull request's queue.
+  try, run after it in the item's queue.
 - A conflict round does not start while any other round of the pull request runs either.
   When the base branch moved meanwhile, the sweep at the end of that round starts it,
   however the round ended (see *Resolving conflicts* under [Work without a
@@ -954,7 +969,7 @@ base branch, so a conflict that needs a choice ends as `blocked` with its questi
   recorded on the pull request's latest round, so a sweep that looks before the new
   round posts its comment does not start it twice. When two starters look at the same
   moment, such as a push to the default branch and a sweep, both may start one; the
-  second waits behind the first in the pull request's concurrency group, and when the
+  second waits behind the first in the item's concurrency group, and when the
   first ended on the same base commit, `route` lets the second run nothing. A pull
   request whose latest round is
   paused at the usage limit is left alone, and so is one with a round running or on its
@@ -1037,7 +1052,7 @@ work. The
 [`request` skill](../skills/request/SKILL.md) says when to make one.
 
 A sweep is a `workflow_dispatch` with the command `autopilot`. Its `number` input is
-`autopilot` too, so callers' concurrency groups give every sweep the group
+`autopilot` too, so `nexkit item` names it that and every sweep gets the group
 `nexkit-autopilot`: sweeps run one at a time, and GitHub keeps one waiting sweep, which
 sees everything a replaced one would have. A replaced sweep's note changes little: what
 is done comes from GitHub (see *Done notices* below), and a sweep that replaced one

@@ -54,8 +54,8 @@ merge GitHub refused, on the head its checks and review passed:
   trigger and job condition to let approvals through, and that group, as `nexkit init`
   writes them; `nexkit doctor` says when they do not;
 - **at each sweep** with autopilot, once GitHub reports the pull request as mergeable
-  (`clean`, or `unstable` for a check it does not require), such as after an approval
-  while runs were busy, or after a rule changed. A head that GitHub reported as mergeable
+  (`clean`, `unstable` for a check it does not require, or `has_hooks` when the server runs
+  hooks before a push), such as after an approval while runs were busy, or after a rule changed. A head that GitHub reported as mergeable
   and still refused, at the round or at a sweep, is not tried again by sweeps.
 
 Each try has the guards of every merge: an issue that closed, an edit by someone without
@@ -88,12 +88,13 @@ branch: leave a costly workflow's `push` trigger off for the default branch and 
 here, usually with `every`. A workflow that has both runs twice. After each merge, NexKit
 starts every listed workflow that is due on the base branch with `workflow_dispatch`:
 
-- Each workflow needs a `workflow_dispatch` trigger without required inputs, for example
+- Each workflow needs a `workflow_dispatch` trigger whose required inputs all have a `default`,
+  because NexKit starts it with no inputs; for example
   `on: {pull_request: {}, workflow_dispatch: {}}`.
   `nexkit init --after-workflow FILE`, repeated for each file, sets the list.
-  `nexkit doctor` marks ✗ a listed file that is missing or has no such trigger, and a `push`
-  trigger that also runs it on the default branch: by `branches`, by a `branches-ignore`
-  that leaves that branch out, or by no filter.
+  `nexkit doctor` marks ✗ a listed file that is missing, has no such trigger or requires an
+  input without a default, and a `push` trigger that also runs it on the default branch: by
+  `branches`, by a `branches-ignore` that leaves that branch out, or by no filter.
 - With autopilot, a finished run starts a sweep, so a failure is noticed within minutes;
   see *When a finished run is noticed* under [Autopilot](autopilot.md#autopilot).
 - The run uses the base branch's newest commit when it starts, normally the merge commit.

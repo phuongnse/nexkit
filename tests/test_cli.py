@@ -226,6 +226,61 @@ class InitDoctorTests(unittest.TestCase):
             scaffold.doctor(self.root),
         )
 
+    def test_doctor_marks_an_after_merge_workflow_with_a_required_input_without_a_default(self):
+        cli.main(["init", "--repo", str(self.root), "--check", "test=true", "--force"])
+        path = self.root / ".nexkit/config.json"
+        cfg = json.loads(path.read_text())
+        cfg["merge"]["after_workflows"] = ["ci.yml"]
+        path.write_text(json.dumps(cfg))
+        started = (True, "merge.after_workflows: ci.yml can be started after a merge")
+        for how, text in (
+            (
+                "block",
+                "on:\n  workflow_dispatch:\n    inputs:\n      tag:\n"
+                "        required: true\n        type: string\n",
+            ),
+            ("inline", "on:\n  workflow_dispatch:\n    inputs:\n      tag: {required: true}\n"),
+            (
+                "quoted",
+                "on:\n  workflow_dispatch:\n    inputs:\n      tag:\n        required: 'True'\n",
+            ),
+        ):
+            (self.root / ".github/workflows/ci.yml").write_text(text)
+            findings = scaffold.doctor(self.root)
+            self.assertNotIn(started, findings, how)
+            [found] = [m for ok, m in findings if not ok and "requires the input" in m]
+            self.assertIn("ci.yml requires the input `tag` without a default", found, how)
+        for how, text in (
+            (
+                "optional",
+                "on:\n  workflow_dispatch:\n    inputs:\n      tag:\n        required: false\n",
+            ),
+            (
+                "default",
+                "on:\n  workflow_dispatch:\n    inputs:\n      tag:\n"
+                "        required: true\n        default: x\n",
+            ),
+            (
+                "inline default",
+                "on:\n  workflow_dispatch:\n    inputs:\n      tag: {required: true, default: x}\n",
+            ),
+            ("no inputs", "on:\n  workflow_dispatch:\n"),
+            ("list", "on: [push, workflow_dispatch]\n"),
+            (
+                "workflow_call only",
+                "on:\n  workflow_call:\n    inputs:\n      tag:\n"
+                "        required: true\n  workflow_dispatch:\n",
+            ),
+            (
+                "input after the trigger",
+                "on:\n  workflow_dispatch:\n  workflow_call:\n"
+                "    inputs:\n      tag:\n        required: true\n",
+            ),
+        ):
+            (self.root / ".github/workflows/ci.yml").write_text(text)
+            findings = scaffold.doctor(self.root)
+            self.assertIn(started, findings, how)
+
     def after_merge_findings(self, text, branch="main"):
         """What doctor says about ci.yml with `text`, in merge.after_workflows, about a
         merge also starting it."""

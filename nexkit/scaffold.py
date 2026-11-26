@@ -406,6 +406,14 @@ def _after_merge_workflow(root, name):
             f"merge.after_workflows: {name} has no workflow_dispatch trigger, "
             "so NexKit cannot start it after a merge",
         )
+    required = required_dispatch_inputs(text)
+    if required:
+        names = ", ".join(f"`{n}`" for n in required)
+        return (
+            False,
+            f"merge.after_workflows: {name} requires the input {names} without a default, "
+            "but NexKit starts it with no inputs; give each a default or make it optional",
+        )
     return (True, f"merge.after_workflows: {name} can be started after a merge")
 
 
@@ -416,6 +424,61 @@ def _items(text):
 
 def _indent(line):
     return len(line) - len(line.lstrip())
+
+
+def required_dispatch_inputs(workflow):
+    """The names of the inputs of a workflow's `workflow_dispatch` trigger that it requires
+    without a default, which a dispatch with no inputs cannot start. Reads the block form;
+    what only a YAML parser reads, such as `workflow_dispatch: {inputs: ...}` on one line,
+    counts as no inputs. The inputs of other triggers, such as `workflow_call`, do not count."""
+    lines = _uncommented(workflow).splitlines()
+    start = next(
+        (
+            at
+            for at, line in enumerate(lines)
+            if re.fullmatch(r"""\s*['"]?workflow_dispatch['"]?:\s*""", line)
+        ),
+        None,
+    )
+    if start is None:
+        return []
+    block = []
+    for line in lines[start + 1 :]:
+        if line.strip():
+            if _indent(line) <= _indent(lines[start]):
+                break
+            block.append(line)
+    key = next(
+        (at for at, line in enumerate(block) if re.fullmatch(r"""\s*['"]?inputs['"]?:\s*""", line)),
+        None,
+    )
+    if key is None:
+        return []
+    inputs = []
+    for line in block[key + 1 :]:
+        if _indent(line) <= _indent(block[key]):
+            break
+        inputs.append(line)
+    names = _indent(inputs[0]) if inputs else 0
+    found = []
+    for at, line in enumerate(inputs):
+        match = re.fullmatch(r"""['"]?([^'":\s]+)['"]?:(.*)""", line.strip())
+        if _indent(line) != names or not match:
+            continue
+        name, text = match.groups()
+        settings = []
+        for rest in inputs[at + 1 :]:
+            if _indent(rest) <= names:
+                break
+            settings.append(rest)
+        if settings:
+            direct = _indent(settings[0])
+            text += "\n" + "\n".join(s.strip() for s in settings if _indent(s) == direct)
+        required = re.search(r"""(^|[{,\s])['"]?required['"]?\s*:\s*['"]?true\b""", text, re.I)
+        default = re.search(r"""(^|[{,\s])['"]?default['"]?\s*:""", text)
+        if required and not default:
+            found.append(name)
+    return found
 
 
 def push_filters(workflow):

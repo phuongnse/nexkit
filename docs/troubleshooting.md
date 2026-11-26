@@ -329,8 +329,8 @@ rule (see [Automatic merge](merges-and-waits.md#automatic-merge)).
 
 **"Could not start `ci.yml`" after an automatic merge.** The merge happened; only the
 workflow did not start. Check that `.github/workflows/ci.yml` exists on the base branch
-and has a `workflow_dispatch` trigger without required inputs; `nexkit doctor` checks both
-in your working copy. To run it for this merge, use *Run workflow* on the base branch in
+and has a `workflow_dispatch` trigger whose required inputs all have a `default`;
+`nexkit doctor` checks both in your working copy. To run it for this merge, use *Run workflow* on the base branch in
 the Actions tab.
 
 **A new NexKit pull request is behind `main`.** Something was merged into the base branch

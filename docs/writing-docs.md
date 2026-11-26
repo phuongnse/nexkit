@@ -256,6 +256,8 @@ when a list of what the code defines misses an entry. These rules close each of 
    matches its constant; that each test the security page names exists; that the outcome table of
    [how it works](how-it-works.md) lists each outcome the code defines and no other; that the key
    tables and the complete configuration of the [configuration reference](configuration.md) list
-   each key the code defines and no other, with its default and range; and that the index matches
+   each key the code defines and no other, with its default and range; that the runtime table of
+   the configuration reference lists each runtime the code defines, with its providers, effort
+   levels and budget support, and which runtimes report usage limits; and that the index matches
    the decision files, each of which follows the template and is linked from a rule or a page. A
    docs check is added only once the whole tree passes it: there are no lists of exceptions.

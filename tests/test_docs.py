@@ -7,8 +7,10 @@ the workflows and nexkit/, the how-it-works page's job table matches the jobs of
 permissions its rows name and the number in its heading, each test the security page names exists,
 and the outcome table of how it works lists each outcome the code defines and no other. The key
 tables and the complete configuration of the configuration reference list each key the code
-defines and no other, with the defaults and ranges the code has. The plan and review layouts of
-stages match the sections the code writes, and the values the pages repeat match their constants.
+defines and no other, with the defaults and ranges the code has. The runtime table of that page
+lists each runtime the code defines and no other, with its providers, effort levels and budget
+support, and which runtimes report usage limits. The plan and review layouts of stages match the
+sections the code writes, and the values the pages repeat match their constants.
 The decisions index matches the decision files, and each decision is linked, as
 docs/writing-docs.md#how-the-docs-stay-correct says."""
 
@@ -36,6 +38,8 @@ SECURITY = DOCS / "security.md"
 OUTCOMES_HEADER = "| Outcome | Meaning |"
 CONFIG_PAGE = DOCS / "configuration.md"
 KEYS_HEADER = "| Key | Default | Meaning |"
+RUNTIMES_HEADER = "| Runtime | Providers | `effort` | `max_budget_usd` |"
+LIMITS = re.compile(r"((?:`[\w-]+`(?:, | and )?)+) reports? usage limits")
 DECISIONS = DOCS / "decisions"
 DECISIONS_INDEX = DOCS / "decisions.md"
 HOW_IT_WORKS = (
@@ -343,6 +347,48 @@ def recorded_ranges():
 
 
 class ConfigurationTests(unittest.TestCase):
+    def test_the_runtime_table_lists_each_runtime_the_code_defines_and_no_other(self):
+        rows = {cells[0].strip("`"): cells for cells in table(CONFIG_PAGE, RUNTIMES_HEADER)}
+        self.assertTrue(rows, "docs/configuration.md has no runtime table")
+        for name in sorted(set(rows) | set(runtimes.RUNTIMES)):
+            with self.subTest(runtime=name):
+                self.assertIn(
+                    name,
+                    runtimes.RUNTIMES,
+                    f"docs/configuration.md has a row for {name}, which the code does not define",
+                )
+                self.assertIn(name, rows, f"docs/configuration.md has no row for runtime {name}")
+                runtime, cells = runtimes.RUNTIMES[name], rows[name]
+                self.assertEqual(
+                    set(re.findall(r"`([^`]+)`", cells[1])),
+                    set(runtime.providers),
+                    f"the providers of {name} in docs/configuration.md differ from the code",
+                )
+                self.assertEqual(
+                    re.findall(r"`([^`]+)`", cells[2]),
+                    list(runtime.efforts),
+                    f"the effort levels of {name} in docs/configuration.md differ from the code",
+                )
+                self.assertEqual(
+                    cells[3],
+                    "yes" if runtime.supports_budget else "no",
+                    f"the max_budget_usd of {name} in docs/configuration.md differs from the code",
+                )
+
+    def test_the_page_names_each_runtime_that_reports_usage_limits(self):
+        text = " ".join(CONFIG_PAGE.read_text().split())  # the sentence wraps across lines
+        match = LIMITS.search(text)
+        self.assertIsNotNone(
+            match, "docs/configuration.md does not name the runtimes that report usage limits"
+        )
+        named = set(re.findall(r"`([\w-]+)`", match.group(1)))
+        reporting = {name for name, runtime in runtimes.RUNTIMES.items() if runtime.reports_limits}
+        self.assertEqual(
+            named,
+            reporting,
+            "the runtimes that docs/configuration.md says report usage limits differ from the code",
+        )
+
     def test_the_key_tables_list_each_key_the_code_defines_and_no_other(self):
         rows = key_rows()
         self.assertTrue(rows, "docs/configuration.md has no key tables")

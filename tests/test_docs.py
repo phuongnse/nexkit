@@ -3,14 +3,15 @@ plugin's skills matches skills/. The links of every page under docs/, of the REA
 of the plugin's skills and of the maintenance skills resolve, every link to how it works and the
 pages split from it resolves, each task of the nexkit-maintain skill links a section of the delivery
 page, AGENTS.md keeps within its word limits, the architecture page's job and module tables match
-the workflows and nexkit/, and each test the security page names exists. The decisions index matches
-the decision files, and each decision is linked, as docs/writing-docs.md#how-the-docs-stay-correct
-says."""
+the workflows and nexkit/, each test the security page names exists, and the outcome table of how it
+works lists each outcome the code defines and no other. The decisions index matches the decision
+files, and each decision is linked, as docs/writing-docs.md#how-the-docs-stay-correct says."""
 
 import re
 import unittest
 from pathlib import Path
 
+from nexkit import autopilot, report, state
 from tests.test_cli import jobs_of, permissions_of
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -21,6 +22,8 @@ FENCE = re.compile(r"^```.*?^```", re.M | re.S)
 AGENTS = ROOT / "AGENTS.md"
 ARCH = DOCS / "architecture.md"
 SECURITY = DOCS / "security.md"
+HOW_IT_WORKS_PAGE = DOCS / "how-it-works.md"
+OUTCOMES_HEADER = "| Outcome | Meaning |"
 DECISIONS = DOCS / "decisions"
 DECISIONS_INDEX = DOCS / "decisions.md"
 HOW_IT_WORKS = (
@@ -217,6 +220,31 @@ def table(path, header):
         if not re.fullmatch(r"[|\s:-]+", line):  # the row of dashes under the header
             rows.append([cell.strip() for cell in line.strip().strip("|").split("|")])
     return rows
+
+
+class OutcomesTests(unittest.TestCase):
+    def test_the_outcome_table_lists_each_outcome_the_code_defines_and_no_other(self):
+        code = (
+            set(report.COMPLETED)
+            | set(report.NEEDS_PERSON)
+            | state.UNCOUNTED
+            | autopilot.CHAINED
+            | autopilot.UNCHANGED
+            | {state.PAUSED}
+        )
+        rows = table(HOW_IT_WORKS_PAGE, OUTCOMES_HEADER)
+        self.assertTrue(rows, "docs/how-it-works.md has no table of outcomes")
+        listed = {name for row in rows for name in re.findall(r"`([a-z_]+)`", row[0])}
+        for name in sorted(code):
+            with self.subTest(outcome=name):
+                self.assertIn(name, listed, f"docs/how-it-works.md has no row for outcome {name}")
+        for name in sorted(listed):
+            with self.subTest(row=name):
+                self.assertIn(
+                    name,
+                    code,
+                    f"docs/how-it-works.md lists {name}, which the code does not define",
+                )
 
 
 class ArchitectureTests(unittest.TestCase):

@@ -8,10 +8,12 @@ agent, verify and review jobs keep read-only tokens.
 from __future__ import annotations
 
 import copy
+import json
 import sys
 
 from .checks import FAILURE_LINES, PASSED_LEFT_OUT, failing_lines
 from .github import GitHubError, run_url
+from .item_state import TRIES
 from .state import (
     CONTINUED,
     PAUSED,
@@ -20,6 +22,7 @@ from .state import (
     TEXT_LIMIT,
     find_run,
     next_round,
+    read_state,
     render_run,
     render_state,
     run_comments,
@@ -62,11 +65,19 @@ def trigger(decision):
     return decision["action"] + (f" ({', '.join(labels)})" if labels else "")
 
 
+class StateMoved(GitHubError):
+    """Other writes to a state came first, every time a writer tried."""
+
+    def __init__(self, message):
+        super().__init__(409, message)
+
+
 def _save(gh, number, comment_id, body):
+    """Edit the comment, or post it. Returns the id of the comment that holds `body`."""
     if comment_id:
         gh.update_comment(comment_id, body)
-    else:
-        gh.comment(number, body)
+        return comment_id
+    return gh.comment(number, body)["id"]
 
 
 def find_round(comments, decision):
@@ -213,14 +224,56 @@ def fit_state(state, limit=TEXT_LIMIT):
     return _fitted(state, caps)
 
 
-def save_state(gh, pr, comment_id, state):
+_UNSET = object()
+
+
+def rebased(read, mine, stored):
+    """`mine`, a writer's state that it made from `read`, applied on top of the newer
+    `stored`: each field the writer changed takes its value, and `auto_fixes`, the count of
+    automatic fix rounds, takes what the writer added to or took from it."""
+    state = copy.deepcopy(stored or {})
+    read, mine = read or {}, mine or {}
+    for key in read.keys() | mine.keys():
+        if key == "auto_fixes":
+            continue
+        value = mine.get(key, _UNSET)
+        if value != read.get(key, _UNSET):
+            if value is _UNSET:
+                state.pop(key, None)
+            else:
+                state[key] = copy.deepcopy(value)
+    counts = (state.get("auto_fixes") or 0) + (mine.get("auto_fixes") or 0)
+    counts -= read.get("auto_fixes") or 0
+    if "auto_fixes" in mine or "auto_fixes" in read or counts:
+        state["auto_fixes"] = counts
+    return state
+
+
+def save_state(gh, pr, comment_id, state, read, tries=TRIES):
     """Edit the state comment, within GitHub's limit on a comment's length (see
-    `fit_state`). A v1.1.0 state comment is left as it is; a new one replaces it."""
+    `fit_state`), when it still holds `read`, the state that the writer made `state` from.
+    One that moved is read again and gets the writer's changes on top (`rebased`), up to
+    `tries` times, then `StateMoved`: a stale copy never replaces a newer one, as D1 says
+    and [How it works](docs/how-it-works.md#state) shows. A v1.1.0 state comment is left as
+    it is; a new one replaces it. Returns the comment's id and the state it stored.
+
+    GitHub has no compare-and-set, so a write between the last read and the edit is
+    overwritten: the check narrows the race and does not close it."""
+    for _ in range(tries):
+        found = gh.comments(pr) if comment_id is None else [gh.issue_comment(comment_id)]
+        if read_state(found)[1] == read:
+            break
+        comment_id, stored = read_state(gh.comments(pr))
+        state, read = rebased(read, state, stored), stored
+    else:
+        raise StateMoved(f"Other writes to the state of #{pr} came first {tries} times.")
     if "rounds" in state:
         state = {key: value for key, value in state.items() if key != "rounds"}
         state["version"] = 2
         comment_id = None
-    _save(gh, pr, comment_id, render_state(fit_state(state)))
+    written = fit_state(state)
+    comment_id = _save(gh, pr, comment_id, render_state(written))
+    return comment_id, json.loads(json.dumps(written))
 
 
 def show_command(gh, decision, status, text="", comments=None, **fields):

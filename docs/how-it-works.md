@@ -388,6 +388,14 @@ output. With autopilot, each issue
 it worked on has one record comment, edited in place, that names the command it started
 last. Nothing else is stored, so there is nothing to migrate or repair.
 
+A writer edits the state comment, and autopilot's record comment, only while the comment still
+holds what the writer read: it reads the comment again just before the edit
+([D1](decisions/d1-state-lives-only-on-github.md)). When another write came first, the writer
+applies its own changes to the newer state and tries again, a few times: for the count of
+automatic fix rounds it adds its own difference to the stored count, and for any other field it
+changed, its value wins. After the last try it fails and changes nothing. The check narrows the
+race and does not close it, because GitHub has no compare-and-set.
+
 Each run comment's hidden marker is machine-readable: the command or round, its trigger,
 status (running, success, failure, paused, continued), the outcome (for example `planned`,
 `ready`, `merged`, `merge_refused`, `agent_blocked`, `paused`, `ci_waiting` with the `bug`
@@ -395,7 +403,11 @@ issue it waits for, `held` with what it kept back), the agents that ran each
 stage, the reason a person is needed when one is, the resume record of a paused run, and
 after an automatic merge each started `merge.after_workflows` run. A round's marker also
 holds its commit, whether its checks passed, and which of them passed on that commit,
-each with a digest of its `run` command, and a digest of its `setup` commands. `nexkit status` reads these markers, not
+each with a digest of its `run` command, and a digest of its `setup` commands. A conflict round's
+marker holds `conflicts` and the `base_sha` of the base branch it started for. A plan's record holds
+`too_large` when the plan says the work does not fit one agent session, and suggests a split when it
+can. A round whose review carried over an earlier approval records that in its review as `carried`.
+`nexkit status` reads these markers, not
 the text people read, to list the open NexKit work and what each item waits for. NexKit
 reads a marker only where [Comments and markers](security.md#comments-and-markers) says. The
 latest commit whose checks passed becomes the next round's `NEXKIT_VERIFIED_SHA`, and for each check the latest commit on which it passed
@@ -407,14 +419,25 @@ change cannot affect.
 
 The markers are NexKit's own format and can change between releases. Read them through
 `nexkit status --json`, whose `attention` field gives the reason an item needs a person.
-Names a person meets in run comments and in that output:
+These are the outcomes a person meets in run comments and in that output:
 
-| Name | Meaning |
+| Outcome | Meaning |
 |---|---|
-| `too_large` | The plan says the work does not fit one agent session, and suggests a split when it can. |
+| `planned` | A plan run posted its plan. The issue waits for its approval, its answers or a hand-made change. |
+| `ready` | Checks and the AI review passed, and a person decides what follows: the merge, the accepted criteria or the checklist items. See [Troubleshooting](troubleshooting.md). |
+| `merged` | NexKit merged the pull request after checks and review passed. |
+| `auto_fix` | Checks or the AI review found something to fix, and NexKit started an automatic fix round, up to `fix.max_auto_rounds`. |
+| `conflict_fix` | The pull request conflicts with its base branch, and NexKit started a round to resolve the conflict. |
+| `up_to_date` | The base branch already merges cleanly into the pull request, so the round found nothing to do. |
+| `held` | A label holds the issue, so NexKit kept back the round it would have started. A sweep starts it once no label holds the issue. |
+| `ci_waiting` | The checks fail as the default branch does, and a bug issue for that failure is open. NexKit starts no fix round until the default branch passes again. |
+| `retry` | The run stopped on a transient error, and NexKit started its command again in a run of its own, without a wait. |
+| `retry_waiting` | The run stopped on a transient error and waits for the next of `retry.wait_minutes` before it runs its command again. See [Transient errors](merges-and-waits.md#transient-errors). |
+| `paused` | The agent hit its usage limit, and the run waits for the limit to reset. NexKit runs the command again then, unless `usage_limit.resume` is `false`. See [Usage limits](merges-and-waits.md#usage-limits). |
+| `lost` | An automatic run ended without a report, and its job log says what happened. With autopilot, NexKit starts the command again, and a person decides once the starts are used up. See [Failure handling](failure-handling.md#failure-handling). |
+| `needs_merge` | A round of a NexKit release before the GitHub App, whose token could not change workflow files. Only the comments of those releases have this outcome, and it counts against neither limit. |
 | `conflicting` | The round's commit conflicts with the base branch, so its checks and review did not run, and NexKit started no conflict round, because `conflicts.max_rounds` are used up. |
 | `branch_updated` | GitHub refused the automatic merge because the branch was behind its base branch; NexKit merged the base branch into it and started `/nexkit review` on the new commit. |
-| `carried` | The round carried over the approval of that commit, after a branch update that left the pull request's change as it was. |
 | `head_moved` | GitHub refused the automatic merge because the branch moved after the round checked it; NexKit started `/nexkit review` on the new head. When GitHub says it moved and the pull request still shows the head the round checked, or NexKit cannot read the head, the outcome is `merge_refused` and a person decides. |
 | `superseded` | NexKit stopped the round in its checks because the base branch moved so that they could not lead to a merge, and started the conflict round, or an update of the branch and `/nexkit review`. See *Stopping a round in its checks* under [Work without a command](work-without-a-command.md#work-without-a-command). |
 | `stop_failed` | NexKit stopped the round in its checks for the same reason, but the next round could not start; a person starts it. |
@@ -428,8 +451,15 @@ Names a person meets in run comments and in that output:
 | `merge_untrusted` | The same edit stopped a merge. A new `/nexkit trust` starts `/nexkit review`, which merges as usual. |
 | `person_reviewed` | `/nexkit review` checked and reviewed a person's pull request. NexKit changes nothing on it, whatever the round found. See *A person's pull request* under [Stages](stages.md#stages). |
 | `no_change` | An implement round found that no change is needed. The issue closes with its finding, at once or through autopilot's answer (see [Stages](stages.md#stages)). A plan's finding closes it through autopilot. |
-| `attention` | The reason a person is needed, when one is. |
-| `conflicts`, `base_sha` | The round was a conflict round, started for that commit of the base branch. |
+| `agent_blocked` | The agent stopped at a decision that is the owner's to make, and it asked questions. A person answers them. See [Troubleshooting](troubleshooting.md). |
+| `agent_error` | The run stopped on an error. Agent errors never retry by themselves, so a person posts the command again. See [Troubleshooting](troubleshooting.md). |
+| `agent_failed` | The agent job ended without a result, so NexKit had nothing to go on. A person posts the command again. See [Troubleshooting](troubleshooting.md). |
+| `publish_failed` | NexKit could not publish the agent's result. See [Troubleshooting](troubleshooting.md). |
+| `review_failed` | The AI review did not complete. A person posts `/nexkit review` again. See [Troubleshooting](troubleshooting.md). |
+| `needs_human` | Checks or the AI review still need attention, and no automatic fix round remains. See [Troubleshooting](troubleshooting.md). |
+| `merge_refused` | GitHub refused the automatic merge. A person decides how to unblock it. See [Troubleshooting](troubleshooting.md). |
+| `retry_failed` | The run stopped on a transient error again after every wait of `retry.wait_minutes`. See [Troubleshooting](troubleshooting.md). |
+| `close_failed`, `on_base_failed` | No change is needed, or the base branch already holds this change, but GitHub refused NexKit's close. A person closes the issue, or the pull request and its issue. See [Troubleshooting](troubleshooting.md). |
 
 A pull request from NexKit 1.1.0 has a single status comment instead. NexKit reads its
 state, leaves it as it is and saves the state in a new state comment.

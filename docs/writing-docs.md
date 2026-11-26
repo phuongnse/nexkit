@@ -250,6 +250,7 @@ when a list of what the code defines misses an entry. These rules close each of 
    works and the pages split from it resolves; that each task of the `nexkit-maintain` skill links a
    section of [Delivery](delivery.md); that AGENTS.md keeps within its word limits; that the job and
    module tables of the architecture page match the workflows and `nexkit/`; that each test the
-   security page names exists; and that the index matches the decision files, each of which follows
-   the template and is linked from a rule or a page. A docs check is added only once the whole tree
-   passes it: there are no lists of exceptions.
+   security page names exists; that the outcome table of [how it works](how-it-works.md) lists each
+   outcome the code defines and no other; and that the index matches the decision files, each of
+   which follows the template and is linked from a rule or a page. A docs check is added only once
+   the whole tree passes it: there are no lists of exceptions.

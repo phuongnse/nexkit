@@ -2975,7 +2975,8 @@ class UpdateImageWorkflowTests(unittest.TestCase):
     def test_the_updates_run_every_week_with_the_least_permissions(self):
         """Both workflows that propose a pin run once a week, not after merges, since they check
         no behaviour; autopilot watches their runs, and they hold only what they need to push
-        and open a pull request."""
+        and open a pull request. Each pull request they open carries `dependencies`, as
+        docs/delivery.md says of one that updates a pin."""
         cfg = nexkit.config.load(ROOT)
         after = {
             entry["workflow"] if isinstance(entry, dict) else entry
@@ -3014,6 +3015,10 @@ class UpdateImageWorkflowTests(unittest.TestCase):
                 self.assertIn("$'1\\t1\\tnexkit/__init__.py'", jobs["update"])
                 self.assertNotIn("secrets.", text)
                 self.assertNotIn("gh issue", text)
+                creates = re.findall(r"gh pr create\b[^\n]*", jobs["update"])
+                self.assertTrue(creates)
+                for create in creates:
+                    self.assertIn("--label dependencies", create)
 
     def test_proposes_only_a_moved_digest_on_one_branch(self):
         propose, job = self.jobs["propose"], self.jobs["update"]

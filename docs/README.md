@@ -26,6 +26,9 @@ Read by people who set NexKit up on a repository and work with it there.
 | [Agents and profiles](agents-and-profiles.md) | The agents that run each stage and the profiles that choose them | You choose agents, or want to know which agent a stage uses |
 | [When a run fails](failure-handling.md) | What NexKit does for each failure and which failures it retries | You want to know whether NexKit retries a failure, and when |
 | [Configuration reference](configuration.md) | Every setting of `.nexkit/config.json`, its default and what it does; the GitHub App; upgrading | You change a setting, or upgrade NexKit |
+| [Checks](checks.md) | The checks of a repository: slow, parallel and sharded checks, result files, evidence from CI runs, skipping work | You set or change a check |
+| [Autopilot](autopilot.md) | Autopilot's scope, order, labels, trust and answers, CI on the default branch, issues from a workflow, `/nexkit trust`, Dependabot advisories | You turn autopilot on or change what it takes |
+| [Merges and waits](merges-and-waits.md) | Automatic merge, parent issues, mentions, conflicts with the base branch, usage limits and transient errors | You let NexKit merge, or change how it waits and whom it tells |
 | [Troubleshooting](troubleshooting.md) | What each stop and wait means, and what to do | A run failed, stopped or waits for a person |
 | [Security](security.md) | What NexKit trusts, and for each input it does not, what an attacker could reach, the rule that contains it and the tests that check it | You decide how far to trust an input, or change a job, a token or a secret |
 

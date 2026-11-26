@@ -474,9 +474,12 @@ def main():
             "status": "done",
             "summary": "Added test_add_negative. Kept the name add(), as the note asks.",
         }
-        # No fix round was recorded since that review; this run's fix is the one it reads.
+        # No fix round was recorded since that review; this run's fix is the one it reads, as
+        # the newest record, numbered after the review's round.
         current = current_fix(decision, fix)
-        reviewed = prompt.previous_review(state["last_review"], [], current)
+        reviewed = prompt.previous_review(
+            state["last_review"], [{**current, "round": state["last_review"]["round"] + 1}]
+        )
         context = {**CONTEXT, "pr": 2, **reviewed}
         second = stage(
             "review", work, root / "second", args.program, context, checks=checks, base="main"

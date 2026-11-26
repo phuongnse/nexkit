@@ -34,7 +34,7 @@ trust that repository; only on their word, run it again with
      `retrying` with its `retry_at`, `failed`, `waiting`, `held`), the round and the link
      to its last round. A `held` one
      has an issue that a label holds (see *Labels* under
-     [Autopilot](../../docs/configuration.md#autopilot)), which only a person releases. A `waiting` pull
+     [Autopilot](../../docs/autopilot.md#autopilot)), which only a person releases. A `waiting` pull
      request has `waits_for`, the autopilot `bug` issue it waits for, and the `reason`
      (see *Failing checks the default branch has* under
      [Stages](../../docs/stages.md#stages)). Like a `merge_waiting` one, it needs
@@ -57,7 +57,7 @@ trust that repository; only on their word, run it again with
    resumes by itself after the time shown, unless it is also in `needs_person` (see
    [Usage limits](../../docs/work-without-a-command.md#usage-limits)). A `retrying` item stopped on
    a transient error and runs its command again by itself at `retry_at` (see [Transient
-   errors](../../docs/configuration.md#transient-errors)); posting the command meanwhile
+   errors](../../docs/merges-and-waits.md#transient-errors)); posting the command meanwhile
    replaces that wait. A run comment showing ⏭️ `continued` was carried on by a later run.
 
 2. **Why a run stopped.** For an item that failed, open its link. For the details, use
@@ -81,6 +81,6 @@ trust that repository; only on their word, run it again with
    stage and why triage chose them. With autopilot on, do not post `/nexkit plan` or
    `/nexkit go` on an issue whose autopilot state is `start` or `active`: autopilot starts
    it or already did. Nor suggest one for what autopilot does by itself after a comment
-   (see the configuration's [Autopilot](../../docs/configuration.md#autopilot)). To make autopilot look again at once, for example after a
+   (see the configuration's [Autopilot](../../docs/autopilot.md#autopilot)). To make autopilot look again at once, for example after a
    *blocked by* relationship changed, start a sweep:
    `gh workflow run nexkit.yml -f command=autopilot -f number=autopilot`.

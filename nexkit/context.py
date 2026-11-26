@@ -11,6 +11,7 @@ import os
 import re
 from pathlib import Path
 
+from . import first_state
 from .autopilot import (
     LINEAGE,
     PART,
@@ -563,7 +564,9 @@ def linked(gh, issue, comments, chain=(), problems=(), skip=(), own=None):
 def fetch(gh, decision, stage, fix_result=None, results=None, ci=None, cfg=None, workflow=""):
     """(the inputs of `stage`'s prompt, by kind, as the engine's `prompt` reads them; what
     only the GitHub host keeps of the round: an edit nobody vouched for, the names of the
-    texts the issue links to that were read, and whether a fix round merges a moved base).
+    texts the issue links to that were read, whether a fix round merges a moved base, and the
+    state document that the prompt reads the earlier rounds from, built from NexKit 6's state
+    comment).
     See `gather` for the arguments."""
     issue = gh.issue(decision["issue"])
     comments = gh.comments(decision["issue"])
@@ -622,12 +625,10 @@ def fetch(gh, decision, stage, fix_result=None, results=None, ci=None, cfg=None,
             inputs["previous_plan"] = previous
     if decision.get("person") or (stage == "review" and decision.get("pr")):
         _, state = read_state(gh.comments(decision["pr"]))
-        state = state or {}
-        inputs["findings"] = {"last_review": state.get("last_review")}
-        inputs["rounds"] = {
-            "fixes": state.get("fixes") or [],
-            "current": current_fix(decision, fix_result),
-        }
+        change = {"id": str(decision["pr"]), "version": str(decision.get("head") or "")}
+        host["state"] = first_state.for_prompt(
+            decision["issue"], change, state, current_fix(decision, fix_result)
+        )
         merged = merged_fix(decision, fix_result)
         if merged:
             inputs["diff"] = {"merged": merged}
@@ -639,12 +640,15 @@ def fetch(gh, decision, stage, fix_result=None, results=None, ci=None, cfg=None,
         saved = _saved_feedback(pr_comments)
         _, state = read_state(pr_comments)
         inputs["checks"] = {"results": saved.get("checks"), "required": saved.get("required")}
-        inputs["findings"] = {"review": saved.get("review")}
         inputs["discussion"]["said"] = people(gh, decision)
         host["merge_moved_base"] = _after_failed_checks(decision, pr_comments)
         kept = evidence(saved, decision, results)
         evidence_found["results"] = {**kept, "keeps": KEEPS["results"]} if kept else None
-        inputs["rounds"] = {"fixes": (state or {}).get("fixes") or []}
+        change = {
+            "id": str(decision["pr"]),
+            "version": str(saved.get("head") or decision.get("head") or ""),
+        }
+        host["state"] = first_state.for_prompt(decision["issue"], change, state)
         inputs["checks"]["diagnose"] = diagnosis(decision, saved)
         inputs["discussion"]["change"] = entries(pr_comments)
     if evidence_found:
@@ -690,7 +694,7 @@ def gather(
     stage = stage or decision["action"]
     inputs, host = fetch(gh, decision, stage, fix_result, results, ci, cfg, workflow)
     shelf = prompt.Shelf(Path(texts).resolve() if texts else None)
-    context = prompt.texts(stage, inputs, shelf)
+    context = prompt.texts(stage, inputs, shelf, host.get("state"))
     if shelf.folder:
         keep_texts(
             ({"path": path, "text": text} for path, text in shelf.files.items()), shelf.folder

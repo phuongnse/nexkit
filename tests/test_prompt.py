@@ -16,6 +16,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -23,7 +24,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from nexkit import agent, engine, protocol
+from nexkit import agent, engine, first_state, protocol
 from nexkit.context import gather
 from nexkit.engine import cli, prompt, serve, textutil
 from nexkit.engine.machine import INPUTS
@@ -249,6 +250,17 @@ def case_fix(world):
                     {"severity": "suggestion", "file": "", "line": 0, "body": "Docs"},
                 ]
             },
+        },
+        # NexKit 6 records the review beside the checks it fed to the fix round.
+        last_review={
+            "round": 3,
+            "head": HEAD,
+            "verdict": "request_changes",
+            "findings": [
+                {"severity": "blocking", "file": "calc.py", "line": 2, "body": "Sign"},
+                {"severity": "blocking", "file": "", "line": 0, "body": "No test"},
+                {"severity": "suggestion", "file": "", "line": 0, "body": "Docs"},
+            ],
         },
         fixes=[
             {
@@ -558,7 +570,7 @@ class Round:
             if found["previous"]:
                 decision["previous_profile"] = found["previous"]
         self.decision = decision
-        self.fetched, self.added = {}, {}
+        self.fetched, self.added, self.state = {}, {}, None
 
     def run(self):
         """The prompt the round writes, as `prompt.md` keeps it."""
@@ -605,9 +617,10 @@ class Round:
         folder = world.out / "triage" if stage == "triage" else world.out
         return world.shown((folder / "prompt.md").read_text(encoding="utf-8"))
 
-    def texts(self, stage, inputs, shelf, real=prompt.texts):
+    def texts(self, stage, inputs, shelf, state=None, real=prompt.texts):
         self.fetched = json.loads(json.dumps(inputs))
-        return real(stage, inputs, shelf)
+        self.state = json.loads(json.dumps(state))
+        return real(stage, inputs, shelf, state)
 
     def finish(self, stage, context, inputs, policies, *rest, real=prompt.finish):
         self.added = json.loads(json.dumps(inputs))
@@ -628,7 +641,7 @@ class Round:
         return {
             "protocol": 1,
             "call": "prompt",
-            "state": None,
+            "state": self.state,
             "stage": self.stage,
             "inputs": inputs,
             "policies": agent.policies(self.cfg),
@@ -854,12 +867,12 @@ class PromptInputTests(unittest.TestCase):
         self.schema = protocol.load("calls/prompt.schema.json")
         self.defs = self.schema["$defs"]
 
-    def request(self, stage, inputs):
+    def request(self, stage, inputs, state=None):
         policies = {"budgets": {"implement": {"seconds": 2700}}}
         request = {
             "protocol": 1,
             "call": "prompt",
-            "state": None,
+            "state": state,
             "stage": stage,
             "inputs": inputs,
             "policies": policies,
@@ -868,18 +881,124 @@ class PromptInputTests(unittest.TestCase):
         self.assertEqual(protocol.check(request, "calls/prompt.schema.json"), [])
         return request
 
-    def test_only_round_history_is_left_in_rounds_and_findings(self):
-        keys = lambda name: set(self.defs[name]["properties"])  # noqa: E731
-        self.assertEqual(keys("rounds"), {"fixes", "current"})
-        self.assertEqual(keys("findings"), {"review", "lastReview"})
-        self.assertEqual(keys("current"), {"auto", "summary", "note", "cause"})
+    def test_rounds_and_findings_are_no_prompt_input(self):
+        for kind in ("rounds", "findings"):
+            self.assertNotIn(kind, self.defs["inputs"]["properties"])
+            self.assertNotIn(
+                kind,
+                protocol.load("actions/runAgent.schema.json")["properties"]["inputs"]["items"][
+                    "enum"
+                ],
+            )
+            for stage, needs in INPUTS.items():
+                self.assertNotIn(kind, needs, stage)
         for name, field in (
             ("discussion", "said"),
             ("item", "outsidePlan"),
             ("diff", "merged"),
             ("checks", "diagnose"),
         ):
-            self.assertIn(field, keys(name))
+            self.assertIn(field, set(self.defs[name]["properties"]))
+        # The input table of docs/engine.md names the schema's inputs, and no others.
+        text = (ROOT / "docs" / "engine.md").read_text(encoding="utf-8")
+        table = text.split("### The prompt", 1)[1].split("\n\n")[2]
+        rows = [row for row in table.splitlines()[2:] if row.startswith("|")]
+        named = {name for row in rows for name in re.findall(r"`(\w+)`", row.split("|")[1])}
+        self.assertEqual(named, set(self.defs["inputs"]["properties"]))
+
+    def fix_state(self, version="v", fixes=None, last=None):
+        """The state document of a change whose fix rounds, and last review if `last`, the
+        prompt reads."""
+        state = first_state.empty("5")
+        state["change"] = {"id": "6", "version": version}
+        state["rounds"]["fixes"] = fixes
+        if last:
+            state["rounds"]["lastReview"] = last
+        return state
+
+    def test_a_fix_prompt_lists_the_fix_rounds_of_its_state(self):
+        fixes = [
+            {
+                "round": 2,
+                "auto": True,
+                "diagnosis": False,
+                "note": "",
+                "summary": "Wrapped the select.",
+                "cause": "",
+            },
+            {
+                "round": 3,
+                "auto": False,
+                "diagnosis": True,
+                "note": "Try popupOverflow",
+                "summary": "Set popupOverflow.",
+                "cause": "The popup is clipped.",
+            },
+        ]
+        inputs = self.needs("fix")
+        shown = engine.answer(self.request("fix", inputs, self.fix_state(fixes=fixes)))["text"]
+        self.assertIn("### Round 2: fix (automatic)", shown)
+        self.assertIn("Wrapped the select.", shown)
+        self.assertIn("### Round 3: fix (requested by a person, a diagnosis round)", shown)
+        self.assertIn("Set popupOverflow.", shown)
+        self.assertIn("The popup is clipped.", shown)
+        self.assertNotIn(prompt.NO_EARLIER_FIXES, shown)
+        # Without a state there are no earlier rounds.
+        shown = engine.answer(self.request("fix", inputs))["text"]
+        self.assertIn(prompt.NO_EARLIER_FIXES, shown)
+        self.assertNotIn("### Round 2: fix", shown)
+
+    def test_a_fix_prompt_lists_the_last_reviews_blocking_findings_only_for_its_version(self):
+        last = {
+            "round": 3,
+            "version": "v",
+            "verdict": "request_changes",
+            "findings": [
+                {"severity": "blocking", "file": "calc.py", "line": 2, "body": "Sign is wrong"},
+                {"severity": "suggestion", "file": "", "line": 0, "body": "Docs"},
+            ],
+        }
+        inputs = self.needs("fix")
+        heading = "### Blocking findings from the NexKit review"
+        for version, shown in (("v", True), ("w", False)):
+            with self.subTest(version=version):
+                state = self.fix_state(version, [], last)
+                text = engine.answer(self.request("fix", inputs, state))["text"]
+                self.assertEqual(heading in text, shown)
+                self.assertEqual("`calc.py:2`: Sign is wrong" in text, shown)
+                self.assertNotIn("Docs", text.split("Blocking findings")[-1][:200])
+
+    def test_a_review_prompt_reads_the_last_review_and_the_fix_rounds_since_from_its_state(self):
+        last = {"round": 3, "version": "a" * 40, "verdict": "request_changes", "findings": []}
+        fixes = [
+            {
+                "round": 3,
+                "auto": True,
+                "diagnosis": False,
+                "summary": "Before the review.",
+                "note": "",
+                "cause": "",
+            },
+            {
+                "round": 4,
+                "auto": False,
+                "diagnosis": False,
+                "summary": "Merged the base.",
+                "note": "",
+                "cause": "",
+            },
+        ]
+        inputs = self.needs("review")
+        inputs["item"]["change"] = "6"
+        inputs["diff"] = {**inputs["diff"], "merged": {"base": "b" * 40, "conflicts": ["a.py"]}}
+        state = self.fix_state("v", fixes, last)
+        text = engine.answer(self.request("review", inputs, state))["text"]
+        self.assertIn("Findings of the review of commit aaaaaaa (request_changes)", text)
+        self.assertIn("#### Fix 1 (requested by a person)", text)
+        self.assertIn("Merged the base.", text)
+        self.assertNotIn("Before the review.", text)
+        self.assertNotIn("#### Fix 2", text)
+        self.assertIn("resolved conflicts in `a.py`", text)
 
     def needs(self, stage):
         """The inputs `stage` needs, each with only its required fields."""
@@ -893,7 +1012,7 @@ class PromptInputTests(unittest.TestCase):
         kinds = self.defs["inputs"]["properties"]
         for stage, needs in INPUTS.items():
             for kind in needs:
-                choices = 2 if kind in ("findings", "linked") else 1
+                choices = 2 if kind == "linked" else 1
                 for option in range(choices):
                     with self.subTest(stage=stage, kind=kind, option=option):
                         inputs = self.needs(stage)

@@ -14,7 +14,7 @@ logs go, where the state lives and what to decide about security. Four more page
 
 Three parts are played around NexKit:
 
-- **The person who decides:** the people in [`notify`](configuration.md#mentions), whom
+- **The person who decides:** the people in [`notify`](merges-and-waits.md#mentions), whom
   NexKit mentions when a run needs a person. They answer the questions that have no
   recommended option, and those asked again after autopilot answered them. They decide
   each merge while `merge.auto` is off, confirm the acceptance criteria that the review
@@ -83,11 +83,11 @@ Some other events start a run too; they run only `route` and `maintain` (see
 
 | Job | Runs for | Does |
 |---|---|---|
-| `route` | every event | Checks the command and the author's write access, reads the config from the default branch, and on a person's pull request that changes `.nexkit/config.json` loads that file from its head through the API, picks the action, and shows that the run started. In an automatic review, leaves out of the check matrix the checks whose [`unaffected_by`](configuration.md#checks-that-a-change-cannot-affect) lists every path changed since they passed, from GitHub's comparison. Never executes repository code. |
-| `agent` | plan, go, fix | Installs the pinned runtimes the configuration uses; for go and fix, restores the [caches](configuration.md#caches) and runs `setup`; for fix, downloads the [result files](configuration.md#result-files-of-failing-checks) that the last round's failing checks kept (`actions: read`); for go and fix, downloads the [evidence of the CI runs](configuration.md#evidence-from-ci-runs) the issue names (`actions: read`, `checks: read`). Then one agent session, and at a usage limit the stage's [fallback agents](configuration.md#fallback-agents) in turn; with profiles, a plan starts with a triage call. Uploads the result and a patch. |
+| `route` | every event | Checks the command and the author's write access, reads the config from the default branch, and on a person's pull request that changes `.nexkit/config.json` loads that file from its head through the API, picks the action, and shows that the run started. In an automatic review, leaves out of the check matrix the checks whose [`unaffected_by`](checks.md#checks-that-a-change-cannot-affect) lists every path changed since they passed, from GitHub's comparison. Never executes repository code. |
+| `agent` | plan, go, fix | Installs the pinned runtimes the configuration uses; for go and fix, restores the [caches](configuration.md#caches) and runs `setup`; for fix, downloads the [result files](checks.md#result-files-of-failing-checks) that the last round's failing checks kept (`actions: read`); for go and fix, downloads the [evidence of the CI runs](checks.md#evidence-from-ci-runs) the issue names (`actions: read`, `checks: read`). Then one agent session, and at a usage limit the stage's [fallback agents](configuration.md#fallback-agents) in turn; with profiles, a plan starts with a triage call. Uploads the result and a patch. |
 | `publish` | plan, go, fix | Posts the plan, or applies the patch, rejects protected paths, commits, pushes and opens the pull request. When the base branch moved while the agent worked, it merges the base branch's tip after the round's commit if the base branch's rules want pull requests up to date, and finds with git whether that tip conflicts with the commit (see [Stages](stages.md#stages)). Never executes repository code. |
-| `shards` | go, fix, review, with [sharded checks](configuration.md#parallel-checks) | Runs the `count` of each sharded check on the published commit, before `setup`, and gives `verify` the matrix of its shards, each a check of its own with `NEXKIT_SHARD=k/N`. In an automatic review, also leaves out the shards whose `unaffected_by` lists every path changed since they passed with the same N, from git. A `count` that fails or prints no number from 1 to `max` fails its check, and no shard of it runs. |
-| `verify` | go, fix, review | Restores the [caches](configuration.md#caches), then runs `setup` and the checks on the published commit, and keeps the result files of the checks that failed. With [`parallel_checks`](configuration.md#parallel-checks), one such job runs for each check job, at once. Skipped, with the review, for a published commit that conflicts with the base branch, and by itself when `route` skipped every check. |
+| `shards` | go, fix, review, with [sharded checks](checks.md#parallel-checks) | Runs the `count` of each sharded check on the published commit, before `setup`, and gives `verify` the matrix of its shards, each a check of its own with `NEXKIT_SHARD=k/N`. In an automatic review, also leaves out the shards whose `unaffected_by` lists every path changed since they passed with the same N, from git. A `count` that fails or prints no number from 1 to `max` fails its check, and no shard of it runs. |
+| `verify` | go, fix, review | Restores the [caches](configuration.md#caches), then runs `setup` and the checks on the published commit, and keeps the result files of the checks that failed. With [`parallel_checks`](checks.md#parallel-checks), one such job runs for each check job, at once. Skipped, with the review, for a published commit that conflicts with the base branch, and by itself when `route` skipped every check. |
 | `combine` | go, fix, review, with `parallel_checks` | Joins the results of the check jobs into the one `nexkit-checks` artifact that the review, `report` and the next fix round read, and writes each check job's time to the [run summary](#logs-summary-and-artifacts), from the Actions API. Never checks out or executes repository code. |
 | `review` | go, fix, review | A fresh agent session with read-only access reviews the diff against the plan, the discussion, the check results and the previous review round. After NexKit brought an approved pull request up to date with its base branch, it first checks with git whether the approval [carries over](stages.md#stages), and then runs no agent. |
 | `report` | every action | Sets commit statuses, posts the review, shows the outcome in the run's comment, starts the next automatic round or asks for a person. With `merge.auto`, merges an approved pull request, closes its issue, deletes its branch when the repository deletes head branches on merge, and starts the `merge.after_workflows` that are due on the base branch. Never checks out or executes repository code. |
@@ -134,7 +134,7 @@ replaces ⏸️ once a later run carries the command on.
 `report` decides from the run's outcome and the agents' structured output whether a
 person is needed. It records the reason in the run comment's hidden marker, and with
 `notify` set it mentions those people in a new comment (see
-[Mentions](configuration.md#mentions)). The reason says what to do, why NexKit does not do
+[Mentions](merges-and-waits.md#mentions)). The reason says what to do, why NexKit does not do
 it itself, and where to look, such as every question to answer, each checklist item to
 decide with what the review found, or, for a refused merge, the rule and the files a code
 owner reviews (see [What a mention
@@ -145,14 +145,14 @@ says](troubleshooting.md#what-a-mention-says)):
 | Plan posted, and it has questions or says the issue is too large | yes, unless [autopilot](work-without-a-command.md#autopilot) answers it with an option that does more than close the issue, or splits it, or plans again for parts it lacks, for fewer than its more than ten parts, or for parts titled like the issue |
 | Plan posted without either | no |
 | The agent returned `blocked` | yes, unless autopilot answers it |
-| The agent failed or errored, publishing failed, or the review did not complete | yes, unless the error was transient and the command runs again after its wait of [`retry.wait_minutes`](configuration.md#transient-errors), or autopilot asks for a split after an implement or fix agent ran out of time (see [limits on parts](work-without-a-command.md#autopilot)) |
+| The agent failed or errored, publishing failed, or the review did not complete | yes, unless the error was transient and the command runs again after its wait of [`retry.wait_minutes`](merges-and-waits.md#transient-errors), or autopilot asks for a split after an implement or fix agent ran out of time (see [limits on parts](work-without-a-command.md#autopilot)) |
 | Checks fail only as the default branch does while autopilot's `bug` issue about that is open (`ci_waiting`) | no: an automatic fix round starts once the default branch passes (see *Failing checks the default branch has* under [Stages](stages.md#stages)) |
 | Checks or review still fail and no automatic fix rounds remain | yes |
 | Checks or review still fail after a fix round found nothing to change for a cause outside the code and ran them again | yes |
 | Ready, with `merge.auto` off | yes |
 | Ready, with an acceptance criterion the review could not verify | yes, also with `merge.auto` on |
 | Ready, with a checklist item not met that a person decides | yes, also with `merge.auto` on; their approval merges |
-| GitHub refused the automatic merge | yes, unless the refusal passes by itself: see [Failure handling](failure-handling.md#failure-handling). The person's part, such as a code owner's approval, is enough: NexKit merges after an approval, or with autopilot once GitHub reports the pull request as mergeable (see [Automatic merge](configuration.md#automatic-merge)) |
+| GitHub refused the automatic merge | yes, unless the refusal passes by itself: see [Failure handling](failure-handling.md#failure-handling). The person's part, such as a code owner's approval, is enough: NexKit merges after an approval, or with autopilot once GitHub reports the pull request as mergeable (see [Automatic merge](merges-and-waits.md#automatic-merge)) |
 | Merged, or an automatic fix or conflict round started | no |
 | The round's commit conflicts with the base branch, and no conflict round is left to start (`conflicting`) | yes |
 | Paused at the usage limit, resuming by itself | no |
@@ -256,7 +256,7 @@ stage stopped, for a fix round that merged the base branch the files that had co
 the files changed (including what the merge brought), each command the agent ran and
 whether it failed, and for a review the findings.
 
-With [`parallel_checks`](configuration.md#parallel-checks), the `combine` job's summary
+With [`parallel_checks`](checks.md#parallel-checks), the `combine` job's summary
 shows the round's checks as a whole, from the Actions API and each job's `checks.json`: a
 line with the run's time so far, how long it waited before its first job started, and the
 time from the first check job's start to the last one's end; then one row per check job,
@@ -307,7 +307,7 @@ implement and review, only when every run in it has a count; otherwise the cell 
 | Artifact | Contains |
 |---|---|
 | `nexkit-agent`, `nexkit-review` | `prompt.md` (the exact prompt), `context.json`, `texts/` (each whole text the prompt [shortened or left out](agents-and-profiles.md#agents), and the whole kept output of each failing check it shows), `result.json`, `run.json` (the [runner's](engine.md#runners) result, built from the redacted `result.json`), `changes.patch` (implement and fix), and with `transcript` on: `transcript.jsonl` (the CLI's event stream, including thinking) and `transcript.md` (the conversation in order: the agent's text, the CLI's notices, tool calls and results shortened as in the log, without thinking). A plan with profiles adds `triage/` with the triage call's `prompt.md` and transcripts; its result is in the plan's `result.json`, and the runner's in `triage/run.json`. A fallback agent's transcripts are in `agent-<name>/` (for triage, `triage/agent-<name>/`). |
-| `nexkit-checks` | `checks.json`: each check's command, exit code, the last 12,000 characters of its output (`output`) and the first 20 lines before them that report a failure (`failure_lines`, when there are any). `results/<check>/`: the files that each failing check names in [`results`](configuration.md#result-files-of-failing-checks), text files redacted, at most 50 MB per round; with [`parallel_checks`](configuration.md#parallel-checks), at most the larger of each job's even share of 50 MB and 25 MB per job. The next fix round's `agent` job downloads this artifact. With [`parallel_checks`](configuration.md#parallel-checks), each check job uploads its own part as `nexkit-checks-<job>`, with `checked.json`, the commit it checked, and `combine` joins them into this one. |
+| `nexkit-checks` | `checks.json`: each check's command, exit code, the last 12,000 characters of its output (`output`) and the first 20 lines before them that report a failure (`failure_lines`, when there are any). `results/<check>/`: the files that each failing check names in [`results`](checks.md#result-files-of-failing-checks), text files redacted, at most 50 MB per round; with [`parallel_checks`](checks.md#parallel-checks), at most the larger of each job's even share of 50 MB and 25 MB per job. The next fix round's `agent` job downloads this artifact. With [`parallel_checks`](checks.md#parallel-checks), each check job uploads its own part as `nexkit-checks-<job>`, with `checked.json`, the commit it checked, and `combine` joins them into this one. |
 
 Each stage that runs uploads its artifact, even when it fails. `report` downloads only the
 artifacts of the stages that ran:
@@ -393,7 +393,7 @@ reads a marker only where [Comments and markers](security.md#comments-and-marker
 latest commit whose checks passed becomes the next round's `NEXKIT_VERIFIED_SHA`, and for each check the latest commit on which it passed
 with its current command and the current `setup` becomes its `NEXKIT_CHECK_VERIFIED_SHA`
 (see [Skipping work that a change cannot
-affect](configuration.md#skipping-work-that-a-change-cannot-affect)). In an automatic
+affect](checks.md#skipping-work-that-a-change-cannot-affect)). In an automatic
 review, `route` compares the round's commit with that commit to skip the checks that a
 change cannot affect.
 
@@ -416,7 +416,7 @@ Names a person meets in run comments and in that output:
 | `issue_closed` | The issue closed while its plan or `/nexkit go` ran, so NexKit published nothing. |
 | `merge_issue_closed` | Checks and review approved the pull request, but its issue is closed, so NexKit did not merge it; a person merges or closes it. |
 | `pull_closed` | Checks and review approved the pull request, but a person had already merged or closed it, so NexKit did not merge it. Nobody is mentioned. Reopened, it waits for a person's approval or `/nexkit review`. |
-| `agent_untrusted` | Someone without write access edited a vouched issue, so a round NexKit started ran no agent. A new `/nexkit trust` starts it again; it counts against neither `fix.max_auto_rounds` nor `conflicts.max_rounds`. See [Vouching for an issue](configuration.md#vouching-for-an-issue). |
+| `agent_untrusted` | Someone without write access edited a vouched issue, so a round NexKit started ran no agent. A new `/nexkit trust` starts it again; it counts against neither `fix.max_auto_rounds` nor `conflicts.max_rounds`. See [Vouching for an issue](autopilot.md#vouching-for-an-issue). |
 | `merge_untrusted` | The same edit stopped a merge. A new `/nexkit trust` starts `/nexkit review`, which merges as usual. |
 | `person_reviewed` | `/nexkit review` checked and reviewed a person's pull request. NexKit changes nothing on it, whatever the round found. See *A person's pull request* under [Stages](stages.md#stages). |
 | `no_change` | An implement round found that no change is needed. The issue closes with its finding, at once or through autopilot's answer (see [Stages](stages.md#stages)). A plan's finding closes it through autopilot. |
@@ -446,8 +446,8 @@ These are the choices that remain with whoever runs NexKit on a repository.
 - Add to `protected_paths` the paths no agent may change, beyond `.github/` and `.nexkit/`, which
   are required (see the [configuration reference](configuration.md)).
 - List in `autopilot.trusted_workflows` only workflows whose output you would act on unread (see
-  [Issues from a workflow](configuration.md#issues-from-a-workflow)), and vouch for any other issue
-  that autopilot should take with [`/nexkit trust`](configuration.md#vouching-for-an-issue).
+  [Issues from a workflow](autopilot.md#issues-from-a-workflow)), and vouch for any other issue
+  that autopilot should take with [`/nexkit trust`](autopilot.md#vouching-for-an-issue).
 
 The reasons are in [D4](decisions/d4-outside-text-is-untrusted.md) and
 [D5](decisions/d5-agents-cannot-change-the-pipeline.md).

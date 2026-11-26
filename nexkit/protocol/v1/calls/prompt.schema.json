@@ -19,6 +19,7 @@
       "const": "prompt"
     },
     "state": {
+      "$comment": "The fix and review prompts read the earlier fix rounds from `rounds.fixes`, the last review from `rounds.lastReview` and the change's current version from `change.version`; a request without a state, or whose state holds none of them, shows no earlier rounds. The newest fix record is the round a review follows.",
       "anyOf": [
         {
           "$ref": "../state.schema.json"
@@ -232,14 +233,8 @@
         "previousPlan": {
           "$ref": "#/$defs/previousPlan"
         },
-        "rounds": {
-          "$ref": "#/$defs/rounds"
-        },
         "checks": {
           "$ref": "#/$defs/checks"
-        },
-        "findings": {
-          "$ref": "#/$defs/findings"
         },
         "linked": {
           "anyOf": [
@@ -396,132 +391,6 @@
       },
       "required": []
     },
-    "fix": {
-      "$comment": "A recorded fix round: who started it, its note, what the agent found, the checks that still failed after it.",
-      "type": "object",
-      "properties": {
-        "round": {
-          "type": "integer"
-        },
-        "auto": {
-          "type": [
-            "boolean",
-            "null"
-          ]
-        },
-        "summary": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "note": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "cause": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "diagnosis": {
-          "type": "boolean"
-        },
-        "failing": {
-          "type": [
-            "array",
-            "null"
-          ],
-          "items": {
-            "type": "object",
-            "properties": {
-              "name": {
-                "type": "string"
-              },
-              "signature": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              }
-            },
-            "required": [
-              "name"
-            ]
-          }
-        },
-        "conflicts": {
-          "$comment": "The files a merge of the base had conflicts in; [] when it merged cleanly, null without a merge.",
-          "type": [
-            "array",
-            "null"
-          ],
-          "items": {
-            "type": "string"
-          }
-        }
-      },
-      "required": [
-        "round"
-      ]
-    },
-    "current": {
-      "$comment": "The fix round of this run, which the review follows: who started it, its note, and what its agent said. Its merge of the base is `diff.merged`.",
-      "type": "object",
-      "properties": {
-        "auto": {
-          "type": [
-            "boolean",
-            "null"
-          ]
-        },
-        "summary": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "note": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "cause": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": []
-    },
-    "rounds": {
-      "$comment": "Earlier rounds: the recorded fix rounds and the fix round of this run that the review follows. Interim: the host sends it until it keeps the engine's state document, which then holds it.",
-      "type": "object",
-      "properties": {
-        "fixes": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/fix"
-          }
-        },
-        "current": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/current"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      },
-      "required": []
-    },
     "check": {
       "$comment": "A check's result with the end of its output and earlier lines that report a failure.",
       "type": "object",
@@ -638,74 +507,6 @@
       },
       "required": []
     },
-    "finding": {
-      "type": "object",
-      "properties": {
-        "severity": {
-          "type": "string"
-        },
-        "file": {
-          "type": "string"
-        },
-        "line": {
-          "type": "integer"
-        },
-        "body": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "severity",
-        "file",
-        "line",
-        "body"
-      ]
-    },
-    "toFix": {
-      "$comment": "The review whose blocking findings a fix round addresses.",
-      "type": "object",
-      "properties": {
-        "findings": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/finding"
-          }
-        }
-      },
-      "required": [
-        "findings"
-      ]
-    },
-    "lastReview": {
-      "$comment": "The last review of the change, which the next review reads.",
-      "type": "object",
-      "properties": {
-        "round": {
-          "type": "integer"
-        },
-        "head": {
-          "type": "string"
-        },
-        "verdict": {
-          "type": "string"
-        },
-        "findings": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/finding"
-          }
-        },
-        "leftOut": {
-          "type": "integer"
-        }
-      },
-      "required": [
-        "round",
-        "head",
-        "verdict",
-        "findings"
-      ]
-    },
     "said": {
       "$comment": "What a person said on the change's version: a review with its state, or a comment on a line.",
       "anyOf": [
@@ -780,33 +581,6 @@
           ]
         }
       ]
-    },
-    "findings": {
-      "$comment": "The findings a fix round addresses and the last review a review reads. Interim: the host sends it until it keeps the engine's state document, which then holds it.",
-      "type": "object",
-      "properties": {
-        "review": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/toFix"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "lastReview": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/lastReview"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      },
-      "required": []
     },
     "linkedText": {
       "$comment": "A text the item links to: a comment, the engine's plan, or the text of an item or a change.",
@@ -1204,7 +978,7 @@
       ]
     },
     "diff": {
-      "$comment": "The change, from the host's workspace. `merging` is the version of the base a fix round merges in and the files it conflicts in. `merged` is the merge of the base that this run's fix round made, which a review follows.",
+      "$comment": "The change, from the host's workspace. `merging` is the version of the base a fix round merges in and the files it conflicts in. `merged` is the merge of the base that the newest fix record in `state.rounds.fixes` made, the round a review follows.",
       "type": "object",
       "properties": {
         "base": {

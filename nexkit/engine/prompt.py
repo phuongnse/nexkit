@@ -4,7 +4,9 @@ keeps and the list of what was shortened or not read (docs/engine.md#the-engine)
 
 The host fetches; the engine writes. The inputs are named by kind, as `runAgent` names them
 (`machine.INPUTS`). Inside the engine they are snake_case, as NexKit's records are; the
-protocol's call sends them in camelCase, and `answer` converts them.
+protocol's call sends them in camelCase, and `answer` converts them. The earlier fix rounds and
+the last review are not an input: they come from the call's `state`, as `rounds.fixes` and
+`rounds.lastReview`.
 
 A prompt is written in two parts, which `write` runs one after the other: `texts`, from what
 the host read about the work item, and `finish`, from what its round adds: the change's diff,
@@ -358,23 +360,15 @@ def feedback(checks=None, required=None, review=None, people=None, shelf=None):
     return "\n\n".join(parts) if parts else "No recorded feedback. Follow the note."
 
 
-def previous_review(last, fixes=(), current=None, merged=None):
-    """{previous_head, previous_round}: the `last` NexKit review of the change and the fix
-    rounds since, of the recorded `fixes` and this run's `current` one, whose merge of the
-    base is `merged`; None without a review."""
+def previous_review(last, fixes=(), merged=None):
+    """{previous_head, previous_round}: the `last` NexKit review of the change and the
+    recorded `fixes` since, the newest of which is the round the review follows, whose merge of
+    the base is `merged`; None without a review."""
     if not last:
         return None
-    fixes = [f for f in fixes or [] if f["round"] > last["round"]]
-    if current:
-        fixes.append(
-            {
-                "auto": current.get("auto"),
-                "summary": current.get("summary"),
-                "cause": current.get("cause"),
-                "note": current.get("note"),
-                "conflicts": merged.get("conflicts") if merged and merged.get("base") else None,
-            }
-        )
+    fixes = [dict(f) for f in fixes or [] if f["round"] > last["round"]]
+    if fixes and merged and merged.get("base"):
+        fixes[-1]["conflicts"] = merged.get("conflicts")
     lines = [f"### Findings of the review of commit {last['head'][:7]} ({last['verdict']})", ""]
     for number, f in enumerate(last["findings"], 1):
         where = f"{f['file']}:{f['line']}" if f.get("file") else "general"
@@ -493,11 +487,13 @@ def linked(found, shelf):
     return out
 
 
-def texts(stage, inputs, shelf):
+def texts(stage, inputs, shelf, state=None):
     """The texts of a stage's prompt that come from what the host fetched, as NexKit 6's
     `context.gather` gave them: the item, its plan and discussions, what it links to, and the
-    stage's own, in the order a prompt shortens them. A text the prompt shortens goes whole
-    to `shelf`, and `shortened` names it."""
+    stage's own, in the order a prompt shortens them. The earlier fix rounds and the last
+    review come from `state`'s `rounds`, and the version the last review must have read for
+    the fix prompt to show its findings from the change's. A text the prompt shortens goes
+    whole to `shelf`, and `shortened` names it."""
     item = inputs.get("item") or {}
     talk = inputs.get("discussion") or {}
     on_item, on_change = talk.get("item") or [], talk.get("change") or []
@@ -524,7 +520,10 @@ def texts(stage, inputs, shelf):
         context["ci_evidence"] = _without_keeps(evidence["ci"])
     if stage in ("plan", "implement", "fix", "review"):
         context["linked"] = linked(inputs.get("linked"), shelf)
-    rounds, findings = inputs.get("rounds") or {}, inputs.get("findings") or {}
+    history = snake((state or {}).get("rounds") or {})
+    fixes, last = history.get("fixes") or [], history.get("last_review")
+    if last:
+        last = {**last, "head": last["version"]}
     merged = (inputs.get("diff") or {}).get("merged") or {}
     shown = None
     if planning:
@@ -542,8 +541,7 @@ def texts(stage, inputs, shelf):
             before = previous.get("before") or 0
             shown = discussion(on_item[:before], shelf=shelf)
             context["since_plan"] = discussion(on_item[before:], notes=True, shelf=shelf)
-    current = rounds.get("current")
-    reviewed = previous_review(findings.get("last_review"), rounds.get("fixes"), current, merged)
+    reviewed = previous_review(last, fixes, merged)
     if item.get("person"):
         # Its item is the change itself, with its description and comments, so the review
         # needs neither a plan nor the same discussion twice.
@@ -558,7 +556,7 @@ def texts(stage, inputs, shelf):
         )
         context["outside_plan"] = outside_plan(item.get("outside_plan"))
         context.update(reviewed or {})
-        if current and merged.get("base"):
+        if merged.get("base"):
             context["merged"] = {
                 "head": merged.get("head"),
                 "base": merged["base"],
@@ -566,16 +564,17 @@ def texts(stage, inputs, shelf):
             }
     elif stage == "fix":
         checks = inputs.get("checks") or {}
+        version = ((state or {}).get("change") or {}).get("version")
         context["feedback"] = feedback(
             checks.get("results"),
             checks.get("required"),
-            findings.get("review"),
+            last if last and last["version"] == version else None,
             talk.get("said"),
             shelf,
         )
         results = evidence.get("results")
         context["evidence"] = _without_keeps(results) if results else None
-        context["earlier_fixes"] = earlier_fixes(rounds.get("fixes"))
+        context["earlier_fixes"] = earlier_fixes(fixes)
         context["diagnose"] = list(checks.get("diagnose") or [])
         # The fix prompt shows the feedback rather than the discussion, so it names nothing
         # shortened here.
@@ -1115,16 +1114,17 @@ def finish(stage, context, inputs, policies, folder=None, keeps=None):
     }
 
 
-def write(stage, inputs, policies=None, folder=None, unfit=None):
+def write(stage, inputs, policies=None, folder=None, unfit=None, state=None):
     """The `prompt` call, on inputs in snake_case: {text, shortened, not_read, files}. The
-    prompt of `stage` from `inputs`, or, with `unfit`, the prompt that asks the same session
-    for its result alone. `folder` is where the host keeps the texts the prompt shortens;
-    `files` are those the host writes there before the agent runs."""
+    prompt of `stage` from `inputs` and the `state` it reads earlier rounds from, or, with
+    `unfit`, the prompt that asks the same session for its result alone. `folder` is where the
+    host keeps the texts the prompt shortens; `files` are those the host writes there before
+    the agent runs."""
     if unfit is not None:
         text = result_prompt(stage, unfit)
         return {"text": text, "shortened": [], "not_read": [], "files": []}
     shelf = Shelf(folder)
-    context = texts(stage, inputs, shelf)
+    context = texts(stage, inputs, shelf, state)
     done = finish(stage, context, inputs, policies or {}, folder)
     kept = [{"path": path, "text": text} for path, text in shelf.files.items()]
     return {**done, "files": kept + done["files"]}
@@ -1138,5 +1138,6 @@ def answer(request):
         request["policies"],
         request.get("texts"),
         request.get("unfit"),
+        request.get("state"),
     )
     return camel(written)

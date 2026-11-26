@@ -450,6 +450,25 @@ class ImportTest(unittest.TestCase):
         self.assertNotIn("lastReview", rounds)
         self.assertNotIn("fixes", rounds)
 
+    def test_the_state_for_a_prompt_ends_with_this_run_s_fix_numbered_after_the_review(self):
+        fix = {"round": 4, "head": "a" * 40, "auto": False, "summary": "Kept.", "note": "n"}
+        review = {"round": 6, "head": "b" * 40, "verdict": "approve", "findings": []}
+        record = {"fixes": [fix], "last_review": review}
+        change = {"id": "308", "version": "b" * 40}
+        this = {"auto": True, "summary": "Merged.", "note": "", "cause": "Stale."}
+        state = first_state.for_prompt(42, change, record, this)
+        self.assertEqual(protocol.check(state, "state.schema.json"), [])
+        self.assertEqual((state["item"], state["change"]), ("42", change))
+        self.assertEqual([f["round"] for f in state["rounds"]["fixes"]], [4, 7])
+        self.assertEqual(state["rounds"]["fixes"][1]["summary"], "Merged.")
+        self.assertEqual(state["rounds"]["lastReview"]["version"], "b" * 40)
+        # Without a fix, or without a marker, the history is the marker's.
+        state = first_state.for_prompt(42, change, record)
+        self.assertEqual([f["round"] for f in state["rounds"]["fixes"]], [4])
+        state = first_state.for_prompt(42, None, None, this)
+        self.assertEqual([f["round"] for f in state["rounds"]["fixes"]], [1])
+        self.assertNotIn("lastReview", state["rounds"])
+
     def test_the_import_keeps_lists_and_signatures_within_the_state_s_bounds(self):
         part = {"title": "A part", "body": "Part.", "depends_on": []}
         record = {"questions": [], "too_large": True, "parts": 12, "split": [part] * 12}

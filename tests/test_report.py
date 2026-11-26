@@ -1783,7 +1783,8 @@ class ReportTests(ReportCase):
 
         fix = {"action": "fix", "issue": 5, "pr": 6, "head": HEAD, "note": ""}
         feedback = gather(self.gh, fix)["feedback"]
-        self.assertIn(body.strip(), feedback)
+        # The review NexKit records for the next round keeps a finding's first 1,500 characters.
+        self.assertIn(body[:1_500].strip(), feedback)
         self.assertIn("✘ 1 desk.spec.ts:42 › picks an option (1.3s)", feedback)
         self.assertIn("teardown ok\n1 failed\n```", feedback)
         self.assertNotIn("unit-1", feedback)

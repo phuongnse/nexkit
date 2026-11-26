@@ -1,7 +1,8 @@
-"""The docs' map lists every doc, the links of the map, of the docs standard, of the architecture
-page and of AGENTS.md resolve, AGENTS.md keeps within its word limits, and the architecture page's
-job and module tables match the workflows and nexkit/, as
-docs/writing-docs.md#how-the-docs-stay-correct says."""
+"""The docs' map lists every doc, with the decisions listed through their index. The links of the
+map, of the docs standard, of the architecture page, of the decisions and of AGENTS.md resolve.
+AGENTS.md keeps within its word limits, and the architecture page's job and module tables match the
+workflows and nexkit/. The decisions index matches the decision files, and each decision is linked,
+as docs/writing-docs.md#how-the-docs-stay-correct says."""
 
 import re
 import unittest
@@ -16,11 +17,18 @@ HEADING = re.compile(r"^#{1,6} (.+?)\s*$", re.M)
 FENCE = re.compile(r"^```.*?^```", re.M | re.S)
 AGENTS = ROOT / "AGENTS.md"
 ARCH = DOCS / "architecture.md"
+DECISIONS = DOCS / "decisions"
+DECISIONS_INDEX = DOCS / "decisions.md"
 WORKFLOWS = ("pipeline.yml", "pipeline-agent.yml", "pipeline-review.yml")
 JOBS_HEADER = "| Workflow | Job | Job token | App token | Secrets |"
 MODULES_HEADER = "| Module | Purpose |"
+DECISIONS_HEADER = "| Decision | Title | Status |"
 WORD = re.compile(r"\S*\w\S*")
 RULES = re.compile(r"^## Rules\n(.*?)(?=^## |\Z)", re.M | re.S)
+DECISION_FILE = re.compile(r"d(\d+)-[a-z0-9-]+\.md")
+DECISION_TITLE = re.compile(r"# D(\d+)\. (.+)$", re.M)
+DECISION_STATUS = re.compile(r"^Status: \*\*(Agreed|Proposed)\*\*$", re.M)
+DECISION_LINK = re.compile(r"\[D(\d+)\]\(decisions/([^)]+)\)")
 
 
 def anchors(path):
@@ -64,12 +72,20 @@ def rules(path):
 class DocsMapTests(unittest.TestCase):
     def test_the_map_lists_every_doc(self):
         listed = {file for file, _ in links(DOCS / "README.md")}
+        indexed = {file for file, _ in links(DECISIONS_INDEX)}
         for doc in sorted(DOCS.rglob("*.md")):
-            if doc.name != "README.md":
+            if doc.name == "README.md":
+                continue
+            if doc.parent == DECISIONS:
+                self.assertIn(
+                    doc.resolve(), indexed, f"docs/decisions.md has no row for {doc.name}"
+                )
+            else:
                 self.assertIn(doc.resolve(), listed, f"docs/README.md has no row for {doc.name}")
 
-    def test_the_links_of_the_map_the_docs_standard_and_agents_md_resolve(self):
-        for page in (DOCS / "README.md", DOCS / "writing-docs.md", AGENTS, ARCH):
+    def test_the_links_of_the_map_the_docs_standard_the_decisions_and_agents_md_resolve(self):
+        pages = (DOCS / "README.md", DOCS / "writing-docs.md", AGENTS, ARCH, DECISIONS_INDEX)
+        for page in (*pages, *sorted(DECISIONS.glob("*.md"))):
             for file, anchor in links(page):
                 self.assertTrue(file.exists(), f"{page.name} links {file}, which does not exist")
                 if anchor and file.suffix == ".md":
@@ -170,6 +186,64 @@ class ArchitectureTests(unittest.TestCase):
             self.assertTrue(
                 any(f"`{name}`" in cell for cell in firsts),
                 f"docs/architecture.md has no row for nexkit/{name}",
+            )
+
+
+def decision(path):
+    """The number, title and status of the decision file `path`, or None if a line is missing."""
+    text = path.read_text()
+    title = DECISION_TITLE.match(text)
+    status = DECISION_STATUS.search(text)
+    if not title or not status:
+        return None
+    return title.group(1), title.group(2), status.group(1)
+
+
+class DecisionsTests(unittest.TestCase):
+    def test_each_decision_file_follows_the_template(self):
+        files = sorted(DECISIONS.glob("*.md"))
+        self.assertTrue(files, "docs/decisions/ has no decision")
+        for file in files:
+            match = DECISION_FILE.fullmatch(file.name)
+            self.assertIsNotNone(match, f"docs/decisions/{file.name} is not d<n>-<slug>.md")
+            text = file.read_text()
+            title = DECISION_TITLE.match(text)
+            self.assertIsNotNone(title, f"{file.name} has no title '# D<n>. <title>'")
+            self.assertEqual(title.group(1), match.group(1), f"{file.name} has another number")
+            self.assertRegex(text, DECISION_STATUS, f"{file.name} has no status Agreed or Proposed")
+            for heading in ("Context", "Decision", "Consequences"):
+                section = re.compile(rf"^## {heading}$", re.M)
+                self.assertRegex(text, section, f"{file.name} has no {heading} section")
+
+    def test_the_index_has_one_row_for_each_decision_file(self):
+        rows = table(DECISIONS_INDEX, DECISIONS_HEADER)
+        self.assertTrue(rows, "docs/decisions.md has no table of decisions")
+        listed = set()
+        for cells in rows:
+            link = DECISION_LINK.fullmatch(cells[0]) if len(cells) == 3 else None
+            self.assertIsNotNone(link, f"a row of docs/decisions.md links no decision: {cells}")
+            number, name = link.groups()
+            listed.add(name)
+            if cells[2].startswith("Superseded by"):
+                continue
+            file = DECISIONS / name
+            self.assertTrue(file.exists(), f"docs/decisions.md links {name}, which does not exist")
+            self.assertEqual(
+                decision(file),
+                (number, cells[1], cells[2]),
+                f"the row of docs/decisions.md for {name} differs from the file",
+            )
+        for file in sorted(DECISIONS.glob("*.md")):
+            self.assertIn(file.name, listed, f"docs/decisions.md has no row for {file.name}")
+
+    def test_each_decision_is_linked_from_a_rule_or_a_page(self):
+        linked = set()
+        for page in (AGENTS, *DOCS.rglob("*.md")):
+            if page != DECISIONS_INDEX:
+                linked.update(file for file, _ in links(page))
+        for file in sorted(DECISIONS.glob("*.md")):
+            self.assertIn(
+                file.resolve(), linked, f"no rule of AGENTS.md and no page links {file.name}"
             )
 
 

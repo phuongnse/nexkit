@@ -2,9 +2,12 @@
 
 NexKit turns GitHub issues into reviewed, tested pull requests with Claude Code. It is the reusable
 workflow `.github/workflows/pipeline.yml`, the package `nexkit/` that each job runs through
-`bin/nexkit` (standard library only, Python 3.12+), and the plugin (`.claude-plugin/`, `skills/`)
-that sets up repositories. Read [How it works](docs/how-it-works.md) before changing behaviour,
-[Architecture](docs/architecture.md) for how the parts are built, [Delivery](docs/delivery.md) before taking an issue, and [Testing](docs/testing.md) for the checks.
+`bin/nexkit` (standard library only, [D8](docs/decisions/d8-standard-library-only.md), Python
+3.12+), and the plugin (`.claude-plugin/`, `skills/`) that sets up repositories. Read
+[How it works](docs/how-it-works.md) before changing behaviour,
+[Architecture](docs/architecture.md) for how the parts are built,
+[Delivery](docs/delivery.md) before taking an issue, and [Testing](docs/testing.md) for the
+checks.
 
 ## Layout
 
@@ -17,20 +20,23 @@ job holds, and the plugin are described in [Architecture](docs/architecture.md).
 
 - Jobs that run an agent or repository code have read-only tokens and no App key. Jobs with write
   tokens never run repository code or get an agent credential. `tests/test_cli.py` checks every
-  workflow; extend it for new jobs. See [Tokens and secrets](docs/architecture.md#tokens-and-secrets).
+  workflow; extend it for new jobs. See [Tokens and secrets](docs/architecture.md#tokens-and-secrets)
+  and [D3](docs/decisions/d3-agent-jobs-hold-no-write-token.md).
 - NexKit writes on GitHub only as the App. Each writing job mints its own token. Each write must
   leave the run it starts nothing to do. The exception is `release.yml`'s `publish` job, which runs
   no repository code and pushes the image with `github.token`. See
-  [Releases](docs/delivery.md#releases).
+  [Releases](docs/delivery.md#releases) and [D2](docs/decisions/d2-nexkit-writes-only-as-the-app.md).
 - Agent output is untrusted: validate it before publishing, redact what a session prints or stores
   with `redact.py`, and print tool output with workflow commands stopped. Markers count only in the
   App's comments that no one else changed, never the Actions bot, and only at the position NexKit
-  writes them. See [Security notes](docs/how-it-works.md#security-notes).
+  writes them. See [Security notes](docs/how-it-works.md#security-notes) and
+  [D4](docs/decisions/d4-outside-text-is-untrusted.md).
 - State lives only on GitHub: comments, pull requests and statuses. See
-  [State](docs/how-it-works.md#state).
+  [State](docs/how-it-works.md#state) and [D1](docs/decisions/d1-state-lives-only-on-github.md).
 - Agent errors and `blocked` results never retry automatically. Only check failures and review
   findings do, up to `fix.max_auto_rounds`; a transient error before publishing runs again after its
-  waits. See [Failure handling](docs/how-it-works.md#failure-handling).
+  waits. See [Failure handling](docs/how-it-works.md#failure-handling) and
+  [D6](docs/decisions/d6-agent-errors-never-retry.md).
 - Every issue in autopilot's scope is carried on by a run that exists, or waits for a person. A
   command starts again only after a change, or when GitHub never ran it. A new automatic rule needs
   a scenario in `tests/test_scenarios.py`. See [Autopilot](docs/how-it-works.md#autopilot).
@@ -39,7 +45,8 @@ job holds, and the plugin are described in [Architecture](docs/architecture.md).
 - Prompts judge code behaviour, never what an agent cannot change, such as PR text or workflows. A
   person's pull request may change workflows, but `/nexkit review` there never pushes, starts a
   round or merges. See [Reviewing your own pull
-  requests](docs/configuration.md#reviewing-your-own-pull-requests).
+  requests](docs/configuration.md#reviewing-your-own-pull-requests) and
+  [D5](docs/decisions/d5-agents-cannot-change-the-pipeline.md).
 - A config key, command or prompt contract changes together with its tests, docs and skills. See
   [How the docs stay correct](docs/writing-docs.md#how-the-docs-stay-correct).
 - `tests/prompts/` is NexKit 6's record of each stage's prompt. Never write it again with
@@ -47,18 +54,23 @@ job holds, and the plugin are described in [Architecture](docs/architecture.md).
   See [Which check covers what](docs/testing.md#which-check-covers-what).
 - Pins live only in `nexkit/__init__.py`; the pipeline installs exactly those versions, and tests
   use no matrix. `update-agents.yml` and `update-image.yml` each propose an update that needs its
-  own check. See [The smoke test](docs/testing.md#the-smoke-test).
+  own check. See [The smoke test](docs/testing.md#the-smoke-test) and
+  [D9](docs/decisions/d9-pins-live-in-one-place.md).
 - Everything specific to a CLI or provider lives in `runtimes/` behind `Runtime` and `Provider`; no
   other code branches on runtime names. Settings that identify an account or resource are secret
-  fields. See [Agents](docs/how-it-works.md#agents).
+  fields. See [Agents](docs/how-it-works.md#agents) and
+  [D7](docs/decisions/d7-one-tested-runtime-claude-code.md).
 - NexKit reads only the secrets the configuration names, and a job that runs an agent never indexes
   `secrets` itself, since that puts every secret on its runner. Agent secret names may not start
   with `GITHUB_` or `NEXKIT_`. See [Settings and
-  secrets](docs/configuration.md#settings-and-secrets).
+  secrets](docs/configuration.md#settings-and-secrets) and
+  [D3](docs/decisions/d3-agent-jobs-hold-no-write-token.md).
 - A session outside NexKit takes only `hand-made` issues, and never merges, pushes a tag or
-  releases. See [NexKit on this repository](docs/delivery.md#nexkit-on-this-repository).
+  releases. See [NexKit on this repository](docs/delivery.md#nexkit-on-this-repository) and
+  [D11](docs/decisions/d11-nexkit-works-its-own-issues-on-a-release.md).
 - A change that moves a decision of NexKit 6 into the engine keeps GitHub's behaviour, as [Moving
-  decisions into the engine](docs/testing.md#moving-decisions-into-the-engine) says.
+  decisions into the engine](docs/testing.md#moving-decisions-into-the-engine) says, and
+  [D10](docs/decisions/d10-an-engine-decides-hosts-carry-out.md) gives the reason.
 
 ## Verify
 

@@ -75,6 +75,8 @@ issue, and NexKit must run a release that has proven itself elsewhere.
 - No agent pushes a tag or releases: the owner does, and moves the pin to a release only once it
   runs well elsewhere.
 
+The reasons are in [D11](decisions/d11-nexkit-works-its-own-issues-on-a-release.md).
+
 ## Releases
 
 A release is a pull request of its own, so a feature's pull request never conflicts with another's

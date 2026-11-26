@@ -186,7 +186,7 @@ class ChecksTests(unittest.TestCase):
 
     def test_a_planned_marker_of_a_closed_issue_is_built(self):
         markers = audit.planned_markers(audit.tracked_all())
-        self.assertIn(("docs/writing-docs.md", 212, 360), markers)
+        self.assertIn(("docs/writing-docs.md", 226, 360), markers)
         [found] = audit.marker_findings([("docs/a.md", 4, 7), ("docs/b.md", 2, 8)], {7})
         self.assertEqual((found["page"], found["line"], found["kind"]), ("docs/a.md", 4, "built"))
         self.assertIn("#7, which is closed", found["statement"])

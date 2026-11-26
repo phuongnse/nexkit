@@ -24,7 +24,8 @@ Three parts are played around NexKit:
   as CLAUDE.md or AGENTS.md, and never hold a token that can write to the repository.
 
 Everything NexKit writes on GitHub, it writes as the repository's
-[GitHub App](configuration.md#the-github-app).
+[GitHub App](configuration.md#the-github-app). The reasons are in
+[D2](decisions/d2-nexkit-writes-only-as-the-app.md).
 
 NexKit carries the work on by itself wherever these docs say it does: automatic fix and
 conflict rounds, runs again after growing waits after a transient error, and with autopilot its plans,
@@ -1343,6 +1344,9 @@ transcript, and checks the structured result against the stage's schema itself b
 anything is published. Everything specific to one CLI lives in `nexkit/runtimes/`, and no other
 code branches on a runtime's name.
 
+Claude Code is the one runtime that NexKit supports. The reasons are in
+[D7](decisions/d7-one-tested-runtime-claude-code.md).
+
 **What a stage may affect** is the same for every runtime:
 
 | Stage | Access | Claude Code |
@@ -1592,6 +1596,8 @@ Names a person meets in run comments and in that output:
 A pull request from NexKit 1.1.0 has a single status comment instead. NexKit reads its
 state, leaves it as it is and saves the state in a new state comment.
 
+The reasons are in [D1](decisions/d1-state-lives-only-on-github.md).
+
 ## Failure handling
 
 | What happened | NexKit does |
@@ -1698,6 +1704,8 @@ cannot fix. A run paused at the usage limit is not a retry: it continues the sam
 once the limit has reset. A run again after a transient error repeats a run that stopped
 for a reason outside the work, before it published anything.
 
+The reasons are in [D6](decisions/d6-agent-errors-never-retry.md).
+
 ## Security notes
 
 - Only collaborators with write, maintain or admin access can start runs. Prompts include
@@ -1758,3 +1766,6 @@ for a reason outside the work, before it published anything.
   an issue with, NexKit writes `<!-- nexkit:` in it as `‹!-- nexkit:`. That covers all
   of a plan's agent text, so the plan text the agents read and the parts filed from a split
   show it so too.
+
+The reasons are in [D4](decisions/d4-outside-text-is-untrusted.md) and
+[D5](decisions/d5-agents-cannot-change-the-pipeline.md).

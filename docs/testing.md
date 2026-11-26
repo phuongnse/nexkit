@@ -21,7 +21,7 @@ rounds on this repository run the commands that `checks` in `.nexkit/config.json
 | Differential check | `tests/differential/`, run by `tests/differential/check.sh` | The engine against NexKit 6, with random walks of the engine and its mutants, as [its README](../tests/differential/README.md) says |
 | Lint | `scripts/lint.sh` | ruff on the Python code, and actionlint on the workflows |
 | Plugin | `claude plugin validate --strict .` | The plugin's manifest and skills |
-| Docs | `tests/test_docs.py` | The map lists every doc, and the links of the map, of the docs standard and of AGENTS.md resolve. AGENTS.md stays within 800 words, and each of its rules within 60, as [writing the docs](writing-docs.md#how-the-docs-stay-correct) says. It also compares the job table of [the architecture page](architecture.md) with the three pipeline workflows, and its module table with `nexkit/` |
+| Docs | `tests/test_docs.py` | The map lists every doc, with the decisions listed through [their index](decisions.md), and the links of the map, of the docs standard, of the index, of each decision and of AGENTS.md resolve. Each decision file follows the template, its index row matches it, and a rule or a page links each decision. AGENTS.md stays within 800 words, and each of its rules within 60, as [writing the docs](writing-docs.md#how-the-docs-stay-correct) says. It also compares the job table of [the architecture page](architecture.md) with the three pipeline workflows, and its module table with `nexkit/` |
 | The engine's image | `release.yml` | The image builds from the pinned base and answers over HTTP as `nexkit-engine` answers on standard input. `update-image.yml` proposes a new base, and its pull request needs this check |
 | Code scanning | `codeql.yml` | CodeQL on the Python code and the workflows |
 | Smoke test | `scripts/smoke.py` | Real Claude Code at its pin, as [the smoke test](#the-smoke-test) says |
@@ -39,6 +39,9 @@ what it covers.
 Run it when changing `engine/prompts/`, `engine/prompt.py`, `engine/textutil.py`, `agent.py`,
 `schema.py`, `runtimes/` or a pin. CI runs it on such a pull request, and on the pull request of
 `update-agents.yml` for the runtime it updates.
+
+The reasons for pinning each version in one place, and testing only the pinned versions, are in
+[D9](decisions/d9-pins-live-in-one-place.md).
 
 ## Moving decisions into the engine
 

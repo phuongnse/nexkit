@@ -19,7 +19,7 @@ Each kind of content has one home. Write a fact in its home and link to it from 
 | The engine, its protocol and its hosts | [The engine](engine.md) |
 | How NexKit is built: modules, workflows and jobs, tokens and secrets | [Architecture](architecture.md) |
 | What NexKit trusts, and the rule that contains each input it does not | Security _(planned, #360)_ |
-| A choice between real alternatives, with its reasons | A [decision](#decisions) |
+| A choice between real alternatives, with its reasons | A [decision](#decisions), listed in the [index of decisions](decisions.md) |
 | How the work on NexKit is done: issues, pull requests, labels, milestones, releases | [Delivery](delivery.md) |
 | How NexKit is tested | [Testing](testing.md) |
 | How an agent applies a rule, step by step | A skill, which links the rule and does not restate it: the plugin's skills under `skills/` for people who use NexKit, and the maintenance skills under `.claude/skills/` for work on NexKit |
@@ -75,6 +75,19 @@ It never holds progress, dates, names or issue numbers.
   hold, so the old file is never half valid. In the same change the old file is deleted, its row in
   the index says `Superseded by D<n>` with a link to its last text in git, and every page, link and
   comment in the code that cited it follows the new decision. A number is never used again.
+
+A change needs a decision when it makes a choice that had real alternatives and is costly to undo,
+or when it changes the choice of an Agreed decision. Such a change adds a **Proposed** decision in
+the same pull request, and links it from the rule or page that the choice shapes.
+
+A new decision takes the next number that no decision has used, superseded ones included. Its slug
+is its title in kebab-case, so the title must state the choice, as `D1. State lives only on GitHub`
+does. Its row in the index links the file, and repeats the title without the `D<n>. ` prefix and
+the status, as in this row:
+
+```markdown
+| [D1](decisions/d1-state-lives-only-on-github.md) | State lives only on GitHub | Agreed |
+```
 
 ## Reference pages
 
@@ -157,7 +170,8 @@ pull requests rarely edit the same lines.
   the reader wants, then lists every file under `docs/` with what it holds and when to read it,
   grouped for people who use NexKit and people who work on it. A new file gets its row in the same
   change, and a test fails when a file has none. A new topic that needs more than a few sections
-  starts in a file of its own.
+  starts in a file of its own. The map lists the decisions through their [index](decisions.md): a
+  decision file gets a row in the index, not in the map.
 - **Small files.** A doc under `docs/` holds at most 12,000 words. A change that grows a doc past
   10,000 words splits it by topic, moving whole `##` sections unchanged to a new file, and leaves each
   page at or under 8,000 words so that the next changes do not meet the limit again. A change near
@@ -225,8 +239,10 @@ when a list of what the code defines misses an entry. These rules close each of 
    whose close on GitHub and roadmap row disagree. It also points each broken link of an open issue
    at its new home. The [docs audit skill](../.claude/skills/nexkit-docs-audit/SKILL.md) says how a
    page is read and what each issue holds.
-9. **Checks catch what a machine can.** `tests/test_docs.py` checks that [the map](README.md) lists every doc, that the links of the map,
-   of this page, of the architecture page and of [AGENTS.md](../AGENTS.md) resolve, that AGENTS.md
-   keeps within its word limits, and that the job and module tables of the architecture page match
-   the workflows and `nexkit/`. A docs check is added only once the whole tree passes
-   it: there are no lists of exceptions.
+9. **Checks catch what a machine can.** `tests/test_docs.py` checks that [the map](README.md) lists
+   every doc, with the decisions listed through [the index](decisions.md); that the links of the
+   map, of this page, of the architecture page, of the index, of each decision file and of
+   [AGENTS.md](../AGENTS.md) resolve; that AGENTS.md keeps within its word limits; that the job and
+   module tables of the architecture page match the workflows and `nexkit/`; and that the index
+   matches the decision files, each of which follows the template and is linked from a rule or a
+   page. A docs check is added only once the whole tree passes it: there are no lists of exceptions.

@@ -1,0 +1,32 @@
+{
+  "policies": {},
+  "state": {
+    "example": "failed",
+    "set": {
+      "change": null,
+      "observed": null,
+      "attention": {
+        "reason": "untrusted",
+        "text": "An untrusted edit stopped the round",
+        "ref": null
+      }
+    }
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "requested",
+        "what": "trust",
+        "by": {
+          "id": "olivia",
+          "role": "writer"
+        }
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    }
+  ]
+}

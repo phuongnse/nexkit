@@ -169,6 +169,7 @@
         "blocked",
         "failed",
         "roundFailed",
+        "untrusted",
         "reopened",
         "outage",
         "askedAgain",

@@ -916,6 +916,41 @@ class Step:
                 self.run("fix", by=event["by"], note=event["note"])
             else:
                 self.start_plan()
+        elif what == "trust":
+            return self.vouched(event)
+        else:
+            return False
+        return True
+
+    def vouched(self, event):
+        """A writer's `/nexkit trust` after an untrusted edit stopped the item
+        (`autopilot._vouched_again`): the next command that NexKit 6 starts then. A plan on
+        an item with no change; on one with a change, an automatic fix round, counted, or a
+        person when none is left; the checks and review of a merge that stopped, in `ready`.
+        A request from anyone else, or on any other stop, changes nothing."""
+        by = event["by"]
+        if (
+            self.review_only
+            or by is None
+            or by["role"] not in WRITERS
+            or (self.s["attention"] or {}).get("reason") != "untrusted"
+        ):
+            return False
+        if self.state == "failed" and not self.s["change"]:
+            self.start_plan()
+        elif self.state == "failed":
+            # The round that stopped gave its count back; the vouched one counts when it starts,
+            # unless a hold keeps it back.
+            self.s["policies"], self.p = {}, self.given
+            self.move("fixing")
+            self.s["rounds"]["due"] = True
+            if not self.s["hold"]:
+                self.issue_fix(fresh=True)
+        elif self.state == "ready":
+            self.s["rounds"].pop("automatic", None)
+            self.s["policies"], self.p = {}, self.given
+            self.move("checking")
+            self.check()
         else:
             return False
         return True
@@ -1191,8 +1226,9 @@ class Step:
         """Whether the item failed because its round was blocked with nothing to answer, or
         failed on an error, on no change, and `afterFailure` plans it again: the item waits in
         `failed` with attention `blocked` or `roundFailed`, which only those rounds give. A
-        time-out, a usage limit, a failed plan and an untrusted stop keep `failed`, which a
-        comment does not plan again."""
+        time-out, a usage limit and a failed plan keep `failed`, and an untrusted stop has its
+        own attention, `untrusted`, which a writer's vouch ends (`vouched`): a comment does
+        not plan any of them again."""
         return (
             self.state == "failed"
             and not self.s["change"]

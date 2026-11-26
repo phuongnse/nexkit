@@ -1,0 +1,28 @@
+{
+  "policies": {},
+  "state": {
+    "example": "failed",
+    "set": {
+      "attention": {
+        "reason": "untrusted",
+        "text": "An untrusted edit stopped the round",
+        "ref": null
+      }
+    }
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "requested",
+        "what": "trust",
+        "by": {
+          "id": "rita",
+          "role": "reader"
+        }
+      },
+      "state": "failed",
+      "changed": false,
+      "actions": []
+    }
+  ]
+}

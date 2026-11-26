@@ -65,6 +65,9 @@ INVARIANTS = {
     "a plan that a round which ran out of time asked for (`supersede`)",
     "parent-end": "a split ends as accepted only when every part ended, one was accepted and "
     "`parentEnd` is `whenPartAccepted`, and under `person` its parts' end leaves it to a person",
+    "trust": "a `trust` changes the item only from a writer on an untrusted stop: with no change "
+    "it plans, once; with a change it starts one automatic fix round, counted, or waits for the "
+    "end of a hold, or for a person when no round is left; a stopped merge runs its checks",
     "start": "a `requested` start starts work only on an item that waits to start, with no hold "
     "and no blocker wait, and on a free `new` item it starts exactly one plan run",
     "accept-conflict": "a merge refused for a conflict starts a conflict round only under "
@@ -108,6 +111,9 @@ NEW = 0.1
 # The share that start from the example of a split whose parts end, which a walk from a new item
 # reaches only through a plan that splits.
 SPLIT = 0.1
+# The share that start from the example of a failed or ready item that an untrusted edit
+# stopped, which no event of a walk makes: only the host sees who edited the item.
+VOUCH = 0.1
 # The most events the engine may refuse, as a share of all: the walker sends some it may.
 REFUSED = 0.1
 ROLES = ["decides", "writer", "reader", "outside"]
@@ -402,11 +408,13 @@ class Walker:
                     found["at"] = _later(late)
                 return found
         if kind == "requested":
-            whats = ["plan", "planFromScratch", "go", "fix", "review", "retry", "start"]
+            whats = ["plan", "planFromScratch", "go", "fix", "review", "retry", "start", "trust"]
             if state["state"] in ("new", "awaitingApproval"):
                 whats += ["go", "go", "start"]
             event = {"kind": "requested", "what": rng.choice(whats)}
             event["by"] = rng.choice([tc.PERSON, None])
+            if event["what"] == "trust":
+                event["by"] = rng.choice([{"id": "u", "role": role} for role in ROLES] + [None])
             if rng.random() < 0.3:
                 event["title"] = rng.choice([TITLE, "Other"])
             if rng.random() < 0.3:
@@ -709,8 +717,10 @@ class Walker:
                 flag("counts", "a round that waited counted past the fixRounds given now", info)
             if not rounds.get("automatic") and new["state"] == "fixing":
                 flag("automatic", "a counted round not marked automatic", info)
+            vouched = event["kind"] == "requested" and event["what"] == "trust"
             if event["kind"] in ("requested", "changesRequested", "answered", "commented"):
-                if not old.get("due"):
+                # A writer's vouch starts the engine's own round, which counts (`trust`).
+                if not old.get("due") and not vouched:
                     flag("counts", "a person's round counted", info)
         if state["state"] == "fixing" and old.get("due") and event["kind"] == "requested":
             if short.get("what") in ("fix", "review") and answer["changed"]:
@@ -852,6 +862,8 @@ class Walker:
             marked = [a for a in actions if a["kind"] in ("runAgent", "runChecks", "publish")]
             # A conflict round that the request leads to is the engine's own.
             own = rounds["conflicts"] > old["conflicts"]
+            # So is the automatic fix round that a writer's vouch starts (`trust`).
+            own = own or (event["what"] == "trust" and bool(rounds.get("automatic")))
             if not own and any(("by" in a) != (event["by"] is not None) for a in marked):
                 flag("lost", "a request's work is marked other than by who asked", info)
         # usage-limit
@@ -890,6 +902,7 @@ class Walker:
         self.required_checks(state, event, answer, done, given, flag, info)
         self.refusals(state, event, answer, done, flag, info)
         self.start(state, event, pol, answer, flag, info)
+        self.trust(state, event, pol, answer, given, flag, info)
         self.accept_conflict(state, event, answer, done, given, flag, info)
         self.accept_behind(state, event, answer, done, given, flag, info)
         self.behind_checks(state, event, answer, {**self.defaults, **eff}, flag, info)
@@ -964,6 +977,56 @@ class Walker:
             plans = [a for a in started if a["kind"] == "runAgent" and a["stage"] == "plan"]
             if len(plans) != 1 or new["state"] != "planning":
                 flag("start", "a start of a free new item plans it other than once", info)
+
+    def trust(self, state, event, pol, answer, given, flag, info):
+        """A `trust` changes the item only from a writer on an untrusted stop (`failed` or
+        `ready`): with no change it plans once; with a change it starts one automatic fix round,
+        counted now, or waits for a hold to end, or goes to a person when `fixRounds` has none
+        left; a stopped merge runs its checks. What the reconcile after any event does is not
+        the request's."""
+        if state is None or event["kind"] != "requested" or event["what"] != "trust":
+            return
+        if event["id"] in state["recentEvents"]:
+            return
+        new, actions = answer["state"], answer["actions"]
+        by = event["by"]
+        stopped = (state["attention"] or {}).get("reason") == "untrusted"
+        writer = by is not None and by["role"] in ("decides", "writer")
+        if not (stopped and writer and state["state"] in ("failed", "ready")):
+            if answer["changed"]:
+                other = self.reconciled(state, pol, event)
+                if "state" not in other or other["state"]["state"] != new["state"]:
+                    flag("trust", "a trust that is no writer's changed an untrusted stop", info)
+            return
+        seen = state["observed"]
+        calm = not seen or not (seen["conflicts"] or seen["merged"] or seen["empty"])
+        calm = calm and (not seen or seen["version"] == (state["change"] or {}).get("version"))
+        if not calm or not answer["changed"]:
+            if calm:
+                flag("trust", "a writer's trust on an untrusted stop changed nothing", info)
+            return
+        runs = [a for a in actions if a["kind"] == "runAgent"]
+        old, rounds = state["rounds"], new["rounds"]
+        if state["state"] == "ready":
+            checks = [a for a in actions if a["kind"] == "runChecks"]
+            if new["state"] != "checking" or len(checks) != 1:
+                flag("trust", "a stopped merge does not run its checks again", info)
+        elif not state["change"]:
+            if new["state"] != "planning" or [a["stage"] for a in runs] != ["plan"]:
+                flag("trust", "a writer's trust on an item with no change does not plan it", info)
+        elif state["hold"]:
+            if new["state"] != "fixing" or runs or not rounds.get("due"):
+                flag("trust", "a vouched fix round under a hold does not wait for its end", info)
+        elif rounds["counted"] >= given["fixRounds"] and old["counted"] >= given["fixRounds"]:
+            reasons = [a["reason"] for a in actions if a["kind"] == "needPerson"]
+            if runs or reasons != ["roundsUsedUp"] or rounds["counted"] != old["counted"]:
+                flag("trust", "a vouched fix round starts with no automatic round left", info)
+        else:
+            fixes = [a for a in runs if a["stage"] == "fix"]
+            if new["state"] != "fixing" or len(runs) != 1 or len(fixes) != 1:
+                flag("trust", "a vouched fix round does not start one fix run", info)
+            elif rounds["counted"] != old["counted"] + 1 or not rounds.get("automatic"):
+                flag("trust", "a vouched fix round is not counted as automatic", info)
 
     def accept_conflict(self, state, event, answer, done, given, flag, info):
         """The invariants of a merge that was refused for a conflict."""
@@ -1272,6 +1335,7 @@ class Walker:
         state = None
         trail = []
         memory = {"open": {}, "floor": None}
+        vouched = False
         if rng.random() < SPLIT:
             path = self.tc.EXAMPLES / "state" / "split.json"
             state = json.loads(path.read_text())
@@ -1284,6 +1348,20 @@ class Walker:
                 state["waits"].append({"id": "w1.2", "for": "blocker", "until": None, "on": "7"})
             state["hold"] = rng.random() < 0.3
             memory["open"] = {action["id"]: action for action in state["pending"]}
+        elif rng.random() < VOUCH:
+            # An untrusted edit stopped a round: a failed item with no change, or with one, or
+            # a merge, in `ready`. The engine never marks one by itself.
+            name = rng.choice(["failed", "failed", "ready"])
+            state = json.loads((self.tc.EXAMPLES / "state" / f"{name}.json").read_text())
+            if name == "failed" and rng.random() < 0.5:
+                state["change"], state["observed"] = None, None
+            text = "An edit by someone without write access stopped it."
+            state["attention"] = {"reason": "untrusted", "text": text, "ref": None}
+            state["hold"] = rng.random() < 0.15
+            if state["change"] and rng.random() < 0.4:
+                state["rounds"]["counted"] = rng.choice([1, 2, 3])
+            memory["open"] = {action["id"]: action for action in state["pending"]}
+            vouched = rng.random() < 0.8
         elif rng.random() < ACCEPTING:
             # Some walks start at a merge that waits for required checks, which a walk from a
             # new item seldom reaches: its accept, refusals and ticks come at once.
@@ -1302,6 +1380,11 @@ class Walker:
         self.last_checks = None
         for number in range(1, steps + 1):
             short = self.short(rng, state)
+            if vouched and number == 1:
+                # The first thing that happens to an item that an untrusted edit stopped is a
+                # vouch, most of the time.
+                role = rng.choice(["writer", "decides", "reader", "outside"])
+                short = {"kind": "requested", "what": "trust", "by": {"id": "u", "role": role}}
             if short is None:
                 continue
             try:

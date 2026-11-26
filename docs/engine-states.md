@@ -29,7 +29,7 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
 | `split` | The work is carried by its parts | `accepted`, `dropped` |
 | `noChange` | Nothing needs to change, and the item says why | `new`, when a person reopens it |
 | `dropped` | A person ended the work | `new`, when a person reopens it |
-| `failed` | A step failed in a way that waiting does not help, or a token or time budget ran out. The change is kept, and the item waits for a person whatever is observed of it, but a merge or an emptied change | `planning` when a person asks, or when the failure policy plans an item with no change again; `fixing` and `checking` only when a person asks; `dropped` |
+| `failed` | A step failed in a way that waiting does not help, or a token or time budget ran out. The change is kept, and the item waits for a person whatever is observed of it, but a merge or an emptied change | `planning` when a person asks, when a writer vouches after an untrusted stop, or when the failure policy plans an item with no change again; `fixing` and `checking` only when a person asks, or a writer vouches after an untrusted stop; `ready` when a writer vouches and no automatic fix round is left; `dropped` |
 
 - **Approval leads to the change that exists.** An approved plan goes to `working` when the item
   has no change, and to `fixing` when it has one, such as after a re-plan or a question in a fix
@@ -88,6 +88,14 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
     again. On an item with a change a person decides (`replanRecommended`), since a new plan
     would leave the change behind.
   - Otherwise the round runs again with the answers.
+- **An untrusted edit stops a round or a merge.** The host marks the item with attention
+  `untrusted`, in `failed` for a round and in `ready` for a merge, and the engine never marks it
+  by itself, since only the host sees who edited the item. A comment does not plan it again. A
+  `trust` request from a writer, sent after the stop, ends it as NexKit 6 does: an item with no
+  change plans again, an item with a change starts an automatic fix round, counted, and a
+  stopped merge runs its checks and review again. Where no automatic fix round is left, a
+  person decides (`roundsUsedUp`) instead of a round that goes past `fixRounds`, which NexKit 6
+  would start. A `trust` from anyone else, or on any other stop, changes nothing.
 - **What a person does on a round's questions.** A writer's answer that picks the option that
   only closes the item drops it, on an item with no change, as for a plan; any other answer
   plans the item again. Under `autoWhenClean`, a person's comment on questions the engine could
@@ -256,7 +264,8 @@ Three things sit beside the state, never in place of it:
   pass in time), fix rounds used up
   (`roundsUsedUp`), a split that is not complete (`splitIncomplete`), a round that was blocked
   (`blocked`), a step that failed (`failed`), an implement round with no change that failed on an error
-  (`roundFailed`), a final item opened again (`reopened`), or an
+  (`roundFailed`), a round that an untrusted edit stopped (`untrusted`), a final item opened
+  again (`reopened`), or an
   action the host lost (`outage`).
 - **Hold:** nothing new starts by itself: the sweep's start waits, while a person's own request
   still runs, as NexKit 6's hold label does. A step that runs finishes and records what it held
@@ -293,7 +302,7 @@ Three things sit beside the state, never in place of it:
 | --- | --- |
 | `created` | A work item is made, with its kind, its title and text, how deep a part it is, who does each stage and, for an item made with a plan, the plan |
 | `textChanged`, `commented` | A work item's text is edited, or a person writes on it, with their role |
-| `requested` | A person or the sweep asks for something: `plan`, `planFromScratch`, `go`, `fix`, `review`, `retry`, `trust` or `start`, with a note, and the item's title and depth again when the host gives them. The engine takes `trust` and changes nothing for it, since whom a host trusts is its own check, as [vouching for an issue](autopilot.md#vouching-for-an-issue) says |
+| `requested` | A person or the sweep asks for something: `plan`, `planFromScratch`, `go`, `fix`, `review`, `retry`, `trust` or `start`, with a note, and the item's title and depth again when the host gives them. The engine takes `trust` only from a writer on an item that an untrusted edit stopped (the attention of that name), and starts the next command as the rule on an untrusted stop says. For any other `trust` it changes nothing, since whom a host trusts is its own check, as [vouching for an issue](autopilot.md#vouching-for-an-issue) says |
 | `planApproved`, `answered`, `changesRequested`, `changeApproved`, `dropRequested` | A person decides: the plan, its questions, the change, a person-only checklist item or criterion on the change's version, or the end |
 | `actionFinished` | An action ended, with its id, the change version and its result |
 | `actionLost` | An action the host started never reported, with any tokens it is known to have used |

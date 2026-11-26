@@ -1,3 +1,4 @@
+import ast
 import base64
 import contextlib
 import copy
@@ -5239,3 +5240,152 @@ class WaitForEndsTests(AutopilotCase):
         )
         self.assertEqual((self.sleeps, self.reads), (0, []))
         self.assertFalse(any("step run" in line for line in lines))
+
+
+# What `.host` gives that is not an answer of the engine: a refusal and its words.
+NOT_ANSWERS = ("Refused", "refused_reason")
+
+
+def _calls(nodes):
+    """The calls by name within the expressions `nodes`, as (name, place, node)."""
+    return [
+        (node.func.id, (node.lineno, node.col_offset), node)
+        for top in nodes
+        for node in ast.walk(top)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    ]
+
+
+def _heads(stmt):
+    """The expressions of `stmt` itself, not those of the statements within it: a condition,
+    what a loop runs over, what a `with` opens, or a whole simple statement."""
+    return [
+        child
+        for name, value in ast.iter_fields(stmt)
+        for child in (value if isinstance(value, list) else [value])
+        if isinstance(child, ast.AST) and not isinstance(child, (ast.stmt, ast.ExceptHandler))
+    ]
+
+
+def _passed(stmt):
+    """The calls that run before the statement after `stmt` does, whatever the branch taken:
+    its own expressions, and the body of a `try` or `with`, which runs through. The branches
+    of an `if` or a loop do not count, since another branch may be the one that ran."""
+    found = _calls(_heads(stmt))
+    if isinstance(stmt, (ast.Try, ast.With)):
+        for inner in stmt.body:
+            found += _passed(inner)
+    return found
+
+
+def _before(stmts, target):
+    """The calls that run before `target`, which is within `stmts`, on the way to it, or None
+    when it is not within them."""
+    before = []
+    for stmt in stmts:
+        if not any(node is target for node in ast.walk(stmt)):
+            before += _passed(stmt)
+            continue
+        own = _calls(_heads(stmt))
+        blocks = [getattr(stmt, "body", []), getattr(stmt, "orelse", [])]
+        blocks.append(getattr(stmt, "finalbody", []))
+        blocks += [handler.body for handler in getattr(stmt, "handlers", [])]
+        for block in blocks:
+            found = _before(block, target)
+            if found is not None:
+                if isinstance(stmt, (ast.Try, ast.With)) and block is not stmt.body:
+                    found = _passed_body(stmt) + found
+                return before + own + found
+        return before + own
+    return None
+
+
+def _passed_body(stmt):
+    return [call for inner in stmt.body for call in _passed(inner)]
+
+
+def unanswered_starts(source):
+    """The top-level functions of `source` (autopilot.py's text) that make a
+    `_step(..., "start", ...)` with no engine call on the way to it in the same function. A
+    call of the engine is one of a name imported from `.host`, other than `NOT_ANSWERS`, or of
+    a function of `source` that makes one, directly or through others. On the way means a
+    statement that runs before the start whatever the branch: a call in one branch of an `if`
+    does not count for the start in another. Only direct calls by name are followed."""
+    tree = ast.parse(source)
+    hosts = {
+        (alias.asname or alias.name)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module == "host" and node.level == 1
+        for alias in node.names
+        if alias.name not in NOT_ANSWERS
+    }
+    functions = [node for node in tree.body if isinstance(node, ast.FunctionDef)]
+    callers = set()
+    grown = True
+    while grown:
+        grown = False
+        for function in functions:
+            names = {name for name, _, _ in _calls([function])}
+            if function.name not in callers and names & (hosts | callers):
+                callers.add(function.name)
+                grown = True
+    found = []
+    for function in functions:
+        for name, place, node in _calls([function]):
+            if name != "_step" or len(node.args) < 2:
+                continue
+            kind = node.args[1]
+            if not (isinstance(kind, ast.Constant) and kind.value == "start"):
+                continue
+            ways = _before(function.body, node) or []
+            if not any(other in hosts | callers and at < place for other, at, _ in ways):
+                found.append(function.name)
+    return found
+
+
+class EveryStartFollowsTheEngine(unittest.TestCase):
+    """Autopilot starts a command only after an answer of the engine, in the function that
+    makes the start: the host asks the engine, and autopilot carries out what it answers
+    (docs/engine.md#getting-there)."""
+
+    def test_every_start_of_autopilot_follows_an_engine_call(self):
+        source = (Path(autopilot.__file__)).read_text(encoding="utf-8")
+        self.assertEqual(unanswered_starts(source), [])
+
+    def test_a_start_with_no_engine_call_before_it_fails(self):
+        source = 'def bad(issue):\n    return _step(issue, "start", "x")\n'
+        self.assertEqual(unanswered_starts(source), ["bad"])
+
+    def test_a_start_before_the_engine_call_fails(self):
+        source = (
+            "def bad(issue):\n"
+            '    first = _step(issue, "start", "x")\n'
+            "    from .host import after_go\n"
+            "    after_go()\n"
+            "    return first\n"
+        )
+        self.assertEqual(unanswered_starts(source), ["bad"])
+
+    def test_a_start_after_a_call_that_only_refuses_fails(self):
+        source = (
+            "def bad(issue):\n"
+            "    from .host import Refused, refused_reason\n"
+            "    refused_reason(Refused())\n"
+            '    return _step(issue, "start", "x")\n'
+        )
+        self.assertEqual(unanswered_starts(source), ["bad"])
+
+    def test_a_start_after_a_helper_that_asks_the_engine_passes(self):
+        source = (
+            "def ask(issue):\n"
+            "    from .host import vouched\n"
+            "    return vouched(issue)\n"
+            "def wrap(issue):\n"
+            "    return ask(issue)\n"
+            "def good(issue):\n"
+            "    wrap(issue)\n"
+            '    return _step(issue, "start", "x")\n'
+            "def waits(issue):\n"
+            '    return _step(issue, "waits", "x")\n'
+        )
+        self.assertEqual(unanswered_starts(source), [])

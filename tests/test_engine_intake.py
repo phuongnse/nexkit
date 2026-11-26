@@ -1,5 +1,5 @@
 """The engine's rules that a single step shows best: what holds a state's work back from
-starting again (docs/engine.md#states), and what the state keeps of results and events within
+starting again (docs/engine-states.md#states), and what the state keeps of results and events within
 its size (docs/engine.md#the-state-document)."""
 
 import copy

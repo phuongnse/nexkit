@@ -42,7 +42,7 @@ BOT = ("-c", "user.name=nexkit", "-c", "user.email=nexkit@localhost")
 # brought the change of a pull request that changes nothing once merged with it.
 HOLDING_TRIES = 50
 
-# Each stage's result schema is the protocol's (docs/engine.md#runners), so that every
+# Each stage's result schema is the protocol's (docs/engine-hosts.md#runners), so that every
 # runner and host reads the same one. A plan's or a round's question names the option it
 # recommends and the one that only closes the issue (`route.closing_answer`), counting from
 # 1, and a blocked round's the options that change the issue's scope, which a new plan

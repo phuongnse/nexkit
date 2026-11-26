@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/phuongnse/nexkit/protocol/v1/policies.schema.json",
-  "$comment": "A host's policies, which come with every call, as docs/engine.md#what-a-host-decides lists them. A policy left out takes its default, NexKit 6's on GitHub without autopilot, except `parentEnd`, which keeps the engine's rule (GitHub's `close_parent_issues` is off by default). These are the policies the engine decides with so far; the page says which are not in this version yet.",
+  "$comment": "A host's policies, which come with every call, as docs/engine-hosts.md#what-a-host-decides lists them. A policy left out takes its default, NexKit 6's on GitHub without autopilot, except `parentEnd`, which keeps the engine's rule (GitHub's `close_parent_issues` is off by default). These are the policies the engine decides with so far; the page says which are not in this version yet.",
   "type": "object",
   "properties": {
     "planApproval": {

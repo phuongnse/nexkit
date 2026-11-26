@@ -199,10 +199,10 @@ class ChecksTests(unittest.TestCase):
         files = set(audit.tracked_all())
         base = f"{REPO}/blob/main/"
         body = (
-            f"See [states]({base}docs/engine.md#states), [gone]({base}docs/engine.md#gone), "
+            f"See [versions]({base}docs/engine.md#versions), [gone]({base}docs/engine.md#gone), "
             f"{base}docs/nowhere.md and {base}nexkit/agent.py#L5-L9 and "
             f"{base}docs/engine.md#gone again, {REPO}/blob/abc123/docs/old.md, and "
-            f"{base}docs/engine.md#states. Also {base}docs/nowhere.md."
+            f"{base}docs/engine.md#versions. Also {base}docs/nowhere.md."
         )
         found = audit.broken_links([{"number": 3, "body": body}], files, REPO)
         self.assertEqual(
@@ -311,7 +311,11 @@ class HomesTests(ReadTests):
         self.fake.configure(
             result={
                 "homes": [
-                    {"issue": 1, "link": links[0]["link"], "home": f"{base}docs/engine.md#states"},
+                    {
+                        "issue": 1,
+                        "link": links[0]["link"],
+                        "home": f"{base}docs/engine.md#versions",
+                    },
                     {"issue": 2, "link": links[1]["link"], "home": f"{base}docs/engine.md#made-up"},
                     {"issue": 9, "link": links[0]["link"], "home": f"{base}docs/engine.md"},
                     {"issue": 1, "link": links[0]["link"], "home": "https://evil.example/x"},
@@ -325,7 +329,8 @@ class HomesTests(ReadTests):
             repository="https://github.com/phuongnse/nexkit",
         )
         self.assertEqual(
-            homes, [{"issue": 1, "link": links[0]["link"], "home": f"{base}docs/engine.md#states"}]
+            homes,
+            [{"issue": 1, "link": links[0]["link"], "home": f"{base}docs/engine.md#versions"}],
         )
         call = self.fake.call()
         args = call["args"]
@@ -367,7 +372,7 @@ class MainTests(unittest.TestCase):
             findings, homes = Path(tmp) / "findings.json", Path(tmp) / "homes.json"
             findings.write_text("[]")
             homes.write_text(
-                json.dumps([{"issue": 6, "link": link, "home": f"{base}docs/engine.md#states"}])
+                json.dumps([{"issue": 6, "link": link, "home": f"{base}docs/engine.md#versions"}])
             )
             out = io.StringIO()
             env = {"GH": str(gh), "GITHUB_REPOSITORY": "phuongnse/nexkit"}
@@ -375,6 +380,7 @@ class MainTests(unittest.TestCase):
             with (
                 mock.patch.dict("os.environ", env),
                 mock.patch.object(audit, "planned_markers", return_value=markers),
+                mock.patch.object(audit, "doc_words", return_value=[("docs/long.md", 10_001)]),
                 contextlib.redirect_stdout(out),
             ):
                 self.assertEqual(audit.main(["x", "plan", str(findings), str(homes), "77"]), 0)
@@ -385,11 +391,17 @@ class MainTests(unittest.TestCase):
         marker = next(i for i in planned["issues"] if "writing-docs" in i["title"])
         self.assertIn("#360, which is closed", marker["body"])
         self.assertNotIn("#359, which", marker["body"])
-        # #368 and #369 are not open in this fake, so each long doc gets its split issue.
+        # A doc past the limit gets its split issue, whichever docs the repository holds.
         self.assertTrue(any("is split by topic" in title for title in titles))
         self.assertEqual(
             planned["relinks"],
-            [{"issue": 6, "before": f"See {link}.", "after": f"See {base}docs/engine.md#states."}],
+            [
+                {
+                    "issue": 6,
+                    "before": f"See {link}.",
+                    "after": f"See {base}docs/engine.md#versions.",
+                }
+            ],
         )
 
     def test_the_schema_holds_only_what_an_agent_receives(self):

@@ -229,7 +229,7 @@ def observed(pull):
     """The observation of a pull request, as the engine keeps the latest one: its head commit,
     whether it conflicts, was merged or changes no file. None while GitHub has not said whether
     it conflicts, or no count of its files was read: an observation holds only what is known
-    (docs/engine.md#hosts)."""
+    (docs/engine-hosts.md#hosts)."""
     mergeable, files = pull.get("mergeable"), pull.get("changed_files")
     if not isinstance(mergeable, bool) or not isinstance(files, int) or isinstance(files, bool):
         return None

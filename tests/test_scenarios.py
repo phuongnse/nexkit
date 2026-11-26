@@ -491,7 +491,7 @@ class ItemGroup:
     """One work item's concurrency group, as GitHub keeps it: one run runs and one waits, and a
     run queued while another waits replaces it, so its event is never answered by its own run.
     Each run takes the item's events from their sources with `host.take`
-    (docs/engine.md#hosts), on a state comment that is already stored."""
+    (docs/engine-hosts.md#hosts), on a state comment that is already stored."""
 
     NUMBER = 5
 

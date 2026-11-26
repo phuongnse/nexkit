@@ -204,7 +204,7 @@ class Refused(Exception):
 
 def policies(cfg):
     """The engine's policies for the GitHub host's configuration
-    (docs/engine.md#what-a-host-decides)."""
+    (docs/engine-hosts.md#what-a-host-decides)."""
     taken = autopilot.takes(cfg)
     return {
         "planApproval": "autoWhenClean" if taken else "person",
@@ -563,7 +563,7 @@ def take(gh, cfg, number, tries=item_state.TRIES, sleep=time.sleep):
     comment's cursor, oldest first, and give [(event, actions)] of those whose answer was
     stored. A run of an item's concurrency group calls it, so that a command whose run GitHub
     replaced with a newer one is answered by the run that ran, not lost
-    (docs/engine.md#hosts). The sources are a writer's `/nexkit` comments, other people's
+    (docs/engine-hosts.md#hosts). The sources are a writer's `/nexkit` comments, other people's
     comments, a writer's approving or *Request changes* review of the change, and the adding
     and removing of a label of `autopilot.labels` that holds the item. Each is answered by
     `item_state.apply`, which moves the cursor past it, even when the answer changes nothing,

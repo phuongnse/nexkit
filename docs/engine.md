@@ -738,7 +738,14 @@ adapter. A new rule of the engine comes with a case.
   split is imported with how many levels of parts it is below the issue first split, so a part at
   the deepest level whose plan is too large waits for a person. Autopilot's answers are kept in
   `asked` only while the plan or round they started is on its way: a person's comment, or a run
-  that reported and changed the item, ends them. The plan that autopilot asked for after a pull
+  that reported and changed the item, ends them. A `/nexkit go` that stopped as blocked is placed
+  where the engine puts the round's result, under the GitHub host's policies, and automatic
+  approval applies only to an issue autopilot takes. Its questions wait for answers, with the
+  ones that only a new plan carries out kept, and a change that needs protected paths waits for a
+  person whatever the round asks. A round with nothing to answer fails, one whose only question
+  recommends closing with a finding that no change is needed ends in `noChange`, and one that the
+  engine refuses fails for a person. Answers that the engine would give leave the plan or round
+  they start waiting for the sweep to start it. The plan that autopilot asked for after a pull
   request's round ran out of time is imported with `supersede`, so its split withdraws the pull
   request. A NexKit 6 run on its way becomes the action the
   engine waits for, and an automatic fix round on its way, with a count, is marked

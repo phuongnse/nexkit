@@ -1,10 +1,11 @@
-"""The docs' map lists every doc, with the decisions listed through their index. The links of every
-page under docs/, of the README, of AGENTS.md, of the plugin's skills and of the maintenance skills
-resolve, every link to how it works and the pages split from it resolves, each task of the
-nexkit-maintain skill links a section of the delivery page, AGENTS.md keeps within its word limits,
-the architecture page's job and module tables match the workflows and nexkit/, and each test the
-security page names exists. The decisions index matches the decision files, and each decision is
-linked, as docs/writing-docs.md#how-the-docs-stay-correct says."""
+"""The docs' map lists every doc, with the decisions listed through their index, and its list of the
+plugin's skills matches skills/. The links of every page under docs/, of the README, of AGENTS.md,
+of the plugin's skills and of the maintenance skills resolve, every link to how it works and the
+pages split from it resolves, each task of the nexkit-maintain skill links a section of the delivery
+page, AGENTS.md keeps within its word limits, the architecture page's job and module tables match
+the workflows and nexkit/, and each test the security page names exists. The decisions index matches
+the decision files, and each decision is linked, as docs/writing-docs.md#how-the-docs-stay-correct
+says."""
 
 import re
 import unittest
@@ -41,6 +42,7 @@ DECISION_FILE = re.compile(r"d(\d+)-[a-z0-9-]+\.md")
 DECISION_TITLE = re.compile(r"# D(\d+)\. (.+)$", re.M)
 DECISION_STATUS = re.compile(r"^Status: \*\*(Agreed|Proposed)\*\*$", re.M)
 DECISION_LINK = re.compile(r"\[D(\d+)\]\(decisions/([^)]+)\)")
+SKILL_NAME = re.compile(r"^name:\s*(\S+)\s*$", re.M)
 
 
 def anchors(path):
@@ -94,6 +96,25 @@ class DocsMapTests(unittest.TestCase):
                 )
             else:
                 self.assertIn(doc.resolve(), listed, f"docs/README.md has no row for {doc.name}")
+
+    def test_the_map_names_each_skill_of_the_plugin(self):
+        paragraphs = re.split(r"\n\s*\n", (DOCS / "README.md").read_text())
+        found = next((p for p in paragraphs if p.startswith("The plugin's skills")), None)
+        self.assertTrue(found, "docs/README.md names no skills of the plugin")
+        listed = set(re.findall(r"`([\w-]+)`", found))  # `skills/` has a slash, so it is left out
+        defined = set()
+        for skill in sorted((ROOT / "skills").glob("*/SKILL.md")):
+            match = SKILL_NAME.search(skill.read_text())
+            self.assertIsNotNone(match, f"{skill.relative_to(ROOT)} has no name: field")
+            defined.add(match.group(1))
+        for name in sorted(defined):
+            self.assertIn(name, listed, f"docs/README.md does not list the skill {name}")
+        for name in sorted(listed):
+            self.assertIn(
+                name,
+                defined,
+                f"docs/README.md lists the skill {name}, which skills/ does not define",
+            )
 
     def test_the_links_of_the_docs_the_readme_agents_md_and_the_skills_resolve(self):
         pages = [

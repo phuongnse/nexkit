@@ -710,6 +710,25 @@ MUTANTS = {
         "seen": ("harness",),
         "families": ("parents",),
     },
+    # A run's budget is its stage's, not capped by what is left of the item's. Only the walker
+    # sees it: the GitHub host sends no item budget.
+    "item-budget-uncapped": {
+        "path": MACHINE,
+        "old": """                if left is not None and (budget[key] is None or left < budget[key]):""",  # noqa: E501
+        "new": """                if False:""",
+        "seen": ("walker",),
+        "families": ("give",),
+    },
+    # An agent run starts on an item whose own budget is spent. Only the walker sees it.
+    "item-budget-spent-run-starts": {
+        "path": MACHINE,
+        "old": """        if stage != "plan" and self.stop_for_budget():
+            return False
+""",
+        "new": "",
+        "seen": ("walker",),
+        "families": ("give",),
+    },
 }
 
 

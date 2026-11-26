@@ -89,12 +89,19 @@
             "integer",
             "null"
           ]
+        },
+        "modelCalls": {
+          "type": [
+            "integer",
+            "null"
+          ]
         }
       },
       "required": [
         "tokens",
         "seconds"
-      ]
+      ],
+      "$comment": "What the run may spend. `modelCalls` is there only when the stage's `budgets` policy sets it."
     },
     "session": {
       "type": [

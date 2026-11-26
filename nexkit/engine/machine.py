@@ -114,12 +114,13 @@ DEFAULTS = {
     "splitDepth": 3,
     "retryWaits": [15, 30, 60],
     "lostWaits": [],
+    "budgets": {},
     "parentEnd": "whenPartAccepted",
 }
 # The policies read as the host gives them at each step, even in a round that keeps the others
 # as it started with them: NexKit 6 reads autopilot's waits at each sweep, and the state keeps
-# none of them.
-NOW = ("lostWaits",)
+# none of them. A run's budget is read the same way, so a lowered budget applies to the next run.
+NOW = ("lostWaits", "budgets")
 # The policies a round keeps. A round never reads a parent's end: only a split parent does, and a
 # parent is never in a round.
 KEPT = tuple(name for name in DEFAULTS if name != "parentEnd" and name not in NOW)
@@ -140,6 +141,11 @@ WRITERS = ("decides", "writer")
 # What the engine's answers to a round's questions keep in `asked`: that it answered, and that
 # its answers started a new plan, whose round they start too (`autopilot.asked_again`).
 ANSWERED = ("answers", "replan")
+# Why an item fails when its own budget runs out (`Step.stop_for_budget`).
+BUDGET_TEXT = {
+    "tokens": "The work item spent its token budget.",
+    "time": "The work item's time budget ran out.",
+}
 # What the engine asks a plan once more for, when a plan that is too large is not split, and
 # the attention after a second such plan (`autopilot._split`).
 AGAIN_FOR = {
@@ -371,6 +377,39 @@ class Step:
             used["tokens"][key] += tokens.get(key, 0)
         used["seconds"] += source.get("seconds") or 0
 
+    def item_left(self):
+        """What is left of the item's own budget (`budgets.item`) as `(tokens, seconds)`, each
+        None when it has no limit. Tokens are input plus output of every run: cached tokens are
+        part of the input already. Time counts from `used.since`, which is none before the
+        change starts."""
+        item = self.p["budgets"].get("item") or {}
+        used = self.s["used"]
+        tokens = seconds = None
+        if item.get("tokens"):
+            tokens = item["tokens"] - (used["tokens"]["input"] + used["tokens"]["output"])
+        if item.get("seconds") and used["since"] and self.at:
+            seconds = _seconds(used["since"]) + item["seconds"] - _seconds(self.at)
+        return tokens, seconds
+
+    def out_of_budget(self):
+        """`tokens` or `time` when the item's own budget is used up, otherwise None."""
+        tokens, seconds = self.item_left()
+        if tokens is not None and tokens <= 0:
+            return "tokens"
+        if seconds is not None and seconds <= 0:
+            return "time"
+        return None
+
+    def stop_for_budget(self):
+        """Fail the item, keeping its change, when its own budget is used up: whether it is
+        true. It is decided where an agent run would start, or stopped without a result."""
+        reason = self.out_of_budget()
+        if reason is None:
+            return False
+        self.move("failed")
+        self.need("failed", BUDGET_TEXT[reason])
+        return True
+
     def run(self, stage, again=False, diagnose=False, by=None, note=""):
         """Run `stage`'s agent. A fix round names the checks it looks into first: with
         `diagnose`, an automatic fix round, those that failed the same way before and after the
@@ -380,6 +419,8 @@ class Step:
         diagnoses and the request's `note` until its result records it (`finished_change`)."""
         if self.review_only and stage != "review":
             raise EngineError("A review-only item is only checked and reviewed.")
+        if stage != "plan" and self.stop_for_budget():
+            return False
         if not again and stage != "review":
             # New work starts the count of runs again afresh; a review handed on within the
             # round keeps it, as NexKit 6's `retry` goes through the stages of one command.
@@ -396,6 +437,15 @@ class Step:
                 "diagnosis": bool(fields["diagnose"]),
                 "note": clip_text(note, HISTORY["note"]),
             }
+        limits = self.p["budgets"].get(stage) or {}
+        budget = {"tokens": limits.get("tokens"), "seconds": limits.get("seconds")}
+        if stage != "plan":
+            # What the item has left caps the stage's budget.
+            for key, left in zip(("tokens", "seconds"), self.item_left(), strict=True):
+                if left is not None and (budget[key] is None or left < budget[key]):
+                    budget[key] = left
+        if limits.get("modelCalls") is not None:
+            budget["modelCalls"] = limits["modelCalls"]
         self.do(
             "runAgent",
             stage=stage,
@@ -406,11 +456,12 @@ class Step:
             agent=None,
             model=None,
             effort=None,
-            budget={"tokens": None, "seconds": None},
+            budget=budget,
             session=None,
             resume=False,
             **fields,
         )
+        return True
 
     def forget_again(self, *names):
         """Drop `names` of the count of runs again, and the count when nothing stays in it."""
@@ -448,6 +499,8 @@ class Step:
         self.run("plan")
 
     def start_change(self):
+        # The item's time counts from here (`budgets.item`).
+        self.s["used"]["since"] = self.at
         if self.s["change"]:
             self.move("fixing")
             self.run("fix")
@@ -527,6 +580,8 @@ class Step:
             self.p = self.given
         if rounds["counted"] >= self.p["fixRounds"]:
             self.used_up()
+            return
+        if self.stop_for_budget():
             return
         rounds["counted"] += 1
         rounds["automatic"] = True
@@ -709,6 +764,8 @@ class Step:
             self.move("working")
             self.do("replaceChange", reason="The change no longer applies to what it was made on.")
         elif policy == "resolve" and left:
+            if self.stop_for_budget():
+                return True
             rounds["conflicts"] += 1
             self.move("fixing")
             # The round that resolves the conflict is no automatic fix round: the count of
@@ -760,7 +817,7 @@ class Step:
         """Run `stage` again in the same round, so it counts nothing again. An automatic fix
         round diagnoses again, as after a usage limit."""
         automatic = stage == "fix" and bool(self.s["rounds"].get("automatic"))
-        self.run(stage, again=True, diagnose=automatic)
+        return self.run(stage, again=True, diagnose=automatic)
 
     def resume(self, hold=True):
         """Start the work of the item's state again once nothing holds it back, as after a
@@ -895,6 +952,7 @@ class Step:
             # was judged already, or it is a round that waits, whose count stands too.
             self.s["rounds"].pop("automatic", None)
             self.s["policies"], self.p = {}, self.given
+            self.s["used"]["since"] = self.at
             self.move("fixing")
             self.run("fix", by=event["by"], note=event["note"])
         elif what == "review":
@@ -909,6 +967,7 @@ class Step:
         elif what == "retry" and state == "failed":
             if self.review_only and not change:
                 return False
+            self.s["used"]["since"] = self.at
             if self.review_only:
                 self.check()
             elif change:
@@ -1076,6 +1135,7 @@ class Step:
             return False
         self.s["rounds"].pop("recheck", None)
         self.by = "person"
+        self.s["used"]["since"] = self.at
         self.move("fixing")
         self.run("fix", by=event["by"])
         return True
@@ -1452,6 +1512,9 @@ class Step:
             # `move` cancels the agent of a state the item leaves, so this is a state that a
             # host changed by hand.
             raise EngineError(f"{action['id']} runs {stage}, which {self.state} does not run.")
+        stopped = stage != "plan" and self.stopped_without_result(result, stage)
+        if stopped and self.stop_for_budget():
+            return
         if result["limit"]:
             self.limited(result["limit"])
             return
@@ -1470,6 +1533,20 @@ class Step:
             self.need(reason, result["error"] or f"The agent gave no result that fits. {text}")
             return
         getattr(self, f"finished_{stage}")(output, action["id"])
+
+    def stopped_without_result(self, result, stage):
+        """Whether the run gave no output that fits: a usage limit, a transient stop, a
+        time-out, an error, or output that is none or misfits its schema."""
+        output = result["output"]
+        return bool(
+            result["limit"]
+            or result["transient"]
+            or result["timedOut"]
+            or result["error"]
+            or result["noResult"]
+            or output is None
+            or self.misfits(output, stage)
+        )
 
     def limited(self, limit):
         """The agent stopped at a usage limit: the item waits for its reset, and then the same
@@ -1544,7 +1621,7 @@ class Step:
         else:
             plan["approved"] = True
             self.start_change()
-        if replan:
+        if replan and self.state != "failed":
             # The answers of a re-plan reach the round that follows, past the move that
             # forgets the engine's answers.
             self.s["asked"] += list(ANSWERED)

@@ -122,6 +122,162 @@
       },
       "maxItems": 10,
       "default": []
+    },
+    "budgets": {
+      "$comment": "What each stage's agent run may spend, by stage (`triage`, `plan`, `implement`, `fix`, `review`): tokens, seconds and model calls, each from 1, or null for no limit, and no money. `item` limits one work item across all its stages and rounds: its tokens count every run as input plus output, and its seconds count from `used.since`. The engine caps each implement, fix and review run's budget by what is left, and fails the item when either runs out. The engine copies the stage's into each `runAgent.budget`, `modelCalls` only when it is set, and reads `budgets` as the host gives it at each step and never keeps it. A limit on one session is the runner's to enforce, as docs/engine-hosts.md#runners says.",
+      "type": "object",
+      "properties": {
+        "triage": {
+          "type": "object",
+          "properties": {
+            "tokens": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            },
+            "seconds": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            },
+            "modelCalls": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            }
+          }
+        },
+        "plan": {
+          "type": "object",
+          "properties": {
+            "tokens": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            },
+            "seconds": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            },
+            "modelCalls": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            }
+          }
+        },
+        "implement": {
+          "type": "object",
+          "properties": {
+            "tokens": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            },
+            "seconds": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            },
+            "modelCalls": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            }
+          }
+        },
+        "fix": {
+          "type": "object",
+          "properties": {
+            "tokens": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            },
+            "seconds": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            },
+            "modelCalls": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            }
+          }
+        },
+        "review": {
+          "type": "object",
+          "properties": {
+            "tokens": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            },
+            "seconds": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            },
+            "modelCalls": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            }
+          }
+        },
+        "item": {
+          "type": "object",
+          "properties": {
+            "tokens": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            },
+            "seconds": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            }
+          }
+        }
+      },
+      "default": {}
     }
   },
   "required": []

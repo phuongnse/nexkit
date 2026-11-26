@@ -203,7 +203,7 @@ needed.
   When a document would still pass the limit, the engine shortens texts that a person reads in full
   where the host keeps them, each to the most that fits, in this order: the findings, the questions
   and their options, the protected paths, the attention's text, and the names of repeated checks
-  past the ten that a diagnosis round looks into, which no name of NexKit's own ever needs. Only
+  past the 10 that a diagnosis round looks into, which no name of NexKit's own ever needs. Only
   then does it shorten the history: the last review's suggestions and then its blocking findings,
   the fix records' notes, summaries and causes and the note of the round under way, the check
   names, failure signatures and conflicting files of the fix records, and the files of the last

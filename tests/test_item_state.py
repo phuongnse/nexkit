@@ -4,14 +4,27 @@ never past GitHub's comment size."""
 
 import copy
 import json
+import re
 import unittest
+from pathlib import Path
 
 from nexkit import engine, item_state, protocol
 from nexkit.engine.machine import blank
-from nexkit.protocol.size import HISTORY, LONGEST, MOST, STATE_LIMIT, dump, fit, size
+from nexkit.protocol.size import (
+    DIAGNOSES,
+    HISTORY,
+    KEY,
+    LONGEST,
+    MOST,
+    STATE_LIMIT,
+    dump,
+    fit,
+    size,
+)
 from nexkit.state import TEXT_LIMIT
 from tests.support import BOT_LOGIN, FakeGitHub
 
+ROOT = Path(__file__).resolve().parent.parent
 PERSON = {"id": "octocat", "role": "decides"}
 NOW = "2026-11-23T15:01:11Z"
 
@@ -485,7 +498,75 @@ def decisions(state):
     )
 
 
+# What the state-document bullet of docs/engine.md says of each bound the code sets, by its name
+# here: the page's phrase, with `{}` where it writes the value.
+BOUNDS = {
+    "STATE_LIMIT": "{} bytes as JSON",
+    "TEXT_LIMIT": "one GitHub comment of {} characters",
+    "MOST.questions": "{} questions of",
+    "MOST.options": "of {} options each",
+    "MOST.protectedPaths": "{} protected paths",
+    "MOST.split": "{} split parts",
+    "MOST.findings": "{} findings with the blocking ones first",
+    "MOST.signatures": "{} failure signatures",
+    "MOST.failing": "{} failing checks, each",
+    "KEY": "{}-digit digest",
+    "MOST.repeated": "{} checks that repeated",
+    "MOST.criteria": "{} criteria and",
+    "MOST.checklist": "{} checklist answers",
+    "LONGEST.question": "a question at {} characters",
+    "LONGEST.option": "an option at {}",
+    "LONGEST.title": "a part's at {}",
+    "LONGEST.path": "a path at {}",
+    "LONGEST.finding": "a finding at {}",
+    "LONGEST.reason": "a reason for a person at {}",
+    "LONGEST.check": "a check's name at {}",
+    "HISTORY.note": "a note at {} characters",
+    "HISTORY.summary": "a summary at {}",
+    "HISTORY.cause": "a cause at {}",
+    "HISTORY.body": "body at {}",
+    "HISTORY.signature": "fix record at {}",
+    "MOST.fixes": "the latest {} fix records",
+    "MOST.fixFailing": "at most {} failing checks",
+    "lastReview": "the last review's {} findings",
+    "DIAGNOSES": "past the {} that a diagnosis round",
+}
+
+
+def bound(name):
+    """The value the code sets for a name of BOUNDS."""
+    if name == "lastReview":
+        return most("rounds.lastReview.findings")
+    table, _, key = name.partition(".")
+    if key:
+        return {"MOST": MOST, "LONGEST": LONGEST, "HISTORY": HISTORY}[table][key]
+    return {
+        "STATE_LIMIT": STATE_LIMIT,
+        "TEXT_LIMIT": TEXT_LIMIT,
+        "KEY": KEY,
+        "DIAGNOSES": DIAGNOSES,
+    }[name]
+
+
 class SizeTest(unittest.TestCase):
+    def test_the_page_names_the_bounds_of_the_code(self):
+        text = (ROOT / "docs" / "engine.md").read_text(encoding="utf-8")
+        bullet = text.split("\n- **It has a size.**", 1)[1].split("\n- ", 1)[0]
+        bullet = " ".join(bullet.split())
+        for group, table in (("MOST", MOST), ("LONGEST", LONGEST), ("HISTORY", HISTORY)):
+            named = {name.split(".")[1] for name in BOUNDS if name.startswith(f"{group}.")}
+            self.assertEqual(named, set(table))
+        for name in BOUNDS:
+            with self.subTest(name):
+                self.assertIn(BOUNDS[name].format(f"{bound(name):,}"), bullet)
+        # NexKit's own name and the names of encodings hold digits that are not limits.
+        rest = re.sub(r"NexKit \d+|UTF-8|base64", "", bullet)
+        numbers = re.findall(r"(?<![\w-])\d+(?:,\d{3})*", rest)
+        self.assertEqual(
+            sorted(int(number.replace(",", "")) for number in numbers),
+            sorted(bound(name) for name in BOUNDS),
+        )
+
     def test_a_document_at_the_limit_fits_one_comment(self):
         state = {**blank("42"), "revision": 1}
         state["attention"] = {"reason": "failed", "text": "", "ref": None}

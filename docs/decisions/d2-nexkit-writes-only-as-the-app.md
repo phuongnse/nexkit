@@ -15,7 +15,8 @@ may change workflow files. NexKit's work needs both, so it needs an identity tha
   expires within an hour.
 - One kind of exception: the jobs that maintain NexKit's own repository write with
   `github.token`. They run no repository code and hold no secret. They publish the engine's
-  image, propose pin updates, file the docs audit's issues and upload code scanning results.
+  image, attach its conformance suite to the release, propose pin updates, file the docs audit's
+  issues and upload code scanning results.
   - The package registry takes no App token.
   - Storing the App's key for these jobs would put it on more runners, for writes that need no
     workflow to start: the update jobs start CI on their branch themselves, and autopilot's

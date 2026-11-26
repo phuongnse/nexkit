@@ -17,7 +17,7 @@ Each kind of content has one home. Write a fact in its home and link to it from 
 | Every setting, its default and what it does | The [configuration reference](configuration.md) |
 | Why a run stopped or waits, and what to do | [Troubleshooting](troubleshooting.md) |
 | The engine, its protocol and its hosts | [The engine](engine.md) |
-| How NexKit is built: modules, workflows and jobs, tokens and secrets | Architecture _(planned, #359)_ |
+| How NexKit is built: modules, workflows and jobs, tokens and secrets | [Architecture](architecture.md) |
 | What NexKit trusts, and the rule that contains each input it does not | Security _(planned, #360)_ |
 | A choice between real alternatives, with its reasons | A [decision](#decisions) |
 | How the work on NexKit is done: issues, pull requests, labels, milestones, releases | [Delivery](delivery.md) |
@@ -225,7 +225,8 @@ when a list of what the code defines misses an entry. These rules close each of 
    whose close on GitHub and roadmap row disagree. It also points each broken link of an open issue
    at its new home. The [docs audit skill](../.claude/skills/nexkit-docs-audit/SKILL.md) says how a
    page is read and what each issue holds.
-9. **Checks catch what a machine can.** `tests/test_docs.py` checks that [the map](README.md) lists
-   every doc, that the links of the map, of this page and of [AGENTS.md](../AGENTS.md) resolve, and
-   that AGENTS.md keeps within its word limits. A docs check is added only once the whole tree passes
+9. **Checks catch what a machine can.** `tests/test_docs.py` checks that [the map](README.md) lists every doc, that the links of the map,
+   of this page, of the architecture page and of [AGENTS.md](../AGENTS.md) resolve, that AGENTS.md
+   keeps within its word limits, and that the job and module tables of the architecture page match
+   the workflows and `nexkit/`. A docs check is added only once the whole tree passes
    it: there are no lists of exceptions.

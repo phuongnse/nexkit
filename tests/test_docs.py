@@ -5,14 +5,15 @@ pages split from it resolves, each task of the nexkit-maintain skill links a sec
 page, AGENTS.md keeps within its word limits, the architecture page's job and module tables match
 the workflows and nexkit/, the how-it-works page's job table matches the jobs of pipeline.yml, the
 permissions its rows name and the number in its heading, each test the security page names exists,
-and the outcome table of how it works lists each outcome the code defines and no other. The key
-tables and the complete configuration of the configuration reference list each key the code
-defines and no other, with the defaults and ranges the code has. The runtime table of that page
-lists each runtime the code defines and no other, with its providers, effort levels and budget
-support, and which runtimes report usage limits. The trigger table of its workflow file section
-lists each trigger of the workflow template and no other. The table of the App's permissions
-matches the permissions and levels of the App manifest. The plan and review layouts of stages
-match the sections the code writes, and the values the pages repeat match their constants.
+and the outcome table of how it works lists each outcome the code defines and no other. The
+command table of the README lists each comment command the code accepts, where it accepts it, and
+no other. The key tables and the complete configuration of the configuration reference list each
+key the code defines and no other, with the defaults and ranges the code has. The runtime table of
+that page lists each runtime the code defines and no other, with its providers, effort levels and
+budget support, and which runtimes report usage limits. The trigger table of its workflow file
+section lists each trigger of the workflow template and no other. The table of the App's
+permissions matches the permissions and levels of the App manifest. The plan and review layouts of
+stages match the sections the code writes, and the values the pages repeat match their constants.
 The decisions index matches the decision files, and each decision is linked, as
 docs/writing-docs.md#how-the-docs-stay-correct says."""
 
@@ -23,7 +24,19 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from nexkit import app, autopilot, checks, config, context, github, publish, report, runtimes, state
+from nexkit import (
+    app,
+    autopilot,
+    checks,
+    config,
+    context,
+    github,
+    publish,
+    report,
+    route,
+    runtimes,
+    state,
+)
 from nexkit.engine import prompt, textutil
 from tests.test_cli import jobs_of, permissions_of
 
@@ -38,6 +51,10 @@ HOW_IT_WORKS_PAGE = DOCS / "how-it-works.md"
 STAGES = DOCS / "stages.md"
 SECURITY = DOCS / "security.md"
 OUTCOMES_HEADER = "| Outcome | Meaning |"
+README = ROOT / "README.md"
+COMMANDS_HEADER = "| Where | Comment | What happens |"
+# The README's *Where* cells, by the place where route.decide reads the command.
+PLACES = {"Issue": "issue", "NexKit PR": "pull request", "Your PR": "pull request"}
 CONFIG_PAGE = DOCS / "configuration.md"
 PERMISSIONS_HEADER = "| Permission | Level | For |"
 # GitHub's names on an App's settings page, by the manifest's keys in nexkit/app.py.
@@ -316,6 +333,42 @@ class OutcomesTests(unittest.TestCase):
                     name,
                     code,
                     f"docs/how-it-works.md lists {name}, which the code does not define",
+                )
+
+
+class CommandsTests(unittest.TestCase):
+    def test_the_readme_lists_each_command_the_code_accepts_and_no_other(self):
+        code = {("issue", command) for command in (*route.ISSUE_COMMANDS, route.TRUST)}
+        code |= {("pull request", command) for command in route.PR_COMMANDS}
+        rows = table(README, COMMANDS_HEADER)
+        self.assertTrue(rows, "README.md has no table of the comment commands")
+        listed = set()
+        for row in rows:
+            commands = re.findall(r"`/nexkit ([a-z]+)", row[1])
+            if not commands:
+                continue
+            with self.subTest(row=row[0]):
+                self.assertIn(
+                    row[0],
+                    PLACES,
+                    f"README.md has a command row under {row[0]}; add it to PLACES in "
+                    "tests/test_docs.py",
+                )
+                listed |= {(PLACES[row[0]], command) for command in commands}
+        for place, command in sorted(code):
+            with self.subTest(place=place, command=command):
+                self.assertIn(
+                    (place, command),
+                    listed,
+                    f"README.md has no row for /nexkit {command} on the {place}",
+                )
+        for place, command in sorted(listed):
+            with self.subTest(place=place, command=command):
+                self.assertIn(
+                    (place, command),
+                    code,
+                    f"README.md lists /nexkit {command} on the {place}, which "
+                    "nexkit/route.py does not accept",
                 )
 
 

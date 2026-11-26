@@ -17,7 +17,7 @@ that sets up repositories. Read [How it works](docs/how-it-works.md) before chan
 | `runtimes/` | Everything specific to one CLI or provider |
 | `schema.py`, `redact.py`, `runlog.py` | Result validation, secret removal, run log |
 | `protocol/` | The engine's protocol as JSON Schemas, with examples; `size.py` bounds its state document; [The engine](docs/engine.md) |
-| `engine/` | The engine: states and moves in `machine.py`; prompts in `prompt.py`, `textutil.py` and `prompts/`; `cli.py` (`nexkit-engine`) and `serve.py` |
+| `engine/` | The engine: states and moves in `machine.py`; prompts in `prompt.py`, `textutil.py` and `prompts/`; `sweep.py` (starts); `cli.py` (`nexkit-engine`) and `serve.py` |
 | `publish.py` | `publish`: plan comment, commit, push, pull request |
 | `checks.py`, `cache.py` | Setup and checks; the keys of cache restore |
 | `report.py`, `state.py`, `progress.py`, `refusal.py` | Statuses, reviews, run and state comments; why GitHub refused a merge |

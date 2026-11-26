@@ -1,0 +1,37 @@
+{
+  "note": "An awaited item that starts while a place is free is not beyondLimit, and still takes a place.",
+  "policies": {
+    "maxParallel": 3
+  },
+  "running": 1,
+  "limited": [],
+  "items": [
+    {
+      "item": "1",
+      "awaited": true
+    },
+    {
+      "item": "2"
+    },
+    {
+      "item": "3"
+    }
+  ],
+  "starts": [
+    {
+      "item": "1",
+      "beyondLimit": false
+    },
+    {
+      "item": "2",
+      "beyondLimit": false
+    }
+  ],
+  "waits": [
+    {
+      "item": "3",
+      "for": "place",
+      "running": 3
+    }
+  ]
+}

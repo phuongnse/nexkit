@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/calls/sweep.answer.schema.json",
+  "$comment": "The answer to a sweep call: the items to start, in order, and each other item with what it waits for. `beyondLimit` is true for an awaited item that starts once `maxParallel` was reached. A wait's `running` is how many items ran at that point, those that already ran and the starts before it.",
+  "type": "object",
+  "required": [
+    "protocol",
+    "starts",
+    "waits"
+  ],
+  "properties": {
+    "protocol": {
+      "const": 1
+    },
+    "starts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "item",
+          "beyondLimit"
+        ],
+        "properties": {
+          "item": {
+            "$ref": "../common.schema.json#/$defs/id"
+          },
+          "beyondLimit": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "waits": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "item",
+          "for",
+          "running"
+        ],
+        "properties": {
+          "item": {
+            "$ref": "../common.schema.json#/$defs/id"
+          },
+          "for": {
+            "enum": [
+              "place",
+              "usageLimit"
+            ]
+          },
+          "running": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    }
+  }
+}

@@ -39,7 +39,9 @@ ALLOWED = {
         "nexkit.protocol",
         "nexkit.engine.machine",
         "nexkit.engine.prompt",
+        "nexkit.engine.sweep",
     },
+    "nexkit.engine.sweep": {"__future__", "nexkit.engine.machine"},
     # `importlib` only for `importlib.resources`, to read the prompts' own templates, which
     # ship inside the package as the schemas do; `nexkit.protocol` for the checklist stages.
     "nexkit.engine.prompt": {

@@ -12,7 +12,7 @@ GitHub says when it fits.
 
 ## Done
 
-These features make up NexKit 6, released from 1.0.0 (2026-10-05) to 6.12.2 (2026-11-20).
+These features make up NexKit 6, released from 1.0.0 (2026-10-05) to 6.13.0 (2026-11-26).
 
 | Milestone | What it delivers | Since |
 | --- | --- | --- |

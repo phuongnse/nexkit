@@ -1,5 +1,56 @@
 # Changelog
 
+## 6.13.0
+
+An issue's commands and the rounds on its pull request wait in one queue, and autopilot writes
+each item only from that queue. NexKit's decisions move one by one into an engine,
+`nexkit-engine`, which the GitHub host asks; GitHub's behaviour stays NexKit 6's but where
+this entry says otherwise.
+
+- An issue's commands and the rounds on its `nexkit/issue-<n>` pull request share one
+  concurrency group, `nexkit-<n>`, so two runs never write the same work item at once
+  (#407). Before, the issue and the pull request had separate queues.
+  - The workflow gets a read-only first job, `item`, which runs `nexkit item` to name the
+    work item. It holds no App key and checks out no code of the repository.
+  - `nexkit doctor` reports a workflow without the `item` job, and an `item` job that checks
+    out another release than the pipeline.
+  - A person's pull request, and a fork's pull request on a `nexkit/issue-<n>` branch, keep
+    their own number as their queue.
+- The autopilot sweep writes no issue or pull request itself (#467, #468). For each issue
+  whose step writes, it sends a `step` dispatch, which carries the step out in the issue's
+  queue, and waits for those runs to end. Parts of a split start one sweep later.
+  `gh workflow run nexkit.yml -f command=step -f number=<issue>` moves one issue on by hand.
+- A writer's approval of a NexKit pull request merges it from a `step` run in the issue's
+  queue, which reads the approving review back from GitHub (#453). A head that moved since
+  the approval is not merged.
+- Under autopilot, a plan, a blocked `/nexkit go` or a blocked fix round whose recommended
+  answer only closes the issue mentions `notify` in its own report, and no longer says that
+  autopilot carries on (#327, #346). The sweeps after it do not mention them again.
+- A comment of NexKit's App that anyone else ever changed is no record of NexKit's (#329):
+  every reader ignores its markers, and autopilot leaves the item to a person. Deleting the
+  changed comment hands the item back.
+- NexKit reads each marker only at the position where it writes it, so quoted text from an
+  agent or CI never passes for its record (#330).
+- The engine (see [The engine](docs/engine.md)): the protocol's JSON Schemas, and
+  `nexkit-engine step`, `prompt`, `sweep` and `serve`, which answers the same calls over HTTP.
+  The release publishes its image, `ghcr.io/phuongnse/nexkit-engine:6.13.0`, with its build
+  provenance, and refuses a version it already published (#318, #334).
+  - The decisions that follow a plan, a blocked `/nexkit go`, a round's checks and review,
+    a fix round, a lost command, a merge's refusals and waits, and the start of a new
+    issue's first plan, are the engine's. A differential check against NexKit 6 shows the
+    same outcomes, comments and times on GitHub.
+- The pipeline installs claude-code 2.1.323 (#307).
+- The configuration reference, *How it works* and the engine's page are split into pages by
+  topic. Links to their sections may need a new page name.
+
+### Upgrade
+
+- **Add the `item` job** of `nexkit/templates/workflow.yml` at this tag to
+  `.github/workflows/nexkit.yml`, with its checkout at the same ref as the pipeline. Give the
+  `nexkit` job `needs: item` and the template's concurrency group. Without it, NexKit runs as
+  before, but an issue's commands and its pull request's rounds may overlap, and
+  `nexkit doctor` reports it.
+
 ## 6.12.2
 
 - An issue that GitHub closes at the same moment as NexKit counts as closed (#303). After

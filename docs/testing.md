@@ -38,7 +38,9 @@ what it covers.
 
 Run it when changing `engine/prompts/`, `engine/prompt.py`, `engine/textutil.py`, `agent.py`,
 `schema.py`, `runtimes/` or a pin. CI runs it on such a pull request, and on the pull request of
-`update-agents.yml` for the runtime it updates.
+`update-agents.yml` for the runtime it updates. A ruleset on `main` requires its job,
+`smoke-claude-code`, which GitHub counts as passed when CI skips it, so a pull request that breaks
+real Claude Code does not merge, also one that NexKit merges.
 
 The reasons for pinning each version in one place, and testing only the pinned versions, are in
 [D9](decisions/d9-pins-live-in-one-place.md).

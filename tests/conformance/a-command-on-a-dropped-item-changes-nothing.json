@@ -1,0 +1,44 @@
+{
+  "policies": {},
+  "state": {
+    "example": "dropped"
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "requested",
+        "what": "plan"
+      },
+      "state": "dropped",
+      "changed": false,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "go"
+      },
+      "state": "dropped",
+      "changed": false,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "fix"
+      },
+      "state": "dropped",
+      "changed": false,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "review"
+      },
+      "state": "dropped",
+      "changed": false,
+      "actions": []
+    }
+  ]
+}

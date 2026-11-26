@@ -1,0 +1,26 @@
+{
+  "policies": {},
+  "state": {
+    "example": "ready"
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "requested",
+        "what": "go"
+      },
+      "state": "ready",
+      "changed": false,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "plan"
+      },
+      "state": "ready",
+      "changed": false,
+      "actions": []
+    }
+  ]
+}

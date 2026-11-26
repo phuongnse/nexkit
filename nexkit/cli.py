@@ -343,7 +343,9 @@ def cmd_route(args):
                 "their source for the next run."
             )
             return 1
-    decision = route(gh, os.environ["GITHUB_EVENT_NAME"], event, event.get("inputs") or {})
+    decision = route(
+        gh, os.environ["GITHUB_EVENT_NAME"], event, event.get("inputs") or {}, cfg=loaded
+    )
     cfg = None
     if decision["action"] != "none":
         if problem:

@@ -18,7 +18,9 @@ other, with its providers, effort levels and budget support, and which runtimes 
 The provider table of that page lists each provider the code defines and no other, with its
 settings and secret fields.
 The trigger table of its workflow file section lists each trigger of the workflow template and no
-other. The table of the App's permissions matches the permissions and levels of the App manifest.
+other. The list of workflow permissions in step 5 of the App upgrade matches the top-level
+permissions of the workflow template, with their levels. The table of the App's permissions matches
+the permissions and levels of the App manifest.
 The refusals of `unaffected_by` that the checks page lists name each refusal of the code and no
 other, and the code refuses each one. The plan and review layouts of stages match the sections
 the code writes, and the values the pages repeat match their constants. The words that the agents
@@ -111,6 +113,10 @@ KEYS_HEADER = "| Key | Default | Meaning |"
 STAGE_KEYS_HEADER = "| Key | Meaning |"
 TRIGGERS_HEADER = "| Trigger | Starts NexKit for |"
 WORKFLOW_TEMPLATE = ROOT / "nexkit/templates/workflow.yml"
+# Step 5 of the App upgrade: the workflow permissions as names, then their one level.
+UPGRADE_PERMISSIONS = re.compile(
+    r"`permissions:` may shrink to (.+?), all `(\w+)`, as `nexkit init` writes it", re.S
+)
 RUNTIMES_HEADER = "| Runtime | Providers | `effort` |"
 PROVIDERS_HEADER = "| Provider | Settings | Secret |"
 # A field's name in a cell of the provider table, in backticks: `none` and `claude setup-token`
@@ -740,6 +746,12 @@ def workflow_triggers():
     return set(re.findall(r"^  (?:# )?([a-z_]+):\s*$", block, re.M))
 
 
+def workflow_permissions():
+    """The workflow-level `permissions:` of the workflow template, by name."""
+    block = re.search(r"^permissions:\n((?:  .*\n)+)", WORKFLOW_TEMPLATE.read_text(), re.M)
+    return dict(re.findall(r"^  ([\w-]+): (\w+)", block.group(1), re.M)) if block else {}
+
+
 class ConfigurationTests(unittest.TestCase):
     def test_the_runtime_table_lists_each_runtime_the_code_defines_and_no_other(self):
         rows = {cells[0].strip("`"): cells for cells in table(CONFIG_PAGE, RUNTIMES_HEADER)}
@@ -917,6 +929,40 @@ class ConfigurationTests(unittest.TestCase):
         for trigger in sorted(workflow_triggers() - listed):
             with self.subTest(trigger=trigger):
                 self.fail(f"the trigger table of docs/configuration.md has no row for {trigger}")
+
+    def test_the_app_upgrade_lists_each_workflow_permission_of_the_template(self):
+        match = UPGRADE_PERMISSIONS.search(CONFIG_PAGE.read_text())
+        self.assertIsNotNone(
+            match,
+            "docs/configuration.md has no list of workflow permissions in step 5 "
+            "of the App upgrade",
+        )
+        template = workflow_permissions()
+        self.assertTrue(
+            template, "nexkit/templates/workflow.yml has no top-level permissions block"
+        )
+        listed = set(re.findall(r"`([\w-]+)`", match.group(1)))
+        level = match.group(2)
+        for name in sorted(listed - set(template)):
+            with self.subTest(permission=name):
+                self.fail(
+                    f"step 5 of the App upgrade lists {name}, which nexkit/templates/workflow.yml "
+                    "does not set"
+                )
+        for name in sorted(set(template) - listed):
+            with self.subTest(permission=name):
+                self.fail(
+                    f"nexkit/templates/workflow.yml sets {name}, which step 5 of the App upgrade "
+                    "does not list"
+                )
+        for name in sorted(listed & set(template)):
+            with self.subTest(permission=name):
+                self.assertEqual(
+                    template[name],
+                    level,
+                    f"nexkit/templates/workflow.yml gives {name} as {template[name]}, "
+                    f"but step 5 of the App upgrade says {level}",
+                )
 
 
 REFUSALS_LEAD = "- NexKit refuses, and `nexkit doctor` says why:"

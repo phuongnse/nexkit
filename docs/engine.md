@@ -525,15 +525,25 @@ host runs it through its own adapter. A new rule of the engine comes with a case
    the count stay the host's. A person's own lost command waits for that person. After a blocked `/nexkit go` or fix round whose recommended
    answer only closes the issue, `report` mentions the person, as for any other wait, and the
    sweep does not mention them again; NexKit 6 said autopilot carries on and left the mention
-   to the sweep, and this differs from it on purpose. A conflict that the base branch's move makes, found
-   after an implement round or on a push to the base branch (`maintain`), stays NexKit 6's,
-   as does the merge itself (`report.merge_pull`) but for the refusals above: those for required
+   to the sweep, and this differs from it on purpose. It decides what follows a move of the base branch
+   under an open NexKit pull request too (`host.base_moved`, called by
+   `maintain.resolve_conflicts` on a push to the base branch, on the schedule and after NexKit's
+   merge, by `maintain.stop_superseded`, and by `report._conflicts_after` after an implement
+   round): the host sends a `changeObserved` with the conflict, and with `behind` when the base
+   branch's rules want pull requests up to date and the head lacks its tip, together with the
+   conflict rounds and the updates used, and carries out the answer: a conflict round, an
+   update, a stop of the round's checks, or a wait for a person. A round that runs only its
+   checks is in `checking` with those checks pending, and any other pull request is in `ready`.
+   A hold on the issue is read first, as in NexKit 6, and so are NexKit 6's other reasons not to
+   start a round: one tried on this base commit, one that runs, is paused or is queued, and an
+   implement round that still runs. A conflict round or update that fails to start after the
+   stop, which NexKit 6 records as `stop_failed`, stays the host's. The merge itself
+   (`report.merge_pull`) stays NexKit 6's but for the refusals above: those for required
    checks that fail or have not passed yet, a head that moved, a base branch that kept moving,
    a reason only a person clears, a conflict and a branch behind its base, a change that a
    person merged, one that became empty, a commit pushed while the merge waits, and the end of
    every parent. The facts only GitHub knows stay NexKit 6's, such as parts that were never
-   filed as sub-issues, and so does the update of a branch after the base branch moved
-   (`maintain.stop_superseded`). The import ends a merge that waited more than six hours by
+   filed as sub-issues. The import ends a merge that waited more than six hours by
    itself, even when its branch is behind, since it reads no `mergeable_state`. A
    person's push during the wait for the base branch's failure is not sent yet: NexKit 6's
    sweep does not read the head then either. A `/nexkit go`

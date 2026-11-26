@@ -623,12 +623,50 @@ class Step:
                 # `give_back` returns the count.
                 self.s["rounds"].pop("automatic", None)
             self.check()
+            if self.behind_in_checks():
+                self.update_behind()
         elif observed["conflicts"] and not self.review_only and self.at_once():
             if not self.on_conflict_found():
                 return False
+        elif self.behind_in_checks():
+            self.update_behind()
         else:
             return False
         return True
+
+    def update_behind(self):
+        """Stop the checks that run on a branch behind its base, and update it. The checks of
+        a round that the engine asked for in this step never started, and the count of an
+        automatic fix round whose checks stop is given back."""
+        issued = {action["id"] for action in self.actions}
+        for action in [a for a in self.s["pending"] if a["kind"] == "runChecks"]:
+            if action["id"] in issued:
+                self.withdraw(action)
+            else:
+                self.cancel(action)
+        self.do("updateChange", changeVersion=self.version)
+
+    def behind_in_checks(self):
+        """Whether the checks of this version run while it is observed behind its base and an
+        update is left: under any conflict policy but `person`, with no hold, and while
+        `rounds.updates` is below `conflictRounds`. A conflict is the conflict rounds' to answer
+        instead."""
+        observed = self.s["observed"]
+        return bool(
+            self.state == "checking"
+            and observed.get("behind")
+            and not observed["conflicts"]
+            and not self.review_only
+            and not self.s["hold"]
+            and self.p["conflicts"] != "person"
+            and self.update_left()
+            and any(a["kind"] == "runChecks" for a in self.s["pending"])
+        )
+
+    def update_left(self):
+        """Whether `conflictRounds` allows another update of the branch from its base, which
+        counts apart from conflict rounds (docs/engine-states.md#states)."""
+        return self.s["rounds"].get("updates", 0) < self.p["conflictRounds"]
 
     def took_change(self, result):
         """A publish, a replace or an update set the change. It changed the change outside the
@@ -1803,7 +1841,7 @@ class Step:
             if self.p["conflicts"] == "person":
                 self.move("ready")
                 self.need("acceptRefused", result["text"] or "The accept was refused.")
-            elif self.s["rounds"].get("updates", 0) < limit:
+            elif self.update_left():
                 self.do("updateChange", changeVersion=self.version)
             else:
                 self.move("ready")

@@ -103,7 +103,7 @@ available, leaves the accept to a person.
 | Observed conflict | `mergeable` is false (`mergeable_state` is `dirty`). While `mergeable` is null, as just after a push, the host reads again before it sends; a merged pull request keeps it null, and its observation says `conflicts` false | The draft no longer applies to the latest release of what it changes |
 | Observed merge | The pull request's `merged`, which needs no `mergeable` | The draft was published outside the engine |
 | Observed as empty | No file differs between the base and the head | The draft changes nothing any more |
-| Observed as behind | `mergeable_state` is `behind`; left out of an observation when it is not | The draft was made on an older release than the latest |
+| Observed as behind | `mergeable_state` is `behind`, and after a move of the base branch the base branch's rules want pull requests up to date while the head lacks its tip; left out of an observation when it is not | The draft was made on an older release than the latest |
 | Observes on | `pull_request` synchronize, closed and reopened; a push to the base, for each open change; each sweep | A change of the draft or of the release; its worker, from time to time |
 | A change closed unmerged | Not an observation: the host tells a person, who drops the item or asks for the work again | The draft was discarded: the same |
 | One event at a time | An issue's commands and its NexKit pull request's rounds share one concurrency group keyed by the issue, which the workflow's `item` job derives with `nexkit item` and passes on (a person's pull request is its own item). A run that waits may be replaced by a newer one, so a run in the item's group takes every event of the item that is still at its source (`host.take`): comments, reviews and hold-label changes after the state comment's cursor, oldest first, each with its stable id from its source, such as the comment's id (see [Events and actions arrive more than once](engine.md#events-and-actions-arrive-more-than-once)). A command whose run was replaced is answered by the run that ran, and a run whose writes keep losing fails and leaves its event for the next run. The live pipeline does not call `host.take` yet. The sweep carries out no item's step itself: it sends a `step` event into each item's group, and that run carries the step out. The sweep still writes NexKit's own labels, CI bug issues and done notices, and its conflict rounds on pull requests, from the `autopilot` group. An approval's run in `approved-N` writes nothing: it sends one `step` event for the item's issue, and the run that takes it in the item's group merges, so that run, not the approval's, writes the item's state. Planned in [#332](https://github.com/phuongnse/nexkit/issues/332): every run that writes an item's state shares such a group, so that the run is the state comment's only writer, which stands for the compare-and-set. Today the `autopilot`, `resume` and `approved-N` groups stay apart from the items' (`nexkit/templates/workflow.yml`) | The request's row, locked while its event is handled |
@@ -112,8 +112,8 @@ What exists only because of GitHub stays in the GitHub host: the GitHub App, sta
 clean-up, watching CI and flaky runs, Dependabot, artifacts, carrying a review over a base merge,
 and up-to-date rules. Each reaches the engine as an event or a result: a failure the base branch
 has is a `runChecks` result, and a branch behind its base is an `accept` refused as `behind`,
-which the engine answers with an `updateChange` that the host carries out by merging the base
-into the branch.
+or an observation while its checks run, which the engine answers with an `updateChange` that the
+host carries out by merging the base into the branch.
 
 The state comment's own write checks the revision too, as a backstop to the one concurrency
 group per item: the GitHub host writes a state only as the next revision of the one its caller

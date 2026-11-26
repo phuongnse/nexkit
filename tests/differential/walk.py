@@ -82,6 +82,10 @@ INVARIANTS = {
     "conflict policy is not `person` and `conflictRounds` has an update left, which counts apart "
     "from conflict rounds when it succeeds; otherwise, and for an update that failed, it needs a "
     "person, in `ready` with `acceptRefused`",
+    "behind-checks": "checks that run on a version observed behind its base, with no conflict and "
+    "no hold, stop and the branch is updated when the conflict policy is not `person` and "
+    "`conflictRounds` has an update left: one `updateChange`, the item staying in `checking`; "
+    "otherwise a step in `checking` asks for no update",
     "refusals": "a refused accept that no one retries, a moved head, a refusal after the base "
     "branch kept moving or one only a person clears, waits for a person in `ready`; one that "
     "was not accepted fails the item",
@@ -885,6 +889,7 @@ class Walker:
         self.start(state, event, pol, answer, flag, info)
         self.accept_conflict(state, event, answer, done, given, flag, info)
         self.accept_behind(state, event, answer, done, given, flag, info)
+        self.behind_checks(state, event, answer, {**self.defaults, **eff}, flag, info)
         # automatic: a round that its checks or its review judged keeps its count, so only a
         # fix round issued in the same step is automatic after it.
         judged = done is not None and done["kind"] == "runChecks"
@@ -1039,6 +1044,50 @@ class Walker:
             flag("accept-behind", "an update names another version than the change's", info)
         if new["rounds"]["conflicts"] != state["rounds"]["conflicts"]:
             flag("accept-behind", "a branch behind counted a conflict round", info)
+
+    def behind_checks(self, state, event, answer, eff, flag, info):
+        """The invariants of checks that run on a version observed behind its base: they stop and
+        the branch is updated when an update is left, and no step in `checking` asks for an
+        update otherwise."""
+        if state is None:
+            return
+        new = answer["state"]
+        updates = [a for a in answer["actions"] if a["kind"] == "updateChange"]
+
+        def left(of):
+            room = (
+                eff["conflicts"] != "person"
+                and of["rounds"].get("updates", 0) < eff["conflictRounds"]
+            )
+            return room and not new["hold"] and of["itemKind"] != "reviewOnly"
+
+        def live(of):
+            seen = of["observed"]
+            running = any(a["kind"] == "runChecks" for a in of["pending"])
+            coming = any(
+                a["kind"] in ("publish", "replaceChange", "updateChange") for a in of["pending"]
+            )
+            return bool(
+                of["state"] == "checking"
+                and seen
+                and seen.get("behind")
+                and of["change"]
+                and seen["version"] == of["change"]["version"]
+                and not (seen["conflicts"] or seen["merged"] or seen["empty"])
+                and running
+                and not coming
+                and left(of)
+            )
+
+        if live(new):
+            flag(
+                "behind-checks", "checks run on a branch behind its base with an update left", info
+            )
+        if updates and state["state"] == "checking" and event["kind"] != "actionFinished":
+            if len(updates) != 1 or not left(state) or new["state"] != "checking":
+                flag("behind-checks", "a step in checks asked for an update it may not", info)
+            elif not any(a["kind"] == "cancel" for a in answer["actions"]):
+                flag("behind-checks", "an update in checks left their run going", info)
 
     def required_checks(self, state, event, answer, done, given, flag, info):
         """The invariants of the wait for required checks and its six hours."""

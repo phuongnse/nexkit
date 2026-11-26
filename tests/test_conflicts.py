@@ -64,6 +64,31 @@ class SweepTests(unittest.TestCase):
         row = {"round": n, "trigger": "fix", "url": f"https://x/{number}/{n}", "status": "success"}
         self.gh.comment(number, render_run({**row, **run}))
 
+    def test_the_engine_answers_the_round_a_sweep_starts(self):
+        with mock.patch.object(host, "base_moved", return_value="waits") as moved:
+            self.sweep()
+        self.assertEqual(self.gh.dispatches, [])
+        # What the host asks: the pull request conflicts, and no round runs its checks.
+        [(cfg, issue, number, head, conflicts, behind, checking, used, updates)] = [
+            call.args for call in moved.call_args_list
+        ]
+        self.assertEqual((issue, number, conflicts, behind, checking), (5, 6, True, False, False))
+        self.assertEqual((used, updates), (0, 0))
+        self.assertEqual(cfg["conflicts"], {"auto_resolve": True, "max_rounds": 3})
+
+    def test_a_sweep_starts_nothing_where_the_engine_refuses(self):
+        with mock.patch.object(host, "base_moved", side_effect=host.Refused("no")):
+            [line] = self.sweep()
+        self.assertIn("#6: ", line)
+        self.assertIn("refused to decide its next step", line)
+        self.assertEqual(self.gh.dispatches, [])
+
+    def test_the_conflict_rounds_used_go_to_the_engine(self):
+        self.round(6, 1, conflicts=True)
+        with mock.patch.object(host, "base_moved", return_value="round") as moved:
+            self.sweep()
+        self.assertEqual(moved.call_args.args[7], 1)
+
     def test_starts_a_round_only_for_conflicting_nexkit_pull_requests(self):
         self.assertEqual(self.sweep(), ["Started an automatic round on #6 to merge `main`."])
         [dispatch] = self.gh.dispatches
@@ -304,6 +329,55 @@ class SupersededTests(unittest.TestCase):
         # Once: the next look finds no round in its checks.
         self.assertEqual(self.sweep(), [])
         self.assertEqual(len(rounds_started(self.gh)), 1)
+
+    def test_the_engine_answers_the_stop_of_a_round_whose_head_is_behind(self):
+        self.behind()
+        with mock.patch.object(host, "base_moved", return_value="waits") as moved:
+            self.assertEqual(self.sweep(), [])
+        # Nothing stopped, nothing updated, nothing started.
+        nothing = (self.gh.cancelled, self.gh.updated, rounds_started(self.gh))
+        self.assertEqual(nothing, ([], [], []))
+        self.assertEqual(self.latest()["run"]["status"], "running")
+        # What the host asks: behind, with no conflict, while the round runs its checks.
+        [(_, issue, number, head, conflicts, behind, checking, used, updates)] = [
+            call.args for call in moved.call_args_list
+        ]
+        self.assertEqual((issue, number, head), (5, 6, CHECKED))
+        self.assertEqual((conflicts, behind, checking, used, updates), (False, True, True, 0, 0))
+
+    def test_the_engine_answers_the_stop_of_a_round_whose_head_conflicts(self):
+        self.gh.pulls[6]["mergeable"] = False
+        with mock.patch.object(host, "base_moved", return_value="waits") as moved:
+            self.assertEqual(self.sweep(), [])
+        self.assertEqual((self.gh.cancelled, rounds_started(self.gh)), ([], []))
+        # Asked for the round's stop first, then for the round that no round runs against.
+        first, *_ = moved.call_args_list
+        self.assertEqual(first.args[4:7], (True, False, True))
+
+    def test_a_round_is_stopped_for_an_update_only_when_the_engine_answers_one(self):
+        self.behind()
+        with mock.patch.object(host, "base_moved", return_value="update"):
+            [line] = self.sweep()
+        self.assertIn("NexKit stopped this round's checks", line)
+        self.assertEqual((self.gh.cancelled, self.gh.updated), ([50], [(6, CHECKED)]))
+
+    def test_a_round_is_stopped_for_a_conflict_round_only_when_the_engine_answers_one(self):
+        self.gh.pulls[6]["mergeable"] = False
+        with mock.patch.object(host, "base_moved", return_value="round"):
+            [line] = self.sweep()
+        self.assertIn("NexKit stopped this round's checks", line)
+        self.assertEqual(self.gh.cancelled, [50])
+        [dispatch] = rounds_started(self.gh)
+        self.assertEqual(dispatch["inputs"]["auto"], "conflicts")
+
+    def test_a_round_whose_stop_the_engine_refuses_goes_on(self):
+        self.behind()
+        with mock.patch.object(host, "base_moved", side_effect=host.Refused("no")):
+            [line] = self.sweep()
+        self.assertIn("refused to decide its next step", line)
+        nothing = (self.gh.cancelled, self.gh.updated, rounds_started(self.gh))
+        self.assertEqual(nothing, ([], [], []))
+        self.assertEqual(self.latest()["run"]["status"], "running")
 
     def test_a_round_counting_its_shards_is_in_its_checks_too(self):
         self.in_job(50, "shards")
@@ -1039,6 +1113,32 @@ class MergeRefusalTests(ReportCase):
         self.gh.pulls[6]["mergeable"] = True
         self.run_report(cfg=cfg)
         self.assertFalse(rounds_started(self.gh))
+
+    def test_an_implement_round_starts_its_conflict_round_only_when_the_engine_answers_one(self):
+        os.environ["GITHUB_RUN_ID"] = "1"  # the id the next report runs as
+        self.gh.comment(5, render_run({"command": "go", "url": run_url(), "status": "running"}))
+        self.candidate()
+        self.gh.pulls[6]["mergeable"] = False
+        cfg = make_config(conflicts={"auto_resolve": True})
+        with mock.patch.object(host, "base_moved", return_value="waits") as moved:
+            outcome = self.run_report(cfg=cfg)
+        self.assertEqual(outcome["outcome"], "ready")
+        self.assertFalse(rounds_started(self.gh))
+        self.assertEqual(self.gh.cancelled, [])
+        args = moved.call_args.args
+        self.assertEqual((args[1], *args[4:]), (5, True, False, False, 0, 0))
+        self.assertNotIn("Started an automatic round", outcome["summary"])
+
+    def test_an_implement_round_whose_conflict_round_the_engine_refuses_starts_none(self):
+        os.environ["GITHUB_RUN_ID"] = "1"  # the id the next report runs as
+        self.gh.comment(5, render_run({"command": "go", "url": run_url(), "status": "running"}))
+        self.candidate()
+        self.gh.pulls[6]["mergeable"] = False
+        cfg = make_config(conflicts={"auto_resolve": True})
+        with mock.patch.object(host, "base_moved", side_effect=host.Refused("no")):
+            outcome = self.run_report(cfg=cfg)
+        self.assertFalse(rounds_started(self.gh))
+        self.assertIn("refused to decide its next step", outcome["summary"])
 
     def test_a_merge_waiting_for_required_checks_is_merged_by_a_later_sweep(self):
         self.gh.add_milestone(1)

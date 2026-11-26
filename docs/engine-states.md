@@ -161,6 +161,19 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   change, so the failure's or the reopen's attention stands whatever else is observed: a new
   version waits in the observation until a person's request takes the item on, such as a review, a
   retry or a fix, which then starts its work on that version.
+- **Checks that run on a branch behind its base** stop, and the branch is updated at once, when
+  the latest observation says that the current version is `behind` its base, with no conflict,
+  while an update is left: under any conflict policy but `person`, with no hold, on a change that
+  is not a person's own, and while `rounds.updates` is below `conflictRounds`. The engine cancels
+  the checks, which gives back the count of an automatic fix round whose checks stop, answers
+  `updateChange`, and the item stays in `checking`, since the update's result goes to its checks
+  again, as after an update at the accept. Checks that the engine asked for in the same step are
+  withdrawn instead, since they never started. Under `person`, under a hold, or once the updates
+  used reach `conflictRounds`, the checks run to their end, as NexKit 6 lets them, and the
+  merge's own `behind` refusal decides what follows. A conflict is the conflict rounds' to answer
+  instead, and wins over `behind`. A version that a person pushed and that is observed behind is
+  updated as soon as it would be checked. NexKit 6 reads `behind` here only from the base
+  branch's rules and a comparison with its tip (`maintain.stop_superseded`).
 - **From every state that is not final:** `dropRequested` goes to `dropped`, and the engine cancels
   the step that runs. A host's `stopped` event, such as a key that its provider refused or a
   person who was disabled, goes to `failed`.

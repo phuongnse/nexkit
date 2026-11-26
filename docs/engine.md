@@ -491,10 +491,16 @@ host runs it through its own adapter. A new rule of the engine comes with a case
    engine makes that exception. The merge's observations reach the engine too
    (`host.change_seen`): a pull request that a person merged first ends the item as `accepted`, a
    change that the base branch already holds ends it as `noChange`, and a commit that a person
-   pushes while the merge waits is checked. After NexKit's own merge, `host.part_ended` sends the
-   parent its part's end, and the parent closes only when the engine answers `close`: it does so
-   under `parentEnd` `whenPartAccepted`, which the GitHub host gives with `close_parent_issues`
-   and a parent of at most as many parts as a state document holds. `report`
+   pushes while the merge waits is checked. Every parent's end goes through
+   `host.part_ended`, which sends the parent its part's end: after NexKit's own merge, after a
+   person closes the part, after a round that finds no change is needed, after a pull request
+   whose base branch already holds its change, and in autopilot's sweep, at every level up the
+   tree and for a parent of any number of sub-issues. The parent closes only when the engine
+   answers `close`: it does so under `parentEnd` `whenPartAccepted`, which the GitHub host gives
+   with `close_parent_issues`. When the engine answers that a person decides, NexKit leaves
+   NexKit 6's note on the parent. A parent of more sub-issues than a state document holds sends
+   a reduced list of the part, an open sub-issue, a completed one and a dropped one, which keeps
+   the two facts the rule reads. `report`
    sends every round's checks and review to `step`: a review that paused at a usage limit,
    with the reset when NexKit 6 resumes it, a review that failed, a person's own pull request
    as an item that is only reviewed, and a round whose commit conflicts with its base branch,
@@ -524,8 +530,8 @@ host runs it through its own adapter. A new rule of the engine comes with a case
    checks that fail or have not passed yet, a head that moved, a base branch that kept moving,
    a reason only a person clears, a conflict and a branch behind its base, a change that a
    person merged, one that became empty, a commit pushed while the merge waits, and the end of
-   the direct parent. The parents above it, and a parent's end outside the merge, stay NexKit
-   6's, and so does the update of a branch after the base branch moved
+   every parent. The facts only GitHub knows stay NexKit 6's, such as parts that were never
+   filed as sub-issues, and so does the update of a branch after the base branch moved
    (`maintain.stop_superseded`). The import ends a merge that waited more than six hours by
    itself, even when its branch is behind, since it reads no `mergeable_state`. A
    person's push during the wait for the base branch's failure is not sent yet: NexKit 6's

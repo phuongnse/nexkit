@@ -95,11 +95,12 @@ again, the wait or the person. What counts as lost, and the six-hour window of t
 It decides what the merge finds too (`report.merge_pull`, `autopilot._merge_step`):
 `change_seen` sends a pull request that a person merged first, a change that its base branch
 already holds, and a commit that a person pushed while the merge waited, as observations, and the
-item ends or its new head is checked as the engine answers. After NexKit's own merge,
-`part_ended` sends the end of the part to its parent's document, which closes the parent only when
-every part ended and one was completed, under `parentEnd`. Only the direct parent is the engine's:
-the parents above it, and the facts only GitHub knows, such as parts never filed as sub-issues,
-stay with `maintain.close_parents`.
+item ends or its new head is checked as the engine answers. Every parent's end goes through it:
+`part_ended` sends the end of a part to its parent's document, at every level and on every close
+of the part (a merge, a person's close, a change already on the base branch, no change needed,
+autopilot's sweep), and the parent ends only when every part ended and one was completed, under
+`parentEnd`, whatever the number of its sub-issues. Only the facts GitHub knows, such as parts
+never filed as sub-issues, stay with `maintain.close_parent`.
 
 Every round's checks and review reach it (`round_ended`): a review that paused at a usage
 limit, a review that failed, and a person's own pull request, which is only reviewed; a
@@ -1963,17 +1964,21 @@ def change_seen(cfg, issue, pr, head, auto_fixes, seen, waiting=False):
 
 
 def part_ended(cfg, parent, subs, part, state):
-    """Whether the parent issue `parent` ends once its sub-issue `part`, which NexKit merged
-    and closed as `state`, ended, as the engine decides it (`report.merge_pull`): `close` when
-    every one of the sub-issues `subs` ended and one was completed, under `parentEnd`, which
-    GitHub gives as `person` without `close_parent_issues`; otherwise `stays`. Facts only
-    GitHub knows, such as parts that were never filed, stay with `maintain.close_parents`.
-    Raises `Refused`, also when the parent has more sub-issues than a state holds."""
+    """Whether the parent issue `parent` ends once its sub-issue `part`, which closed as
+    `state`, ended, as the engine decides it (`maintain.close_parent`, at every level and for
+    every way a part closes): `close` when every one of the sub-issues `subs` ended and one
+    was completed, under `parentEnd`, which GitHub gives as `person` without
+    `close_parent_issues`; `person` when every part ended and a person decides; otherwise
+    `stays`. Facts only GitHub knows, such as parts that were never filed, stay with
+    `maintain.close_parent`. A parent with more sub-issues than a state holds sends a reduced
+    list: the part, and one open, one completed and one dropped sub-issue, which keep the two
+    facts the rule reads, that every part ended and that one was completed. Raises
+    `Refused`."""
     ended = {str(sub["number"]): first_state._ended(sub) for sub in subs}
     # The part is one of them, though a list that GitHub has not caught up with may miss it.
     ended[str(part)] = None
     if len(ended) > MOST["split"]:
-        raise Refused("The parent has more sub-issues than the engine keeps parts.")
+        ended = _reduced(ended, str(part))
     doc = first_state.empty(str(parent))
     doc["state"] = "split"
     doc["waits"] = [{"id": "w1.1", "for": "parts", "until": None, "on": None}]
@@ -1982,7 +1987,22 @@ def part_ended(cfg, parent, subs, part, state):
     found = {**policies(cfg), "parentEnd": end}
     event = _event("partEnded", parent, None, f"part-{parent}-{part}", part=str(part), state=state)
     _, actions = _answers(doc, [event], found)
-    return "close" if any(action["kind"] == "close" for action in actions) else "stays"
+    kinds = {action["kind"] for action in actions}
+    if "close" in kinds:
+        return "close"
+    return "person" if "needPerson" in kinds else "stays"
+
+
+def _reduced(ended, part):
+    """The parts `ended` (item to state) cut to `MOST["split"]`, with `part` first, then the
+    first open one, the first completed and the first dropped, then the others in order. The
+    engine's rule reads only whether every part ended and whether one was completed, and the
+    list keeps both."""
+    keep = [part]
+    for wanted in (None, "accepted", "dropped"):
+        keep += [item for item, how in ended.items() if how == wanted and item not in keep][:1]
+    keep += [item for item in ended if item not in keep]
+    return {item: ended[item] for item in keep[: MOST["split"]]}
 
 
 def stopped_counts(issue, pr, head, auto_fixes, automatic, by_host, checking=False):

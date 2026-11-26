@@ -30,7 +30,6 @@ from .maintain import (
     update_branch,
     updates_used,
 )
-from .protocol.size import MOST
 from .route import auto_input, on_base
 from .runlog import add_tokens, one_line
 from .schema import filled
@@ -668,7 +667,7 @@ def _no_change(gh, cfg, decision, agent):
     lines = [f"No change is needed, so NexKit closed #{issue} as completed.", "", finding]
     if cfg["close_parent_issues"]:
         # At once, for this round's comment; the `issues: closed` run finds nothing left.
-        lines += ["", *close_parents_safely(gh, issue)]
+        lines += ["", *close_parents_safely(gh, cfg, issue)]
     return {
         "outcome": "no_change",
         "summary": "\n".join(lines).strip(),
@@ -1345,7 +1344,7 @@ def merge_pull(gh, cfg, target, row, message, workflow, default_branch):
     (see `maintain.close_on_base`). One that a person merged or closed first ends the round
     as `pull_closed`, before its issue counts, since that merge closes the issue too. The
     engine decides what a merge by a person and an emptied change end (`host.change_seen`), and
-    whether a parent ends after NexKit's merge (`host.part_ended`)."""
+    whether a parent ends once its part ended (`host.part_ended`)."""
     pr, head = target["pr"], target["head"]
     number = pr
     try:
@@ -1479,11 +1478,11 @@ def _seen(cfg, target, message, seen, expect):
 
 def _parent_ends(gh, cfg, target):
     """Lines for the round's comment about the parent issue of `target`'s issue, which NexKit
-    merged and closed. The engine decides whether the direct parent ends (`host.part_ended`),
-    and when it does, `maintain.close_parents` closes it, with the facts only GitHub knows, and
-    goes on up. A parent with more sub-issues than a state document holds is NexKit 6's:
-    `close_parent_issues` decides. The parent of an issue that merges stays as it is when the
-    engine refuses to decide."""
+    merged and closed. With `close_parent_issues` on, `maintain.close_parents` asks the engine
+    about every parent, from the direct one up (`host.part_ended`), and closes those it ends,
+    with the facts only GitHub knows. Without it the engine still hears the end of the part, as
+    `person`, and NexKit writes nothing on the parent. The parent of an issue that merges stays
+    as it is when the engine refuses to decide."""
     from .host import Refused, accept_answer, part_ended
 
     issue = target["issue"]
@@ -1491,15 +1490,14 @@ def _parent_ends(gh, cfg, target):
         parent = gh.parent_issue(issue)
         if not parent or parent.get("state") != "open" or not autopilot.in_repository(gh, parent):
             return []
-        subs = gh.sub_issues(parent["number"])
-        if len({sub["number"] for sub in subs} | {issue}) > MOST["split"]:
-            return close_parents_safely(gh, issue) if cfg["close_parent_issues"] else []
         auto_fixes = (target.get("state") or {}).get("auto_fixes", 0)
         accepted = {"accepted": True, "refusal": None, "text": ""}
         end, state = accept_answer(cfg, issue, target["pr"], target["head"], auto_fixes, accepted)
         if end != "accepted":
             raise Refused(f"The engine answers {end!r} to a merge that went through.")
-        close = part_ended(cfg, parent["number"], subs, issue, state["state"])
+        if cfg["close_parent_issues"]:
+            return close_parents_safely(gh, cfg, issue)
+        part_ended(cfg, parent["number"], gh.sub_issues(parent["number"]), issue, state["state"])
     except GitHubError as exc:
         return [f"Could not check the parent issue of #{issue}: {exc}"]
     except Refused as error:
@@ -1508,7 +1506,7 @@ def _parent_ends(gh, cfg, target):
             f"Left the parent issue of #{issue} as it is: NexKit's engine refused to decide: {why}"
         )
         return [line]
-    return close_parents_safely(gh, issue) if close == "close" else []
+    return []
 
 
 def _passed_but(head, ended):

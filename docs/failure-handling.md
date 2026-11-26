@@ -107,3 +107,5 @@ model usage is never spent repeating a problem the agent
 cannot fix. A run paused at the usage limit is not a retry: it continues the same command
 once the limit has reset. A run again after a transient error repeats a run that stopped
 for a reason outside the work, before it published anything.
+
+The reasons are in [D6](decisions/d6-agent-errors-never-retry.md).

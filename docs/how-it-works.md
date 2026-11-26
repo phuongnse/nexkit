@@ -34,7 +34,8 @@ Three parts are played around NexKit:
   as CLAUDE.md or AGENTS.md, and never hold a token that can write to the repository.
 
 Everything NexKit writes on GitHub, it writes as the repository's
-[GitHub App](configuration.md#the-github-app).
+[GitHub App](configuration.md#the-github-app). The reasons are in
+[D2](decisions/d2-nexkit-writes-only-as-the-app.md).
 
 NexKit carries the work on by itself wherever these docs say it does: automatic fix and
 conflict rounds, runs again after growing waits after a transient error, and with autopilot its plans,
@@ -426,6 +427,8 @@ Names a person meets in run comments and in that output:
 A pull request from NexKit 1.1.0 has a single status comment instead. NexKit reads its
 state, leaves it as it is and saves the state in a new state comment.
 
+The reasons are in [D1](decisions/d1-state-lives-only-on-github.md).
+
 ## Security notes
 
 What NexKit trusts, and the rule and test for each input it does not, are in [Security](security.md).
@@ -446,3 +449,6 @@ These are the choices that remain with whoever runs NexKit on a repository.
 - List in `autopilot.trusted_workflows` only workflows whose output you would act on unread (see
   [Issues from a workflow](autopilot.md#issues-from-a-workflow)), and vouch for any other issue
   that autopilot should take with [`/nexkit trust`](autopilot.md#vouching-for-an-issue).
+
+The reasons are in [D4](decisions/d4-outside-text-is-untrusted.md) and
+[D5](decisions/d5-agents-cannot-change-the-pipeline.md).

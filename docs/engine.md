@@ -34,6 +34,8 @@ fix and each lesson has to be made twice.
 The engine holds the loop once. A host decides only where the work lives and how each step is
 carried out.
 
+The reasons for this split are in [D10](decisions/d10-an-engine-decides-hosts-carry-out.md).
+
 ## Words
 
 - **Work item:** one piece of work, such as an issue or a request in an application.

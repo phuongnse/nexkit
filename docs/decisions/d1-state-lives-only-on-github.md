@@ -13,8 +13,9 @@ of its own to hold that state.
 - All NexKit state lives on GitHub: in comments on the issue or pull request, and in commit
   statuses.
 - Nothing outside GitHub holds state that a later run needs.
-- A state write must come from the state that its writer read, so a stale copy cannot replace a
-  newer one.
+- A write of a state that several runs share must come from the state that its writer read, so a
+  stale copy cannot replace a newer one. These are the pipeline's state comment, autopilot's
+  record comment and each work item's state document.
 
 The detail is in [How it works: State](../how-it-works.md#state) and
 [Architecture: State](../architecture.md#state).
@@ -25,7 +26,10 @@ The detail is in [How it works: State](../how-it-works.md#state) and
   can read the state on GitHub.
 - No server, database or self-hosted runner is needed, so setup stays small.
 - GitHub has no compare-and-set for comments. A write by someone else between a read and an edit
-  can be overwritten. Reading the comment again just before each edit narrows that race, and does not close it.
+  can be overwritten. Reading one of those three shared comments again just before each edit
+  narrows that race, and does not close it.
+- A run or round comment is edited from the body its writer read earlier, without that check. A
+  write that comes in between can be lost.
 
 ## Alternatives
 

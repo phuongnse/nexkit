@@ -68,6 +68,7 @@ from nexkit import (
     config,
     context,
     github,
+    host,
     maintain,
     publish,
     report,
@@ -1648,6 +1649,9 @@ ISSUE_STATES = re.compile(r"- `issues`: (?:(?!- `).)*?a `state` \(([^)]*)\)")
 # The status skill's list of pull request states, in its `pull_requests` bullet, read the same way.
 PULL_STATES = re.compile(r"- `pull_requests`: (?:(?!- `).)*?a `state` \(([^)]*)\)")
 LISTED_STATE = re.compile(r"(?:^|, )`(\w+)`")
+# The status skill's list of autopilot states: the `autopilot` bullet names them after
+# "a `state` (".
+AUTOPILOT_STATES = re.compile(r"- `autopilot`(?:(?!- `).)*?a `state` \(([^)]*)\)")
 # The page and the sentence that list the outcomes after which a writer's approval merges. The
 # group keeps the word `as` before the first outcome, which the outcomes are found after.
 APPROVAL_PAGE = DOCS / "work-without-a-command.md"
@@ -1874,6 +1878,32 @@ def states_set_in(function):
     return states
 
 
+def autopilot_states_of_code():
+    """The states that autopilot's steps take. `_step` takes its state second, in `autopilot`
+    and in `host`. The `step` method that `host` wraps `_step` in takes it first. Only
+    `host.sweep` gives a step a `state=` keyword; elsewhere the keyword sets an issue's
+    document, which is not a step."""
+    states = set()
+    for module in (autopilot, host):
+        for node in ast.walk(ast.parse(inspect.getsource(module))):
+            if not isinstance(node, ast.Call):
+                continue
+            if isinstance(node.func, ast.Name):
+                name = node.func.id
+            elif isinstance(node.func, ast.Attribute):
+                name = node.func.attr
+            else:
+                continue
+            if name == "_step" and len(node.args) >= 2:
+                states.update(state_values(node.args[1]))
+            elif name == "step" and node.args:
+                states.update(state_values(node.args[0]))
+    for node in ast.walk(ast.parse(inspect.getsource(host.sweep))):
+        if isinstance(node, ast.keyword) and node.arg == "state":
+            states.update(state_values(node.value))
+    return states
+
+
 def _allowed_by_enclosing_if(node, name, parents):
     """The strings of the tuple in the nearest `if name in (...)` whose body holds the return
     `node`, or [] when that tuple holds a value the test cannot read."""
@@ -1948,6 +1978,32 @@ class StatusSkillTests(unittest.TestCase):
                 self.fail(
                     f"skills/status/SKILL.md lists {issue_state!r}, "
                     "which status.issue_item does not set"
+                )
+
+    def test_the_skill_lists_each_autopilot_state_the_code_gives_and_no_other(self):
+        # The page wraps its lines, so the regex reads the text with one space between words.
+        match = AUTOPILOT_STATES.search(" ".join(STATUS_SKILL.read_text().split()))
+        if not match:
+            self.fail(
+                "skills/status/SKILL.md has no list of autopilot states in its `autopilot` bullet"
+            )
+        listed = set(LISTED_STATE.findall(match.group(1)))
+        if not listed:
+            self.fail("skills/status/SKILL.md lists no autopilot state")
+        code = autopilot_states_of_code()
+        if not code:
+            self.fail("autopilot's steps give no state that the test can read")
+        for step_state in sorted(code - listed):
+            with self.subTest(state=step_state):
+                self.fail(
+                    f"skills/status/SKILL.md does not list {step_state!r}, "
+                    "which autopilot._step gives"
+                )
+        for step_state in sorted(listed - code):
+            with self.subTest(state=step_state):
+                self.fail(
+                    f"skills/status/SKILL.md lists {step_state!r}, "
+                    "which autopilot._step does not give"
                 )
 
     def test_the_skill_lists_each_pull_request_state_the_code_gives_and_no_other(self):

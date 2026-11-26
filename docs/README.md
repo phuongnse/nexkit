@@ -12,7 +12,7 @@ read only the sections you need. What goes in which doc, and how the docs stay t
 | Understand NexKit | The [README](../README.md) | [How it works](how-it-works.md) and the [roadmap](roadmap.md) |
 | Set NexKit up on a repository | [Set up a repository](../README.md#set-up-a-repository) in the README, or the `setup` skill | The [configuration reference](configuration.md), [The GitHub App](configuration.md#the-github-app) first |
 | Find why a run stopped or waits | [Troubleshooting](troubleshooting.md) | [Failure handling](how-it-works.md#failure-handling) in how it works |
-| Work on NexKit | [AGENTS.md](../AGENTS.md) | [Architecture](architecture.md), [Delivery](delivery.md), [testing](testing.md), [writing the docs](writing-docs.md), [the engine](engine.md) and the [roadmap](roadmap.md) |
+| Work on NexKit | [AGENTS.md](../AGENTS.md) | [Architecture](architecture.md), [security](security.md), [Delivery](delivery.md), [testing](testing.md), [writing the docs](writing-docs.md), [the engine](engine.md) and the [roadmap](roadmap.md) |
 
 ## Using NexKit
 
@@ -20,9 +20,10 @@ Read by people who set NexKit up on a repository and work with it there.
 
 | Doc | What it holds | Read it when |
 | --- | --- | --- |
-| [How it works](how-it-works.md) | Who does what, the jobs of a run, stages, state, failure handling and the security notes | You want to know what NexKit does on your repository, and why |
+| [How it works](how-it-works.md) | Who does what, the jobs of a run, stages, state, failure handling and what you decide about security | You want to know what NexKit does on your repository, and why |
 | [Configuration reference](configuration.md) | Every setting of `.nexkit/config.json`, its default and what it does; the GitHub App; upgrading | You change a setting, or upgrade NexKit |
 | [Troubleshooting](troubleshooting.md) | What each stop and wait means, and what to do | A run failed, stopped or waits for a person |
+| [Security](security.md) | What NexKit trusts, and for each input it does not, what an attacker could reach, the rule that contains it and the tests that check it | You decide how far to trust an input, or change a job, a token or a secret |
 
 The plugin's skills, under `skills/`, carry out the same tasks step by step: `setup` sets NexKit up,
 `request` writes issues for it, and `status` says what NexKit is doing.

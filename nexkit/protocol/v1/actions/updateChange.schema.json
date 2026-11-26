@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/phuongnse/nexkit/protocol/v1/actions/updateChange.schema.json",
+  "$comment": "Bring the change up to date with the branch it was made on, without an agent: the same change at a new version. The engine asks for it when an accept was refused because the change is behind its base and an update is left (docs/engine.md#states).",
+  "type": "object",
+  "properties": {
+    "id": {
+      "$ref": "../common.schema.json#/$defs/id"
+    },
+    "kind": {
+      "const": "updateChange"
+    },
+    "next": {
+      "anyOf": [
+        {
+          "$ref": "../common.schema.json#/$defs/id"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "changeVersion": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "kind",
+    "next",
+    "changeVersion"
+  ]
+}

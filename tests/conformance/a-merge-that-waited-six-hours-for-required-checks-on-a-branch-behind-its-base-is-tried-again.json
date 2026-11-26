@@ -1,0 +1,43 @@
+{
+  "policies": {
+    "conflicts": "resolve"
+  },
+  "state": {
+    "example": "accepting",
+    "set": {
+      "pending": [],
+      "checksSince": {
+        "version": "5a54e2b",
+        "at": "2026-11-23T08:00:00Z"
+      }
+    }
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "changeObserved",
+        "behind": true
+      },
+      "state": "accepting",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "observed.behind": true
+      }
+    },
+    {
+      "event": {
+        "kind": "tick",
+        "wait": "w7.1"
+      },
+      "state": "accepting",
+      "changed": true,
+      "actions": [
+        "accept"
+      ],
+      "expect": {
+        "checksSince.at": "2026-11-23T08:00:00Z"
+      }
+    }
+  ]
+}

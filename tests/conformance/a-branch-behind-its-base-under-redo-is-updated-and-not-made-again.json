@@ -1,0 +1,64 @@
+{
+  "policies": {
+    "conflicts": "redo"
+  },
+  "state": {
+    "example": "accepting",
+    "set": {
+      "pending": []
+    }
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "tick",
+        "wait": "w7.1"
+      },
+      "state": "accepting",
+      "changed": true,
+      "actions": [
+        "accept"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "accept",
+        "result": {
+          "accepted": false,
+          "refusal": "behind",
+          "text": "Refused: behind."
+        }
+      },
+      "state": "accepting",
+      "changed": true,
+      "actions": [
+        "updateChange"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "updateChange",
+        "result": {
+          "change": {
+            "id": "308",
+            "version": "v2"
+          },
+          "refused": null
+        }
+      },
+      "state": "checking",
+      "changed": true,
+      "actions": [
+        "runChecks"
+      ],
+      "expect": {
+        "rounds.updates": 1,
+        "rounds.conflicts": 0,
+        "change.version": "v2",
+        "observed.version": "v2"
+      }
+    }
+  ]
+}

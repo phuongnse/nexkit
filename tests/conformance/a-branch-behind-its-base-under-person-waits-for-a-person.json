@@ -1,0 +1,44 @@
+{
+  "policies": {
+    "conflicts": "person"
+  },
+  "state": {
+    "example": "accepting",
+    "set": {
+      "pending": []
+    }
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "tick",
+        "wait": "w7.1"
+      },
+      "state": "accepting",
+      "changed": true,
+      "actions": [
+        "accept"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "accept",
+        "result": {
+          "accepted": false,
+          "refusal": "behind",
+          "text": "Refused: behind."
+        }
+      },
+      "state": "ready",
+      "changed": true,
+      "actions": [
+        "needPerson"
+      ],
+      "expect": {
+        "attention.reason": "acceptRefused",
+        "attention.text": "Refused: behind."
+      }
+    }
+  ]
+}

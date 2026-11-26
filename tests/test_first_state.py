@@ -343,6 +343,29 @@ class ImportTest(unittest.TestCase):
         made.pop("by", None)
         self.assertEqual(state["pending"], [{**made, "id": first_state.RUN_ID}])
 
+    def test_the_import_counts_the_updates_of_the_branch_apart_from_conflict_rounds(self):
+        def row(number, **fields):
+            run = {
+                "round": number,
+                "trigger": "review",
+                "status": "success",
+                "url": f"https://x/{number}",
+            }
+            return {"run": {**run, **fields}}
+
+        rows = [row(1), row(2, updated_branch=True), row(3, updated_branch=True)]
+        rows.append(row(4, conflicts=True, base_sha="e" * 40))
+        given = {
+            "issue": {"number": 42},
+            "pull": {"number": 308, "head": "a" * 40},
+            "pullComments": rows,
+        }
+        state = first_state.imported(**situation({"nexkit6": given}))
+        self.assertEqual((state["rounds"]["updates"], state["rounds"]["conflicts"]), (2, 1))
+        given["pullComments"] = rows[:1]
+        state = first_state.imported(**situation({"nexkit6": given}))
+        self.assertNotIn("updates", state["rounds"])
+
     def test_the_fix_records_and_the_last_review_are_those_of_nexkit_6_s_marker(self):
         fixes = [
             {

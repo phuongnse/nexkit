@@ -1621,7 +1621,8 @@ def _merge_step(gh, cfg, issue, pull, comment, run, start, now):
     branch gets `/nexkit review`, as a merge refused because the branch moved does. A
     required check that failed gets an automatic fix round when the sweep tries the merge
     (see `report.merge_waiting`), and a branch behind its base, however long it waited,
-    an update from it when `conflicts.auto_resolve` is on."""
+    an update from it when `conflicts.auto_resolve` is on: the engine makes that exception
+    (`host.checks_waited`)."""
     details = gh.pull(pull)
     head = details["head"]["sha"]
     if head != run.get("head"):
@@ -1640,13 +1641,14 @@ def _merge_step(gh, cfg, issue, pull, comment, run, start, now):
         fields = {**start, "target": pull, "auto": "true"}
         return _step(issue, "start", reason, command="review", **fields)
     since = parse_iso(run.get("waiting_since"))
-    behind = cfg["conflicts"]["auto_resolve"] and details.get("mergeable_state") == "behind"
-    if since and not behind:
-        # The six hours are the engine's (`host.checks_waited`).
+    if since:
+        # The six hours are the engine's (`host.checks_waited`), and so is the exception of a
+        # branch behind its base.
         from .host import Refused, checks_waited, refused_reason
 
+        behind = details.get("mergeable_state") == "behind"
         try:
-            waited = checks_waited(cfg, issue, pull, head, since, now)
+            waited = checks_waited(cfg, issue, pull, head, since, now, behind=behind)
         except Refused as error:
             return _step(issue, "waits", refused_reason(error))
         if waited == "waits":

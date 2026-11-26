@@ -180,7 +180,7 @@
       ]
     },
     "observation": {
-      "$comment": "The change as the host reads it: its version, whether it conflicts with what it was made on, whether it was merged or accepted outside the engine, and whether it became empty because the same change landed another way.",
+      "$comment": "The change as the host reads it: its version, whether it conflicts with what it was made on, whether it was merged or accepted outside the engine, and whether it became empty because the same change landed another way. Optionally, whether it is behind the branch it was made on, which leaves it out when it is not: only the six-hour end of the wait for required checks reads it (docs/engine.md#states).",
       "type": "object",
       "properties": {
         "changeId": {
@@ -196,6 +196,9 @@
           "type": "boolean"
         },
         "empty": {
+          "type": "boolean"
+        },
+        "behind": {
           "type": "boolean"
         }
       },

@@ -156,24 +156,14 @@ every open issue in scope, in order, and starts the one command that moves it on
   requests mergeable.
 - **One command per step.** Autopilot keeps one comment on each issue that names the
   command it started last, with its note, and for which run. It starts a command once for
-  a state of the issue. A command that has posted no run comment after
-  `lost_after_minutes`, while its workflow run is neither queued nor running, because
-  `route` refused it or GitHub dropped it from the queue, starts again with the same
-  note: at once, then 30, 60 and 120 minutes after its last start, so that an outage of
-  GitHub Actions, in which GitHub creates no job for a run, costs no person's time; when
-  the fifth start does not run either, the issue waits for a person, with a reason that
-  names the outage. The first sweep after each time notices it, at the end of any NexKit
-  run or on the hourly schedule. A
-  run whose comment still says running after its workflow run ended, for example because
-  the runner was lost, is marked as ended without a report and its pending statuses
-  become errors, within minutes: the run's `finish` job starts a sweep that waits for the
-  run to end. When NexKit
-  started that run itself, autopilot starts it again in the same way, later each time, or
-  once more only when its agent or review job ran to its end; a person's command waits
-  for a person. A run paused at the usage limit that NexKit will
-  not resume waits for a person too. A continued run, or a round that started the next
-  one by itself, whose new run has not started after `lost_after_minutes` starts that run
-  once more, and waits for a person when that one does not start either.
+  a state of the issue. A command that did not run, such as one `route` refused, starts
+  again a few times, each time later, and then the issue waits for a person.
+  `lost_after_minutes` is how long a sweep waits when it cannot read the command's workflow
+  run, and how long a run that a round started next may go unstarted. A run whose comment
+  still says running after its workflow run ended is marked as ended without a report. A
+  run that NexKit started itself starts again in the same way, and a person's command waits
+  for a person. The details are under [Work NexKit starts by itself](work-without-a-command.md#autopilot),
+  in *A command starts once* and *Runs that never end*.
 
 - **Answers.** Plans, and implement and fix rounds that stop as `blocked`, give each
   question its options and the one NexKit recommends, if any; the plan comment marks it
@@ -236,7 +226,8 @@ every open issue in scope, in order, and starts the one command that moves it on
 - **Flaky runs.** A run that passed only when run again, and an older run that failed when
   a newer run had already started, are recorded under each of their failures, on one
   `bug` issue per failure, labelled `nexkit:flaky`, which mentions `notify` and is planned
-  right after the `bug` issues above, labelled `nexkit:ci` (see *Labels* above). An older run is never run again. The error annotations of the failed jobs
+  after the `bug` issues above (`nexkit:ci`) and the issues for Dependabot advisories, in the
+  order of the default `autopilot.priority` (see *Labels* above). An older run is never run again. The error annotations of the failed jobs
   name the failures, such as each failing test, by title or else by file and line; the
   runner's own "Process completed with exit code" names nothing. A job without such an
   annotation is named by its first failed step and the message of its first error
@@ -334,8 +325,9 @@ every open issue in scope, in order, and starts the one command that moves it on
   split again, within these limits:
   - A part inherits the time-outs of the issues above it. When one of them already asked
     for a split, a part that runs out of time waits for a person instead.
-  - A part titled like its parent, or starting with its parent's title, is not created.
-    Autopilot asks for the plan once more, and then waits for a person.
+  - When a part is titled like its parent, or starts with its parent's title, autopilot
+    creates no part of that split. It asks for the plan once more, and then waits for a
+    person.
   - Parts go at most three levels deep: an issue at level 3 (its parent's parent's parent
     was the issue first split) is not split again; a person splits it by hand into
     sub-issues, which read every issue above them, or implements it. This limit is not a
@@ -350,14 +342,13 @@ person can still post any command, and autopilot carries on from what it leads t
 Autopilot pairs well with `merge.auto`, `conflicts.auto_resolve`, `close_parent_issues` and
 `notify`; without `merge.auto`, an issue moves on when a person merges its pull request.
 
-Sweeps, the runs that decide this, start after every NexKit run, when an issue opens,
-closes or is reopened, when an issue gets a milestone or a milestone closes (only for the
-`"milestone"` scope), when a run of a workflow in `merge.after_workflows` or
-`autopilot.watch_workflows` finishes on the default branch, and on the hourly schedule, which catches anything the others
-missed. They run one at a time, run no agent
-and use no agent credential. The workflow must listen to those events, as `nexkit init`
-writes it, and to `workflow_run` as *When a finished run is noticed* shows; `nexkit
-doctor` warns when it does not. To start a sweep yourself, for example
+Sweeps, the runs that decide this, start at the end of NexKit runs, when issues change,
+when a watched workflow finishes on the default branch, and on the hourly schedule, which
+catches anything the others missed. [Work NexKit starts by itself](work-without-a-command.md#autopilot)
+lists them under *What starts a sweep*. They run one at a time, run no agent and use no agent
+credential. The workflow must listen to the events that start them, as `nexkit init` writes
+it, and to `workflow_run` as *When a finished run is noticed* shows; `nexkit doctor` warns
+when it does not. To start a sweep yourself, for example
 right after turning autopilot on:
 
 ```sh
@@ -483,8 +474,9 @@ default branch, without a relay of your own:
 Each sweep then opens one issue for each advisory of an open alert at or above that severity,
 as NexKit's App, in no milestone, with a marker of the advisory id. Its text names the
 advisory, the packages, their manifests and the patched versions, and mentions `notify`.
-It is labelled `nexkit:dependabot`, so with the default `autopilot.priority` autopilot takes
-it in either scope, and plans it right after the `bug` issues for CI on the default branch
+With `autopilot.dependabot` set, autopilot takes it in every scope, whatever
+`autopilot.priority` lists. It is labelled `nexkit:dependabot`, so with the default
+`autopilot.priority` it is planned right after the `bug` issues for CI on the default branch
 and before the issues for flaky runs.
 
 - An advisory that an open issue marks gets no other issue, whatever its alerts.

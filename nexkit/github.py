@@ -23,6 +23,8 @@ DOWNLOAD_LIMIT = 64_000_000
 # What starts a job's log that NexKit cut, as one longer than a download reads: only its
 # end is kept, so what failed last is never what is cut.
 LOG_CUT = b"[NexKit: the start of this log is cut; what follows is its end.]\n"
+# How many open Dependabot alerts a sweep reads, the oldest first: one page.
+DEPENDABOT_ALERTS = 100
 
 
 def log_end(data, limit=DOWNLOAD_LIMIT):
@@ -449,14 +451,14 @@ class GitHub:
         return self.request("POST", path, {"issue_id": blocker_id})
 
     def dependabot_alerts(self, severities):
-        """The open Dependabot alerts of these severities, oldest first: the first 100. The
-        token needs the *Dependabot alerts* permission."""
+        """The open Dependabot alerts of these severities, oldest first: at most
+        `DEPENDABOT_ALERTS`. The token needs the *Dependabot alerts* permission."""
         params = {
             "state": "open",
             "severity": ",".join(severities),
             "sort": "created",
             "direction": "asc",
-            "per_page": 100,
+            "per_page": DEPENDABOT_ALERTS,
         }
         return self.request("GET", f"{self._repo}/dependabot/alerts", params=params) or []
 

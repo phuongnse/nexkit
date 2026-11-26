@@ -11,7 +11,7 @@ from unittest import mock
 
 import nexkit
 import nexkit.config
-from nexkit import app, cli, maintain, route, scaffold
+from nexkit import app, cli, host, item_state, maintain, route, scaffold
 from nexkit.globs import branch_matches
 from nexkit.runtimes import DECLARED_SECRETS, RUNTIMES, SECRET_SLOTS
 from nexkit.state import (
@@ -23,7 +23,16 @@ from nexkit.state import (
     render_state,
     setup_fingerprint,
 )
-from tests.support import APP, CLAUDE, PROFILES, FakeClaude, FakeGitHub, GitRepos, git
+from tests.support import (
+    APP,
+    CLAUDE,
+    PROFILES,
+    FakeClaude,
+    FakeGitHub,
+    GitRepos,
+    git,
+    make_config,
+)
 from tests.test_agent import CONTEXT, FIX_DONE
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -2017,6 +2026,25 @@ class WorkflowSafetyTests(unittest.TestCase):
             nested = (ROOT / f".github/workflows/pipeline-{name}.yml").read_text()
             cls.jobs[name] = nested.split("\njobs:\n", 1)[1]
 
+    def test_every_job_waits_for_route_which_takes_the_items_events(self):
+        # `nexkit route` calls `host.take` before anything else (`cli._take`), so a job that
+        # needs `route`, directly or through other jobs, runs only after a run took the events.
+        text_jobs = jobs_of(self.text)
+        needs = {}
+        for name, body in text_jobs.items():
+            found = re.search(r"^    needs: (\[.*\]|\w+)$", body, re.M)
+            needs[name] = set(re.findall(r"\w+", found.group(1))) if found else set()
+        self.assertEqual(needs["route"], set())
+
+        def reaches(name, seen=()):
+            return "route" in needs[name] or any(
+                reaches(other, (*seen, name)) for other in needs[name] if other not in seen
+            )
+
+        for name in text_jobs:
+            if name != "route":
+                self.assertTrue(reaches(name), f"{name} does not need route")
+
     def test_jobs(self):
         self.assertEqual(
             list(self.jobs),
@@ -2700,6 +2728,175 @@ class WorkItemGroupTests(unittest.TestCase):
         with contextlib.redirect_stdout(out):
             self.assertEqual(self.comment(11, "/nexkit fix", on_pull=True), "nexkit-11")
         self.assertIn("::warning::GitHub answered 502 reading #11", out.getvalue())
+
+    def test_a_resume_step_joins_the_group_of_its_item(self):
+        inputs = {"command": "step", "number": "11", "note": "resume 99", "auto": "false"}
+        self.assertEqual(self.group_of("workflow_dispatch", {"inputs": inputs}), "nexkit-5")
+
+    def route_events(self):
+        """Each kind of event the pipeline starts on, as (name, event name, event)."""
+        gh = self.gh
+        pull = gh.pulls[11]
+        step = {"command": "step", "number": "5", "note": "", "auto": "false"}
+        comment = {"id": 1, "body": "/nexkit go", "user": {"login": "alice", "type": "User"}}
+        return [
+            (
+                "a comment on an issue",
+                "issue_comment",
+                {"issue": {"number": 5}, "comment": comment},
+            ),
+            (
+                "a command on a pull request",
+                "issue_comment",
+                {
+                    "issue": {"number": 11, "pull_request": {}},
+                    "comment": {**comment, "body": "/nexkit fix"},
+                },
+            ),
+            (
+                "a review that asks for changes",
+                "pull_request_review",
+                {"pull_request": pull, "review": {"state": "changes_requested"}},
+            ),
+            (
+                "an approval",
+                "pull_request_review",
+                {"pull_request": pull, "review": {"state": "approved"}},
+            ),
+            ("a command dispatch", "workflow_dispatch", {"inputs": {**step, "command": "fix"}}),
+            ("a step dispatch", "workflow_dispatch", {"inputs": step}),
+            (
+                "a step that resumes",
+                "workflow_dispatch",
+                {"inputs": {**step, "number": "11", "note": "resume 9"}},
+            ),
+            (
+                "a step of an approval",
+                "workflow_dispatch",
+                {"inputs": {**step, "number": "11", "note": "approval 11 3"}},
+            ),
+            (
+                "a sweep",
+                "workflow_dispatch",
+                {"inputs": {**step, "command": "autopilot", "number": "autopilot"}},
+            ),
+            (
+                "the wait for resumes",
+                "workflow_dispatch",
+                {"inputs": {**step, "command": "resume", "number": "resume"}},
+            ),
+            ("a closed issue", "issues", {"action": "closed", "issue": {"number": 5}}),
+            ("an opened issue", "issues", {"action": "opened", "issue": {"number": 5}}),
+            ("a closed milestone", "milestone", {"action": "closed"}),
+            (
+                "a command on a person's pull request",
+                "issue_comment",
+                {
+                    "issue": {"number": 10, "pull_request": {}},
+                    "comment": {**comment, "body": "/nexkit review"},
+                },
+            ),
+            ("a schedule", "schedule", {}),
+            ("a push", "push", {}),
+            ("a finished workflow run", "workflow_run", {"action": "completed"}),
+        ]
+
+    def test_every_run_in_an_items_group_takes_its_events_before_it_routes(self):
+        calls = []
+
+        def take(gh, cfg, number, **kwargs):
+            calls.append(("take", number))
+            return []
+
+        def routed(gh, event_name, event, inputs=None):
+            calls.append(("route", None))
+            return {"action": "none", "reason": "test"}
+
+        cfg = make_config()
+        events = self.route_events()
+        self.assertGreater(len(events), 12)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp, "event.json")
+            output = Path(tmp, "output")
+            for name, event_name, event in events:
+                with self.subTest(name):
+                    calls.clear()
+                    group = self.group_of(event_name, event)
+                    path.write_text(json.dumps(event))
+                    env = {
+                        "GITHUB_EVENT_NAME": event_name,
+                        "GITHUB_EVENT_PATH": str(path),
+                        "GITHUB_OUTPUT": str(output),
+                    }
+                    with (
+                        mock.patch.object(cli, "_gh", return_value=self.gh),
+                        mock.patch.object(cli.configuration, "load", return_value=cfg),
+                        mock.patch.object(route, "route", routed),
+                        mock.patch.object(host, "take", take),
+                        mock.patch.dict(os.environ, env),
+                        contextlib.redirect_stdout(io.StringIO()),
+                    ):
+                        self.assertEqual(cli.main(["route", "--repo", tmp]), 0)
+                    item = re.fullmatch(r"nexkit-(\d+)", group)
+                    if item:
+                        # The run is in an item's group: it takes the item's events first.
+                        self.assertEqual(calls, [("take", int(item[1])), ("route", None)], group)
+                    else:
+                        self.assertEqual(calls, [("route", None)], group)
+
+    def test_a_run_whose_every_write_lost_fails_and_one_the_engine_refuses_goes_on(self):
+        event = {"issue": {"number": 5}, "comment": {"id": 1, "body": "/nexkit go"}}
+        cfg = make_config()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp, "event.json")
+            path.write_text(json.dumps(event))
+            env = {
+                "GITHUB_EVENT_NAME": "issue_comment",
+                "GITHUB_EVENT_PATH": str(path),
+                "GITHUB_OUTPUT": str(Path(tmp, "output")),
+            }
+            routed = mock.Mock(return_value={"action": "none", "reason": "test"})
+            for raised, code in (
+                (item_state.Moved(), 1),
+                (host.Refused("a state it refuses"), 0),
+                (nexkit.github.GitHubError(502, "Bad Gateway"), 0),
+            ):
+                with self.subTest(raised=type(raised).__name__):
+                    routed.reset_mock()
+                    out = io.StringIO()
+                    with (
+                        mock.patch.object(cli, "_gh", return_value=self.gh),
+                        mock.patch.object(cli.configuration, "load", return_value=cfg),
+                        mock.patch.object(route, "route", routed),
+                        mock.patch.object(host, "take", side_effect=raised),
+                        mock.patch.dict(os.environ, env),
+                        contextlib.redirect_stdout(out),
+                    ):
+                        self.assertEqual(cli.main(["route", "--repo", tmp]), code)
+                    self.assertEqual(routed.called, code == 0)
+                    self.assertIn("::error::" if code else "::warning::", out.getvalue())
+
+    def test_a_run_with_a_configuration_error_takes_nothing(self):
+        event = {"issue": {"number": 5}, "comment": {"id": 1, "body": "/nexkit go"}}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp, "event.json")
+            path.write_text(json.dumps(event))
+            env = {
+                "GITHUB_EVENT_NAME": "issue_comment",
+                "GITHUB_EVENT_PATH": str(path),
+                "GITHUB_OUTPUT": str(Path(tmp, "output")),
+            }
+            take = mock.Mock()
+            error = nexkit.config.ConfigError("broken")
+            with (
+                mock.patch.object(cli, "_gh", return_value=self.gh),
+                mock.patch.object(cli.configuration, "load", side_effect=error),
+                mock.patch.object(host, "take", take),
+                mock.patch.dict(os.environ, env),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                self.assertEqual(cli.main(["route", "--repo", tmp]), 0)
+            take.assert_not_called()
 
     def test_a_dispatch_with_a_number_that_is_no_item_names_none(self):
         self.assertIsNone(

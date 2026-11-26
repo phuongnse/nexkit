@@ -14,7 +14,6 @@ from nexkit import autopilot, engine, host, item_state
 from nexkit import report as reports
 from nexkit.checks import recorded
 from nexkit.github import GitHubError
-from nexkit.maintain import resume_paused
 from nexkit.protocol.size import MOST
 from nexkit.report import NO_CHANGE_PLAN, TOO_LARGE, needs_person, report
 from nexkit.route import route
@@ -28,7 +27,7 @@ from nexkit.state import (
     render_run,
     render_state,
 )
-from tests.support import BOT_LOGIN, FakeGitHub, make_config
+from tests.support import BOT_LOGIN, FakeGitHub, make_config, play_resume
 from tests.test_autopilot import AutopilotCase, pilot, plan_output
 from tests.test_item_state import CREATED
 from tests.test_item_state import step as engine_step
@@ -2066,8 +2065,8 @@ class StageStopTest(ReportCase):
 
 
 class ResumeTest(ReportCase):
-    """`maintain.resume_paused` sends the tick of each due resume to the engine, a hold on the
-    issue included, and starts the command when the engine runs it."""
+    """The `step` that `maintain.resume_paused` sends for each due resume sends its tick to the
+    engine, a hold on the issue included, and starts the command when the engine runs it."""
 
     NOW = datetime(2026, 10, 11, 5, 0, tzinfo=UTC)
 
@@ -2079,7 +2078,7 @@ class ResumeTest(ReportCase):
 
     def resume(self, cfg=None):
         with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
-            lines, _ = resume_paused(self.gh, "nexkit.yml", "main", self.NOW, cfg)
+            lines, _ = play_resume(self.gh, cfg, self.NOW)
         return lines, [call.args[0] for call in answer.call_args_list]
 
     def test_a_run_paused_under_a_hold_starts_again_at_its_time(self):

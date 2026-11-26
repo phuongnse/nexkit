@@ -20,7 +20,15 @@ from . import autopilot, progress
 from .autopilot import in_repository
 from .config import setting
 from .github import GitHubError
-from .route import APPROVAL, BRANCH_PREFIX, RUN_ID, implementing, issue_from_branch, moved_head
+from .route import (
+    APPROVAL,
+    BRANCH_PREFIX,
+    RESUMED,
+    RUN_ID,
+    implementing,
+    issue_from_branch,
+    moved_head,
+)
 from .state import (
     CONTINUED,
     FAILURE,
@@ -51,6 +59,9 @@ TASKS = {
         "autopilot.enabled",
     ),
     "resume": ("usage_limit.resume", "retry.wait_minutes"),
+    # Paused work that came due, started in the item's queue: the `step` that the run above
+    # and the schedule send for it.
+    "resumed": ("usage_limit.resume", "retry.wait_minutes"),
     "conflicts": ("conflicts.auto_resolve",),
     # An issue opened, reopened or milestoned, or a milestone closed.
     "autopilot": ("autopilot.enabled",),
@@ -82,10 +93,13 @@ UNDECIDED = "<!-- nexkit:parent-undecided -->"
 UNFILED = "<!-- nexkit:parent-unfiled -->"
 CLOSED = "<!-- nexkit:parent-closed -->"
 HOW = {"completed": "completed", "not_planned": "not planned", "duplicate": "duplicate"}
-# The `resume` dispatch: a run that waits for paused commands to come due and starts them.
-# Its `number` input is not a number, so `nexkit item` names it `resume`, which gives it a
-# concurrency group of its own, and it never holds up a command on an issue or pull request.
+# The `resume` dispatch: a run that waits for paused commands to come due and sends a `step`
+# into the item's queue for each, which starts it. Its `number` input is not a number, so
+# `nexkit item` names it `resume`, which gives it a concurrency group of its own, and it never
+# holds up a command on an issue or pull request, nor writes an item's state.
 WAIT_INPUTS = {"command": "resume", "number": "resume", "note": "", "auto": "false"}
+# The log line of a resume's step that was sent, which `tests.support.play_resume` plays.
+RESUME_SENT = "Sent a resume step to "
 # How often a waiting run looks again for runs that paused while it waits.
 POLL = timedelta(minutes=10)
 # How often, and how many times in all, a sweep looks whether a run ended: the run whose
@@ -495,10 +509,12 @@ def paused_runs(gh, now, cfg=None):
 
 
 def resume_paused(gh, workflow, ref, now=None, cfg=None):
-    """Start each command that paused at the usage limit, or waits to run again after a
-    transient error, and whose time has passed, once. Its run comment then shows it
-    continued in a new run and holds no resume record. Returns (lines, the earliest resume
-    time still to come or None); with `cfg`, only one within its `reach`."""
+    """Send a `step` into the item's queue for each command that paused at the usage limit, or
+    waits to run again after a transient error, and whose time has passed. The step, a run in
+    the item's concurrency group, starts the command (`resume_one`), so that every write of
+    the item's state comes from that group; this run writes nothing. A resume whose step has
+    not run yet may be sent again, and the step starts the command once. Returns (lines, the
+    earliest resume time still to come or None); with `cfg`, only one within its `reach`."""
     now = now or datetime.now(UTC)
     lines, upcoming = [], None
     for comment, number, run, at in paused_runs(gh, now, cfg):
@@ -506,36 +522,76 @@ def resume_paused(gh, workflow, ref, now=None, cfg=None):
             if not cfg or within_reach(cfg, run, at, now):
                 upcoming = min(upcoming or at, at)
             continue
-        resume = run["resume"]
-        inputs = {
-            "command": str(resume.get("command") or ""),
-            "number": str(resume.get("number") or number),
-            "note": str(resume.get("note") or ""),
-            "auto": str(resume.get("auto") or "resume"),
-        }
-        if not _engine_resumes(gh, cfg, run, number, now, comment, lines, inputs):
-            continue
+        command = str(run["resume"].get("command") or "")
         try:
-            started = gh.dispatch(workflow, ref, inputs, run_details=True) or {}
+            autopilot.request_step(
+                gh, workflow, ref, number, note=RESUMED.format(comment["id"]), auto="false"
+            )
         except GitHubError as exc:
             # The record stays, so the next scheduled run tries again.
-            lines.append(f"Could not resume /nexkit {inputs['command']} on #{number}: {exc}")
+            lines.append(f"Could not resume /nexkit {command} on #{number}: {exc}")
             continue
-        del run["resume"]
-        # The run that continues it, which a sweep starts once more when it never starts.
-        run.update(status=CONTINUED, next=inputs)
-        link = f"[a new run]({started['html_url']})" if started.get("html_url") else "a new run"
-        target = "" if inputs["number"] == str(number) else f" on #{inputs['number']}"
-        if resume.get("retry"):
-            note = (
-                f"Started `/nexkit {inputs['command']}`{target} again in {link}: run again "
-                f"{resume['retry']} after a transient error."
-            )
-        else:
-            note = f"Resumed `/nexkit {inputs['command']}`{target} in {link} after the usage limit."
-        gh.update_comment(comment["id"], with_run(comment["body"], run, note))
-        lines.append(f"Resumed /nexkit {inputs['command']} on #{inputs['number']}.")
+        lines.append(f"{RESUME_SENT}#{number}: /nexkit {command} is due.")
     return lines, upcoming
+
+
+def resume_one(gh, cfg, number, comment_id, workflow, ref, now=None):
+    """Start the command of the paused run in comment `comment_id` on `number` when its resume
+    is still due, as the `step` of `resume_paused` does in the item's queue, and mark the
+    comment as continued. It trusts nothing of the dispatch but the id: the comment is read
+    again, and only the App's own, unchanged run comment counts. Returns lines for the log."""
+    now = now or datetime.now(UTC)
+    try:
+        comment = gh.issue_comment(comment_id)
+    except GitHubError as exc:
+        return [f"Nothing to resume on #{number}: could not read comment {comment_id}: {exc}"]
+    found = next(run_comments([comment]), None) if _number(comment) == number else None
+    run = found[1] if found else {}
+    resume = run.get("resume")
+    if run.get("status") != PAUSED or not isinstance(resume, dict):
+        return [f"Nothing to resume on #{number}: comment {comment_id} is no paused run."]
+    if cfg and not cfg["usage_limit"]["resume"] and not is_retry(run):
+        return [f"Nothing to resume on #{number}: usage_limit.resume is off."]
+    at = parse_iso(resume.get("at"))
+    if not at or at > now:
+        return [f"Nothing to resume on #{number}: it is not due yet."]
+    return _resume(gh, cfg, comment, number, run, now, workflow, ref)
+
+
+def _resume(gh, cfg, comment, number, run, now, workflow, ref):
+    """Start the command of `run`'s resume record, which is due, unless the engine refuses it
+    (`host.resumes`), and mark the run comment `comment` as continued. Returns lines."""
+    lines = []
+    resume = run["resume"]
+    inputs = {
+        "command": str(resume.get("command") or ""),
+        "number": str(resume.get("number") or number),
+        "note": str(resume.get("note") or ""),
+        "auto": str(resume.get("auto") or "resume"),
+    }
+    if not _engine_resumes(gh, cfg, run, number, now, comment, lines, inputs):
+        return lines
+    try:
+        started = gh.dispatch(workflow, ref, inputs, run_details=True) or {}
+    except GitHubError as exc:
+        # The record stays, so the next resume or scheduled run tries again.
+        lines.append(f"Could not resume /nexkit {inputs['command']} on #{number}: {exc}")
+        return lines
+    del run["resume"]
+    # The run that continues it, which a sweep starts once more when it never starts.
+    run.update(status=CONTINUED, next=inputs)
+    link = f"[a new run]({started['html_url']})" if started.get("html_url") else "a new run"
+    target = "" if inputs["number"] == str(number) else f" on #{inputs['number']}"
+    if resume.get("retry"):
+        note = (
+            f"Started `/nexkit {inputs['command']}`{target} again in {link}: run again "
+            f"{resume['retry']} after a transient error."
+        )
+    else:
+        note = f"Resumed `/nexkit {inputs['command']}`{target} in {link} after the usage limit."
+    gh.update_comment(comment["id"], with_run(comment["body"], run, note))
+    lines.append(f"Resumed /nexkit {inputs['command']} on #{inputs['number']}.")
+    return lines
 
 
 def _engine_resumes(gh, cfg, run, number, now, comment, lines, inputs):
@@ -598,9 +654,9 @@ def wait_for_paused(gh, cfg, now=datetime.now, sleep=time.sleep):
 
 
 def resume_due(gh, cfg, workflow, ref, now=None):
-    """Resume what came due. When another resume comes within its `reach`, this starts the
-    next wait; one due later is left to a scheduled check, which starts a wait when it
-    comes within reach."""
+    """Send a step for what came due (`resume_paused`). When another resume comes within its
+    `reach`, this starts the next wait; one due later is left to a scheduled check, which
+    starts a wait when it comes within reach."""
     now = now or datetime.now(UTC)
     lines, upcoming = resume_paused(gh, workflow, ref, now, cfg)
     if upcoming is not None:
@@ -612,7 +668,8 @@ def resume_due(gh, cfg, workflow, ref, now=None):
 def check_paused(gh, cfg, workflow, ref, now=None):
     """The scheduled check. When a resume comes due within its `reach`, it starts the run
     that waits for it, and every resume goes through that run, so two runs never start the
-    same command. Without any wait, no such run exists, and it resumes what is due itself."""
+    same command. Without any wait, no such run exists, and it sends the steps for what is due
+    itself."""
     now = now or datetime.now(UTC)
     found = paused_runs(gh, now, cfg)
     if longest_reach(cfg) and any(within_reach(cfg, run, at, now) for _, _, run, at in found):
@@ -1298,6 +1355,8 @@ def maintain(gh, decision, cfg, *, workflow="", ref="", alerts=None):
         )
     if task == "resume":
         return resume_due(gh, cfg, workflow, ref)
+    if task == "resumed":
+        return resume_one(gh, cfg, decision["number"], decision["comment"], workflow, ref)
     if task == "schedule":
         lines = []
         if cfg["usage_limit"]["resume"] or cfg["retry"]["wait_minutes"]:

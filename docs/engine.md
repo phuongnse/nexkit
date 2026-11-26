@@ -7,7 +7,8 @@ at a time, and its `prompt` call, which writes each stage's prompt as NexKit 6 d
 `sweep` call, which orders and limits the items that start, as `nexkit-engine sweep`, which
 NexKit 6's autopilot takes its starts from; the
 GitHub host's state comment, its import of NexKit 6's open work and its taking of an item's events
-from their sources (`host.take`), which nothing calls yet; and
+from their sources (`host.take`), which `route` calls at the start of each run in an item's
+concurrency group; and
 the decisions that follow a plan, a blocked `/nexkit go` and a round on a pull request, its
 review, diagnosis and conflict rounds, the end of a round's wait and which rounds count, and the
 start of a new issue's first plan, which

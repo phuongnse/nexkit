@@ -17,8 +17,9 @@ import json
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest import mock
 
-from nexkit import first_state, item_state, protocol
+from nexkit import first_state, host, item_state, protocol
 from nexkit.autopilot import record_marker
 from nexkit.state import ANSWERS_PREFIX, PLAN_DATA_PREFIX, PLAN_MARKER, render_run, render_state
 from tests.support import BOT_LOGIN, FakeGitHub, make_config
@@ -206,6 +207,28 @@ class ImportTest(unittest.TestCase):
         self.assertEqual(state["state"], "new")
         self.assertTrue(state["hold"])
         self.assertEqual([wait["for"] for wait in state["waits"]], ["blocker", "start"])
+
+    def test_an_issue_autopilot_does_not_take_gets_no_automatic_answers(self):
+        given = json.loads((CASES / "go-answered-by-autopilot-runs-again.json").read_text())
+        cfg = make_config(autopilot={**given["config"]["autopilot"], "scope": None})
+        found = {}
+        for number, user in ((42, "alice"), (43, "bob")):
+            gh = FakeGitHub()
+            gh.add_issue(number, user=user)
+            gh.issue_comments[number] = comments_of(given["nexkit6"]["comments"], 1)
+            state = first_state.import_item(gh, cfg, number)
+            found[user] = (state["state"], state["attention"] and state["attention"]["reason"])
+        # Only who opened the issue differs: autopilot does not take what a reader opened.
+        taken, left = ("working", None), ("awaitingApproval", "question")
+        self.assertEqual(found, {"alice": taken, "bob": left})
+
+    def test_the_engine_refusing_a_blocked_go_imports_it_as_failed(self):
+        given = json.loads((CASES / "go-needs-a-hand-made-change.json").read_text())
+        refusal = mock.patch("nexkit.host.step", side_effect=host.Refused("no"))
+        with refusal:
+            kind, state = first_state.situation(**situation(given))
+        self.assertEqual((kind, state["state"]), ("failed", "failed"))
+        self.assertEqual(state["attention"]["reason"], "failed")
 
     def test_the_import_waits_for_the_open_issues_of_a_lower_wave(self):
         gh = FakeGitHub()

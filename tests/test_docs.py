@@ -168,6 +168,8 @@ NUMBERS = (
 DECISIONS_HEADER = "| Decision | Title | Status |"
 WORD = re.compile(r"\S*\w\S*")
 RULES = re.compile(r"^## Rules\n(.*?)(?=^## |\Z)", re.M | re.S)
+PLUGIN_SECTION = re.compile(r"^## The plugin\n(.*?)(?=^## |\Z)", re.M | re.S)
+SKILL_BULLET = re.compile(r"^- \[`([\w-]+)`\]\(\.\./skills/([\w-]+)/SKILL\.md\)", re.M)
 DECISION_FILE = re.compile(r"d(\d+)-[a-z0-9-]+\.md")
 DECISION_TITLE = re.compile(r"# D(\d+)\. (.+)$", re.M)
 DECISION_STATUS = re.compile(r"^Status: \*\*(Agreed|Proposed)\*\*$", re.M)
@@ -232,11 +234,7 @@ class DocsMapTests(unittest.TestCase):
         found = next((p for p in paragraphs if p.startswith("The plugin's skills")), None)
         self.assertTrue(found, "docs/README.md names no skills of the plugin")
         listed = set(re.findall(r"`([\w-]+)`", found))  # `skills/` has a slash, so it is left out
-        defined = set()
-        for skill in sorted((ROOT / "skills").glob("*/SKILL.md")):
-            match = SKILL_NAME.search(skill.read_text())
-            self.assertIsNotNone(match, f"{skill.relative_to(ROOT)} has no name: field")
-            defined.add(match.group(1))
+        defined = plugin_skills(self)
         for name in sorted(defined):
             self.assertIn(name, listed, f"docs/README.md does not list the skill {name}")
         for name in sorted(listed):
@@ -244,6 +242,27 @@ class DocsMapTests(unittest.TestCase):
                 name,
                 defined,
                 f"docs/README.md lists the skill {name}, which skills/ does not define",
+            )
+
+    def test_the_architecture_page_names_each_skill_of_the_plugin(self):
+        section = PLUGIN_SECTION.search(ARCH.read_text())
+        self.assertTrue(section, "docs/architecture.md has no section The plugin")
+        bullets = SKILL_BULLET.findall(section.group(1))
+        self.assertTrue(bullets, "docs/architecture.md names no skills of the plugin")
+        listed = set()
+        for name, folder in bullets:
+            self.assertEqual(
+                name, folder, f"docs/architecture.md links the skill {name} to {folder}"
+            )
+            listed.add(name)
+        defined = plugin_skills(self)
+        for name in sorted(defined):
+            self.assertIn(name, listed, f"docs/architecture.md does not list the skill {name}")
+        for name in sorted(listed):
+            self.assertIn(
+                name,
+                defined,
+                f"docs/architecture.md lists the skill {name}, which skills/ does not define",
             )
 
     def test_the_links_of_the_docs_the_readme_agents_md_and_the_skills_resolve(self):
@@ -1332,6 +1351,16 @@ class MaintenanceSkillsTests(unittest.TestCase):
                 if file == (DOCS / "delivery.md").resolve() and anchor in delivery
             ]
             self.assertTrue(sections, f"{task.name} links no section of docs/delivery.md")
+
+
+def plugin_skills(test):
+    """The names that `skills/*/SKILL.md` define, each read from its `name:` field."""
+    defined = set()
+    for skill in sorted((ROOT / "skills").glob("*/SKILL.md")):
+        match = SKILL_NAME.search(skill.read_text())
+        test.assertIsNotNone(match, f"{skill.relative_to(ROOT)} has no name: field")
+        defined.add(match.group(1))
+    return defined
 
 
 def block_after(path, marker):

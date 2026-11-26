@@ -65,6 +65,10 @@ INVARIANTS = {
     "a plan that a round which ran out of time asked for (`supersede`)",
     "parent-end": "a split ends as accepted only when every part ended, one was accepted and "
     "`parentEnd` is `whenPartAccepted`, and under `person` its parts' end leaves it to a person",
+    "accept-conflict": "a merge refused for a conflict starts a conflict round only under "
+    "`resolve` with one left, in `fixing`, or makes the change again only under `redo` with one "
+    "left; otherwise, and for a conflict found only at the end (`needsPerson`), it needs a person, "
+    "in `ready` with `acceptRefused`",
     "required-checks": "a start of the wait for required checks lives only in `accepting`, on "
     "the change's version; a refusal for them that have not passed leaves one wait, a tick and "
     "the first start of that version; a tick more than six hours after it needs a person",
@@ -267,7 +271,7 @@ class Walker:
                 return self.checks(rng)
         if kind == "accept" and rng.random() < 0.6:
             refusal = rng.choice(
-                ["checkFailed", "checkFailed", "conflict", "behind", "notAccepted"]
+                ["checkFailed", "checkFailed", "conflict", "behind", "notAccepted", "needsPerson"]
                 + ["waitingForChecks"] * 8
             )
             found = {"accepted": False, "refusal": refusal, "text": "x"}
@@ -833,6 +837,7 @@ class Walker:
             if not old.get("due") and rounds["conflicts"] == old["conflicts"]:
                 flag("usage-limit", "a run again after a tick counted as started", info)
         self.required_checks(state, event, answer, done, flag, info)
+        self.accept_conflict(state, event, answer, done, given, flag, info)
         # automatic: a round that its checks or its review judged keeps its count, so only a
         # fix round issued in the same step is automatic after it.
         judged = done is not None and done["kind"] == "runChecks"
@@ -857,6 +862,35 @@ class Walker:
             flag("hold", "a conflict round started under a hold", info)
         if state["hold"] and new["hold"] and any(a["kind"] == "replaceChange" for a in actions):
             flag("hold", "a change made again under a hold", info)
+
+    def accept_conflict(self, state, event, answer, done, given, flag, info):
+        """The invariants of a merge that was refused for a conflict."""
+        if state is None or not answer["changed"] or not done or done["kind"] != "accept":
+            return
+        result = event.get("result") or {}
+        kind = result.get("refusal")
+        if result.get("accepted") or kind not in ("conflict", "needsPerson"):
+            return
+        if state["state"] != "accepting":
+            return
+        # What would move an item out of `accepting` by itself is not this rule's.
+        seen = state["observed"]
+        calm = bool(seen) and not (seen["conflicts"] or seen["merged"] or seen["empty"])
+        calm = calm and seen["version"] == state["change"]["version"] and not state["hold"]
+        if not calm or event.get("changeVersion") != state["change"]["version"]:
+            return
+        new = answer["state"]
+        attention = new["attention"] or {}
+        left = state["rounds"]["conflicts"] < given["conflictRounds"]
+        policy = given["conflicts"] if kind == "conflict" else "person"
+        want = {"resolve": "fixing", "redo": "working"}.get(policy) if left else None
+        want = want or "ready"
+        grew = new["rounds"]["conflicts"] - state["rounds"]["conflicts"]
+        if new["state"] != want or grew != (want != "ready"):
+            went = f"a conflict at the merge under {policy} went to {new['state']}"
+            flag("accept-conflict", went, info)
+        elif want == "ready" and attention.get("reason") != "acceptRefused":
+            flag("accept-conflict", "a conflict at the merge left to a person says not why", info)
 
     def required_checks(self, state, event, answer, done, flag, info):
         """The invariants of the wait for required checks and its six hours."""

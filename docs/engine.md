@@ -823,8 +823,12 @@ adapter. A new rule of the engine comes with a case.
    `maintain`), what follows required checks that fail at the merge (`report`), and the wait
    for required checks that have not passed yet, with its end after a time (`report` and the
    sweep's `autopilot`). `host.accept_answer` sends a merge's answer to `step` as an `accept`
-   result and carries out what the engine answers, and so far only a merge refused for required
-   checks that have not passed yet is sent. The merge's observations reach the engine too
+   result and carries out what the engine answers. So far a merge refused for required checks
+   that have not passed yet is sent, and a merge refused for a conflict, with the conflict rounds
+   used: under `conflicts.auto_resolve` the engine answers a conflict round while
+   `conflicts.max_rounds` has one left, and otherwise a person. A pull request that GitHub
+   reports as `dirty` only at the end of the refusal is sent too, as a conflict without
+   `conflicts.auto_resolve` and as `needsPerson` with it. The merge's observations reach the engine too
    (`host.change_seen`): a pull request that a person merged first ends the item as `accepted`, a
    change that the base branch already holds ends it as `noChange`, and a commit that a person
    pushes while the merge waits is checked. After NexKit's own merge, `host.part_ended` sends the
@@ -857,9 +861,9 @@ adapter. A new rule of the engine comes with a case.
    to the sweep, and this differs from it on purpose. A conflict that the base branch's move makes, found
    after an implement round or on a push to the base branch (`maintain`), stays NexKit 6's,
    as does the merge itself (`report.merge_pull`) but for required checks that fail or have not
-   passed yet, a change that a person merged, one that became empty, a commit pushed while the
+   passed yet, a conflict, a change that a person merged, one that became empty, a commit pushed while the
    merge waits, and the end of the direct parent. The parents above it, and a parent's end
-   outside the merge, stay NexKit 6's. A
+   outside the merge, stay NexKit 6's, and so does a branch behind its base at the merge. A
    person's push during the wait for the base branch's failure is not sent yet: NexKit 6's
    sweep does not read the head then either. A `/nexkit go`
    that stopped as blocked with neither is the engine's too: it waits for a person, and with

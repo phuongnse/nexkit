@@ -9,9 +9,10 @@ and the outcome table of how it works lists each outcome the code defines and no
 tables and the complete configuration of the configuration reference list each key the code
 defines and no other, with the defaults and ranges the code has. The runtime table of that page
 lists each runtime the code defines and no other, with its providers, effort levels and budget
-support, and which runtimes report usage limits. The table of the App's permissions matches the
-permissions and levels of the App manifest. The plan and review layouts of stages match the
-sections the code writes, and the values the pages repeat match their constants.
+support, and which runtimes report usage limits. The trigger table of its workflow file section
+lists each trigger of the workflow template and no other. The table of the App's permissions
+matches the permissions and levels of the App manifest. The plan and review layouts of stages
+match the sections the code writes, and the values the pages repeat match their constants.
 The decisions index matches the decision files, and each decision is linked, as
 docs/writing-docs.md#how-the-docs-stay-correct says."""
 
@@ -51,6 +52,8 @@ PERMISSION_NAMES = {
     "Dependabot alerts": "vulnerability_alerts",
 }
 KEYS_HEADER = "| Key | Default | Meaning |"
+TRIGGERS_HEADER = "| Trigger | Starts NexKit for |"
+WORKFLOW_TEMPLATE = ROOT / "nexkit/templates/workflow.yml"
 RUNTIMES_HEADER = "| Runtime | Providers | `effort` | `max_budget_usd` |"
 LIMITS = re.compile(r"((?:`[\w-]+`(?:, | and )?)+) reports? usage limits")
 DECISIONS = DOCS / "decisions"
@@ -399,6 +402,18 @@ def recorded_ranges():
     return seen
 
 
+def workflow_triggers():
+    """The triggers under `on:` of the workflow template, commented ones included: each key
+    two spaces in, with or without a `#` before it."""
+    lines = WORKFLOW_TEMPLATE.read_text().splitlines()
+    start = lines.index("on:")
+    end = next(
+        (i for i in range(start + 1, len(lines)) if lines[i][:1] not in ("", " ")), len(lines)
+    )
+    block = "\n".join(lines[start:end])
+    return set(re.findall(r"^  (?:# )?([a-z_]+):\s*$", block, re.M))
+
+
 class ConfigurationTests(unittest.TestCase):
     def test_the_runtime_table_lists_each_runtime_the_code_defines_and_no_other(self):
         rows = {cells[0].strip("`"): cells for cells in table(CONFIG_PAGE, RUNTIMES_HEADER)}
@@ -521,6 +536,19 @@ class ConfigurationTests(unittest.TestCase):
                     base[key],
                     f"the complete configuration sets {key} to something but its default",
                 )
+
+    def test_the_workflow_file_table_lists_each_trigger_of_the_template(self):
+        listed = {cells[0].strip("`") for cells in table(CONFIG_PAGE, TRIGGERS_HEADER)}
+        self.assertTrue(listed, "docs/configuration.md has no trigger table under Workflow file")
+        for trigger in sorted(listed - workflow_triggers()):
+            with self.subTest(trigger=trigger):
+                self.fail(
+                    f"the trigger table of docs/configuration.md lists {trigger}, "
+                    "which nexkit/templates/workflow.yml lacks"
+                )
+        for trigger in sorted(workflow_triggers() - listed):
+            with self.subTest(trigger=trigger):
+                self.fail(f"the trigger table of docs/configuration.md has no row for {trigger}")
 
 
 class ArchitectureTests(unittest.TestCase):

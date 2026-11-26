@@ -69,8 +69,8 @@ check `"slow": true`:
 - NexKit's checks after the round run every check in full, slow or not.
 - `checks_run` in the agent's result still lists what the agent ran.
 
-With no check marked slow, the agent runs every check, as before. The plan prompt lists
-every check either way.
+With no check marked slow, the agent runs every check. The plan prompt lists every check
+either way.
 
 ### Parallel checks
 
@@ -106,12 +106,12 @@ in several jobs at once, and a round takes about as long as its slowest job plus
 - A `setup` that fails in one job counts as a failed check, as with one job, and that
   job's checks do not run. A job that ended without a result, for example because its
   runner was lost, fails each of its checks, and the review does not run.
-- Each job keeps up to the larger of its even share of 50 MB and 25 MB of [result
-  files](#result-files-of-failing-checks): 25 MB each with two jobs or with 13, room for
-  one trace however many jobs the round runs. A passing job keeps nothing, so the round's
-  artifact grows only with the number of failing jobs.
-- With `parallel_checks` off, or when every check would run in the same job, the single
-  `verify` job runs as before. `group` is refused without `parallel_checks`.
+- Each job keeps its own share of [result files](#result-files-of-failing-checks), and a
+  passing job keeps nothing, so the round's artifact grows only with the number of failing
+  jobs.
+- With `parallel_checks` off, or when every check would run in the same job, a single
+  `verify` job runs every check one after another. `group` is refused without
+  `parallel_checks`.
 
 **Shards.** A check that splits its own work, such as an end-to-end suite that its
 scripts split by measured durations, can run in as many shards as a command says when the
@@ -139,9 +139,9 @@ round starts, instead of being listed once per shard:
 - A `count` that fails, prints no number, or prints one outside 1 to `max` fails the
   check `e2e` with the end of its output, as a failing check does, and no shard runs. NexKit never
   guesses a number, so no test is left out silently.
-- `shards` needs `parallel_checks`, and a sharded check has no `group`. No other check may
-  take the name of one of its shards, `e2e-1` to `e2e-<max>`. A check with a fixed list of
-  shards, one entry each, works as before.
+- `shards` needs `parallel_checks`, and a sharded check has no `group`. A sharded check's
+  name may be at most 36 characters. No other check may take the name of one of its shards,
+  `e2e-1` to `e2e-<max>`. Shards listed by hand, one check each, need no `shards`.
 
 **Many checks at once.** The checks after a fix round are compared with the checks before it
 to find those that failed the same way, which the next automatic fix round diagnoses (see
@@ -179,8 +179,9 @@ failure.
 - A round whose checks run in one job keeps at most 50 MB of result files, in the order
   of `checks`, then of each check's `results`, then of the file paths. With [parallel
   checks](#parallel-checks), each job keeps up to the larger of its even share of 50 MB
-  and 25 MB, in the same order: 25 MB per job with two jobs or more. Files that would go past the limit are left out, and the `verify`
-  job's run summary lists them, with the paths that were not found.
+  and 25 MB, in the same order: 25 MB per job with two jobs or more. Files that would go
+  past the limit are left out, and the `verify` job's run summary lists them, with the
+  paths that were not found.
   Playwright traces of one failed test are often 15 to 20 MB, so keep `results` to the
   folders that explain a failure.
 - The next fix round's `agent` job downloads that artifact to a folder outside the working
@@ -191,7 +192,6 @@ failure.
   `testsuite`), the check also records the test cases that failed or erred in it, which
   autopilot compares with the default branch's failing tests (see *Failing checks the
   default branch has* under [Plan, implement, fix and review](stages.md#stages)).
-- Checks without `results` behave as before.
 
 The artifact can be downloaded by anyone who can read the run, like the rest of NexKit's
 logs and artifacts (see [What is redacted](how-it-works.md#what-is-redacted)).
@@ -309,8 +309,7 @@ while the others run again.
   [`parallel_checks`](#parallel-checks): the one job without it records its results when
   it ends. A check that failed, or never finished, gets no commit from that round.
 - A check whose `run` changed gets no commit from rounds that ran another command, and no
-  check gets one from rounds that ran other `setup` commands, or that recorded none
-  (rounds from before 5.7.0).
+  check gets one from rounds that ran other `setup` commands, or that recorded none.
 - It is unset, and the check's part of the job log says why, when no earlier round passed
   that check with this `run` and `setup`, or the checkout does not have the commit. Setup
   does not get it.
@@ -394,10 +393,9 @@ file, is in the list, the check is skipped:
   comment shows it as ⏭️.
 
 At any doubt the check runs in full: when no round passed it with this `run` and
-`setup` (also its first round after an upgrade to this release, and a check added since),
-when GitHub cannot compare the commits, when the round's commit does not descend from the
-recorded one (as after a force-push), or when GitHub lists 300 changed files, the most it
-lists. NexKit never falls back to `NEXKIT_VERIFIED_SHA` here: a round whose checks all
+`setup` (such as a check added since), when GitHub cannot compare the commits, when the
+round's commit does not descend from the recorded one (as after a force-push), or when
+GitHub lists 300 changed files, the most it lists. NexKit never falls back to `NEXKIT_VERIFIED_SHA` here: a round whose checks all
 passed may not have run this check at all.
 
 `route` holds write tokens, but it decides from the paths GitHub lists and runs no

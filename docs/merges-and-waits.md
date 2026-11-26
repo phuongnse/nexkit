@@ -89,8 +89,8 @@ starts every listed workflow that is due on the base branch with `workflow_dispa
 - Each workflow needs a `workflow_dispatch` trigger without required inputs, for example
   `on: {pull_request: {}, workflow_dispatch: {}}`.
   `nexkit init --after-workflow FILE`, repeated for each file, sets the list.
-  `nexkit doctor` warns when a listed file is missing or has no such trigger, and when a
-  `push` trigger also runs it on the default branch: by `branches`, by a `branches-ignore`
+  `nexkit doctor` marks ✗ a listed file that is missing or has no such trigger, and a `push`
+  trigger that also runs it on the default branch: by `branches`, by a `branches-ignore`
   that leaves that branch out, or by no filter.
 - With autopilot, a finished run starts a sweep, so a failure is noticed within minutes;
   see *When a finished run is noticed* under [Autopilot](autopilot.md#autopilot).
@@ -130,7 +130,7 @@ The runs it starts are watched like those of every entry: with autopilot, a fail
 the base branch that repeats opens a `bug` issue, and pull requests that fail the same way
 wait for it. A plain file name, or `"every": 1`, starts the workflow after every merge, even
 while another run of it has not finished. `nexkit doctor` rejects an `every` that is not
-an integer from 1 to 1000, and a listed workflow without a `workflow_dispatch` trigger.
+an integer from 1 to 1000.
 
 ## Parent issues
 
@@ -292,6 +292,6 @@ and its comment lists every error the command's runs stopped on.
 - A new command on the same issue or pull request replaces the wait, which then starts
   nothing. A job a person cancelled is never run again.
 - The runs again count against neither `fix.max_auto_rounds` nor `conflicts.max_rounds`.
-- `[0]` runs the command again once, at once, as NexKit did before this setting; a 0 among other
-  waits runs it again at once at that place. `[]` waits for a person at the first such stop.
+- `[0]` runs the command again once, at once; a 0 among other waits runs it again at once at
+  that place. `[]` waits for a person at the first such stop.
 

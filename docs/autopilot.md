@@ -133,11 +133,11 @@ every open issue in scope, in order, and starts the one command that moves it on
   - `nexkit doctor` reports a label in `priority` or `labels` that the repository lacks,
     since no issue can carry it, and one spelled otherwise, since NexKit compares labels
     exactly; GitHub creates NexKit's own labels the first time NexKit uses them.
-  - **From `last_in_milestone_label`.** It works through 6.x as a label of wave 1, so two
-    such issues now run side by side; give one a higher wave to keep them in order.
-    `nexkit doctor` shows the replacement, `"labels": {"<label>": {"wave": 1}}`, and 7.0
-    removes the key. `nexkit init --last-in-milestone-label LABEL` writes the replacement
-    and creates the label.
+  - **From `last_in_milestone_label`.** A label set there counts as a label of wave 1, so
+    two such issues run side by side; give one a higher wave to keep them in order.
+    `nexkit doctor` shows the replacement, `"labels": {"<label>": {"wave": 1}}`, and
+    `nexkit init --last-in-milestone-label LABEL` writes the replacement and creates the
+    label.
 - **Trust.** Autopilot skips a person's approval of the plan, so the issue text drives an
   implement session, which can read the secrets of its job. It takes only issues opened by
   someone with write access to the repository; only they and other writers can edit them.
@@ -240,18 +240,16 @@ every open issue in scope, in order, and starts the one command that moves it on
   annotation is named by its first failed step and the message of its first error
   annotation, such as a download host's refusal, not by the job: the same step failing
   the same way in several jobs, or in several workflows that autopilot watches, is one
-  failure with one issue, whose records list each job and workflow. An issue opened by
-  NexKit 5.0 or earlier for one job's step keeps getting that job's records. Each record
+  failure with one issue, whose records list each job and workflow. Each record
   names the commit, the run, and where the failure showed in each failed attempt. While a
   failure's issue is open, its later records are comments on it; once closed, a new issue
   opens that links it. A run whose failures would open more than five issues records
-  those on one issue for the run. Each run and attempt is recorded once per failure; an
-  issue from NexKit 4.3.0, with every failure of a workflow on it, gets no new records.
-  Sweeps look at the runs of the last day, including the first sweep after an upgrade,
-  and at the runs a `bug` issue reports. To know what is recorded, a sweep reads every
-  open issue NexKit opened and every one updated in the last day, however many other
-  issues and pull requests NexKit opened since. Reading annotations needs `checks: read` in the workflow's
-  permissions, as `nexkit init` writes them.
+  those on one issue for the run. Each run and attempt is recorded once per failure.
+  Sweeps look at the runs of the last day and at the runs a `bug` issue reports. To know
+  what is recorded, a sweep reads every open issue NexKit opened and every one updated in
+  the last day, however many other issues and pull requests NexKit opened since. Reading
+  annotations needs `checks: read` in the workflow's permissions, as `nexkit init` writes
+  them.
 - **When a finished run is noticed.** Within minutes, in two ways that together cover
   every run. First, a `workflow_run` trigger that names each workflow of
   `merge.after_workflows` and `autopilot.watch_workflows` by its `name:` (or its path,
@@ -270,10 +268,9 @@ every open issue in scope, in order, and starts the one command that moves it on
   The `nexkit` job's `if` must let `"workflow_run"` through, as `nexkit init` writes it.
   A run that passed at once starts no sweep, unless a `bug` issue about its workflow is
   open. GitHub sends this event also for the runs that NexKit starts, since it starts them
-  as its App, so a repository's workflows need no job of their own to start a sweep. A
-  `nexkit-sweep` job from an earlier release can go. Without the trigger, the end of the
-  next NexKit run notices a finished run, also a run that started the next automatic
-  round itself, and else the hourly schedule.
+  as its App, so a repository's workflows need no job of their own to start a sweep.
+  Without the trigger, the end of the next NexKit run notices a finished run, also a run
+  that started the next automatic round itself, and else the hourly schedule.
 - **Watching CI that NexKit does not start.** `merge.after_workflows` both starts a
   workflow after each merge and has autopilot watch it. `autopilot.watch_workflows` only
   watches: the runs come from the workflow's own triggers, such as a `schedule`, a

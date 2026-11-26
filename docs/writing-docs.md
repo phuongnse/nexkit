@@ -259,6 +259,8 @@ when a list of what the code defines misses an entry. These rules close each of 
    tables and the complete configuration of the [configuration reference](configuration.md) list
    each key the code defines and no other, with its default and range; that the table of the App's
    permissions in [configuration](configuration.md#the-github-app) matches the permissions and
-   levels `nexkit/app.py` asks for; and that the index matches the decision files, each of which
-   follows the template and is linked from a rule or a page. A docs check is added only once the
-   whole tree passes it: there are no lists of exceptions.
+   levels `nexkit/app.py` asks for; that the trigger table of [the workflow
+   file](configuration.md#workflow-file) lists each trigger of the workflow template and no
+   other; and that the index matches the decision files, each of which follows the template
+   and is linked from a rule or a page. A docs check is added only once the whole tree passes
+   it: there are no lists of exceptions.

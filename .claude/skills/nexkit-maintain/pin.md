@@ -5,9 +5,13 @@ runs well elsewhere, as
 [NexKit on this repository](../../../docs/delivery.md#nexkit-on-this-repository) says. The change
 is under `.github/`, so a session makes it as a hand-made change.
 
-1. On the owner's word that the release runs well, open the pull request that changes the
-   `uses:` ref of `pipeline.yml` in `.github/workflows/nexkit.yml` to the release's tag. Follow
-   [Make a hand-made change](hand-made.md).
-2. Apply each `### Upgrade` step of `CHANGELOG.md` between the old and new tags to
-   `.nexkit/config.json` and the workflow.
-3. Never merge, push a tag or run `gh release create`. Hand the merge to the owner.
+1. On the owner's word that the release runs well, follow
+   [Make a hand-made change](hand-made.md) and upgrade `.github/workflows/nexkit.yml` to the
+   release's tag, as
+   [Upgrading from earlier releases](../../../docs/configuration.md#upgrading-from-earlier-releases)
+   says. Pin every ref it names, `nexkit_ref` among them. Carry out the upgrade steps of each
+   release after the pinned one, wherever they act. Then run `nexkit doctor`.
+2. List in the pull request each upgrade step that a session cannot carry out, such as accepting
+   an App permission on the installation or stopping a scheduled session, for the owner.
+3. Hand the merge to the owner, as
+   [NexKit on this repository](../../../docs/delivery.md#nexkit-on-this-repository) says.

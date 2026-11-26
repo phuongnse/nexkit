@@ -478,7 +478,7 @@ These are the outcomes a person meets in run comments and in that output:
 | `needs_human` | Checks or the AI review still need attention, and no automatic fix round remains. See [Troubleshooting](troubleshooting.md). |
 | `merge_refused` | GitHub refused the automatic merge. A person decides how to unblock it. See [Troubleshooting](troubleshooting.md). |
 | `retry_failed` | The run stopped on a transient error again after every wait of `retry.wait_minutes`. See [Troubleshooting](troubleshooting.md). |
-| `close_failed`, `on_base_failed` | No change is needed, or the base branch already holds this change, but GitHub refused NexKit's close. A person closes the issue, or the pull request and its issue. See [Troubleshooting](troubleshooting.md). |
+| `close_failed`, `on_base_failed` | No change is needed, or the base branch already holds this change, but GitHub refused NexKit's close, or NexKit's engine refused to decide the end. A person closes the issue, or the pull request and its issue. See [Troubleshooting](troubleshooting.md). |
 
 The reasons are in [D1](decisions/d1-state-lives-only-on-github.md).
 

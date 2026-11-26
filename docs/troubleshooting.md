@@ -404,8 +404,8 @@ each outcome of a run is:
 | `pull_closed`, reopened | approve the pull request, which NexKit then merges, or comment `/nexkit review` on it. It was closed when its round was to merge it, and reopening it starts nothing by itself. A pull request that stays merged or closed needs nobody | |
 | `agent_untrusted` | read the issue, and comment `/nexkit trust` on it if you trust it. Someone without write access edited it after a writer vouched for it, so NexKit does not act on its text | |
 | `merge_untrusted` | read the issue, and comment `/nexkit trust` on it if you trust it. Someone without write access edited it after a writer vouched for it, so NexKit does not merge its pull request | |
-| `close_failed` | close the issue yourself. No change is needed, but GitHub refused NexKit's close | the error |
-| `on_base_failed` | close the pull request and its issue yourself. The base branch already holds this change, but GitHub refused NexKit's close | |
+| `close_failed` | close the issue yourself. No change is needed, but GitHub refused NexKit's close, or NexKit's engine refused to decide the end | the error, or the engine's refusal |
+| `on_base_failed` | close the pull request and its issue yourself. The base branch already holds this change, but GitHub refused NexKit's close, or NexKit's engine refused to decide the end | the engine's refusal, when it refused |
 | `paused`, not resumed | post the command again once the usage limit has reset. The agent hit its usage limit, and NexKit does not resume this run | |
 | `retry_waiting`, long past its time | post the command again, and check that NexKit's workflow has its `schedule` trigger. It was to run again after a transient error, and no run started it | the time it was to run |
 

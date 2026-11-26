@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
-from nexkit import cli
+from nexkit import cli, host
 from nexkit.context import gather
 from nexkit.github import GitHubError
 from nexkit.maintain import WAIT_INPUTS
@@ -469,6 +469,53 @@ class ReportTests(ReportCase):
         )
         self.assertEqual(self.gh.run_comments(5)[-1]["run"]["status"], "failure")
         self.assertIn("could not close #5", outcome["summary"])
+
+    def test_a_round_that_finds_no_change_closes_nothing_when_the_engine_refuses(self):
+        with mock.patch.object(host, "_answers", side_effect=host.Refused("no")):
+            outcome = self.no_change(make_config(close_parent_issues=True))
+        self.assertEqual(outcome["outcome"], "close_failed")
+        self.assertIn("NexKit's engine refused to decide its next step: `no`", outcome["attention"])
+        self.assertIn("did not close #5", outcome["summary"])
+        self.assertIn("Fixed by 8b9cb87.", outcome["summary"])
+        self.assertEqual(self.gh.issues[5]["state"], "open")
+        self.assertFalse(self.gh.comments_matching(5, "NexKit closed #5"))
+        self.assertEqual(self.gh.run_comments(5)[-1]["run"]["status"], "failure")
+
+    def test_a_round_that_finds_no_change_sends_the_agent_s_finding_to_the_engine(self):
+        with mock.patch.object(host, "no_change_found", return_value="noChange") as found:
+            self.no_change()
+        self.assertEqual(found.call_args.args[2], "Fixed by 8b9cb87.")
+        self.assertEqual(self.gh.issues[5]["state_reason"], "completed")
+
+    def test_a_fix_round_whose_base_holds_its_change_closes_nothing_when_the_engine_refuses(self):
+        state = {"version": 2, "issue": 5, "auto_fixes": 1, "feedback": None}
+        self.gh.comment(6, render_state(state))
+        found = {
+            "stage": "fix",
+            "status": "already_on_base",
+            "summary": "",
+            "error": "`main` already holds the change of this pull request.",
+            "merge_base": "c" * 40,
+            "on_base": "b" * 40,
+        }
+        self.write("nexkit-agent", "result.json", found)
+        d = decision("fix", pr=6, target=6, head=HEAD, auto=True)
+        with mock.patch.object(host, "_answers", side_effect=host.Refused("no")):
+            outcome = self.run_report(d=d, published=False)
+        self.assertEqual(outcome["outcome"], "on_base_failed")
+        self.assertIn("NexKit's engine refused to decide", outcome["attention"])
+        self.assertEqual(self.gh.pulls[6]["state"], "open")
+        self.assertEqual(self.gh.issues[5]["state"], "open")
+        self.assertFalse(self.gh.deleted)
+        self.assertFalse(self.gh.merged)
+        [row] = self.gh.run_comments(6)
+        self.assertEqual(
+            (row["run"]["status"], row["run"]["outcome"], row["run"]["on_base"]),
+            ("failure", "on_base_failed", "b" * 40),
+        )
+        self.assertIn(f"brought by {'b' * 40}, but NexKit's engine refused to decide", row["body"])
+        # Its count comes back, as when GitHub refuses the close.
+        self.assertEqual(read_state(self.gh.comments(6))[1]["auto_fixes"], 0)
 
     def test_a_changed_round_with_a_no_change_note_publishes_and_keeps_the_issue_open(self):
         self.candidate()

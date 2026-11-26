@@ -1,0 +1,22 @@
+{
+  "policies": {},
+  "state": {
+    "example": "fixing"
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "changeObserved",
+        "changeId": "308",
+        "version": "5a54e2b",
+        "empty": true
+      },
+      "state": "noChange",
+      "changed": true,
+      "actions": [
+        "cancel",
+        "close"
+      ]
+    }
+  ]
+}

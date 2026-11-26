@@ -2297,6 +2297,49 @@ class ChangeSeenTest(ReportCase):
                 self.seen(merged=True)
 
 
+class NoChangeFoundTest(ReportCase):
+    """An implement round that finds no change is needed, and a fix round whose base branch
+    already holds its change, close only when the engine ends the item as `noChange`."""
+
+    def test_a_valid_finding_ends_the_item_without_a_change(self):
+        cfg = make_config()
+        self.assertEqual(host.no_change_found(cfg, {"issue": 5}, "Fixed by 8b9cb87."), "noChange")
+        decision = {"issue": 5, "pr": 6, "head": "c" * 40}
+        self.assertEqual(host.on_base_found(cfg, decision), "noChange")
+
+    def test_the_implement_round_sends_its_result_with_the_finding(self):
+        with mock.patch.object(host, "step", wraps=host.step) as step:
+            host.no_change_found(make_config(), {"issue": 5}, "Fixed by 8b9cb87.")
+        [event] = [call.args[1] for call in step.call_args_list]
+        self.assertEqual(event["kind"], "actionFinished")
+        self.assertEqual(event["result"]["output"]["no_change"], "Fixed by 8b9cb87.")
+
+    def test_the_fix_round_sends_an_empty_change_while_its_agent_is_pending(self):
+        decision = {"issue": 5, "pr": 6, "head": "c" * 40}
+        with mock.patch.object(host, "step", wraps=host.step) as step:
+            host.on_base_found(make_config(), decision)
+        [call] = step.call_args_list
+        self.assertEqual(call.args[0]["state"], "fixing")
+        event = call.args[1]
+        self.assertEqual(
+            (event["kind"], event["changeId"], event["empty"], event["merged"]),
+            ("changeObserved", "6", True, False),
+        )
+
+    def test_an_answer_that_ends_nothing_is_refused(self):
+        cfg = make_config()
+        # An empty finding is no finding: the engine publishes the round's change.
+        with self.assertRaises(host.Refused):
+            host.no_change_found(cfg, {"issue": 5}, "")
+        for call in (
+            lambda: host.no_change_found(cfg, {"issue": 5}, "Fixed."),
+            lambda: host.on_base_found(cfg, {"issue": 5, "pr": 6, "head": "c" * 40}),
+        ):
+            with mock.patch.object(engine, "answer", return_value={"error": "no"}):
+                with self.assertRaises(host.Refused):
+                    call()
+
+
 class PartEndedTest(ReportCase):
     """A part that NexKit merged ends its parent only as the engine decides, under `parentEnd`:
     `close_parent_issues` on gives `whenPartAccepted`, off gives `person`."""

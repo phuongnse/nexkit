@@ -500,7 +500,12 @@ host runs it through its own adapter. A new rule of the engine comes with a case
    sets `refusedAcceptable` from that marker. The merge's observations reach the engine too
    (`host.change_seen`): a pull request that a person merged first ends the item as `accepted`, a
    change that the base branch already holds ends it as `noChange`, and a commit that a person
-   pushes while the merge waits is checked. Every parent's end goes through
+   pushes while the merge waits is checked. An implement round that finds no change is needed
+   sends its result (`host.no_change_found`), and a fix round that finds, before its agent runs,
+   that its base branch already holds the change sends an empty change (`host.on_base_found`).
+   Each closes only when the engine ends the item as `noChange`; an engine that refuses closes
+   nothing, and the round ends as `close_failed` or `on_base_failed` and waits for a person.
+   Every parent's end goes through
    `host.part_ended`, which sends the parent its part's end: after NexKit's own merge, after a
    person closes the part, after a round that finds no change is needed, after a pull request
    whose base branch already holds its change, and in autopilot's sweep, at every level up the

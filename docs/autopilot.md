@@ -11,9 +11,11 @@ This page of the [configuration reference](configuration.md) says how to set aut
   "max_parallel": null,
   "answer": "never",
   "lost_after_minutes": 30,
+  "watch_workflows": [],
   "trusted_workflows": [],
   "priority": ["nexkit:ci", "nexkit:dependabot", "nexkit:flaky"],
   "labels": {},
+  "last_in_milestone_label": null,
   "dependabot": null
 }
 ```

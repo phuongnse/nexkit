@@ -114,6 +114,7 @@ LOCAL_COMMANDS_HEADER = "| Command | What it does |"
 COMMAND = re.compile(r"`nexkit ([\w-]+)`")
 CONFIG_PAGE = DOCS / "configuration.md"
 CHECKS_PAGE = DOCS / "checks.md"
+AUTOPILOT_PAGE = DOCS / "autopilot.md"
 # A field, as the bullets of a field list name it: a check's on the checks page, a cache entry's
 # in the configuration reference.
 FIELD = re.compile(r"^- `([a-z_]+)`:", re.M)
@@ -826,6 +827,16 @@ def complete_configuration():
     return json.loads(text[start : text.index("\n```", start)])
 
 
+def autopilot_block():
+    """The autopilot settings of docs/autopilot.md: its first ```json block, under '## Autopilot'.
+
+    The block holds the members of "autopilot" without the braces of a whole object, so they
+    are wrapped in braces before they are parsed."""
+    text = AUTOPILOT_PAGE.read_text()
+    start = text.index("```json\n", text.index("\n## Autopilot\n")) + len("```json\n")
+    return json.loads("{" + text[start : text.index("\n```", start)] + "}")["autopilot"]
+
+
 def key_rows():
     """The rows of the three key tables of the configuration reference, by their key."""
     return {cells[0].strip("`"): cells for cells in tables(CONFIG_PAGE, KEYS_HEADER)}
@@ -1240,6 +1251,34 @@ class ChecksPageTests(unittest.TestCase):
         for key in sorted(listed - config.CHECK_KEYS):
             with self.subTest(key=key):
                 self.fail(f"docs/checks.md lists {key}, which CHECK_KEYS does not define")
+
+
+class AutopilotPageTests(unittest.TestCase):
+    def test_the_settings_block_lists_each_autopilot_key_the_code_defines_and_no_other(self):
+        listed = autopilot_block()
+        defined = config.DEFAULTS["autopilot"]
+        for key in sorted(set(defined) - set(listed)):
+            with self.subTest(key=key):
+                self.fail(f"docs/autopilot.md does not list autopilot.{key}")
+        for key in sorted(set(listed) - set(defined)):
+            with self.subTest(key=key):
+                self.fail(
+                    f"docs/autopilot.md lists autopilot.{key}, "
+                    "which config.DEFAULTS does not define"
+                )
+
+    def test_the_settings_block_holds_each_default_but_enabled(self):
+        listed = autopilot_block()
+        defined = config.DEFAULTS["autopilot"]
+        # The block turns autopilot on to show it, so `enabled` differs from its default on purpose.
+        for key in sorted((set(listed) & set(defined)) - {"enabled"}):
+            with self.subTest(key=key):
+                self.assertEqual(
+                    listed[key],
+                    defined[key],
+                    f"docs/autopilot.md shows autopilot.{key} as {listed[key]!r}, "
+                    f"but config.DEFAULTS defaults it to {defined[key]!r}",
+                )
 
 
 class ArchitectureTests(unittest.TestCase):

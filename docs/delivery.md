@@ -99,5 +99,6 @@ over the version or the changelog.
   that the image passed. It refuses a tag that is not `v` and the version in
   `nexkit/__init__.py`, and a commit that is not on `main`. Every pull request builds and checks
   the image the same way, without publishing it. Its `publish` job pushes the image with
-  `github.token` and `packages: write`, since a GitHub App gets no access to packages. It is the
-  only job that writes with `github.token`, and it runs no repository code.
+  `github.token` and `packages: write`, since a GitHub App gets no access to packages. Like
+  NexKit's other maintenance jobs, it runs no repository code, as
+  [D2](decisions/d2-nexkit-writes-only-as-the-app.md) says.

@@ -23,10 +23,11 @@ job holds, and the plugin are described in [Architecture](docs/architecture.md).
   workflow; extend it for new jobs. See [Tokens and secrets](docs/architecture.md#tokens-and-secrets)
   and [Repository code and CI](docs/security.md#repository-code-and-ci) and
   [D3](docs/decisions/d3-agent-jobs-hold-no-write-token.md).
-- NexKit writes on GitHub only as the App. Each writing job mints its own token. Each write must
-  leave the run it starts nothing to do. The exception is `release.yml`'s `publish` job, which runs
-  no repository code and pushes the image with `github.token`. See
-  [Releases](docs/delivery.md#releases) and [D2](docs/decisions/d2-nexkit-writes-only-as-the-app.md).
+- NexKit's pipeline writes on GitHub only as the App. Each writing job mints its own token. Each
+  write must leave the run it starts nothing to do. The exception is the jobs that maintain
+  NexKit's own repository: they run no repository code, hold no secret and write with
+  `github.token`. See [Releases](docs/delivery.md#releases) and
+  [D2](docs/decisions/d2-nexkit-writes-only-as-the-app.md).
 - Agent output is untrusted: validate it before publishing, redact what a session prints or stores
   with `redact.py`, and print tool output with workflow commands stopped. Markers count only in the
   App's comments that no one else changed, never the Actions bot, and only at the position NexKit

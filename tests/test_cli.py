@@ -3081,7 +3081,8 @@ def can_write(text, job):
 
 
 class WriteJobsTests(unittest.TestCase):
-    """AGENTS.md: jobs with write tokens never run repository code, in every workflow."""
+    """AGENTS.md: jobs with write tokens never run repository code, in every workflow, and only
+    the jobs that maintain NexKit's own repository write with github.token (D2)."""
 
     def test_no_job_that_can_write_runs_repository_code(self):
         checked = 0
@@ -3096,6 +3097,30 @@ class WriteJobsTests(unittest.TestCase):
                     for script in run_scripts(job):
                         self.assertNotRegex(script, REPOSITORY_CODE)
         # The jobs that write today, so the test cannot pass by reading nothing.
+        self.assertGreaterEqual(checked, 4)
+
+    def test_only_maintenance_jobs_write_with_the_actions_token(self):
+        """D2: the pipeline writes only as the App; a job whose github.token writes maintains
+        NexKit's own repository and holds no secret and no App token."""
+        paths = [
+            *sorted((ROOT / ".github/workflows").glob("*.yml")),
+            ROOT / "nexkit/templates/workflow.yml",
+        ]
+        pipeline, checked = 0, 0
+        for path in paths:
+            text = path.read_text()
+            shipped = "\n  workflow_call:" in text or "/.github/workflows/pipeline.yml@" in text
+            pipeline += shipped
+            for name, job in jobs_of(text).items():
+                if not can_write(text, job):
+                    continue
+                checked += 1
+                with self.subTest(job=f"{path.name}:{name}"):
+                    self.assertFalse(shipped)
+                    self.assertNotIn("secrets.", job)
+                    self.assertNotIn("app-token", job)
+        # The pipeline's three workflows, this repository's caller and the template's.
+        self.assertGreaterEqual(pipeline, 5)
         self.assertGreaterEqual(checked, 4)
 
     def test_the_check_sees_a_job_that_runs_repository_code(self):

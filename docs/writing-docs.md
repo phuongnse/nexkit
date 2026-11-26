@@ -254,7 +254,8 @@ when a list of what the code defines misses an entry. These rules close each of 
    permissions its rows name, and the number in its heading; that the plan and review layouts of
    [stages](stages.md) list the sections the code writes, and that each value the pages repeat
    matches its constant; that each test the security page names exists; that the outcome table of
-   [how it works](how-it-works.md) lists each outcome the code defines and no other; and that the
-   index matches the decision files, each of which follows the
-   template and is linked from a rule or a page. A docs check is added only once the whole tree
-   passes it: there are no lists of exceptions.
+   [how it works](how-it-works.md) lists each outcome the code defines and no other; that the table
+   of the App's permissions in [configuration](configuration.md#the-github-app) matches the
+   permissions and levels `nexkit/app.py` asks for; and that the index matches the decision files,
+   each of which follows the template and is linked from a rule or a page. A docs check is added
+   only once the whole tree passes it: there are no lists of exceptions.

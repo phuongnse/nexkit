@@ -24,6 +24,7 @@ from nexkit.status import collect, render
 from tests.support import BOT_LOGIN, FakeGitHub, make_config, play_steps, play_sweep
 
 WORKFLOW = "acme/app/.github/workflows/nexkit.yml@refs/heads/main"
+PARENTS = make_config(close_parent_issues=True)
 # The annotation the runner adds to every job whose step fails.
 GENERIC_ANNOTATION = {
     "path": ".github",
@@ -151,7 +152,7 @@ class ParentTests(AutopilotCase):
         self.assertFalse(self.gh.comments_matching(5, "@olivia"))
         # A later sweep, or `maintain` after the last part, finds nothing left to do.
         self.sweep(cfg)
-        maintain_module.close_parents(self.gh, 6)
+        maintain_module.close_parents(self.gh, PARENTS, 6)
         self.assertEqual(len(self.closed_comments()), 1)
 
     def test_a_parent_that_close_parents_closed_during_the_sweep_gets_nothing_more(self):
@@ -161,7 +162,7 @@ class ParentTests(AutopilotCase):
         def preview(gh, cfg):
             found = real(gh, cfg)
             # The `maintain` job of the last part's merge closes the parent meanwhile.
-            maintain_module.close_parents(gh, 6)
+            maintain_module.close_parents(gh, PARENTS, 6)
             return found
 
         with mock.patch.object(autopilot, "preview", preview):
@@ -203,11 +204,11 @@ class ParentTests(AutopilotCase):
         why = "its plan lists 17 parts, but it has 2 sub-issues"
         self.assertEqual(step["reason"], autopilot.person(autopilot.UNFILED_DO, why))
         self.assertEqual((step["state"], step["person"]), ("waits", True))
-        lines = maintain_module.close_parents(self.gh, 6)
+        lines = maintain_module.close_parents(self.gh, PARENTS, 6)
         self.assertEqual(
             lines, ["Left #5 open: it has fewer sub-issues than its plan lists parts."]
         )
-        maintain_module.close_parents(self.gh, 7)
+        maintain_module.close_parents(self.gh, PARENTS, 7)
         [note] = self.gh.comments_matching(5, maintain_module.UNFILED)
         self.assertIn(f"NexKit leaves this issue open: {why}.", note["body"])
         self.sweep(cfg)
@@ -215,7 +216,7 @@ class ParentTests(AutopilotCase):
         self.assertFalse(self.closed_comments())
         self.assertEqual(len(self.gh.comments_matching(5, "@olivia a person is needed")), 1)
         # A part's run after the sweep's mention adds no second note.
-        maintain_module.close_parents(self.gh, 6)
+        maintain_module.close_parents(self.gh, PARENTS, 6)
         self.assertEqual(len(self.gh.comments_matching(5, maintain_module.UNFILED)), 1)
         # Once a person opens the parts that were missing and they close, it closes.
         for number in range(8, 23):
@@ -224,7 +225,7 @@ class ParentTests(AutopilotCase):
             self.gh.close_issue(number, "completed")
         self.assertIn(
             "Closed #5 as completed: all its sub-issues are closed.",
-            maintain_module.close_parents(self.gh, 22),
+            maintain_module.close_parents(self.gh, PARENTS, 22),
         )
 
     def test_sub_issues_in_another_repository_do_not_count_as_parts(self):

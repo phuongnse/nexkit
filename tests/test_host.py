@@ -2107,15 +2107,15 @@ class PartEndedTest(ReportCase):
     def test_the_parent_stays_while_a_part_is_open(self):
         self.assertEqual(self.ended(("open", None)), "stays")
 
-    def test_the_parent_stays_when_no_part_was_completed(self):
+    def test_a_person_decides_when_no_part_was_completed(self):
         subs = [{"number": 5, "state": "closed", "state_reason": "completed"}]
         with mock.patch.object(host, "step", wraps=host.step) as step:
-            self.assertEqual(host.part_ended(make_config(), 1, subs, 7, "dropped"), "stays")
+            self.assertEqual(host.part_ended(make_config(), 1, subs, 7, "dropped"), "person")
         self.assertEqual(step.call_args.args[1]["part"], "7")
 
-    def test_without_close_parent_issues_the_engine_gets_person_and_the_parent_stays(self):
+    def test_without_close_parent_issues_the_engine_gets_person_and_a_person_decides(self):
         with mock.patch.object(host, "step", wraps=host.step) as step:
-            self.assertEqual(self.ended(close=False), "stays")
+            self.assertEqual(self.ended(close=False), "person")
             self.assertEqual(step.call_args.args[2]["parentEnd"], "person")
             self.assertEqual(self.ended(close=True), "close")
             self.assertEqual(step.call_args.args[2]["parentEnd"], "whenPartAccepted")
@@ -2123,13 +2123,45 @@ class PartEndedTest(ReportCase):
     def test_a_list_that_misses_the_part_still_counts_it(self):
         self.assertEqual(self.ended(subs=[]), "close")
 
-    def test_a_parent_with_more_parts_than_a_state_holds_is_refused(self):
-        many = [
-            {"number": n, "state": "closed", "state_reason": "completed"}
-            for n in range(5, 5 + MOST["split"] + 1)
-        ]
-        with self.assertRaises(host.Refused):
-            self.ended(subs=many)
+    def many(self, last=("closed", "not_planned")):
+        """The part 5, closed as not planned, and more sub-issues than a state holds: nine
+        closed as not planned, then `last`."""
+        found = [{"number": 5, "state": "closed", "state_reason": "not_planned"}]
+        for number in range(20, 20 + MOST["split"] - 1):
+            found.append({"number": number, "state": "closed", "state_reason": "not_planned"})
+        state, reason = last
+        found.append({"number": 99, "state": state, "state_reason": reason})
+        self.assertGreater(len(found), MOST["split"])
+        return found
+
+    def test_a_parent_with_more_parts_than_a_state_holds_goes_by_a_reduced_list(self):
+        cfg = make_config(close_parent_issues=True)
+        subs = self.many(("closed", "completed"))
+        with mock.patch.object(host, "step", wraps=host.step) as step:
+            # The completed part is beyond the first ten, and the reduced list keeps it.
+            self.assertEqual(host.part_ended(cfg, 1, subs, 5, "dropped"), "close")
+        parts = step.call_args.args[0]["parts"]
+        self.assertEqual(len(parts), MOST["split"])
+        self.assertIn({"item": "99", "state": "accepted"}, parts)
+        self.assertEqual(step.call_args.args[1]["part"], "5")
+
+    def test_a_parent_with_more_parts_than_a_state_holds_waits_for_a_person_when_none_completed(
+        self,
+    ):
+        cfg = make_config(close_parent_issues=True)
+        self.assertEqual(host.part_ended(cfg, 1, self.many(), 5, "dropped"), "person")
+
+    def test_a_parent_with_more_parts_than_a_state_holds_stays_while_one_is_open(self):
+        subs = self.many(("open", None))
+        self.assertEqual(self.ended(subs=subs), "stays")
+
+    def test_a_parent_with_more_parts_than_a_state_holds_closes_when_all_ended_and_one_completed(
+        self,
+    ):
+        subs = self.many(("closed", "completed"))
+        self.assertEqual(self.ended(subs=subs), "close")
+
+    def test_the_engine_may_refuse_to_decide(self):
         with mock.patch.object(host, "step", side_effect=host.Refused("no")):
             with self.assertRaises(host.Refused):
                 self.ended()
@@ -2219,7 +2251,7 @@ class MergeFindsTest(ReportCase):
             self.assertEqual(self.merge(cfg)["outcome"], "merged")
         self.assertEqual(self.gh.issues[1]["state"], "closed")
 
-    def test_without_close_parent_issues_the_engine_gets_person_and_the_parent_stays(self):
+    def test_without_close_parent_issues_the_engine_gets_person_and_a_person_decides(self):
         self.parent((2, "completed"))
         with mock.patch.object(host, "step", wraps=host.step) as step:
             self.assertEqual(self.merge()["outcome"], "merged")
@@ -2245,12 +2277,12 @@ class MergeFindsTest(ReportCase):
         [row] = self.gh.run_comments(6)
         self.assertIn("engine refused to decide", row["body"])
 
-    def test_a_parent_with_more_sub_issues_than_a_state_holds_keeps_nexkit_6s_path(self):
+    def test_a_parent_with_more_sub_issues_than_a_state_holds_goes_through_the_engine_too(self):
         cfg = make_config(merge={"auto": True}, close_parent_issues=True)
         self.parent(*[(n, "completed") for n in range(20, 20 + MOST["split"])])
-        with mock.patch.object(host, "part_ended") as ended:
+        with mock.patch.object(host, "part_ended", wraps=host.part_ended) as ended:
             self.assertEqual(self.merge(cfg)["outcome"], "merged")
-        ended.assert_not_called()
+        ended.assert_called_once()
         self.assertEqual(self.gh.issues[1]["state"], "closed")
 
 

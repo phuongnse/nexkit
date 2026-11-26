@@ -1,6 +1,7 @@
 import unittest
 from unittest import mock
 
+from nexkit import host
 from nexkit.github import GitHubError
 from nexkit.maintain import (
     BRANCH_KEPT,
@@ -20,6 +21,7 @@ from nexkit.state import render_run
 from tests.support import BOT_LOGIN, FakeGitHub, make_config
 
 HEAD = "a" * 40
+PARENTS = make_config(close_parent_issues=True)
 
 
 class StaleBranchTests(unittest.TestCase):
@@ -235,10 +237,10 @@ class CloseParentTests(unittest.TestCase):
 
     def test_closes_the_parent_when_the_last_sub_issue_closes(self):
         self.close(2)
-        self.assertEqual(close_parents(self.gh, 2), [])
+        self.assertEqual(close_parents(self.gh, PARENTS, 2), [])
         self.assertEqual(self.gh.issues[1]["state"], "open")
         self.close(3, "not_planned")
-        lines = close_parents(self.gh, 3)
+        lines = close_parents(self.gh, PARENTS, 3)
         self.assertEqual(lines, ["Closed #1 as completed: all its sub-issues are closed."])
         self.assertEqual(
             (self.gh.issues[1]["state"], self.gh.issues[1]["state_reason"]), ("closed", "completed")
@@ -251,7 +253,7 @@ class CloseParentTests(unittest.TestCase):
         self.close(3)
         text = f"Done.\n{CLOSED}"
         self.gh.comment(1, render_run({"command": "go", "status": "success"}, text))
-        close_parents(self.gh, 3)
+        close_parents(self.gh, PARENTS, 3)
         self.assertEqual(self.gh.issues[1]["state"], "closed")
         [note] = self.gh.comments_matching(1, "because all its sub-issues are closed")
         self.assertTrue(note["body"].startswith(CLOSED))
@@ -261,32 +263,32 @@ class CloseParentTests(unittest.TestCase):
         self.close(3)
         note = self.gh.comment(1, f"{CLOSED}\nNexKit closed this issue.")
         note["editors"] = ["mallory"]
-        close_parents(self.gh, 3)
+        close_parents(self.gh, PARENTS, 3)
         self.assertEqual(len(self.gh.comments_matching(1, CLOSED)), 2)
         # One that the App alone wrote counts, as the guard of a run that lost the close.
         self.gh.issues[1].update(state="open")
         note["editors"] = [BOT_LOGIN]
         self.gh.issue_comments[1][:] = [note]
-        close_parents(self.gh, 3)
+        close_parents(self.gh, PARENTS, 3)
         self.assertEqual(len(self.gh.comments_matching(1, CLOSED)), 1)
 
     def test_a_note_that_someone_else_changed_does_not_pass_for_the_once_only_note(self):
         self.close(2, "not_planned")
         self.close(3, "duplicate")
-        close_parents(self.gh, 3)
+        close_parents(self.gh, PARENTS, 3)
         [note] = self.gh.comments_matching(1, UNDECIDED)
         note["editors"] = [BOT_LOGIN]
-        close_parents(self.gh, 3)
+        close_parents(self.gh, PARENTS, 3)
         self.assertEqual(len(self.gh.comments_matching(1, UNDECIDED)), 1)
         note["editors"] = [BOT_LOGIN, "mallory"]
-        close_parents(self.gh, 3)
+        close_parents(self.gh, PARENTS, 3)
         self.assertEqual(len(self.gh.comments_matching(1, UNDECIDED)), 2)
 
     def test_a_parent_another_run_closes_at_the_same_moment_is_left_to_it(self):
         self.close(2)
         self.close(3)
         self.gh.closed_by_other.add(1)
-        self.assertEqual(close_parents(self.gh, 3), [])
+        self.assertEqual(close_parents(self.gh, PARENTS, 3), [])
         self.assertEqual(self.gh.issues[1]["state"], "closed")
         # The run whose close went through comments; this one, which may have lost to a
         # person, says nothing.
@@ -296,22 +298,22 @@ class CloseParentTests(unittest.TestCase):
         self.gh.closed_by_other.clear()
         self.gh.close_errors[1] = GitHubError(403, "Forbidden")
         with self.assertRaises(GitHubError):
-            close_parents(self.gh, 3)
+            close_parents(self.gh, PARENTS, 3)
 
     def test_a_parent_whose_sub_issues_were_all_not_planned_stays_open(self):
         self.close(2, "not_planned")
         self.close(3, "duplicate")
-        lines = close_parents(self.gh, 3)
+        lines = close_parents(self.gh, PARENTS, 3)
         self.assertEqual(lines, ["Left #1 open: none of its sub-issues was completed."])
         self.assertEqual(self.gh.issues[1]["state"], "open")
         [note] = self.gh.comments(1)
         self.assertIn(UNDECIDED, note["body"])
         self.assertIn("A person should decide", note["body"])
-        close_parents(self.gh, 3)  # the same event again adds no second note
+        close_parents(self.gh, PARENTS, 3)  # the same event again adds no second note
         self.assertEqual(len(self.gh.comments(1)), 1)
         # Nor does the run of the other part after a sweep's mention came between them.
         self.gh.comment(1, "@olivia a person is needed: decide whether to close it.")
-        close_parents(self.gh, 2)
+        close_parents(self.gh, PARENTS, 2)
         self.assertEqual(len(self.gh.comments_matching(1, UNDECIDED)), 1)
 
     def test_goes_up_the_tree(self):
@@ -320,7 +322,7 @@ class CloseParentTests(unittest.TestCase):
         self.gh.parents.update({1: 10, 9: 10})
         self.close(2)
         self.close(3)
-        lines = close_parents(self.gh, 3)
+        lines = close_parents(self.gh, PARENTS, 3)
         self.assertEqual(len(lines), 2)
         self.assertEqual(self.gh.issues[10]["state"], "closed")
 
@@ -328,34 +330,34 @@ class CloseParentTests(unittest.TestCase):
         self.close(2)
         self.close(3)
         self.gh.issues[1].update(state="closed", state_reason="not_planned")
-        self.assertEqual(close_parents(self.gh, 3), [])
+        self.assertEqual(close_parents(self.gh, PARENTS, 3), [])
         self.assertEqual(self.gh.issues[1]["state_reason"], "not_planned")
         self.assertFalse(self.gh.comments(1))
         self.gh.add_issue(7)
-        self.assertEqual(close_parents(self.gh, 7), [])  # no parent
+        self.assertEqual(close_parents(self.gh, PARENTS, 7), [])  # no parent
 
     def test_a_parent_in_another_repository_is_left_alone(self):
         self.close(2)
         self.close(3)
         self.gh.issues[1]["repository_url"] = "https://api.github.com/repos/acme/other"
-        self.assertEqual(close_parents(self.gh, 3), [])
+        self.assertEqual(close_parents(self.gh, PARENTS, 3), [])
         self.assertEqual(self.gh.issues[1]["state"], "open")
         self.gh.issues[1]["repository_url"] = "https://api.github.com/repos/ACME/app"
-        self.assertEqual(len(close_parents(self.gh, 3)), 1)
+        self.assertEqual(len(close_parents(self.gh, PARENTS, 3)), 1)
 
     def test_sub_issues_closed_together_close_the_parent_once(self):
         self.close(2)
         self.close(3)
-        close_parents(self.gh, 2)
+        close_parents(self.gh, PARENTS, 2)
         self.gh.issues[1]["state"] = "open"  # the second run read it before the first closed it
-        close_parents(self.gh, 3)
+        close_parents(self.gh, PARENTS, 3)
         self.assertEqual(len(self.gh.comments(1)), 1)
 
     def test_errors_become_a_line(self):
         self.close(2)
         self.close(3)
         self.gh.close_errors[1] = GitHubError(403, "Forbidden")
-        [line] = close_parents_safely(self.gh, 3)
+        [line] = close_parents_safely(self.gh, PARENTS, 3)
         self.assertIn("Could not check the parent issue of #3: GitHub API 403", line)
 
     def test_maintain_runs_the_task(self):
@@ -364,6 +366,131 @@ class CloseParentTests(unittest.TestCase):
         decision = {"action": "maintain", "task": "parents", "issue": 3}
         maintain(self.gh, decision, make_config(close_parent_issues=True))
         self.assertEqual(self.gh.issues[1]["state"], "closed")
+
+
+class ParentAsksTheEngineTests(unittest.TestCase):
+    """Every caller that closes a parent asks the engine first (`host.part_ended`), at every
+    level: the parent stays open when it answers `stays`, whatever the sub-issues say."""
+
+    CFG = make_config(close_parent_issues=True, merge={"auto": True})
+
+    def setUp(self):
+        self.gh = FakeGitHub()
+        self.gh.add_issue(1, title="Epic")
+        self.gh.add_issue(2, title="Part")
+        self.gh.parents[2] = 1
+        self.gh.add_issue(5, title="Part")
+        self.gh.parents[5] = 1
+        self.gh.issues[2].update(state="closed", state_reason="completed")
+
+    def stays(self):
+        return mock.patch.object(host, "part_ended", return_value="stays")
+
+    def asked_not_closed(self, ended, parent=1):
+        ended.assert_called()
+        self.assertEqual(self.gh.issues[parent]["state"], "open")
+        self.assertFalse(self.gh.comments_matching(parent, CLOSED))
+
+    def test_the_parents_task_leaves_the_parent_open_when_the_engine_says_stays(self):
+        self.gh.issues[5].update(state="closed", state_reason="completed")
+        decision = {"action": "maintain", "task": "parents", "issue": 5}
+        with self.stays() as ended:
+            maintain(self.gh, decision, self.CFG)
+        self.asked_not_closed(ended)
+
+    def test_a_change_the_base_branch_holds_leaves_the_parent_open_when_the_engine_says_stays(self):
+        self.gh.add_pull(6, 5, HEAD)
+        target = {"pr": 6, "issue": 5, "base": "main", "merge_base": "c" * 40}
+        with self.stays() as ended:
+            outcome, _, _ = close_on_base(self.gh, self.CFG, target, commit="d" * 40)
+        self.assertEqual(outcome, "already_on_base")
+        self.assertEqual(self.gh.issues[5]["state"], "closed")
+        self.asked_not_closed(ended)
+
+    def test_a_round_that_finds_no_change_leaves_the_parent_open_when_the_engine_says_stays(self):
+        from nexkit import report
+
+        agent = {"output": {"no_change": "Fixed by 8b9cb87."}}
+        with self.stays() as ended:
+            report._no_change(self.gh, self.CFG, {"issue": 5}, agent)
+        self.assertEqual(self.gh.issues[5]["state"], "closed")
+        self.asked_not_closed(ended)
+
+    def test_autopilots_close_step_leaves_the_parent_open_when_the_engine_says_stays(self):
+        from nexkit import autopilot
+
+        step = {"number": 5, "reason": "it is done", "finding": "Nothing to do.", "plan_url": ""}
+        with self.stays() as ended:
+            autopilot.close(self.gh, self.CFG, step, "nexkit.yml", "main")
+        self.assertEqual(self.gh.issues[5]["state"], "closed")
+        self.asked_not_closed(ended)
+
+    def test_autopilots_sweep_of_a_parent_asks_the_engine_for_the_part_that_closed_last(self):
+        from nexkit import autopilot
+
+        self.gh.issues[5].update(state="closed", state_reason="not_planned")
+        self.gh.issues[2]["closed_at"] = "2026-01-01T00:00:00Z"
+        self.gh.issues[5]["closed_at"] = "2026-02-01T00:00:00Z"
+        with self.stays() as ended:
+            autopilot.close(self.gh, self.CFG, {"number": 1, "parent": True}, "nexkit.yml", "main")
+        self.assertEqual(ended.call_args.args[3:], (5, "dropped"))
+        self.asked_not_closed(ended)
+
+    def test_the_merge_leaves_the_parent_open_when_the_engine_says_stays(self):
+        from nexkit import report
+
+        self.gh.issues[5].update(state="closed", state_reason="completed")
+        target = {"issue": 5, "pr": 6, "head": HEAD, "state": {}}
+        with self.stays() as ended:
+            report._parent_ends(self.gh, self.CFG, target)
+        self.asked_not_closed(ended)
+
+    def test_a_parent_two_levels_up_closes_only_as_the_engine_answers_at_both_levels(self):
+        self.gh.add_issue(9, title="Goal")
+        self.gh.parents[1] = 9
+        self.gh.issues[5].update(state="closed", state_reason="completed")
+        # Closed at the first level, kept at the second.
+        with mock.patch.object(host, "part_ended", side_effect=["close", "stays"]) as ended:
+            close_parents(self.gh, self.CFG, 5)
+        self.assertEqual([call.args[1] for call in ended.call_args_list], [1, 9])
+        self.assertEqual([call.args[3] for call in ended.call_args_list], [5, 1])
+        self.assertEqual(self.gh.issues[1]["state"], "closed")
+        self.assertEqual(self.gh.issues[9]["state"], "open")
+        # A parent that stays ends the climb.
+        self.gh.issues[1].update(state="open")
+        with mock.patch.object(host, "part_ended", return_value="stays") as ended:
+            close_parents(self.gh, self.CFG, 5)
+        self.assertEqual(ended.call_count, 1)
+        self.assertEqual(self.gh.issues[9]["state"], "open")
+        # Both answer close.
+        self.gh.issues[1].update(state="open")
+        with mock.patch.object(host, "part_ended", return_value="close"):
+            close_parents(self.gh, self.CFG, 5)
+        self.assertEqual((self.gh.issues[1]["state"], self.gh.issues[9]["state"]), ("closed",) * 2)
+
+    def test_a_refusal_leaves_the_parent_open_with_a_line_for_the_log(self):
+        self.gh.issues[5].update(state="closed", state_reason="completed")
+        with mock.patch.object(host, "part_ended", side_effect=host.Refused("no rule")):
+            lines = close_parents(self.gh, self.CFG, 5)
+        self.assertEqual(lines, ["Left #1 as it is: NexKit's engine refused to decide: `no rule`"])
+        self.assertEqual(self.gh.issues[1]["state"], "open")
+
+    def test_a_parent_with_more_sub_issues_than_a_state_holds_closes_as_the_engine_says(self):
+        self.gh.issues[2].update(state_reason="not_planned")
+        for number in range(20, 31):
+            self.gh.add_issue(number)
+            self.gh.parents[number] = 1
+            self.gh.issues[number].update(state="closed", state_reason="not_planned")
+        self.gh.issues[5].update(state="closed", state_reason="not_planned")
+        self.assertEqual(
+            close_parents(self.gh, self.CFG, 5),
+            ["Left #1 open: none of its sub-issues was completed."],
+        )
+        self.gh.issues[30].update(state_reason="completed")
+        self.assertEqual(
+            close_parents(self.gh, self.CFG, 5),
+            ["Closed #1 as completed: all its sub-issues are closed."],
+        )
 
 
 class OnBaseTests(unittest.TestCase):

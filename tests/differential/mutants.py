@@ -25,6 +25,7 @@ MACHINE = "nexkit/engine/machine.py"
 HOST = "nexkit/host.py"
 SIZE = "nexkit/protocol/size.py"
 SWEEP = "nexkit/engine/sweep.py"
+MAINTAIN = "nexkit/maintain.py"
 
 MUTANTS = {
     # A fix round held back, or waiting for the base branch, starts without reading
@@ -550,6 +551,27 @@ MUTANTS = {
         "new": "elif full:",
         "seen": ("harness", "walker"),
         "families": ("start",),
+    },
+    # The reduced list that a parent with more than ten sub-issues sends leaves out the part
+    # that was completed, so the engine finds none and a person decides, where NexKit 6 closes
+    # the parent (#531).
+    "reduced-list-drops-the-completed-part": {
+        "path": HOST,
+        "old": 'for wanted in (None, "accepted", "dropped"):',
+        "new": 'for wanted in (None, "dropped"):',
+        "seen": ("harness",),
+        "families": ("parents",),
+    },
+    # A parent closes when the engine answers that a person decides, where NexKit 6 leaves one
+    # whose parts were all not planned open with a note (#531).
+    "parent-closes-when-a-person-decides": {
+        "path": MAINTAIN,
+        "old": """    if answer == "person":
+        _note_once(""",
+        "new": """    if False:
+        _note_once(""",
+        "seen": ("harness",),
+        "families": ("parents",),
     },
 }
 

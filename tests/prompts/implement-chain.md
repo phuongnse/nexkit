@@ -102,8 +102,8 @@ When what this issue asks depends on a text listed under *Links NexKit did not r
   `status: blocked` with a single question, whose recommended option is to close the
   issue with that finding, and set its `closes` to that option's number.
 - When the change must modify a protected path, do not change it. Return
-  `status: blocked` and list the paths in `protected_paths`: a person makes that change
-  by hand.
+  `status: blocked`, give the reason in `blocker` and list the paths in `protected_paths`: a
+  person makes that change by hand.
 
 ## How to write
 
@@ -131,7 +131,9 @@ NexKit builds the pull request description from `summary`, `changes`, `testing`,
   for, with the reason. An empty list when you followed the plan.
 - `reviewer_notes`: a list of strings, each something a reviewer should know or check,
   such as a trade-off or a known limit. An empty list when there is nothing to add.
-- `blocker`: why you stopped, when `status` is `blocked`; otherwise an empty string.
+- `blocker`: when `status` is `blocked`, why you stopped, in a sentence or two that a person reads in
+  the run's comment. It may be empty only when `questions` (or, in a fix round, `open_conflicts`)
+  holds what you ask; NexKit rejects a blocked result with neither. Otherwise an empty string.
 - `questions`: when `status` is `blocked` because a person must decide something, one entry
   for each decision; otherwise an empty list. Each has the `question`, the `options` you
   see (two to four short answers) and `recommended`: the number of the option you would

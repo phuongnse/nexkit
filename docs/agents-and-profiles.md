@@ -113,7 +113,8 @@ that fits the stage's schema, such as one that leaves out a field or that Claude
 turned down as often as it allows (`error_max_structured_output_retries`). A field whose
 empty value means the same as leaving it out, such as `questions`, `blocker`,
 `outside_plan`, `reviewer_notes`, `protected_paths` or `no_change`, takes that empty value
-instead. Otherwise NexKit asks the same session once for its result alone, with what was
+instead. A blocked implement or fix result with an empty `blocker` and no question or open
+conflict to answer does not fit either: a blocked result must say why it stopped. Otherwise NexKit asks the same session once for its result alone, with what was
 wrong, and leaves the working tree as the agent left it, so an implement or fix round
 keeps its change. That request gets at most 10 minutes of the time the stage has left; the
 log and `result-again/` in the agent's artifact show it. A result that fits then goes on as

@@ -505,7 +505,7 @@ These are the outcomes a person meets in run comments and in that output:
 | `merge_untrusted` | The same edit stopped a merge. A new `/nexkit trust` starts `/nexkit review`, which merges as usual. |
 | `person_reviewed` | `/nexkit review` checked and reviewed a person's pull request. NexKit changes nothing on it, whatever the round found. See *A person's pull request* under [Stages](stages.md#stages). |
 | `no_change` | An implement round found that no change is needed. The issue closes with its finding, at once or through autopilot's answer (see [Stages](stages.md#stages)). A plan's finding closes it through autopilot. |
-| `agent_blocked` | The agent stopped at a decision that is the owner's to make, and it asked questions. A person answers them. See [Troubleshooting](troubleshooting.md). |
+| `agent_blocked` | The agent stopped before it finished: it asked questions, or said in `blocker` why it stopped. A person answers the questions, or reads the reason in the run's comment and answers with a command. See [Troubleshooting](troubleshooting.md). |
 | `agent_error` | The run stopped on an error. Agent errors never retry by themselves, so a person posts the command again. See [Troubleshooting](troubleshooting.md). |
 | `agent_failed` | The agent job ended without a result, so NexKit had nothing to go on. A person posts the command again. See [Troubleshooting](troubleshooting.md). |
 | `publish_failed` | NexKit could not publish the agent's result. See [Troubleshooting](troubleshooting.md). |

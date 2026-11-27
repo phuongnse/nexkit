@@ -7,7 +7,14 @@ import unittest
 from nexkit import report as report_module
 from nexkit.autopilot import mention_text, person
 from nexkit.config import ConfigError, validate
-from nexkit.report import NEEDS_PERSON, READY, needs_person, report
+from nexkit.report import (
+    BLOCKED_NOTHING,
+    BLOCKED_NOTHING_PULL_DO,
+    NEEDS_PERSON,
+    READY,
+    needs_person,
+    report,
+)
 from nexkit.status import collect, render, to_json
 from tests.support import CLAUDE, make_config
 from tests.test_report import HEAD, LIMIT, ReportCase, decision, review_result
@@ -50,15 +57,40 @@ class RuleTests(unittest.TestCase):
             "decision that is the owner's to make:\n\n1. `Keep @alice's API?`\n2. `Rename it?`",
         )
         self.assertTrue(
-            needs_person("agent_blocked", self.cfg, found={"pull": True}).startswith(
+            needs_person(
+                "agent_blocked",
+                self.cfg,
+                found={"pull": True, "questions": [{"question": "Which?"}]},
+            ).startswith(
                 "answer the questions in the round's comment with `/nexkit fix <answers>`."
             )
         )
 
+    def test_agent_blocked_with_nothing_to_answer_points_to_the_reason(self):
+        do, why = BLOCKED_NOTHING
+        for questions in (None, [], [{"question": " "}]):
+            with self.subTest(questions=questions):
+                found = {"questions": questions}
+                self.assertEqual(
+                    needs_person("agent_blocked", self.cfg, found=found), person(do, why)
+                )
+        reason = needs_person("agent_blocked", self.cfg, found={"pull": True})
+        self.assertEqual(reason, person(BLOCKED_NOTHING_PULL_DO, why))
+        self.assertIn("in the run's comment", person(do, why))
+        self.assertIn("`/nexkit go <instructions>` or `/nexkit plan <changes>`", do)
+        self.assertIn("round's comment", reason)
+        self.assertIn("`/nexkit fix <instructions>`", reason)
+        self.assertNotIn("questions in", reason)
+
     def test_every_outcome_that_needs_a_person_says_what_to_do_and_why(self):
         for outcome, (do, why) in NEEDS_PERSON.items():
             with self.subTest(outcome):
-                reason = needs_person(outcome, self.cfg)
+                asked = [{"question": "Which?"}]
+                found = {"questions": asked} if outcome == "agent_blocked" else None
+                reason = needs_person(outcome, self.cfg, found=found)
+                if outcome == "agent_blocked":
+                    self.assertTrue(reason.startswith(person(do, why) + ":\n\n1. "), reason)
+                    continue
                 self.assertEqual(reason, person(do, why))
                 text = mention_text(make_config(notify=["owner"]), reason)
                 self.assertTrue(text.startswith(f"@owner a person is needed: {do}. "), text)
@@ -374,6 +406,37 @@ class MentionTests(ReportCase):
         self.run_report(d=d, cfg=make_config(notify=["owner"]), published=False)
         self.assertEqual(self.mentions(6), [])
 
+    def test_a_blocked_run_with_nothing_to_answer_mentions_the_reason_on_the_issue(self):
+        reason = "The plan forbids a known.py entry"
+        self.write(
+            "nexkit-agent",
+            "result.json",
+            {"status": "blocked", "error": reason, "output": {"blocker": reason, "questions": []}},
+        )
+        self.run_report(cfg=make_config(notify=["owner"]), published=False)
+        self.assertEqual(
+            self.mentions(5),
+            [
+                "@owner a person is needed: read why the agent stopped in the run's comment, "
+                "then answer with `/nexkit go <instructions>` or `/nexkit plan <changes>`. The "
+                "agent stopped before it finished and asked no question, and NexKit never runs "
+                "a blocked round again by itself."
+            ],
+        )
+        self.assertTrue(self.gh.comments_matching(5, reason))
+
+    def test_a_blocked_run_with_questions_keeps_its_mention_on_the_issue(self):
+        asked = [{"question": "Which way?", "options": ["A", "B"], "recommended": 1}]
+        self.write(
+            "nexkit-agent",
+            "result.json",
+            {"status": "blocked", "error": "", "output": {"blocker": "", "questions": asked}},
+        )
+        self.run_report(cfg=make_config(notify=["owner"]), published=False)
+        [text] = self.mentions(5)
+        self.assertIn("answer the questions in the run's comment with `/nexkit plan", text)
+        self.assertIn("1. `Which way?`", text)
+
     def test_a_blocked_fix_round_mentions_on_the_pull_request(self):
         self.write("nexkit-agent", "result.json", {"status": "blocked", "error": "Which way?"})
         d = decision("fix", pr=6, target=6, head=HEAD)
@@ -381,11 +444,26 @@ class MentionTests(ReportCase):
         self.assertEqual(
             self.mentions(6),
             [
-                "@owner a person is needed: answer the questions in the round's comment with "
-                "`/nexkit fix <answers>`. The agent stopped at a decision that is the owner's "
-                "to make."
+                "@owner a person is needed: read why the agent stopped in the round's comment, "
+                "then comment `/nexkit fix <instructions>` on the pull request, or `/nexkit plan "
+                "<changes>` on the issue to plan it anew. The agent stopped before it finished "
+                "and asked no question, and NexKit never runs a blocked round again by itself."
             ],
         )
+
+    def test_a_blocked_fix_round_with_questions_keeps_its_mention(self):
+        asked = [{"question": "Which way?", "options": ["A", "B"], "recommended": 1}]
+        self.write(
+            "nexkit-agent",
+            "result.json",
+            {"status": "blocked", "error": "", "output": {"blocker": "", "questions": asked}},
+        )
+        d = decision("fix", pr=6, target=6, head=HEAD)
+        self.run_report(d=d, cfg=make_config(notify=["owner"]), published=False)
+        [text] = self.mentions(6)
+        self.assertIn("answer the questions in the round's comment with `/nexkit fix", text)
+        self.assertIn("1. `Which way?`", text)
+        self.assertNotIn("asked no question", text)
 
 
 if __name__ == "__main__":

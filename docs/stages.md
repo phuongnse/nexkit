@@ -105,7 +105,10 @@ check output, blocking review findings and collaborators' review comments on the
 commit. It asks the agent to run the checks before it finishes; of a
 [slow check](checks.md#slow-checks), only the tests that cover the change or that
 failed, since NexKit runs every check after the round. The agent must return `done` or
-`blocked`. A blocked or failed session publishes nothing.
+`blocked`. A `blocked` result needs a non-empty `blocker`, unless it asks a question or, in
+a fix round, lists an open conflict; NexKit treats one with neither as a result that [does
+not fit](agents-and-profiles.md#agents). The run's comment shows the `blocker`, so a person
+reads why the agent stopped. A blocked or failed session publishes nothing.
 
 An implement agent that finds no change is needed, such as for a failure that a commit on
 the base branch already fixed, or a CI failure from outside the repository, such as a

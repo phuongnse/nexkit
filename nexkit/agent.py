@@ -28,6 +28,7 @@ from .runlog import RunLog, add_tokens, one_line, summary, write_summary
 from .runtimes import PROVIDERS, RUNTIMES
 from .runtimes.base import ACCESS, AgentConfigError, Spec
 from .schema import filled, problems
+from .state import round_questions
 from .usage import schedule
 
 # The most time a session gets to give its result alone, after a run without one that fits.
@@ -865,6 +866,19 @@ def paused(result, limit, label="The agent"):
     return result
 
 
+def contract_problems(output, stage):
+    """What a result breaks that its JSON Schema cannot say: a blocked implement or fix
+    result needs a `blocker`, unless it holds a question or an open conflict to answer."""
+    if stage not in ("implement", "fix") or output.get("status") != "blocked":
+        return []
+    if filled(output.get("blocker")) or round_questions({"status": "blocked", "output": output}):
+        return []
+    return [
+        "result.blocker must say why you stopped: status is blocked and there is no "
+        "question or open conflict to answer"
+    ]
+
+
 def interpret(
     stage, run, outcome, timeout_minutes, retry_minutes=60, *, label="The agent", schema=None
 ):
@@ -884,6 +898,8 @@ def interpret(
         result["tokens"] = outcome.tokens
     given = with_defaults(outcome.output, stage)
     found = problems(given, schema) if schema and given is not None else []
+    if not found and isinstance(given, dict):
+        found = contract_problems(given, stage)
     if run["timed_out"]:
         result["error"] = f"{label} did not finish within {timeout_minutes} minutes."
         result["timed_out"] = True
@@ -908,7 +924,9 @@ def interpret(
         if stage in ("implement", "fix"):
             result["status"] = output.get("status")
             if result["status"] == "blocked":
-                result["error"] = output.get("blocker") or "The agent reported it was blocked."
+                result["error"] = (
+                    filled(output.get("blocker")) or "The agent reported it was blocked."
+                )
         else:
             result["status"] = "done"
     if result["status"] == "error" and not run["timed_out"] and outcome.limit:

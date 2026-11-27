@@ -175,6 +175,63 @@ KNOWN = [
     },
 ]
 
+# What NexKit 6 wrote as the mention of a blocked run, and what the tree writes when the run
+# holds no question to answer (#691).
+_BLOCKED_WHY = "The agent stopped at a decision that is the owner's to make"
+_BLOCKED_MENTIONS = (
+    (
+        "answer the questions in the run's comment with `/nexkit plan <answers>`, or "
+        f"`/nexkit go <answers>` when they leave the plan as it is. {_BLOCKED_WHY}",
+        "read why the agent stopped in the run's comment, then answer with `/nexkit go "
+        "<instructions>` or `/nexkit plan <changes>`. The agent stopped before it finished and "
+        "asked no question, and NexKit never runs a blocked round again by itself",
+    ),
+    (
+        f"answer the questions in the round's comment with `/nexkit fix <answers>`. {_BLOCKED_WHY}",
+        "read why the agent stopped in the round's comment, then comment `/nexkit fix "
+        "<instructions>` on the pull request, or `/nexkit plan <changes>` on the issue to plan "
+        "it anew. The agent stopped before it finished and asked no question, and NexKit never "
+        "runs a blocked round again by itself",
+    ),
+)
+
+
+def _replaced(value, pairs):
+    """`value` with each text of `pairs` replaced in every string it holds."""
+    if isinstance(value, str):
+        for old, new in pairs:
+            value = value.replace(old, new)
+        return value
+    if isinstance(value, dict):
+        return {key: _replaced(item, pairs) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_replaced(item, pairs) for item in value]
+    return value
+
+
+def _differs_by_the_blocked_mention(sc, old, new):
+    """Whether the two records differ by the mention of a blocked run with nothing to answer
+    alone, apart from the empty `blockers` entries that a read adds."""
+    said = _replaced(old, _BLOCKED_MENTIONS)
+    return said != old and _without_empty_blockers(said) == _without_empty_blockers(new)
+
+
+KNOWN += [
+    {
+        "name": "a blocked run with nothing to answer asks for no answers",
+        "family": family,
+        "by": "#691",
+        "why": (
+            "NexKit 6 mentioned a blocked run that asked no question as if it had asked some: "
+            "'answer the questions in the run's comment'. The mention now sends the person to "
+            "why the agent stopped, which the run's comment shows, and to the commands that "
+            "answer it. Only a record that differs by this mention is excused."
+        ),
+        "match": _differs_by_the_blocked_mention,
+    }
+    for family in ("stop", "give")
+]
+
 _READ = (
     "reads the item's stored state, which is the import in memory when the item has no state "
     "comment, and the import reads the issues that block it. A read by `FakeGitHub` adds the "

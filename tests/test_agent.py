@@ -628,6 +628,51 @@ class InterpretTests(unittest.TestCase):
         unstructured = interpret_claude("review", {"subtype": "success"})
         self.assertIn("structured result", unstructured["error"])
 
+    def test_a_blocked_result_must_say_why_or_ask(self):
+        blocked = {**FIX_DONE, "status": "blocked"}
+        conflict = {
+            "file": "a.py",
+            "base_change": "x",
+            "pr_change": "y",
+            "question": "Which?",
+            "options": ["A", "B"],
+            "recommended": 0,
+        }
+        question = {
+            "question": "Which?",
+            "options": ["A", "B"],
+            "recommended": 0,
+            "closes": 0,
+            "replans": [],
+        }
+        fits = [
+            ("implement", {**blocked, "blocker": "No spec"}),
+            ("implement", {**blocked, "questions": [question]}),
+            ("fix", {**blocked, "open_conflicts": [conflict]}),
+            ("fix", {**blocked, "blocker": '"Why"'}),
+            ("implement", DONE),
+            ("fix", {**FIX_DONE, "blocker": ""}),
+        ]
+        for stage, output in fits:
+            with self.subTest(stage=stage, output=output):
+                self.assertEqual(agent.contract_problems(output, stage), [])
+                event = {"subtype": "success", "structured_output": output}
+                result = interpret_claude(stage, event, schema=agent.SCHEMAS[stage])
+                self.assertIn(result["status"], ("done", "blocked"), result["error"])
+        for stage in ("implement", "fix"):
+            for empty in ("", '""', " '' "):
+                with self.subTest(stage=stage, blocker=empty):
+                    output = {**blocked, "blocker": empty, "questions": []}
+                    [problem] = agent.contract_problems(output, stage)
+                    self.assertIn("result.blocker must say why you stopped", problem)
+                    event = {"subtype": "success", "structured_output": output}
+                    result = interpret_claude(stage, event, schema=agent.SCHEMAS[stage])
+                    self.assertEqual(result["status"], "error")
+                    self.assertEqual(result["unfit"], problem)
+                    self.assertNotIn("transient", result)
+        # Other stages never get the rule.
+        self.assertEqual(agent.contract_problems({"status": "blocked"}, "plan"), [])
+
     def test_an_optional_field_left_out_takes_its_empty_value(self):
         full = {"plan": PLAN, "implement": DONE, "fix": FIX_DONE}
         for stage, fields in agent.OPTIONAL.items():
@@ -816,6 +861,33 @@ class RunStageTests(StageCase):
         self.assertEqual(second["prompt"], (self.out / "result-again/prompt.md").read_text())
         self.assertTrue((self.out / "result-again/transcript.md").exists())
         self.assertIn("asking the same session for its result alone", log)
+
+    def test_a_blocked_implement_result_without_a_reason_is_asked_for_again(self):
+        silent = {**DONE, "status": "blocked", "blocker": "", "questions": []}
+        reason = "The plan forbids a known.py entry."
+        self.claude.configure(
+            result=silent,
+            write={"calc.py": "x\n"},
+            resumed={"result": {**silent, "blocker": reason}, "events": []},
+        )
+        result, log = self.run_quietly("implement")
+        self.assertEqual((result["status"], result["error"]), ("blocked", reason))
+        self.assertTrue(result["asked_again"])
+        first, second = self.claude.calls()
+        self.assertIn("result.blocker must say why you stopped", second["prompt"])
+        self.assertIn("asking the same session for its result alone", log)
+
+    def test_a_blocked_fix_result_without_a_reason_twice_stops_as_transient(self):
+        silent = {**FIX_DONE, "status": "blocked", "blocker": "", "questions": []}
+        self.claude.configure(
+            result=silent, write={"calc.py": "x\n"}, resumed={"result": silent, "events": []}
+        )
+        result, _ = self.run_quietly("fix", base="main")
+        self.assertEqual(result["status"], "error")
+        self.assertTrue(result["transient"])
+        self.assertTrue(result["asked_again"])
+        self.assertIn("result.blocker must say why you stopped", result["error"])
+        self.assertEqual(len(self.claude.calls()), 2)
 
     def test_a_session_that_gives_no_result_again_stops_as_transient(self):
         self.claude.configure(
@@ -1600,6 +1672,18 @@ class AgentLogTests(StageCase):
         self.assertIn("::group::[00:00 #1] ▸ Bash env", stdout)
         self.assertIn("### NexKit implement: done", summary.read_text())
         self.assertIn("✓ env", summary.read_text())
+
+    def test_a_secret_in_the_blocker_is_stored_and_shown_as_stars(self):
+        blocked = {**DONE, "status": "blocked", "blocker": f"Cannot reach it with {self.SECRET}"}
+        self.configure(result=blocked, write={"calc.py": "1"})
+        result, stdout = self.run_quietly("implement")
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["error"], "Cannot reach it with ***")
+        saved = json.loads((self.out / "result.json").read_text())
+        self.assertEqual(saved["error"], "Cannot reach it with ***")
+        self.assertEqual(saved["output"]["blocker"], "Cannot reach it with ***")
+        self.assertNotIn(self.SECRET, (self.out / "result.json").read_text())
+        self.assertNotIn(self.SECRET, stdout)
 
     def test_transcript_switch(self):
         self.configure(result=DONE, write={"calc.py": "1"})

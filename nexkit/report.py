@@ -95,6 +95,18 @@ COMPLETED = {
 # the run found (see `needs_person`). The other outcomes need nobody: NexKit continues by
 # itself (`auto_fix`, `conflict_fix`, a resumed pause, a sweep after `ci_waiting`) or is
 # done.
+# A blocked run that holds no question to answer: its `blocker` says why it stopped.
+BLOCKED_NOTHING = (
+    "read why the agent stopped in the run's comment, then answer with `/nexkit go "
+    "<instructions>` or `/nexkit plan <changes>`",
+    "the agent stopped before it finished and asked no question, and NexKit never runs a "
+    "blocked round again by itself",
+)
+BLOCKED_NOTHING_PULL_DO = (
+    "read why the agent stopped in the round's comment, then comment `/nexkit fix "
+    "<instructions>` on the pull request, or `/nexkit plan <changes>` on the issue to plan it "
+    "anew"
+)
 NEEDS_PERSON = {
     "agent_blocked": (
         "answer the questions in the run's comment with `/nexkit plan <answers>`, or "
@@ -883,7 +895,11 @@ def needs_person(
             f"the run stopped on a transient error {_times(found['stops'])}, the last after "
             "every wait of `retry.wait_minutes`"
         )
-    if outcome == "agent_blocked" and found.get("pull") and autopilot.replans(found):
+    if outcome == "agent_blocked" and not questions(found.get("questions")):
+        do, why = BLOCKED_NOTHING
+        if found.get("pull"):
+            do = BLOCKED_NOTHING_PULL_DO
+    elif outcome == "agent_blocked" and found.get("pull") and autopilot.replans(found):
         do = autopilot.REPLAN_IN_PULL_DO
     elif outcome == "agent_blocked" and found.get("pull"):
         do = "answer the questions in the round's comment with `/nexkit fix <answers>`"

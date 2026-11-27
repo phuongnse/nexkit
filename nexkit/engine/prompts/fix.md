@@ -53,10 +53,10 @@ $round_checks
   branch when the round needs it, and publishes nothing after a merge of another commit.
 - Leave no temporary files, logs or build output in the working tree.
 - Never skip, delete or weaken tests or checks to make them pass.
-- If you cannot make progress, stop and return `status: blocked` with the reason.
+- If you cannot make progress, stop and return `status: blocked` with the reason in `blocker`.
 - When the change must modify a protected path, do not change it. Return
-  `status: blocked` and list the paths in `protected_paths`: a person makes that change
-  by hand.
+  `status: blocked`, give the reason in `blocker` and list the paths in `protected_paths`: a
+  person makes that change by hand.
 - When a check failed for a cause outside the repository's code, such as a package
   registry, a service or the network that failed while it ran, and no change to the code
   would prevent it, change nothing. Return `status: done` with the cause and its evidence
@@ -76,7 +76,9 @@ $writing
   otherwise leave it empty.
 - `cause_outside`: `true` only when that cause lies outside the repository's code and you
   changed nothing for it; otherwise `false`.
-- `blocker`: why you stopped, when `status` is `blocked`; otherwise an empty string.
+- `blocker`: when `status` is `blocked`, why you stopped, in a sentence or two that a person reads in
+  the run's comment. It may be empty only when `questions` (or, in a fix round, `open_conflicts`)
+  holds what you ask; NexKit rejects a blocked result with neither. Otherwise an empty string.
 - `questions`: when `status` is `blocked` because a person must decide something, one entry
   for each decision; otherwise an empty list. Each has the `question`, the `options` you
   see (two to four short answers) and `recommended`: the number of the option you would

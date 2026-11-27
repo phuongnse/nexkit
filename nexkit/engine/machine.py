@@ -239,9 +239,15 @@ class Step:
         return f"{prefix}{self.s['revision'] + 1}.{count}"
 
     def next_action(self):
-        """The id of the next action: one a withdrawn action had is never given again."""
-        self.issued += 1
-        return self.number("a", self.issued)
+        """The id of the next action: one a withdrawn action had is never given again, nor one
+        that a pending action has, which a host that stores several events as one revision can
+        leave behind."""
+        taken = {action["id"] for action in self.s.get("pending") or []}
+        while True:
+            self.issued += 1
+            found = self.number("a", self.issued)
+            if found not in taken:
+                return found
 
     def kept(self):
         """The policies a round that starts now keeps (`KEPT`)."""

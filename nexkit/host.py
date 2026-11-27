@@ -168,7 +168,14 @@ NexKit dispatches takes them from the `diagnose` list of its pending `runAgent` 
 stored state holds and the dispatch carries out, with no event and no read. A round whose commit
 conflicts with its base branch starts the round that resolves it, within
 `conflicts.max_rounds`, unless a label holds the issue, which keeps it back until the sweep
-finds the label gone (`conflicting`, `conflicts_released`).
+finds the label gone (`conflicting`, `conflicts_released`). When an implement or fix round
+ends, its `report` first stores the agent's result and then the publish result in one write
+(`round_published`), each only while the stored state has that action pending, except the
+publish result of a commit that conflicts, which `conflicting` sends. The stored state then
+waits for the round's checks on the published head, and a fix round's record of the head it
+changed and of changing nothing is in it. The checks are then decided on that state alone. A
+round that the import already placed in its checks, and a report that runs again, store nothing
+new, and decide on the markers' document as before.
 
 It decides the start of the first plan of a new issue too (`first_plan`, called by
 `autopilot._first_plan`): the host builds the document that the import builds for an issue with
@@ -1130,7 +1137,9 @@ def decide_all(
     """The engine's answers to `events` sent in a row on work item `number`, as (state,
     [(event sent, actions), ...]): decided on the stored document where it agrees with `built`
     (`resync`), with `action`, (kind, stage), as the id of the pending action that an
-    `actionFinished` or `actionLost` event answers (`pending_id`), and with the id of the wait of
+    `actionFinished` or `actionLost` event answers (`pending_id`), or a list of them, one for
+    each event of the row (None for one that answers no action), each read on the state that the
+    event before it gave, and with the id of the wait of
     kind `wait` in the document that a `tick` names (`wait_id`). `built` may be a function of
     the stored document, which it reads on each try, so that a count comes from the state that
     is decided on (`_stored_count`), or None, which decides on the stored document alone: the caller
@@ -1163,10 +1172,11 @@ def decide_all(
             raise Refused("The item has no state to decide on.")
         fell[:] = [_why(state, base, rows)]
         revision, state, answers, changed = base["revision"], base, [], False
-        for event in rows:
+        for index, event in enumerate(rows):
             sent = event
-            if action is not None and event["kind"] in ("actionFinished", "actionLost"):
-                sent = {**sent, "action": pending_id(state, *action)}
+            named = action[index] if isinstance(action, list) else action
+            if named is not None and event["kind"] in ("actionFinished", "actionLost"):
+                sent = {**sent, "action": pending_id(state, *named)}
             if wait is not None and event["kind"] == "tick":
                 sent = {**sent, "wait": wait_id(state, wait)}
             found = step(state, sent, found_policies)
@@ -2492,6 +2502,66 @@ ROUND_ENDS = (
 )
 
 
+def round_published(gh, cfg, decision, pr, head, agent, ran, conflicts):
+    """Store the end of the implement or fix round of `decision`, whose commit `head` is on the
+    pull request `pr`, in the item's state, so that the round's checks are decided on it: the
+    agent's result (`agent`, the stage's checked result; `ran`, what its session spent), and
+    when the commit does not `conflict` with its base branch, the publish result, in one write.
+    A conflicting commit gets only the agent's result, since `conflicting` sends its publish
+    result. Each is sent only while the stored state has that action pending, so that a round
+    the import already placed in its checks, and a report that runs again, send nothing. True
+    when the stored state then has `runChecks` pending on `head`: the checks and the review
+    decide on it alone (`round_ended`). False when nothing was sent, or the engine did not
+    answer so, which warns and lets the round go on as NexKit 6 decides it. Raises `Refused`."""
+    if cfg is None or decision.get("action") not in ("implement", "fix"):
+        return False
+    if not isinstance(agent, dict) or not isinstance(agent.get("output"), dict):
+        return False
+    number = decision["issue"]
+    stage = "fix" if decision["action"] == "fix" else "implement"
+    comment, doc = stored(gh, cfg, number, pull=pr)
+    if comment is None:
+        return False
+    running = [
+        action
+        for action in doc.get("pending") or []
+        if action["kind"] == "runAgent" and action.get("stage") == stage
+    ]
+    if not running:
+        return False
+    run = _run_event_id()
+    result = {**spent(ran), "changeVersion": head, "output": agent["output"]}
+    events = [
+        _event(
+            "actionFinished",
+            number,
+            None,
+            run,
+            changeVersion=running[0].get("changeVersion"),
+            result=result,
+        )
+    ]
+    if not conflicts:
+        seen = {"changeId": str(pr), "version": head, "conflicts": False}
+        seen.update(merged=False, empty=False)
+        published = {"change": {"id": str(pr), "version": head}, "refused": None, "observed": seen}
+        # The id names the round's run too: a fix round that changes nothing publishes the head
+        # that an earlier round did, and the engine takes a repeated id for a duplicate.
+        name = f"publish-{pr}-{head}-{run}"
+        events.append(
+            _event("actionFinished", number, None, name, changeVersion=None, result=published)
+        )
+    names = [("runAgent", stage), ("publish", stage)][: len(events)]
+    state, _ = decide_all(gh, cfg, number, events, None, pull=pr, action=names, write=True)
+    if conflicts:
+        return False
+    checks = [a for a in state["pending"] if a["kind"] == "runChecks"]
+    if len(checks) == 1 and checks[0].get("changeVersion") == head:
+        return True
+    print(f"::warning::The state of #{number} does not wait for the checks of {head[:7]}.")
+    return False
+
+
 def after_round(
     gh,
     cfg,
@@ -2508,6 +2578,7 @@ def after_round(
     seen=None,
     ran=None,
     write=False,
+    published=False,
 ):
     """What follows a round of the NexKit pull request `pr` whose checks and review ended on
     `head`, as the engine decides it: one of `ROUND_ENDS`. `auto_fixes` is how many automatic
@@ -2535,6 +2606,7 @@ def after_round(
         label,
         ran,
         write=write,
+        published=published,
     )
     if seen is not None:
         seen["repeated"] = repeated
@@ -2563,6 +2635,7 @@ def round_ended(
     ran=None,
     now=None,
     write=False,
+    published=False,
 ):
     """What follows the checks and the review of the round of `decision` on the pull request
     `pr`, which ended on `head`, as the engine decides it: (end, repeated). `review` is
@@ -2580,7 +2653,12 @@ def round_ended(
     The checks' result and the review's are two events: each is decided on the stored
     document and, with `write`, which only `report` passes, stored as its own revision
     (`decide`). The automatic fix rounds used are the stored `rounds.counted`, or `auto_fixes`
-    when no state can be read (`_stored_count`). Raises `Refused`."""
+    when no state can be read (`_stored_count`). `published`, which only `report` passes, says
+    that it stored the round's agent and publish results first (`round_published`): the checks
+    are then decided on the stored state alone, with no document built from the markers, and
+    `label`, the label that holds the pull request, goes first as a `held` event while the
+    stored state is not held.
+    Raises `Refused`."""
     number = decision["issue"]
     found = policies(cfg)
     person = bool(decision.get("person"))
@@ -2612,17 +2690,42 @@ def round_ended(
         return doc
 
     results = {"checks": _checks(checks), "baseFailure": str(wait["bug"]) if wait else None}
+    name, review_name = f"checks-{pr}-{head}", f"round-review-{pr}-{head}"
+    # Decided on the stored state alone, which the round's agent and publish results reached
+    # (`round_published`), except a review that stopped on a transient error after runs again,
+    # whose count the round's command still carries until the stored state does.
+    alone = published and not (kind == "transient" and int(decision.get("retry") or 0) > 0)
+    if published:
+        # A fix round that changed nothing checks the head that an earlier round checked, and
+        # the engine takes a repeated id for a duplicate, which no markers' document hides.
+        name, review_name = f"{name}-{_run_event_id()}", f"{review_name}-{_run_event_id()}"
     event = _event(
         "actionFinished",
         number,
         None,
-        f"checks-{pr}-{head}",
+        name,
         action=first_state.RUN_ID,
         changeVersion=head,
         result=results,
     )
     options = {"pull": pr, "found_policies": found, "write": write}
-    state, actions = decide(gh, cfg, number, event, built, action=("runChecks", None), **options)
+    if alone:
+        # A label added while the agent worked, or the hold that `report` assumes when it cannot
+        # read the labels, is not stored yet: `held` goes first, only while the state is not held.
+        state, answers = decide_all(
+            gh,
+            cfg,
+            number,
+            _hold_row(number, label, event),
+            None,
+            action=("runChecks", None),
+            **options,
+        )
+        actions = answers[-1][1]
+    else:
+        state, actions = decide(
+            gh, cfg, number, event, built, action=("runChecks", None), **options
+        )
     review_run = [a for a in actions if a["kind"] == "runAgent"]
     if not review_run or review_run[0]["stage"] != "review":
         raise Refused("The engine runs no review after a round's checks.")
@@ -2643,7 +2746,7 @@ def round_ended(
         "actionFinished",
         number,
         usage.iso(now) if kind == "transient" and now else None,
-        f"round-review-{pr}-{head}",
+        review_name,
         action=review_run[0]["id"],
         changeVersion=head,
         result=result,
@@ -3519,7 +3622,12 @@ def _stage_version(decision):
 
 
 def _hold_events(number, label):
-    return [_event("held", number, None, f"held-{number}", label=str(label))] if label else []
+    """The `held` event of a label that holds the item, if any. Its id holds the run, because
+    the engine drops an event whose id is among its last twenty: a hold of a later round, after
+    the label went and came again, is a new event and not a repeat of the earlier one."""
+    if not label:
+        return []
+    return [_event("held", number, None, f"held-{number}-{_run_event_id()}", label=str(label))]
 
 
 def _hold_row(number, label, *rest):

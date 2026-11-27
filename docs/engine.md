@@ -518,7 +518,10 @@ adapter's tests and the answers as what its adapter carries out.
    NexKit 6's only when no state can be read. The run of a conflict round that the push run, the
    schedule or another item's merge dispatches counts it before the round starts. The review that
    follows a branch update stores the update, and the run that the push run starts after it stopped
-   a counted automatic fix round's checks gives that round's count back. A decision that
+   a counted automatic fix round's checks gives that round's count back. The `report` of an
+   implement or fix round first stores the agent's result and the publish result of a commit that
+   does not conflict, in one write, so that the round's checks and review then decide on the
+   stored state alone. A decision that
    still falls back to the markers' document keeps the stored counts, so that no budget starts
    again. The host sends the event that GitHub shows, and carries out the answer in NexKit 6's words,
    comments and statuses. A start, a merge, a branch update, a close,

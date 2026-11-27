@@ -139,6 +139,7 @@
   "review": {
     "checklist": [
       "Every doc section the change makes false is fixed in the same change, and the change keeps docs/writing-docs.md",
+      "An Agreed decision in docs/decisions/ changes only in wording or links: a change to its choice, scope, exceptions or title adds a decision that supersedes it, and no decision or rule is widened to let the change pass, as docs/writing-docs.md#decisions says",
       "A setting, command, label, status or prompt contract that the change adds, renames or removes changes with its skills, and a search of docs/, skills/ and AGENTS.md finds no old name",
       "Every behaviour the change adds or changes has a test that fails without it, in the check that docs/testing.md#which-check-covers-what names for it: a new automatic rule a scenario in tests/test_scenarios.py, a new engine rule a case in tests/conformance/",
       "Text from an agent, a comment or CI is validated, redacted and never read as a marker, as docs/security.md#agent-output and #comments-and-markers say",

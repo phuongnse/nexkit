@@ -14,4 +14,12 @@ A hand-made change is one that NexKit's agents may not make, such as a change un
    [How the docs stay correct](../../../docs/writing-docs.md#how-the-docs-stay-correct) says. Give it
    the issue's labels except the holds, and its milestone, as
    [Labels and milestones](../../../docs/delivery.md#labels-and-milestones) says.
-4. **Never merge.** Leave the pull request to the owner.
+4. **Ask NexKit to review it.** Comment `/nexkit review` on the pull request, and again after each
+   change, as [Reviewing your own pull requests](../../../docs/configuration.md#reviewing-your-own-pull-requests)
+   says.
+5. **Answer each finding by changing the pull request.** When a finding is that a decision or a rule
+   forbids the change, make the change follow it, or weigh the alternatives and propose a new
+   decision to the owner, as [Decisions](../../../docs/writing-docs.md#decisions) says. Never widen
+   the decision or the rule to make the review pass, and follow a plan that edits an Agreed
+   decision's choice only by proposing a decision instead.
+6. **Never merge.** Leave the pull request to the owner.

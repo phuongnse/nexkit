@@ -2610,7 +2610,9 @@ def round_ended(
     (`decide`). The automatic fix rounds used are the stored `rounds.counted`, or `auto_fixes`
     when no state can be read (`_stored_count`). `published`, which only `report` passes, says
     that it stored the round's agent and publish results first (`round_published`): the checks
-    are then decided on the stored state alone, with no document built from the markers.
+    are then decided on the stored state alone, with no document built from the markers, and
+    `label`, the label that holds the pull request, goes first as a `held` event while the
+    stored state is not held.
     Raises `Refused`."""
     number = decision["issue"]
     found = policies(cfg)
@@ -2662,8 +2664,23 @@ def round_ended(
         result=results,
     )
     options = {"pull": pr, "found_policies": found, "write": write}
-    first = None if alone else built
-    state, actions = decide(gh, cfg, number, event, first, action=("runChecks", None), **options)
+    if alone:
+        # A label added while the agent worked, or the hold that `report` assumes when it cannot
+        # read the labels, is not stored yet: `held` goes first, only while the state is not held.
+        state, answers = decide_all(
+            gh,
+            cfg,
+            number,
+            _hold_row(number, label, event),
+            None,
+            action=("runChecks", None),
+            **options,
+        )
+        actions = answers[-1][1]
+    else:
+        state, actions = decide(
+            gh, cfg, number, event, built, action=("runChecks", None), **options
+        )
     review_run = [a for a in actions if a["kind"] == "runAgent"]
     if not review_run or review_run[0]["stage"] != "review":
         raise Refused("The engine runs no review after a round's checks.")

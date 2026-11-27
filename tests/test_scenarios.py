@@ -1472,6 +1472,30 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(len(pipe.gh.merged), 1)
         self.assertEqual(pipe.gh.issues[5]["state"], "closed")
 
+    def test_a_label_added_while_the_agent_works_holds_a_round_decided_on_the_stored_state(self):
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            # Added after `route` took the item's events, so the stored state is not held yet.
+            pipe.gh.issues[5]["labels"] = [{"name": "on-hold"}]
+            return done()
+
+        settings = {"labels": {"on-hold": {"hold": True}}}
+        pipe = Pipeline(self, config(autopilot=settings), script)
+        pipe.issue(5)
+        pipe.take_run(5)
+        entries, fallbacks = self.round_ends()
+        pipe.play()
+        [(_, _, before)] = entries
+        self.assertFalse(before["hold"])
+        self.assertNotIn("nexkit.host.round_ended", fallbacks)
+        self.assertEqual((pipe.gh.merged, pipe.played[-1][2]), ([], "held"))
+        self.assertTrue(item_state.read(pipe.gh, 5)[1]["hold"])
+        pipe.gh.issues[5]["labels"] = []
+        pipe.play()
+        self.assertEqual(len(pipe.gh.merged), 1)
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+
     def test_checks_that_keep_failing_use_their_rounds_then_wait(self):
         def script(pipe, inputs):
             return plan() if inputs["command"] == "plan" else done(checks=False)

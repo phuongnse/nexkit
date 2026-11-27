@@ -375,7 +375,8 @@ pass through it too; binary files are kept as they are. It replaces with `***`:
   also URL-encoded or base64-encoded;
 - Anthropic keys (`sk-ant-…`), OpenAI keys (`sk-…`, `sk-proj-…`, `sk-svcacct-…`,
   `sk-admin-…`), GitHub tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_`),
-  JWTs, `Authorization:` and `Bearer` header values and PEM private key blocks;
+  JWTs (`eyJ…`), `Authorization:` and `Bearer` header values and PEM private key blocks
+  (`-----BEGIN … PRIVATE KEY-----`);
 - `password=` and `pwd=` values in connection strings and the password in
   `scheme://user:password@host`, in any case.
 

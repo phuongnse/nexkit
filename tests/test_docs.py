@@ -47,7 +47,9 @@ says.
 The list of files where a release sets the version, on the delivery page, names each file of the
 package, the plugin, pyproject.toml and the README that holds the version, and no other.
 The table of CI issue titles on the autopilot page shows the titles `ci_title` and `red_title`
-write, for each kind and form of title the code has, and no other."""
+write, for each kind and form of title the code has, and no other. The list of what redaction
+replaces in how it works matches the words, names, minimum length and patterns of
+nexkit/redact.py."""
 
 import argparse
 import ast
@@ -75,6 +77,7 @@ from nexkit import (
     host,
     maintain,
     publish,
+    redact,
     report,
     route,
     runtimes,
@@ -1708,6 +1711,7 @@ VALUES = (
     ("how-it-works.md", f"last {textutil.OUTPUT_TAIL:,} characters"),
     ("how-it-works.md", f"at most {checks.RESULTS_LIMIT // 1_000_000} MB per round"),
     ("how-it-works.md", f"{checks.JOB_RESULTS_FLOOR // 1_000_000} MB per job"),
+    ("how-it-works.md", f"values of {redact.MIN_LENGTH} characters or more"),
     ("work-without-a-command.md", f"last {github.DOWNLOAD_LIMIT // 1_000_000} MB"),
     ("work-without-a-command.md", f"at most {NUMBERS[context.MAX_EARLIER]} of those parts"),
     ("work-without-a-command.md", f"first {NUMBERS[context.MAX_EARLIER * 2]} blockers"),
@@ -1722,6 +1726,59 @@ VALUES = (
     ("autopilot.md", f"A sweep opens at most {NUMBERS[autopilot.DEPENDABOT_NEW_ISSUES]}"),
     ("autopilot.md", f"oldest {github.DEPENDABOT_ALERTS} alerts"),
 )
+# The redaction list of how it works: its heading, and the regex that finds the words of its first
+# bullet. Its other bullets name the token shapes and the passwords, each in a code span.
+REDACTED_HEADING = "### What is redacted"
+SECRET_WORDS_LIST = re.compile(r"whose name contains ((?:`\w+`(?:, |,? or )?)+)")
+# Each shape the list names, as its code span, with a sample that redact.PATTERNS redacts. Where
+# tests/test_redact.py has a sample of a shape, this uses the same one.
+SHAPES = {
+    "sk-ant-…": "sk-ant-api03-AbCdEf_123-456",
+    "sk-…": "sk-" + "a1B2c3D4" * 4,
+    "sk-proj-…": "sk-proj-" + "Ab1_" * 12,
+    "sk-svcacct-…": "sk-svcacct-" + "Zx9-" * 10,
+    "sk-admin-…": "sk-admin-" + "Qw8_" * 10,
+    "ghp_": "ghp_" + "a1B2" * 9,
+    "gho_": "gho_" + "Z9" * 18,
+    "ghu_": "ghu_" + "x" * 36,
+    "ghs_": "ghs_" + "y" * 36,
+    "ghr_": "ghr_" + "z" * 36,
+    "github_pat_": "github_pat_11ABCDEFG0_" + "q" * 40,
+    "eyJ…": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n",
+    "Authorization:": "Authorization: token opaque-value-99",
+    "Bearer": "Bearer abc.def-123456",
+    "-----BEGIN … PRIVATE KEY-----": (
+        "-----BEGIN RSA PRIVATE KEY-----\nMIIEow\nIBAAK\n-----END RSA PRIVATE KEY-----"
+    ),
+    "password=": "Server=db;Password=S3cret!;",
+    "pwd=": "host=db PWD=abc dbname=x",
+    "scheme://user:password@host": "postgres://app:s3cret@db:5432/app",
+}
+
+
+def redacted_bullets():
+    """The three top-level bullets of the redaction list, each on one line with spaces one each."""
+    text = HOW_IT_WORKS_PAGE.read_text()
+    start = text.find(REDACTED_HEADING)
+    if start < 0:
+        raise AssertionError(f"docs/how-it-works.md has no {REDACTED_HEADING!r} section")
+    lines = text[start:].split("\n#", 1)[0].splitlines()[1:]
+    bullets, open_bullet = [], False
+    for line in lines:
+        if line.startswith("- "):
+            bullets.append(line)
+            open_bullet = True
+        elif line.startswith("  ") and open_bullet:
+            bullets[-1] += " " + line
+        else:
+            open_bullet = False
+    if len(bullets) != 3:
+        raise AssertionError(
+            f"docs/how-it-works.md has {len(bullets)} bullets under {REDACTED_HEADING!r}, not 3"
+        )
+    return [" ".join(bullet.split()) for bullet in bullets]
+
+
 # The pages that list the words which mark a failing line, and the regex that finds each list.
 FAILURE_WORDS_PAGES = ("agents-and-profiles.md", "failure-handling.md")
 FAILURE_WORDS = re.compile(r"contains? (`[^`]+`(?:(?:, | or )`[^`]+`)*), in any case")
@@ -1798,6 +1855,66 @@ class ValuesTests(unittest.TestCase):
                 text = " ".join((DOCS / name).read_text().split())
                 self.assertIn(
                     phrase, text, f"docs/{name} does not say {phrase!r}, the code's value"
+                )
+
+
+class RedactionTests(unittest.TestCase):
+    def test_the_page_lists_the_secret_words_and_names_the_code_has(self):
+        first = redacted_bullets()[0]
+        match = SECRET_WORDS_LIST.search(first)
+        self.assertIsNotNone(match, "docs/how-it-works.md has no list after 'whose name contains'")
+        listed_words = set(re.findall(r"`([^`]+)`", match.group(1)))
+        named = set(re.findall(r"`([^`]+)`", first)) - listed_words
+        for word in sorted(set(redact.SECRET_WORDS) - listed_words):
+            with self.subTest(word=word):
+                self.fail(
+                    f"docs/how-it-works.md does not list {word!r}, which redact.SECRET_WORDS has"
+                )
+        for word in sorted(listed_words - set(redact.SECRET_WORDS)):
+            with self.subTest(word=word):
+                self.fail(
+                    f"docs/how-it-works.md lists {word!r}, which redact.SECRET_WORDS does not have"
+                )
+        for name in sorted(set(redact.SECRET_NAMES) - named):
+            with self.subTest(name=name):
+                self.fail(
+                    f"docs/how-it-works.md does not name {name!r}, which redact.SECRET_NAMES has"
+                )
+        for name in sorted(named - set(redact.SECRET_NAMES)):
+            with self.subTest(name=name):
+                self.fail(
+                    f"docs/how-it-works.md names {name!r}, which redact.SECRET_NAMES does not have"
+                )
+
+    def test_the_page_lists_each_token_shape_the_code_redacts_and_no_other(self):
+        listed = set()
+        for bullet in redacted_bullets()[1:]:
+            listed |= set(re.findall(r"`([^`]+)`", bullet))
+        for shape in sorted(listed - set(SHAPES)):
+            with self.subTest(shape=shape):
+                self.fail(
+                    f"docs/how-it-works.md lists {shape!r}, which the test has no sample for: "
+                    "add one that redact.PATTERNS redacts"
+                )
+        for shape in sorted(set(SHAPES) - listed):
+            with self.subTest(shape=shape):
+                self.fail(
+                    f"docs/how-it-works.md does not list {shape!r}, which the test has a sample for"
+                )
+
+    def test_the_code_redacts_each_listed_shape_and_each_pattern_has_one(self):
+        redactor = redact.Redactor({})
+        for shape, sample in SHAPES.items():
+            with self.subTest(shape=shape):
+                redacted = redactor(sample)
+                self.assertNotEqual(redacted, sample, f"redact.Redactor leaves {shape!r} as it is")
+                self.assertIn(redact.MASK, redacted)
+        for pattern, _ in redact.PATTERNS:
+            with self.subTest(pattern=pattern.pattern):
+                self.assertTrue(
+                    any(pattern.search(sample) for sample in SHAPES.values()),
+                    f"redact.PATTERNS has {pattern.pattern!r}, which redacts no shape that "
+                    "docs/how-it-works.md lists",
                 )
 
 

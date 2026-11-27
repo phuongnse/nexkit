@@ -314,6 +314,8 @@ when a list of what the code defines misses an entry. These rules close each of 
    [autopilot](work-without-a-command.md#autopilot) stops a round are those of `CHECK_JOBS`, and
    that those in which it never does are other jobs of `pipeline.yml`; that the table of
    [CI issue titles](autopilot.md) shows the titles `ci_title` and `red_title` in
-   `nexkit/autopilot.py` write, for each kind and form, and no other; and that the index matches
+   `nexkit/autopilot.py` write, for each kind and form, and no other; that the list of what
+   redaction replaces in [how it works](how-it-works.md#what-is-redacted) matches the words, names,
+   minimum length and patterns of `nexkit/redact.py`; and that the index matches
    the decision files, each of which follows the template and is linked from a rule or a page. A
    docs check is added only once the whole tree passes it: there are no lists of exceptions.

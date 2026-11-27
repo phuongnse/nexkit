@@ -6,6 +6,7 @@ the scenario and both records that holds only where the difference is reachable.
 differs from NexKit 6 on purpose, such as one that fixes a NexKit 6 bug, adds its entry here,
 and its pull request calls it out."""
 
+import json
 import re
 
 KNOWN = [
@@ -154,6 +155,32 @@ KNOWN = [
             and isinstance(new.get("step"), dict)
             and new["step"].get("state") == "waits"
             and new["step"].get("person") is True
+        ),
+    },
+    {
+        "name": "the wait for required checks starts again at a person's approval",
+        "family": "waits",
+        "by": "#718",
+        "why": (
+            "A merge that waited for required checks, and that autopilot left to a person after "
+            "six hours, was refused again for the same checks when a writer approved it. NexKit "
+            "6 kept the first time from the round's `waiting_since`, so that its next sweep "
+            "handed the merge to a person again at once. The first time is the stored "
+            "`checksSince` now, and the engine drops it once the merge is no longer `accepting`, "
+            "so the approval starts the six hours anew, as for any merge that a person lets "
+            "wait again."
+        ),
+        "match": lambda sc, old, new: (
+            sc["path"] == "approved"
+            and sc["checks"] == "pending"
+            and (
+                _says(old, "have not passed for six hours")
+                and not _says(new, "have not passed for six hours")
+                if sc["since"] == "6h01m"
+                else sc["since"] == "2099"
+                and "2099-01-01T00:00:00Z" in json.dumps(old)
+                and "2099-01-01T00:00:00Z" not in json.dumps(new)
+            )
         ),
     },
     {
@@ -572,6 +599,11 @@ def _after(record):
     """What GitHub holds in `record` after the command and after each sweep."""
     found = (record.get(key) for key in ("gh", "gh1", "gh2"))
     return [item for item in found if isinstance(item, dict)]
+
+
+def _says(record, text):
+    """Whether a line of the log of the sweep that `record` holds says `text`."""
+    return any(text in line for line in _lines(record))
 
 
 def _outcomes(record, outcome):

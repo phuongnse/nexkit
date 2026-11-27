@@ -204,6 +204,8 @@ class Pipeline:
         self.alerts = None
         # How much time `later` moved on.
         self.elapsed = timedelta(0)
+        # Whether each run stores the item's first state when it has none, as production does.
+        self.stores = False
 
     def posted(self, number, body):
         """A comment, posted now: how recent a round's comment is tells whether the round
@@ -250,6 +252,21 @@ class Pipeline:
         with mock.patch.object(host, "store_import", fixed), contextlib.redirect_stdout(out):
             cli._take(self.gh, self.cfg, "workflow_dispatch", {"inputs": {"number": str(number)}})
         return out.getvalue()
+
+    def first_state(self, number):
+        """With `stores`, the first state of item `number`, stored as the start of a run in its
+        group stores it (`host.store_import`), so that a merge answers the `accept` that its
+        state holds. Without it, a run stores nothing, as work of NexKit 6 on its way has
+        none."""
+        if self.stores and number is not None:
+            host.store_import(self.gh, self.cfg, number, now=IMPORTED_AT)
+
+    def forget_state(self, number):
+        """Item `number` as work of NexKit 6 that its upgrade finds leaves it: its state comment
+        is gone, and no later run stores one until the test runs `take_run`."""
+        self.stores = False
+        comments = self.gh.issue_comments[number]
+        comments[:] = [c for c in comments if not c["body"].startswith("### NexKit state")]
 
     def state_comments(self, number):
         """The state comments of item `number`, which the App posted."""
@@ -319,6 +336,7 @@ class Pipeline:
         self.steps += 1
         self.test.assertLess(self.steps, MAX_STEPS, f"a loop: {self.played}")
         before = len(self.gh.dispatches)
+        self.first_state(int(dispatch["inputs"]["number"]))
         decision = route(self.gh, "workflow_dispatch", {}, dispatch["inputs"])
         if decision["action"] == "none":
             # As `nexkit route` ends it: a step with nothing to do, such as an approval of a
@@ -417,6 +435,7 @@ class Pipeline:
             self.gh.runs[run_id] = {"status": "completed"}
             self.played.append((inputs["command"], int(inputs["number"]), decision["task"]))
             return
+        self.first_state(decision.get("issue"))
         progress.start(self.gh, decision)
         if outcome == "stall":
             # The runner was lost: report never ran, and the run's `finish` job starts a
@@ -1324,6 +1343,7 @@ class ScenarioTests(unittest.TestCase):
             return plan() if inputs["command"] == "plan" else done()
 
         pipe = Pipeline(self, config(), script)
+        pipe.stores = True
         pipe.issue(5)
         pipe.gh.review_states[6] = {"decision": "REVIEW_REQUIRED"}
         pipe.gh.files["CODEOWNERS"] = "* @olivia\n"
@@ -1877,6 +1897,7 @@ class ScenarioTests(unittest.TestCase):
             return plan() if inputs["command"] == "plan" else done()
 
         pipe = Pipeline(self, config(), script)
+        pipe.stores = True
         pipe.issue(5)
         # The rules require `e2e`, which has not reported yet; it passes before the sweep.
         pipe.gh.required = {"e2e"}
@@ -1889,6 +1910,7 @@ class ScenarioTests(unittest.TestCase):
             return plan() if inputs["command"] == "plan" else done()
 
         pipe = Pipeline(self, config(), script)
+        pipe.stores = True
         pipe.issue(5)
         pipe.gh.merge_error = [
             GitHubError(405, 'Required status check "e2e" is expected.'),
@@ -1920,6 +1942,7 @@ class ScenarioTests(unittest.TestCase):
             return plan() if inputs["command"] == "plan" else done()
 
         pipe = Pipeline(self, config(), script)
+        pipe.stores = True
         pipe.issue(5)
         pipe.gh.required = {"e2e"}
         pipe.gh.merge_error = GitHubError(405, 'Required status check "e2e" is expected.')
@@ -1966,6 +1989,7 @@ class ScenarioTests(unittest.TestCase):
             return plan() if inputs["command"] == "plan" else done()
 
         pipe = Pipeline(self, config(), script)
+        pipe.stores = True
         pipe.issue(5)
         pipe.gh.required = {"e2e"}
         pipe.gh.merge_error = GitHubError(405, 'Required status check "e2e" is expected.')
@@ -1993,6 +2017,7 @@ class ScenarioTests(unittest.TestCase):
             return {"checks": done()["checks"]}
 
         pipe = Pipeline(self, config(), script)
+        pipe.stores = True
         pipe.issue(5)
         # The rules require `e2e` and `lint`, which have not reported yet.
         pipe.gh.required = {"e2e", "lint"}
@@ -2042,6 +2067,7 @@ class ScenarioTests(unittest.TestCase):
             return done()
 
         pipe = Pipeline(self, config(), script)
+        pipe.stores = True
         pipe.issue(5)
         self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("fix", 6)])
         # The push started nothing while the implement round ran; its refused merge started
@@ -2112,6 +2138,7 @@ class ScenarioTests(unittest.TestCase):
             return done()
 
         pipe = Pipeline(self, config(), script)
+        pipe.stores = True
         pipe.issue(5)
         self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("review", 6)])
         self.assertEqual([outcome for *_, outcome in pipe.played[1:]], ["head_moved", "merged"])
@@ -2137,6 +2164,7 @@ class ScenarioTests(unittest.TestCase):
             return {"checks": done()["checks"]}
 
         pipe = Pipeline(self, config(), script)
+        pipe.stores = True
         pipe.issue(5)
         self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("review", 6)])
         self.assertEqual([o for *_, o in pipe.played[1:]], ["branch_updated", "merged"])
@@ -2184,6 +2212,7 @@ class ScenarioTests(unittest.TestCase):
                 ],
             )
             pipe = Pipeline(self, cfg, script)
+            pipe.stores = True
             decisions, stages = [], pipe.stages
 
             def recorded(decision, outcome, artifacts):
@@ -2234,6 +2263,7 @@ class ScenarioTests(unittest.TestCase):
             return {**done(), "changed": True}
 
         pipe = Pipeline(self, config(), script)
+        pipe.stores = True
         pipe.issue(5)
         self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("review", 6)])
         self.assertEqual([o for *_, o in pipe.played[1:]], ["branch_updated", "merged"])
@@ -2255,6 +2285,7 @@ class ScenarioTests(unittest.TestCase):
             return done()
 
         pipe = Pipeline(self, config(), script)
+        pipe.stores = True
         pipe.issue(5)
         self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("fix", 6)])
         self.assertEqual([o for *_, o in pipe.played[1:]], ["conflict_fix", "merged"])
@@ -2273,6 +2304,7 @@ class ScenarioTests(unittest.TestCase):
             return done()
 
         pipe = Pipeline(self, config(), script)
+        pipe.stores = True
         pipe.issue(5)
         self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("review", 6), ("fix", 6)])
         self.assertEqual([o for *_, o in pipe.played[1:]], ["branch_updated", "auto_fix", "merged"])
@@ -2294,6 +2326,7 @@ class ScenarioTests(unittest.TestCase):
 
         def play(catch_up):
             pipe = Pipeline(self, config(), script)
+            pipe.stores = True
             pipe.gh.strict = True
             pipe.catch_up = catch_up
             pipe.issue(5)
@@ -2561,6 +2594,7 @@ class ScenarioTests(unittest.TestCase):
                 return done()
 
             pipe = Pipeline(self, config(), script)
+            pipe.stores = True
             pipe.issue(5)
             # `main` moves before each merge, and branch protection wants it up to date.
             pipe.gh.merge_error = [GitHubError(405, "Head branch is out of date")] * refusals
@@ -3249,6 +3283,7 @@ class ScenarioTests(unittest.TestCase):
             return done()
 
         pipe = Pipeline(self, config(close_parent_issues=True), script)
+        pipe.stores = True
         pipe.issue(5)
         # GitHub refuses the third part: the split stops after two.
         real = pipe.gh.create_issue
@@ -4055,12 +4090,15 @@ class ScenarioTests(unittest.TestCase):
             pipe.issue(5)
             pipe.gh.required = {"e2e"}
             pipe.gh.merge_error = GitHubError(405, 'Required status check "e2e" is expected.')
+            pipe.stores = True
             autopilot.request(pipe.gh, "nexkit.yml", "main")
             pipe.drain()
             self.assertEqual([o for *_, o in pipe.played], ["planned", "merge_waiting"])
             return pipe
 
         imported, plain = built(), built()
+        # The upgrade finds the first item's work with no state comment.
+        imported.forget_state(5)
         stored = self.stored_import(imported, 5, 6)
         self.assertEqual(stored["change"]["id"], "6")
         for pipe in (imported, plain):
@@ -4078,10 +4116,11 @@ class ScenarioTests(unittest.TestCase):
         pipe.issue(5)
         pipe.gh.required = {"e2e"}
         pipe.gh.merge_error = GitHubError(405, 'Required status check "e2e" is expected.')
+        # The merge's refusal answers the `accept` that the item's stored state holds.
+        pipe.stores = True
         autopilot.request(pipe.gh, "nexkit.yml", "main")
         pipe.drain()
         self.assertEqual([o for *_, o in pipe.played], ["planned", "merge_waiting"])
-        self.stored_import(pipe, 5, 6)
         self.assertIsNone(pipe.gh.parent_issue(5))
         pipe.gh.merge_error = None
         pipe.head(6)
@@ -4101,6 +4140,7 @@ class ScenarioTests(unittest.TestCase):
             pipe.issue(5)
             pipe.gh.required = {"e2e"}
             pipe.gh.merge_error = GitHubError(405, 'Required status check "e2e" is expected.')
+            pipe.stores = True
             autopilot.request(pipe.gh, "nexkit.yml", "main")
             pipe.drain()
             self.assertEqual([o for *_, o in pipe.played], ["planned", "merge_waiting"])
@@ -4121,6 +4161,7 @@ class ScenarioTests(unittest.TestCase):
         stored, plain = built(), built()
         # Force the two items' record times apart, as a slow runner does between two plays.
         plain.later(timedelta(seconds=1))
+        stored.forget_state(5)
         self.stored_import(stored, 5, 6)
         first = item_state.read(stored.gh, 5)[1]
         self.assertEqual([wait["for"] for wait in first["waits"]], ["requiredChecks"])
@@ -4161,8 +4202,10 @@ class ScenarioTests(unittest.TestCase):
         pipe.issue(5)
         pipe.gh.required = {"e2e"}
         pipe.gh.merge_error = GitHubError(405, 'Required status check "e2e" is expected.')
+        pipe.stores = True
         autopilot.request(pipe.gh, "nexkit.yml", "main")
         pipe.drain()
+        pipe.forget_state(5)
         self.stored_import(pipe, 5, 6)
         before = copy.deepcopy(pipe.gh.comments(5)), copy.deepcopy(pipe.gh.comments(6))
         issue = pipe.gh.issue(5)

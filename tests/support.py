@@ -812,6 +812,54 @@ class FakeGitHub:
         return found
 
 
+def store_fields(gh, number, **fields):
+    """Write `fields` over the stored state of item `number`, at the next revision, as a test
+    leaves the state that an earlier decision of the run would have stored. `rounds` adds to
+    the stored counts instead of replacing them. Gives the stored document."""
+    import copy
+
+    from nexkit import item_state
+
+    found = item_state.read(gh, number)
+    doc = copy.deepcopy(found[1])
+    doc["rounds"] = {**doc["rounds"], **fields.pop("rounds", {})}
+    doc = {**doc, **fields, "revision": found[1]["revision"] + 1}
+    assert item_state.write(gh, number, doc, found)
+    return doc
+
+
+def store_pending(gh, cfg, number, pull, head, kind="accept", action_id="a2.1", **fields):
+    """Store the state of item `number` as a merge on its way leaves it: `accepting` its pull
+    request `pull` on `head`, with an action of `kind` (`accept`, or `updateChange`) pending, as
+    the engine's answer stores it before the host carries it out. The first state is imported
+    first, as `nexkit route` stores it (`host.store_import`), when none is stored. `fields`
+    replace fields of the document (`store_fields`), such as `rounds` or `checksSince`, and the
+    rest of a stored state stays, so a second call is the next action that follows a refused
+    one, named `action_id`. Gives the stored document."""
+    from nexkit import host
+
+    host.store_import(gh, cfg, number)
+    version = str(head)
+    action = {"id": action_id, "next": None, "kind": kind, "changeVersion": version}
+    if kind == "accept":
+        action["by"] = "engine"
+    observed = {"changeId": str(pull), "version": version, "conflicts": False}
+    observed.update(merged=False, empty=False)
+    return store_fields(
+        gh,
+        number,
+        **{
+            "state": "accepting",
+            "change": {"id": str(pull), "version": version},
+            "observed": observed,
+            "pending": [action],
+            "waits": [],
+            "attention": None,
+            **fields,
+        },
+    )
+
+
 def git(cwd, *args):
     return subprocess.run(
         ["git", *args], cwd=cwd, check=True, capture_output=True, text=True

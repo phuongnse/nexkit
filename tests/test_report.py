@@ -36,7 +36,7 @@ from nexkit.state import (
     render_state,
 )
 from nexkit.usage import parse_iso, shown
-from tests.support import FakeGitHub, interpret_claude, make_config
+from tests.support import FakeGitHub, interpret_claude, make_config, store_pending
 
 HEAD = "c" * 40
 WORKFLOW = "acme/app/.github/workflows/nexkit.yml@refs/heads/main"
@@ -145,6 +145,11 @@ class ReportCase(unittest.TestCase):
         os.environ["GITHUB_RUN_ID"] = str(next(self.run_ids))
         if start:
             progress.start(self.gh, d or decision())
+        if published:
+            # A run in the item's group stores the item's first state before it reports
+            # (`cli._take`): a merge answers the `accept` that it holds. A stage that stops
+            # starts first instead (`start`), so that its stored state holds its run.
+            host.store_import(self.gh, cfg or make_config(), 5)
         return report(
             self.gh,
             d or decision(),
@@ -197,6 +202,9 @@ class MergeGuardTests(ReportCase):
         super().setUp()
         self.cfg = make_config(merge={"auto": True})
         self.target = {"pr": 6, "head": HEAD, "issue": 5, "base": "main"}
+        # The merge answers the `accept` that the stored state holds, before the tests close or
+        # edit the issue.
+        store_pending(self.gh, self.cfg, 5, 6, HEAD)
 
     def merge(self):
         from nexkit import host
@@ -269,9 +277,12 @@ class MergeGuardTests(ReportCase):
     def test_a_merge_that_passes_the_guards_tells_the_engine_only_that_it_went_through(self):
         outcome, _, events = self.merge()
         self.assertEqual(outcome, "merged")
-        [event] = events
-        self.assertEqual(event["kind"], "actionFinished")
+        # The `accept` that the state holds is answered, and then the `close` that it asks for,
+        # once GitHub shows the issue closed.
+        [event, closed] = events
+        self.assertEqual((event["kind"], event["action"]), ("actionFinished", "a2.1"))
         self.assertEqual(event["result"], {"accepted": True, "refusal": None, "text": ""})
+        self.assertEqual(closed["id"], "closed-5-a3.1")
 
 
 class PersonsPullRequestTests(ReportCase):
@@ -1036,9 +1047,12 @@ class ReportTests(ReportCase):
 
     def test_a_pull_request_whose_issue_closed_is_not_merged(self):
         self.candidate()
-        self.gh.issues[5].update(state="closed", state_reason="not_planned")
         merge = {"auto": True, "after_workflows": ["ci.yml"]}
-        outcome = self.run_report(cfg=make_config(merge=merge, notify=["olivia"]))
+        cfg = make_config(merge=merge, notify=["olivia"])
+        # The item's state was stored while its issue was open.
+        host.store_import(self.gh, cfg, 5)
+        self.gh.issues[5].update(state="closed", state_reason="not_planned")
+        outcome = self.run_report(cfg=cfg)
         self.assertEqual(outcome["outcome"], "merge_issue_closed")
         self.assertEqual(
             outcome["attention"],
@@ -1179,6 +1193,7 @@ class ReportTests(ReportCase):
         cfg = make_config(merge={"auto": True}, autopilot={"enabled": True})
         target = {"pr": 6, "head": HEAD, "issue": 5, "base": "main"}
         pending = GitHubError(405, 'Required status check "e2e" is expected.')
+        store_pending(self.gh, cfg, 5, 6, HEAD)
         with mock.patch.object(host, "step", wraps=host.step) as step:
             self.gh.merge_error = [pending]
             row = {}
@@ -1196,15 +1211,26 @@ class ReportTests(ReportCase):
             self.assertLess(
                 datetime.now(UTC) - parse_iso(row["waiting_since"]), timedelta(minutes=1)
             )
-            # A second refusal of the same head keeps the first time the checks had not passed.
+            # A second refusal of the same head, of the accept that the sweep's tick started,
+            # keeps the first time the checks had not passed.
             step.reset_mock()
             self.gh.merge_error = [pending]
             first = "2026-11-23T10:00:00Z"
-            row = {"waiting_since": first}
+            store_pending(
+                self.gh,
+                cfg,
+                5,
+                6,
+                HEAD,
+                action_id="a3.1",
+                checksSince={"version": HEAD, "at": first},
+            )
+            row = {}
             outcome, _ = merge_pull(self.gh, cfg, target, row, "", WORKFLOW, "main")
             self.assertEqual(outcome, "merge_waiting")
             [(state, *_)] = [call.args for call in step.call_args_list]
             self.assertEqual(state["checksSince"], {"version": HEAD, "at": first})
+            self.assertEqual(row["waiting_since"], first)
             self.assertEqual(row["waiting_since"], first)
 
     def test_a_refusal_the_engine_cannot_wait_for_goes_to_a_person(self):

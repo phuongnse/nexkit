@@ -28,7 +28,6 @@ from .maintain import (
     start_conflict_round,
     start_waiting,
     update_branch,
-    updates_used,
 )
 from .route import auto_input, on_base
 from .runlog import add_tokens, one_line
@@ -1531,19 +1530,9 @@ def _merge_stored(gh, cfg, target):
     refused too. Nothing here changes what the merge did, so the run prints a warning."""
     from .host import Refused, accept_answer
 
-    auto_fixes = (target.get("state") or {}).get("auto_fixes", 0)
     accepted = {"accepted": True, "refusal": None, "text": ""}
     try:
-        end, state = accept_answer(
-            gh,
-            cfg,
-            target["issue"],
-            target["pr"],
-            target["head"],
-            auto_fixes,
-            accepted,
-            write=True,
-        )
+        end, state = accept_answer(gh, cfg, target["issue"], target["pr"], accepted, write=True)
         if end != "accepted":
             raise Refused(f"The engine answers {end!r} to a merge that went through.")
     except (GitHubError, Refused) as error:
@@ -1627,15 +1616,12 @@ def _engine_accept(gh, cfg, target, kind, text, before=()):
     (`host.accept_answer`'s end). Raises `host.Refused`."""
     from .host import accept_answer
 
-    auto_fixes = (target.get("state") or {}).get("auto_fixes", 0)
     result = {"accepted": False, "refusal": kind, "text": text}
     end, _ = accept_answer(
         gh,
         cfg,
         target["issue"],
         target["pr"],
-        target["head"],
-        auto_fixes,
         result,
         before=before,
         at=iso(datetime.now(UTC)),
@@ -1687,12 +1673,8 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch, after
         from .host import Refused, accept_answer, refused_parts
 
         result = {"accepted": False, "refusal": "conflict", "text": f"It conflicts with `{base}`."}
-        auto_fixes = (target.get("state") or {}).get("auto_fixes", 0)
-        used = conflict_rounds_of(gh, pr, row)
         try:
-            end, _ = accept_answer(
-                gh, cfg, target["issue"], pr, head, auto_fixes, result, conflicts=used, write=True
-            )
+            end, _ = accept_answer(gh, cfg, target["issue"], pr, result, write=True)
             if end not in ("fix", "person"):
                 raise Refused(f"The engine answers {end!r} to a conflict at the merge.")
         except Refused as error:
@@ -1745,17 +1727,13 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch, after
             "refusal": "waitingForChecks",
             "text": "Required checks have not passed yet.",
         }
-        auto_fixes = (target.get("state") or {}).get("auto_fixes", 0)
         try:
             ends, answer = accept_answer(
                 gh,
                 cfg,
                 target["issue"],
                 pr,
-                head,
-                auto_fixes,
                 result,
-                since=row.get("waiting_since"),
                 at=iso(datetime.now(UTC)),
                 write=True,
             )
@@ -1780,12 +1758,8 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch, after
         refusal_kind = "needsPerson" if auto_resolve else "conflict"
         text = f"It conflicts with `{base}`."
         result = {"accepted": False, "refusal": refusal_kind, "text": text}
-        auto_fixes = (target.get("state") or {}).get("auto_fixes", 0)
         try:
-            used = 0 if auto_resolve else conflict_rounds_of(gh, pr, row)
-            end, _ = accept_answer(
-                gh, cfg, target["issue"], pr, head, auto_fixes, result, conflicts=used, write=True
-            )
+            end, _ = accept_answer(gh, cfg, target["issue"], pr, result, write=True)
             if end != "person":
                 raise Refused(f"The engine answers {end!r} to a conflict at the merge.")
             do, why = _not_up_to_date("dirty", base)
@@ -1797,11 +1771,8 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch, after
         from .host import Refused, accept_answer, refused_parts
 
         result = {"accepted": False, "refusal": "behind", "text": f"It is behind `{base}`."}
-        auto_fixes = (target.get("state") or {}).get("auto_fixes", 0)
         try:
-            end, _ = accept_answer(
-                gh, cfg, target["issue"], pr, head, auto_fixes, result, write=True
-            )
+            end, _ = accept_answer(gh, cfg, target["issue"], pr, result, write=True)
             if end != "person":
                 raise Refused(f"The engine answers {end!r} to a branch that is behind.")
             do, why = _not_up_to_date("behind", base)
@@ -1946,9 +1917,7 @@ def _required_failed(gh, cfg, target, row, message, names, workflow, default_bra
     from .host import Refused, refused_parts, required_failed
 
     try:
-        ends = required_failed(
-            gh, cfg, target["issue"], pr, head, state["auto_fixes"], wait, write=True
-        )
+        ends = required_failed(gh, cfg, target["issue"], pr, wait, write=True)
     except Refused as error:
         save()
         target["found"] = {"refused": refused_parts(error)}
@@ -2063,20 +2032,8 @@ def _update_branch(gh, cfg, target, row, message, limit, workflow, default_branc
             target["state_read"] = json.loads(json.dumps(target["state"]))
 
     result = {"accepted": False, "refusal": "behind", "text": f"It is behind `{base}`."}
-    auto_fixes = (target.get("state") or {}).get("auto_fixes", 0)
-    used = updates_used(gh.comments(pr))
     try:
-        end, _ = accept_answer(
-            gh,
-            cfg,
-            target["issue"],
-            pr,
-            target["head"],
-            auto_fixes,
-            result,
-            updates=used,
-            write=True,
-        )
+        end, _ = accept_answer(gh, cfg, target["issue"], pr, result, write=True)
         if end not in ("update", "person"):
             raise Refused(f"The engine answers {end!r} to a branch that is behind.")
     except Refused as error:
@@ -2090,9 +2047,7 @@ def _update_branch(gh, cfg, target, row, message, limit, workflow, default_branc
     if why and updating:
         # An update that GitHub refused goes back to the engine, which hands it to a person.
         try:
-            update_failed(
-                gh, cfg, target["issue"], pr, target["head"], auto_fixes, why, used, write=True
-            )
+            update_failed(gh, cfg, target["issue"], pr, why, write=True)
         except Refused as error:
             do, why = refused_parts(error)
             target["found"] = {"refused": (do, why)}

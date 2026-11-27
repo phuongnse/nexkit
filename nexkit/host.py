@@ -63,7 +63,8 @@ start a counted fix round, wait for the base branch, or leave the rounds used up
 
 It decides the wait for required checks that have not passed yet at a merge, and its end
 (`report._refused`, `autopilot._merge_step`): `accept_answer` sends the merge's answer to
-`step` as an `accept` result, so that the item stays in `accepting` with its first start kept,
+`step` as the result of the `accept` that the item's stored state holds as pending, so that the
+item stays in `accepting` with its first start (the stored `checksSince`) kept,
 and `checks_waited` sends the sweep's tick, which tries the merge again or, once the checks
 have not passed for `machine.CHECKS_END`, leaves it to a person. A merge whose issue no
 sweep looks at is the host's own refusal, since no tick would come for it.
@@ -80,19 +81,21 @@ tries; the checks before the merge, an issue closed, edited after a vouch or unr
 any other refusal GitHub gives that only a person clears.
 
 It decides what follows a merge that GitHub refused for a conflict (`report._refused`):
-`accept_answer` sends it as a `conflict` result with the conflict rounds used, and the engine
-answers a conflict round while `conflicts.max_rounds` has one left, or a person. The host starts
-the round with `start_conflict_round(left=...)`, which keeps NexKit 6's other reasons not to
-start one. A pull request found `dirty` only at the end goes as a `conflict` without
+`accept_answer` sends it as a `conflict` result, and the engine answers a conflict round while
+`conflicts.max_rounds` has one left, counted from the stored `rounds.conflicts`, or a person. The
+host starts the round with `start_conflict_round(left=...)`, which keeps NexKit 6's other reasons
+not to start one. A pull request found `dirty` only at the end goes as a `conflict` without
 `conflicts.auto_resolve` and as `needsPerson` with it.
 
 It decides what follows a merge that GitHub refused because the branch is behind its base
-(`report._update_branch`, `report._refused`): `accept_answer` sends it as a `behind` result with
-the updates used, which `conflicts.max_rounds` limits apart from conflict rounds, and the engine
-answers an update while one is left under `conflicts.auto_resolve`, and a person otherwise. The
+(`report._update_branch`, `report._refused`): `accept_answer` sends it as a `behind` result, and
+the engine answers an update while one is left under `conflicts.auto_resolve`, and a person
+otherwise. The updates used are the stored `rounds.updates`, which `conflicts.max_rounds` limits
+apart from conflict rounds. The
 host carries out the update with `maintain.update_branch(left=...)`, which starts the review that
-carries the approval over, and sends an update that GitHub refused back (`update_failed`), which
-the engine hands to a person. The review that the update starts stores the update's result for the
+carries the approval over, and sends an update that GitHub refused back (`update_failed`) as the
+result of the `updateChange` that the stored state holds as pending, which the engine hands to a
+person. The review that the update starts stores the update's result for the
 pending update (`command`, `_branch_updated`), so that the update is counted and the checks of the
 new head follow. A sweep's merge that waits for required checks past six hours
 sends the observation that its branch is behind (`checks_waited`), and the engine keeps trying
@@ -132,6 +135,18 @@ started, or that ended without a report, or that handed the work on to a run tha
 at the time of the last start, with autopilot's count of losses, and carries out the start
 again, the wait or the person. What counts as lost, and the six-hour window of the count, stay
 `autopilot`'s. A person's own lost command waits for that person.
+
+The three results of a merge (`required_failed`, `accept_answer`, `update_failed`) decide on
+the stored state alone and pass no document of the markers. A result names the pending action
+that it answers by its id and its change version (`_answered`): the `accept`, or the
+`updateChange` of a branch update that GitHub refused. NexKit 6's run id (`first_state.RUN_ID`)
+stands in for none: a NexKit 6 merge on its way is imported with that id, so its action is found,
+and when the stored state holds no such action the decision is refused, with the reason that the
+item has no pending action to answer, nothing is stored, and the merge waits for a person. The
+ids of the result events include the action's id (`accept-<pr>-<action id>`), so that the second
+refusal of the same commit, answering the next `accept`, is not taken for a repeat of the first.
+The fix rounds used, the conflict rounds, the updates and the start of the wait for required
+checks are the stored ones, and NexKit 6's counts of them only word a round's comment.
 
 It decides what the merge finds too (`report.merge_pull`, `autopilot._merge_step`):
 `change_seen` sends a pull request that a person merged first, a change that its base branch
@@ -291,7 +306,8 @@ exactly as they are: a finished plan's import is `awaitingApproval`, which canno
 result, and a second send of one event, such as the plan's result that `report` and the step run
 both send, would be a duplicate. `after_go` and `round_carried_on` no longer go through it: they
 pass no document of the markers. Nor do `stage_limited`, `stage_transient` and `resumes`, which
-decide on the stored state alone. The last move to the stored document removes `resync`.
+decide on the stored state alone, nor `required_failed`, `accept_answer` and `update_failed`. The
+last move to the stored document removes `resync`.
 
 A row of events, such as a hold and then the stop, or a round's result and then a comment, is one
 write: the state after the last event, at the revision read plus one, since `item_state.write`
@@ -315,8 +331,10 @@ comment stores nothing here, since only `store_import` posts the first one, and 
 comment someone other than the App changed is refused (`autopilot.changed_comment`). `pending_id`
 names the action of the outbox that a result answers. A merge that waits for required checks keeps
 the time of its first wait in the stored document across the sweeps' previews. `accept_answer`
-decides each event that the host read before the merge's result, such as a head that moved, on the
-answer before it, and stores each as its own revision.
+sends the events that the host read before the merge's result, such as a head that moved, and
+then the result, as one row, stored as a single write: the result names the `accept` that was
+pending before the row, which a head that moved cancels in the engine, and the engine then
+ignores it.
 
 No module outside `nexkit/engine/` writes on GitHub without an answer of the engine before it:
 `tests/test_answers.py` reads their code and fails on a dispatch, a merge, a branch update, a close,
@@ -942,6 +960,16 @@ def pending_id(doc, kind, stage=None):
         if action["kind"] == kind and (stage is None or action.get("stage") == stage):
             return action["id"]
     return first_state.RUN_ID
+
+
+def _answered(state, kind):
+    """The first action of `state`'s outbox that is a `kind`, which the result of a merge
+    answers, or `Refused` when the stored state holds none: the result never names an action
+    that is not pending, and NexKit 6's run id (`first_state.RUN_ID`) stands in for none."""
+    for action in (state or {}).get("pending") or []:
+        if action["kind"] == kind:
+            return action
+    raise Refused(f"The item has no pending {kind} to answer.")
 
 
 def stored(gh, cfg, number, pull=None):
@@ -3153,27 +3181,33 @@ def base_passes(gh, cfg, issue, pull, run, auto_fixes, write=False):
     return _wait_end(state, actions)
 
 
-def required_failed(gh, cfg, issue, pr, head, auto_fixes, wait, write=False):
-    """What follows required checks that failed on `head` of the NexKit pull request `pr` at
-    its merge, as the engine decides it (`report._required_failed`): `auto_fix`, counted,
-    `ci_waiting` while they fail as the base branch does, which `wait` names
-    (`autopilot.ci_wait`), or `needs_human` when no automatic fix round is left. NexKit 6
-    tries a merge only when no label holds the issue. `write` stores the answer (`decide`).
-    Raises `Refused`."""
-    doc = _pull_doc(cfg, issue, pr, head, "accepting", auto_fixes)
-    version = doc["change"]["version"]
-    action = {"id": first_state.RUN_ID, "next": None, "kind": "accept"}
-    doc["pending"] = [{**action, "changeVersion": version, "by": "engine"}]
-    result = {
-        "accepted": False,
-        "refusal": "checkFailed",
-        "text": "A required check failed.",
-        "baseFailure": str(wait["bug"]) if wait else None,
-    }
-    fields = {"action": first_state.RUN_ID, "changeVersion": version, "result": result}
-    event = _event("actionFinished", issue, None, f"required-{pr}-{version}", **fields)
-    state, actions = decide(gh, cfg, issue, event, doc, pull=pr, action=("accept",), write=write)
-    kinds = {action["kind"]: action for action in actions}
+def required_failed(gh, cfg, issue, pr, wait, write=False):
+    """What follows required checks that failed at the merge of the NexKit pull request `pr`, as
+    the engine decides it (`report._required_failed`): `auto_fix`, counted, `ci_waiting` while
+    they fail as the base branch does, which `wait` names (`autopilot.ci_wait`), or `needs_human`
+    when no automatic fix round is left. The result answers the `accept` that the item's stored
+    state holds as pending, with its id and change version, and the automatic fix rounds used are
+    the stored ones. NexKit 6 tries a merge only when no label holds the issue. `write` stores the
+    answer (`decide_all`). Raises `Refused`, also when the stored state holds no pending
+    `accept`, and then stores nothing."""
+
+    def row(state):
+        pending = _answered(state, "accept")
+        result = {
+            "accepted": False,
+            "refusal": "checkFailed",
+            "text": "A required check failed.",
+            "baseFailure": str(wait["bug"]) if wait else None,
+        }
+        fields = {
+            "action": pending["id"],
+            "changeVersion": pending.get("changeVersion"),
+            "result": result,
+        }
+        return [_event("actionFinished", issue, None, f"required-{pr}-{pending['id']}", **fields)]
+
+    state, answers = decide_all(gh, cfg, issue, row, None, pull=pr, write=write)
+    kinds = {action["kind"]: action for _, actions in answers for action in actions}
     if (kinds.get("runAgent") or {}).get("stage") == "fix":
         return "auto_fix"
     if any(wait["for"] == "baseFailure" for wait in state["waits"]):
@@ -3191,56 +3225,35 @@ def head_observed(issue, pr, head):
     return _event("changeObserved", issue, None, f"head-{pr}-{head}", **fields)
 
 
-def accept_answer(
-    gh,
-    cfg,
-    issue,
-    pr,
-    head,
-    auto_fixes,
-    result,
-    before=(),
-    since=None,
-    at=None,
-    conflicts=0,
-    updates=0,
-    write=False,
-):
+def accept_answer(gh, cfg, issue, pr, result, before=(), at=None, write=False):
     """What follows the answer of GitHub's merge of the NexKit pull request `pr`, as the engine
     decides it (`report._refused`): the accept's `result`, as `accepted` or with its refusal
     kind, sent after the events `before`, which tell the engine what the host read, such as a
-    head that moved. `since`, when given, is when required checks first had not passed on
-    `head`, as NexKit 6's `waiting_since` says, and `at` the time of the events. `conflicts`
-    is the conflict rounds used, which `conflicts.max_rounds` limits, and `updates` the updates of
-    the branch from its base, which it limits apart from them. Returns `(end, state)`, `end`
-    being `accepted`, `waiting` while the required checks are awaited, `review` for the checks
-    and review of a newer head that `before` observed, `fix` or `redo` for the round that
-    follows, `update` for the update of a branch that is behind its base, `base_failure` while a
-    failure the base branch has is awaited, or `person`, whose reason `state["attention"]` names.
-    With `write`, each event of `before` and then the result are decided on the answer before,
-    and each answer is stored at its own revision (`decide`), since a write takes the revision
-    that follows the stored one, and the actions of all of them are the answer's. Raises
-    `Refused`."""
-    doc = _pull_doc(cfg, issue, pr, head, "accepting", auto_fixes)
-    doc["rounds"]["conflicts"] = max(int(conflicts or 0), 0)
-    if int(updates or 0) > 0:
-        doc["rounds"]["updates"] = int(updates)
-    version = doc["change"]["version"]
-    action = {"id": first_state.RUN_ID, "next": None, "kind": "accept"}
-    doc["pending"] = [{**action, "changeVersion": version, "by": "engine"}]
-    if since:
-        doc["checksSince"] = {"version": version, "at": str(since)}
-    events = [{**event, "at": at or event["at"]} for event in before]
-    fields = {"action": first_state.RUN_ID, "changeVersion": version, "result": result}
-    events.append(_event("actionFinished", issue, at, f"accept-{pr}-{version}", **fields))
-    state, actions = doc, []
-    for event in events[:-1]:
-        state, found = decide(gh, cfg, issue, event, state, pull=pr, write=write)
-        actions += found
-    state, found = decide(
-        gh, cfg, issue, events[-1], state, pull=pr, action=("accept",), write=write
-    )
-    actions += found
+    head that moved, and `at` the time of the events. It answers the `accept` that the item's
+    stored state holds as pending, with its id and change version, as read before the events
+    `before`: a head that moved cancels that `accept` in the engine, which ignores the result
+    then. The conflict rounds and updates used, which `conflicts.max_rounds` limits apart from
+    each other, and the start of the wait for required checks (`checksSince`) are the stored
+    ones. Returns `(end, state)`, `end` being `accepted`, `waiting` while the required checks
+    are awaited, `review` for the checks and review of a newer head that `before` observed, `fix`
+    or `redo` for the round that follows, `update` for the update of a branch that is behind its
+    base, `base_failure` while a failure the base branch has is awaited, or `person`, whose reason
+    `state["attention"]` names. The events `before` and the result are one row, stored as a
+    single write with `write` (`decide_all`). Raises `Refused`, also when the stored state holds
+    no pending `accept`, and then stores nothing."""
+
+    def row(state):
+        pending = _answered(state, "accept")
+        fields = {
+            "action": pending["id"],
+            "changeVersion": pending.get("changeVersion"),
+            "result": result,
+        }
+        finished = _event("actionFinished", issue, at, f"accept-{pr}-{pending['id']}", **fields)
+        return [*({**event, "at": at or event["at"]} for event in before), finished]
+
+    state, answers = decide_all(gh, cfg, issue, row, None, pull=pr, write=write)
+    actions = [action for _, found in answers for action in found]
     kinds = {action["kind"]: action for action in actions}
     waits = {wait["for"] for wait in state["waits"]}
     stage = (kinds.get("runAgent") or {}).get("stage")
@@ -3358,22 +3371,26 @@ def refusal_cleared(gh, cfg, issue, pr, run, acceptable, write=False):
     raise Refused(f"The engine answers {sorted(kinds)} after a refused merge, which it cannot do.")
 
 
-def update_failed(gh, cfg, issue, pr, head, auto_fixes, why, updates=0, write=False):
+def update_failed(gh, cfg, issue, pr, why, write=False):
     """What follows an update of the NexKit pull request `pr`'s branch, which the engine asked
     for and GitHub refused, as it decides it (`report._update_branch`): `why` is GitHub's
-    answer, `updates` the updates used before it. The engine hands the merge to a person: this
-    returns `person`. `write` stores the answer (`decide`). Raises `Refused`."""
-    doc = _pull_doc(cfg, issue, pr, head, "accepting", auto_fixes)
-    if int(updates or 0) > 0:
-        doc["rounds"]["updates"] = int(updates)
-    version = doc["change"]["version"]
-    action = {"id": first_state.RUN_ID, "next": None, "kind": "updateChange"}
-    doc["pending"] = [{**action, "changeVersion": version}]
-    result = {"change": None, "refused": str(why), "observed": None}
-    fields = {"action": first_state.RUN_ID, "changeVersion": version, "result": result}
-    event = _event("actionFinished", issue, None, f"update-{pr}-{version}", **fields)
-    _, actions = decide(gh, cfg, issue, event, doc, pull=pr, action=("updateChange",), write=write)
-    reasons = {action["kind"]: action for action in actions}
+    answer. The result answers the `updateChange` that the item's stored state holds as
+    pending, with its id and change version. The engine hands the merge to a person: this
+    returns `person`. `write` stores the answer (`decide_all`). Raises `Refused`, also when the
+    stored state holds no pending `updateChange`, and then stores nothing."""
+
+    def row(state):
+        pending = _answered(state, "updateChange")
+        result = {"change": None, "refused": str(why), "observed": None}
+        fields = {
+            "action": pending["id"],
+            "changeVersion": pending.get("changeVersion"),
+            "result": result,
+        }
+        return [_event("actionFinished", issue, None, f"update-{pr}-{pending['id']}", **fields)]
+
+    _, answers = decide_all(gh, cfg, issue, row, None, pull=pr, write=write)
+    reasons = {action["kind"]: action for _, actions in answers for action in actions}
     if (reasons.get("needPerson") or {}).get("reason") == "acceptRefused":
         return "person"
     raise Refused(f"The engine answers {sorted(reasons)} after a failed update.")

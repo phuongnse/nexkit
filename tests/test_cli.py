@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -1976,6 +1977,38 @@ class InstallAgentsTests(unittest.TestCase):
             self.assertEqual(path.read_text(), f"{bin_dir}\n")
         self.assertIn(f"Installing claude-code {nexkit.CLAUDE_CODE}", stdout.getvalue())
         self.assertEqual(commands[0][-1], nexkit.CLAUDE_CODE)
+
+    def _install_with(self, side_effect):
+        env = {"NEXKIT_CONFIG": json.dumps(nexkit.config.validate({"agents": CLAUDE}))}
+        stderr = io.StringIO()
+        with (
+            mock.patch.dict(os.environ, env),
+            mock.patch("subprocess.run", side_effect=side_effect) as run,
+            mock.patch("time.sleep") as sleep,
+            contextlib.redirect_stdout(io.StringIO()),
+            contextlib.redirect_stderr(stderr),
+        ):
+            try:
+                result = cli.main(["install-agents", "--runtime", "claude-code"])
+            except subprocess.CalledProcessError:
+                result = "failed"
+        return result, run, sleep, stderr.getvalue()
+
+    def test_tries_a_failed_install_again(self):
+        failure = subprocess.CalledProcessError(1, "x")
+        result, run, sleep, stderr = self._install_with([failure, mock.DEFAULT])
+        self.assertEqual(result, 0)
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(sleep.call_args_list, [mock.call(10)])
+        self.assertIn("exit status 1", stderr)
+        self.assertIn("in 10 seconds", stderr)
+
+    def test_fails_when_every_install_fails(self):
+        failure = subprocess.CalledProcessError(1, "x")
+        result, run, sleep, _ = self._install_with(failure)
+        self.assertEqual(result, "failed")
+        self.assertEqual(run.call_count, 3)
+        self.assertEqual(sleep.call_args_list, [mock.call(10), mock.call(30)])
 
 
 class SupportedVersionTests(unittest.TestCase):

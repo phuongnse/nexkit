@@ -115,11 +115,12 @@ today.
 
 The engine's state lives only for one call of the host while the GitHub host builds each
 item's document from NexKit 6's markers, apart from the decisions after a plan, for a first
-plan, after a writer's vouch, after a blocked or stopped round, at a usage limit or a transient
+plan, after a writer's vouch, after a stopped round, at a usage limit or a transient
 error, at a resume, for a lost command, an implement round that finds no change, a fix round
 whose change is on the base branch, the end of a part in its parent's state and about a pull
 request's rounds, which store their answer in the item's state comment but decide from the
-markers' document wherever it differs from the stored one. Every family stores the import of its
+markers' document wherever it differs from the stored one. The decisions after a blocked or
+failed `/nexkit go` decide on the stored state alone. Every family stores the import of its
 items before its first event, so those decisions meet a stored state, and `--fallbacks` lists
 where they still decide from the markers' document. The counts of conflict rounds and automatic
 fix rounds are the stored ones, so a round that the stored state counts and NexKit 6's markers do

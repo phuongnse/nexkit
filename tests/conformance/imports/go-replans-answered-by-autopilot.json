@@ -115,7 +115,9 @@
     ],
     "parts": [],
     "policies": {},
-    "recentEvents": []
+    "recentEvents": [
+      "run-2"
+    ]
   },
   "steps": [
     {

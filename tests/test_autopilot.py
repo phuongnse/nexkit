@@ -1323,11 +1323,20 @@ class AnswerTests(AnswerAndSplitCase):
         self.blocked(4)
         self.sweep()
         self.assertEqual(self.started(), [("go", 4)])
-        # The go that autopilot's answers started blocks again, and nobody did anything.
-        self.blocked(4)
+        # The go that autopilot's answers started blocks again, and nobody did anything. Its
+        # state was stored while it ran, as `nexkit route` stores it.
+        started = self.run_comment(4, "go", status="running")
+        host.store_import(self.gh, self.cfg, 4)
+        url = f"https://github.com/acme/app/actions/runs/{self.runs}"
+        ended = {"url": url, "command": "go", "status": "failure", "outcome": "agent_blocked"}
+        ended["questions"] = [QUESTION]
+        self.gh.update_comment(started["id"], render_run(ended, "Done."))
         decision = {"action": "implement", "issue": 4, "pr": None}
         agent = {"status": "blocked", "output": {"questions": [QUESTION]}}
-        self.assertFalse(autopilot.carries_on(self.gh, self.cfg, decision, "agent_blocked", agent))
+        # `report` runs in the workflow run that the round's comment links.
+        with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": str(self.runs)}):
+            carried = autopilot.carries_on(self.gh, self.cfg, decision, "agent_blocked", agent)
+        self.assertFalse(carried)
         self.sweep()
         self.assertEqual(self.started(), [("go", 4)])
         self.assertEqual(len(self.gh.comments_matching(4, "answers for the owner")), 1)
@@ -1337,7 +1346,9 @@ class AnswerTests(AnswerAndSplitCase):
         self.assertIn(4, [item["number"] for item in data["needs_person"]])
         # A person's comment since the answers lets autopilot answer again.
         self.gh.human_comment(4, "I attached the files to the issue.")
-        self.assertTrue(autopilot.carries_on(self.gh, self.cfg, decision, "agent_blocked", agent))
+        # The comment's run takes it: the engine answers the questions again on the stored
+        # state, which already holds the round's result, and the sweep carries that out.
+        host.take(self.gh, self.cfg, 4)
         self.sweep()
         self.assertEqual(self.started(), [("go", 4), ("go", 4)])
 

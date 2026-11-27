@@ -70,7 +70,10 @@ It never holds progress, dates, names or issue numbers.
 
 - **Proposed** is a working default that can still change, and it may be edited freely.
 - **Agreed** means the owner has accepted it and work may rely on it. A wording or a link may still be
-  fixed, but a change to the choice is a new decision.
+  fixed, but a change to the choice is a new decision. A narrower or wider scope, an exception added
+  or removed, a case it now allows or forbids and a new title each change the choice; a wording fix
+  leaves what the decision allows and forbids as it was. Only the owner sets **Agreed**: a new
+  decision stays **Proposed** until the owner agrees to it.
 - **A new decision that changes an agreed one replaces it whole.** It restates the parts that still
   hold, so the old file is never half valid. In the same change the old file is deleted, its row in
   the index says `Superseded by D<n>` with a link to its last text in git, and every page, link and
@@ -79,6 +82,12 @@ It never holds progress, dates, names or issue numbers.
 A change needs a decision when it makes a choice that had real alternatives and is costly to undo,
 or when it changes the choice of an Agreed decision. Such a change adds a **Proposed** decision in
 the same pull request, and links it from the rule or page that the choice shapes.
+
+A change follows the decisions and rules in force; none is widened to let a change pass. When a
+review or a check finds that a decision or a rule forbids the change, the change is made to follow
+it, or it adds a **Proposed** decision that weighs the alternatives and goes ahead only once the
+owner agrees to it. A plan that would edit an Agreed decision's choice proposes such a decision
+instead.
 
 A new decision takes the next number that no decision has used, superseded ones included. Its slug
 is its title in kebab-case, so the title must state the choice, as `D1. State lives only on GitHub`

@@ -3166,8 +3166,9 @@ class WriteJobsTests(unittest.TestCase):
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
-    """release.yml builds the engine's image with a read-only token, and only the job that
-    publishes it writes, with github.token, running no repository code (AGENTS.md)."""
+    """release.yml builds the engine's image with a read-only token and plays the conformance
+    suite against it; only the jobs that publish the image and attach the suite write, with
+    github.token, running no repository code (AGENTS.md)."""
 
     @classmethod
     def setUpClass(cls):
@@ -3175,12 +3176,13 @@ class ReleaseWorkflowTests(unittest.TestCase):
         cls.jobs = jobs_of(cls.text)
 
     def test_jobs_and_triggers(self):
-        self.assertEqual(list(self.jobs), ["build", "publish"])
+        self.assertEqual(list(self.jobs), ["build", "publish", "attach"])
         self.assertIn("permissions: {}\n", self.text)
         # Every pull request builds and checks the image; only a release publishes it.
         self.assertIn("\n  pull_request:\n", self.text)
         self.assertIn("\n  release:\n    types: [published]\n", self.text)
         self.assertIn("    if: github.event_name == 'release'\n", self.jobs["publish"])
+        self.assertIn("    if: github.event_name == 'release'\n", self.jobs["attach"])
         self.assertIn("IMAGE: ghcr.io/phuongnse/nexkit-engine\n", self.text)
 
     def test_the_job_that_runs_repository_code_only_reads(self):
@@ -3263,7 +3265,49 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("print(nexkit.PYTHON_IMAGE)", build)
         self.assertIn('--build-arg PYTHON_IMAGE="$base"', build)
         self.assertIn('--tag "$IMAGE:$VERSION" .', build)
-        self.assertIn("cmp served.json expected.json", build)
+
+    def test_the_image_passes_the_whole_conformance_suite_over_http(self):
+        """#600: every build plays each request of the suite against the running image, and a
+        difference fails the job before the image is saved, so nothing is published."""
+        build = self.jobs["build"]
+        steps = build.split("\n      - ")[1:]
+        play = next(i for i, step in enumerate(steps) if "conformance.py check" in step)
+        save = next(i for i, step in enumerate(steps) if "docker image save" in step)
+        self.assertLess(play, save)
+        step = steps[play]
+        self.assertNotIn("if:", step.split("\n        run:", 1)[0], "on every event")
+        self.assertIn('suite="$RUNNER_TEMP/nexkit-engine-conformance-$VERSION.json"', step)
+        self.assertIn('python scripts/conformance.py build "$suite"', step)
+        self.assertIn(
+            'python scripts/conformance.py check --url http://127.0.0.1:8080 "$suite"', step
+        )
+        self.assertIn('--publish 127.0.0.1:8080:8080 "$IMAGE:$VERSION"', step)
+        self.assertNotIn("|| true", step)
+        self.assertIn("name: nexkit-engine-conformance\n", build)
+        self.assertIn(
+            "path: ${{ runner.temp }}/nexkit-engine-conformance-"
+            "${{ steps.version.outputs.version }}.json",
+            build,
+        )
+
+    def test_a_release_attaches_the_suite_and_writes_nothing_else(self):
+        """#600: once the image is published, the release gets the suite it passed as
+        nexkit-engine-conformance-<version>.json, by a job that only uploads it."""
+        attach = self.jobs["attach"]
+        self.assertEqual(permissions_of(attach), {"contents": "write"})
+        self.assertIn("    needs: [build, publish]\n", attach)
+        self.assertEqual(re.findall(r"uses: (\S+)@", attach), ["actions/download-artifact"])
+        self.assertIn("name: nexkit-engine-conformance\n", attach)
+        for text in ("uses: ./", "actions/checkout", "python", "bin/", "docker", "secrets"):
+            self.assertNotIn(text, attach)
+        self.assertEqual(re.findall(r"^ +(gh [\w-]+ [\w-]+)", attach, re.M), ["gh release upload"])
+        self.assertIn(
+            'gh release upload "$TAG" "$RUNNER_TEMP/nexkit-engine-conformance-$VERSION.json"',
+            attach,
+        )
+        self.assertIn("TAG: ${{ github.event.release.tag_name }}", attach)
+        # An asset of the same name fails the upload, so a release never replaces its suite.
+        self.assertNotIn("--clobber", "\n".join(run_scripts(attach)))
 
 
 class TestFilesTests(unittest.TestCase):

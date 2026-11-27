@@ -9,7 +9,8 @@ GitHub's Actions token cannot start other workflows, and it cannot change files 
 may change workflow files. NexKit's pipeline needs both, so it needs an identity that can do them.
 
 NexKit's own repository also runs jobs that maintain it: they publish the engine's image,
-propose pin updates, file the docs audit's issues and upload code scanning results. None of them
+attach its conformance suite to the release, propose pin updates, file the docs audit's issues
+and upload code scanning results. None of them
 needs to start a workflow by its write or to change a workflow file. An App's private key acts on
 every repository where the App is installed, and it does not expire.
 

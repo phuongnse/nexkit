@@ -353,6 +353,9 @@ when a list of what the code defines misses an entry. These rules close each of 
      lists.
    - `test_the_field_list_names_each_check_key_the_code_defines_and_no_other`: the list of a check's
      fields on [the checks page](checks.md#checks) lists each key the code defines and no other.
+   - `test_the_page_names_the_limits_of_check_heads`: the list under `NEXKIT_CHECK_VERIFIED_SHA` on
+     [the checks page](checks.md#skipping-work-that-a-change-cannot-affect) names the limits of 50
+     checks and 3 commands that the code sets.
    - `test_the_settings_block_lists_each_autopilot_key_the_code_defines_and_no_other`: the autopilot
      settings block on [the autopilot page](autopilot.md) lists each key the code defines and no
      other.

@@ -15,9 +15,12 @@ from nexkit.route import (
 )
 from nexkit.scaffold import workflow_text
 from nexkit.state import (
+    MAX_COMMANDS,
+    MAX_PASSED,
     PLAN_MARKER,
     check_fingerprint,
     empty_state,
+    passed_checks,
     profile_record,
     profile_text,
     render_run,
@@ -439,6 +442,29 @@ class RouteTests(unittest.TestCase):
         self.assertNotIn("check_heads", decide())
         # Route alone, before it reads the configuration, gives none.
         self.assertNotIn("check_heads", self.fix_on_pull())
+
+    def test_a_round_records_at_most_50_passed_checks_and_3_commands_of_each(self):
+        # The first 50 checks that passed, in result order; a failed result is left out.
+        results = [{"name": f"c{n:02}", "run": "make", "passed": n != 0} for n in range(61)]
+        self.assertEqual(
+            list(passed_checks(results)), [f"c{n:02}" for n in range(1, MAX_PASSED + 1)]
+        )
+        # Of a check's commands, only the latest 3 keep their commit: command 1 goes.
+        self.gh.add_pull(6, 5)
+        cfg = make_config()
+        setup = setup_fingerprint(cfg["setup"])
+        for n, head in enumerate("abcd", 1):
+            fingerprint = check_fingerprint(f"make unit {n}")
+            self.gh.round_comment(
+                6, n, head * 40, "passed", passed={"unit": fingerprint}, setup=setup
+            )
+        heads = skip_unaffected(self.gh, self.fix_on_pull(), cfg)["check_heads"]["unit"]
+        latest = {
+            check_fingerprint(f"make unit {n}"): head * 40
+            for n, head in ((2, "b"), (3, "c"), (4, "d"))
+        }
+        self.assertEqual(len(heads), MAX_COMMANDS)
+        self.assertEqual(heads, latest)
 
     def test_only_nexkit_round_markers_give_a_check_its_commit(self):
         self.gh.add_pull(6, 5)

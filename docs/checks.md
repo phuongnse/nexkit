@@ -313,6 +313,13 @@ while the others run again.
   it ends. A check that failed, or never finished, gets no commit from that round.
 - A check whose `run` changed gets no commit from rounds that ran another command, and no
   check gets one from rounds that ran other `setup` commands, or that recorded none.
+- The record has limits. A round's comment records at most the first 50 checks that passed,
+  in the order of `checks`. Each shard counts as one check, so 15 checks of 20 shards each
+  reach the limit. NexKit reads at most 50 checks from all rounds together. When rounds
+  recorded more, the checks first recorded in the earliest rounds drop out. For each check,
+  NexKit keeps the commits of only its latest 3 commands, each `run` with its shard. Rounds
+  that ran an older command give it nothing. A check past these limits gets no commit, so it
+  runs in full, though it passed.
 - It is unset, and the check's part of the job log says why, when no earlier round passed
   that check with this `run` and `setup`, or the checkout does not have the commit. Setup
   does not get it.
@@ -408,9 +415,10 @@ file, is in the list, the check is skipped:
   comment shows it as ⏭️.
 
 At any doubt the check runs in full: when no round passed it with this `run` and
-`setup` (such as a check added since), when GitHub cannot compare the commits, when the
-round's commit does not descend from the recorded one (as after a force-push), or when
-GitHub lists 300 changed files, the most it lists. NexKit never falls back to `NEXKIT_VERIFIED_SHA` here: a round whose checks all
+`setup` (such as a check added since), when the pass was not recorded because of the limits
+under [`NEXKIT_CHECK_VERIFIED_SHA`](#skipping-work-that-a-change-cannot-affect), when GitHub
+cannot compare the commits, when the round's commit does not descend from the recorded one
+(as after a force-push), or when GitHub lists 300 changed files, the most it lists. NexKit never falls back to `NEXKIT_VERIFIED_SHA` here: a round whose checks all
 passed may not have run this check at all.
 
 `route` holds write tokens, but it decides from the paths GitHub lists and runs no

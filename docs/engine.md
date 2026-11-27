@@ -298,6 +298,8 @@ The protocol is built for delivery at least once, in any order a host's queues g
   records the actions it waits for, and the engine ignores a result whose action it no longer
   waits for, such as one it cancelled when the change moved on. A step that runs twice, a late
   result after a cancel, and a run started again after it was lost are then each harmless.
+  An id is never one that a pending action has, since a host that stores several events as one
+  revision hands the next event a state that is still at the revision before them.
   A result for an action that is still pending names the version that action acts on; one that
   names another is an error the engine refuses.
 - **Leaving a state cancels its work.** An item that moves on cancels the actions of the state it

@@ -481,8 +481,8 @@ When outages of a service the repository's `setup` downloads from often last lon
 the waits, add longer waits, such as `[15, 30, 60, 120, 240]`.
 
 While a command still waits to run again, its comment shows ⏸️ with the time, and
-`nexkit status` lists it as `retrying`: nobody needs to act. A `/nexkit go` or `/nexkit plan`
-posted meanwhile is refused with the engine's reply, and the wait goes on.
+`nexkit status` lists it as `retrying`: nobody needs to act. A command posted meanwhile
+replaces the wait.
 
 ### No automatic fix rounds left
 

@@ -1651,7 +1651,7 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(pipe.gh.issues[5]["state"], "closed")
         self.assertFalse(pipe.gh.comments_matching(5, "a person is needed"))
 
-    def test_a_go_while_a_run_waits_to_run_again_is_refused_and_the_wait_goes_on(self):
+    def test_a_new_command_replaces_a_run_that_waits_to_run_again(self):
         def script(pipe, inputs):
             if inputs["command"] == "plan":
                 return plan()
@@ -1669,9 +1669,8 @@ class ScenarioTests(unittest.TestCase):
         steps = {s["number"]: s for s in collect(pipe.gh, pipe.cfg)["autopilot"]["issues"]}
         self.assertEqual(steps[5]["state"], "active")
         self.assertIn("runs again after", steps[5]["reason"])
-        # A person posts `/nexkit go` while the waiting run waits: the engine takes no go on a
-        # round that waits, so NexKit 6's replacement of the wait is gone. The person gets the
-        # engine's reply, and the wait goes on: that run starts once the time comes.
+        # A person posts the command while the waiting run waits: it replaces the wait, so
+        # that run starts nothing once the time comes.
         waiting = pipe.gh.dispatches[pipe.handled]
         pipe.handled += 1
         go = {"command": "go", "number": "5", "note": "", "auto": ""}
@@ -1682,15 +1681,13 @@ class ScenarioTests(unittest.TestCase):
         pipe.waited(waiting["inputs"])
         pipe.drain()
         played = [(c, o) for c, _, o in pipe.played]
-        self.assertEqual([found[0] for found in played], ["plan", "go", "go", "go"])
-        self.assertEqual(
-            [played[0][1], played[1][1], played[3][1]], ["planned", "retry_waiting", "merged"]
-        )
-        self.assertIn("starts nothing for '/nexkit go'", played[2][1])
+        expected = [("plan", "planned"), ("go", "retry_waiting"), ("go", "merged")]
+        self.assertEqual(played[:3], expected)
         self.assertEqual(pipe.gh.issues[5]["state"], "closed")
-        resumed = pipe.gh.run_comments(5)[1]["run"]
-        self.assertEqual(resumed["status"], "continued")
-        self.assertNotIn("resume", resumed)
+        replaced = pipe.gh.run_comments(5)[1]["run"]
+        self.assertEqual(replaced["status"], "continued")
+        self.assertNotIn("resume", replaced)
+        self.assertEqual([c for c, _ in played].count("go"), 2, played)
 
     def test_a_resume_is_started_by_a_step_in_the_items_queue_and_the_waiting_run_writes_nothing(
         self,

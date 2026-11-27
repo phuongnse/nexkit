@@ -210,6 +210,9 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   round on an item with no change. The count of runs again goes on through
   the stages of one round, so a review handed on keeps it, and starts afresh when a request is
   taken or a new plan, implement or fix run starts.
+  A person's `plan`, or `go` for an implement run, replaces such a wait, as a new command does in
+  NexKit 6: the item starts that work again, and the tick of the wait it replaced changes nothing.
+  A usage limit's wait is replaced the same way.
 - **An accept refused because required checks have not passed yet** (`waitingForChecks`) keeps
   the item in `accepting`, with a wait for them (`requiredChecks`) and a `wait` action whose tick
   comes `CHECKS_RETRY` later, so that any host ticks the wait without a tight loop. The tick

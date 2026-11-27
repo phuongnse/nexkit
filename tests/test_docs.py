@@ -27,10 +27,12 @@ from nexkit import (
     github,
     host,
     maintain,
+    progress,
     publish,
     redact,
     report,
     route,
+    runlog,
     runtimes,
     scaffold,
     state,
@@ -1608,6 +1610,15 @@ def restart_delays():
     return ", ".join(str(m) for m in minutes[:-1]) + f" and {minutes[-1]} minutes"
 
 
+def artifact_days():
+    """The `retention-days` of the pipeline workflows' artifacts, as the page words them: one
+    value, or all of them when they differ, which no page says."""
+    days = set()
+    for path in sorted((ROOT / ".github/workflows").glob("pipeline*.yml")):
+        days |= set(re.findall(r"retention-days: (\d+)", path.read_text()))
+    return ", ".join(sorted(days))
+
+
 def retry_delays():
     """The retry delays of the failure handling row that starts with PUBLISH_ROW, as
     (publish's delays, its word for tries in all, the other calls' word for tries more, their
@@ -1709,6 +1720,31 @@ VALUES = (
     ("how-it-works.md", f"at most {checks.RESULTS_LIMIT // 1_000_000} MB per round"),
     ("how-it-works.md", f"{checks.JOB_RESULTS_FLOOR // 1_000_000} MB per job"),
     ("how-it-works.md", f"values of {redact.MIN_LENGTH} characters or more"),
+    ("how-it-works.md", f"(first {runlog.MESSAGE_CHARS} characters)"),
+    (
+        "how-it-works.md",
+        f"first and last {runlog.HEAD_LINES} lines of the output, at most {runlog.MAX_CHARS:,} "
+        "characters",
+    ),
+    ("how-it-works.md", f"(`▸ Tool detail`, {runlog.CALL_CHARS} characters)"),
+    ("how-it-works.md", f"kept {artifact_days()} days"),
+    ("how-it-works.md", f"first {textutil.FAILURE_LINES} lines before them"),
+    (
+        "how-it-works.md",
+        f"up to {report.MAX_FINDINGS} of its findings: past {report.MAX_FINDINGS},",
+    ),
+    ("how-it-works.md", f"last {NUMBERS[report.MAX_FIXES]} fix rounds"),
+    ("how-it-works.md", f"GitHub's {textutil.TEXT_LIMIT:,} characters"),
+    ("how-it-works.md", f"down to {progress.FIT_STEPS[0][1]:,} characters each"),
+    (
+        "how-it-works.md",
+        f"blocking ones (keeping their start, down to {progress.FIT_STEPS[1][1]} characters)",
+    ),
+    (
+        "how-it-works.md",
+        "the blocking findings (keeping their start, down to "
+        f"{progress.FIT_STEPS[4][1]} characters)",
+    ),
     ("work-without-a-command.md", f"last {github.DOWNLOAD_LIMIT // 1_000_000} MB"),
     ("work-without-a-command.md", f"at most {NUMBERS[context.MAX_EARLIER]} of those parts"),
     ("work-without-a-command.md", f"first {NUMBERS[context.MAX_EARLIER * 2]} blockers"),

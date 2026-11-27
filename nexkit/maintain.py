@@ -285,7 +285,22 @@ def record_part_end(gh, cfg, decision):
     except host.Refused as error:
         why = autopilot.quoted(str(error), 300)
         return [f"Recorded nothing for #{part}: NexKit's engine refused to decide: {why}"]
+    # The part's run closed the parent before it sent this, so the parent's `close` is done.
+    _close_done(gh, cfg, parent)
     return [f"Recorded the end of #{part} in #{parent}'s state: {answer}."]
+
+
+def _close_done(gh, cfg, number):
+    """In the queue of issue `number`: store the result of the `close` that its state holds,
+    when GitHub shows it closed (`host.close_done`). It adds nothing to the log: a run that
+    cannot read or store it leaves the close pending, which the issue's own `issues: closed`
+    run reports again."""
+    from . import host  # host imports this module
+
+    try:
+        host.close_done(gh, cfg, number)
+    except (GitHubError, host.Refused):
+        pass
 
 
 def close_or_find_closed(gh, number, reason="completed"):
@@ -1437,6 +1452,8 @@ def maintain(gh, decision, cfg, *, workflow="", ref="", alerts=None):
         return merge_approved(gh, cfg, decision, workflow, ref)
     if task == "parents":
         issue = decision["issue"]
+        # This is the closed issue's own run: its `close` has happened, whoever did it.
+        _close_done(gh, cfg, issue)
         lines = close_parents_safely(gh, cfg, issue) if cfg["close_parent_issues"] else []
         lines += send_part_end(gh, issue, workflow, ref)
         return lines + autopilot.request_safely(gh, cfg, workflow, ref, issue)

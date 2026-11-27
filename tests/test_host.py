@@ -484,6 +484,45 @@ class TakeTest(TestCase):
         self.assertEqual(self.state()["state"], "planning")
         self.assertEqual(self.cursor(), (LATER, f"comment-{asked['id']}"))
 
+    def test_a_command_on_a_closed_issue_is_passed_over_and_a_remark_still_counts(self):
+        self.gh.close_issue(42)
+        asked = self.gh.human_comment(42, "/nexkit plan", at=LATER)
+        remark = self.gh.human_comment(42, "Why not a cache?", login="bob", at=LATER)
+        before = self.state()
+        events = []
+        real = host.step
+
+        def spy(state, event, found_policies):
+            events.append(event["id"])
+            return real(state, event, found_policies)
+
+        with mock.patch.object(host, "step", spy):
+            taken = host.take(self.gh, self.CFG, 42)
+        # The command never reaches the engine, so the stored state has no stage of it; the
+        # remark is taken as before, and the cursor is past both.
+        self.assertEqual(events, [f"comment-{remark['id']}"])
+        self.assertEqual(taken, [])
+        self.assertNotIn(f"comment-{asked['id']}", self.state()["recentEvents"])
+        self.assertNotEqual(self.state()["state"], "planning")
+        self.assertEqual(self.state()["state"], before["state"])
+        self.assertEqual(self.cursor(), (LATER, f"comment-{remark['id']}"))
+
+    def test_a_command_and_a_review_on_a_closed_pull_request_are_passed_over(self):
+        self.gh.pulls[6]["state"] = self.gh.issues[6]["state"] = "closed"
+        self.gh.human_comment(6, "/nexkit fix", at=LATER)
+        asked = self.review("alice", "CHANGES_REQUESTED")
+        before = self.state()
+        self.assertEqual(self.taken_events(), [])
+        after = self.state()
+        self.assertEqual((after["state"], after["pending"]), (before["state"], before["pending"]))
+        # Both sources are behind the cursor.
+        passed = item_state.order((LATER, f"review-{asked['id']}"))
+        self.assertGreaterEqual(item_state.order(self.cursor()), passed)
+        # The issue is open: a command on it is sent to the engine as before.
+        asked = self.gh.human_comment(42, "/nexkit plan", at="2026-01-09T00:00:00Z")
+        [event] = self.taken_events()
+        self.assertEqual(event["id"], f"comment-{asked['id']}")
+
     def test_the_stored_run_names_the_model_of_the_plan_s_profile(self):
         cfg = profile_config()
         self.gh.add_issue(43)
@@ -882,6 +921,29 @@ class DecideTest(HostCase):
         self.assertEqual(host.pending_id(doc, "runAgent", "plan"), "a3.1")
         self.assertEqual(host.pending_id(doc, "runAgent", "fix"), first_state.RUN_ID)
         self.assertEqual(host.pending_id(doc, "runChecks"), first_state.RUN_ID)
+
+    def test_with_no_built_document_the_stored_state_alone_decides(self):
+        state = copy.deepcopy(self.read()[1])
+        self.assertIs(host.resync(state, None, {"id": "x"}), state)
+        self.assertIsNone(host.resync(None, None, {"id": "x"}))
+        event = {
+            "protocol": 1,
+            "kind": "commented",
+            "id": "comment-9",
+            "item": "5",
+            "at": "2026-01-02T00:00:00Z",
+            "by": {"id": "bob", "role": "reader"},
+            "text": {"name": "comment", "ref": "9"},
+        }
+        stored, _ = host.decide(self.gh, self.cfg, 5, event, None, write=True)
+        self.assertEqual(stored["recentEvents"][-1], "comment-9")
+        self.assertEqual(self.read()[1]["recentEvents"][-1], "comment-9")
+        self.assertEqual(stored["state"], self.read()[1]["state"])
+        # An item with no state comment has the import in memory, and a state that cannot be
+        # read has nothing to decide on.
+        with mock.patch.object(host, "stored", return_value=(None, None)):
+            with self.assertRaises(host.Refused):
+                host.decide(self.gh, self.cfg, 5, {**event, "id": "comment-10"}, None)
 
     def test_the_stored_state_decides_only_where_it_agrees_with_the_markers(self):
         built = host._planning(host._document({"number": 5}, {}), 0, False)

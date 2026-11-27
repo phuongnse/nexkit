@@ -444,7 +444,7 @@ class ParentAsksTheEngineTests(unittest.TestCase):
         self.gh.add_pull(6, 5, head_sha=HEAD)
         target = {"issue": 5, "pr": 6, "head": HEAD, "state": {}}
         with self.stays() as ended:
-            report._parent_ends(self.gh, self.CFG, target)
+            report._parent_ends(self.gh, self.CFG, target, {"state": "accepted"}, None)
         self.asked_not_closed(ended)
 
     def test_a_parent_two_levels_up_closes_only_as_the_engine_answers_at_both_levels(self):
@@ -553,7 +553,7 @@ class PartEndTests(unittest.TestCase):
         target = {"issue": 5, "pr": 6, "head": HEAD, "state": {}}
         calls, patch = self.spies()
         with patch:
-            report._parent_ends(self.gh, self.CFG, target)
+            report._parent_ends(self.gh, self.CFG, target, {"state": "accepted"}, None)
             close_parents(self.gh, self.CFG, 5)
         self.assertNotIn(1, calls)
         self.assertEqual(self.state_comments(), self.stored)

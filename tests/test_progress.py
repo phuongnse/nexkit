@@ -524,13 +524,18 @@ class PausedRunTests(unittest.TestCase):
         new = {"round": 2, "trigger": "fix: auto; conflicts", "action": "fix", "kinds": ["auto"]}
         self.assertEqual((run_action(new), run_kinds(new)), ("fix", {"auto"}))
         self.assertEqual(run_kinds({**old, "kinds": []}), set())
-        # An automatic fix round that NexKit stopped gives its round back, read from them.
-        self.gh.add_pull(6, 5)
-        self.gh.comment(6, render_state({"version": 2, "issue": 5, "auto_fixes": 1}))
-        _give_back(self.gh, make_config(), 5, 6, self.gh.comments(6), {**old, "kinds": []})
-        self.assertEqual(read_state(self.gh.comments(6))[1]["auto_fixes"], 1)
-        _give_back(self.gh, make_config(), 5, 6, self.gh.comments(6), new)
-        self.assertEqual(read_state(self.gh.comments(6))[1]["auto_fixes"], 0)
+        # An automatic fix round that NexKit stopped gives its round back, read from them: the
+        # item's stored state, imported from the round on its way, says it was automatic.
+        head = "c" * 40
+        for issue, pull, found, left in ((5, 6, {**old, "kinds": []}, 1), (7, 8, new, 0)):
+            self.gh.add_issue(issue)
+            self.gh.add_pull(pull, issue, head_sha=head)
+            self.gh.comment(pull, render_state({"version": 2, "issue": issue, "auto_fixes": 1}))
+            running = {**found, "status": "running", "head": head, "url": "https://x/runs/9"}
+            self.gh.comment(pull, render_run(running, "Running."))
+            host.store_import(self.gh, make_config(), issue, now=datetime(2026, 1, 1, tzinfo=UTC))
+            _give_back(self.gh, make_config(), issue, pull, self.gh.comments(pull), found)
+            self.assertEqual(read_state(self.gh.comments(pull))[1]["auto_fixes"], left)
 
     def test_a_new_command_replaces_a_paused_one(self):
         self.paused(5, 1)

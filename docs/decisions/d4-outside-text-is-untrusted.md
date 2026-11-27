@@ -13,7 +13,8 @@ Such text can carry secrets, steer an agent, or imitate a record that NexKit wro
 - Everything that a session prints or stores passes through `nexkit/redact.py`. Tool output is
   printed with workflow commands stopped.
 - NexKit reads one of its markers only in an App comment that no one else changed, and only where
-  NexKit writes it. Agent text that could pass for a marker is rewritten so it cannot.
+  NexKit writes it. Where agent text stands next to a marker that NexKit writes, NexKit writes
+  `<!-- nexkit:` in it as `‹!-- nexkit:`, so it cannot open one.
 - Discussion and review feedback count only from collaborators.
 
 The detail is in [Security notes](../how-it-works.md#security-notes) and

@@ -14,10 +14,10 @@ rounds on this repository run the commands that `checks` in `.nexkit/config.json
 
 | Check | Where | What it covers |
 | --- | --- | --- |
-| Unit tests | `tests/test_*.py`, run by `python3 -m unittest discover -s tests -t .` | Each module's behaviour, most of it against `FakeGitHub`, with the standard library only. `tests/test_cli.py` also reads the workflows and checks which job holds which token and secret, and `tests/test_answers.py` reads every module outside `nexkit/engine/` and fails on a write that no engine answer comes before |
+| Unit tests | `tests/test_*.py`, run by `python3 -m unittest discover -s tests -t .` | Each module's behaviour, most of it against `FakeGitHub`, with the standard library only. `tests/test_cli.py` also reads the workflows and checks which job holds which token and secret, and `tests/test_answers.py` reads every module outside `nexkit/engine/` except `nexkit/github.py`, which defines the writes, and fails on a write that no engine answer comes before |
 | Scenarios | `tests/test_scenarios.py` | Autopilot over many rounds and sweeps: every issue in scope is carried on or waits for a person, and budgets count as they should |
 | Conformance | `tests/conformance/` | Each rule of the engine, as a case of events and the actions and state they must give; every policy value, event kind and action kind of the protocol's schemas has a case that plays it; each kind of import (`first_state.KINDS`) has a case in `tests/conformance/imports/`; the `sweep` call has its cases in `tests/conformance/sweeps/`; `scripts/conformance.py` writes the cases as one file and plays it against an engine |
-| Prompt goldens | `tests/prompts/` | The prompt each stage writes, compared with NexKit 6's own record of it. A change to a prompt changes its golden by hand and says why. Never write them again with `NEXKIT_WRITE_PROMPTS` from today's code: set it only to add a case's file from NexKit 6's code, or to change a prompt on purpose |
+| Prompt goldens | `tests/prompts/` | The prompt each stage writes, compared with NexKit 6's own record of it. A change to a prompt changes its golden by hand and says why. Never write them again with `NEXKIT_WRITE_PROMPTS` from today's code: set it only to add a case's file from NexKit 6's code |
 | Agent schemas | `tests/golden/agent-schemas.json`, read by `tests/test_protocol.py` | The result schema each stage gives its agent, as NexKit 6 gave it |
 | Random walks | `tests/walk.py`, a fixed sample in `tests/test_walk.py` | The engine against its invariants, which stays after 7.0. Unit tests play a fixed sample of walks of seed 349 in a few seconds, some with an application's policies, and fail on a broken invariant that `KNOWN` does not list. The script plays longer walks, and `check.sh` plays 1,000 of them until 7.0 |
 | Engine mutation check | `tests/mutants.py`, run by hand | Each mutant breaks one rule of the engine in a copy of the tree, and the conformance suite or the walker must see it. It needs no checkout of NexKit 6 and stays after 7.0. `tests/test_mutants.py` checks that each mutant still applies, since the check runs by hand |
@@ -25,6 +25,7 @@ rounds on this repository run the commands that `checks` in `.nexkit/config.json
 | Application host | `tests/apphost.py`, played by `tests/test_apphost.py` | A host other than GitHub that carries requests from plan to end, or to a wait for a person, over HTTP to `nexkit-engine serve` alone. After every step each action it carried out was pending, and each request that is not final has work, a wait, a hold or attention. It imports only the standard library, which a test checks with `ast`. A test fails on an action kind of the protocol that no scenario carried out |
 | Differential check | `tests/differential/`, run by `tests/differential/check.sh` | The engine against NexKit 6, until 7.0: `check.sh` plays a fixed sample of scenarios (`harness.py`), then the random walks. Its `mutants.py` plays the mutants that only this check sees, and the engine's too, with the families that cover them. It takes minutes, so a change that moves a rule runs it by hand, as [its README](../tests/differential/README.md) says |
 | Lint | `scripts/lint.sh` | ruff on the Python code, and actionlint on the workflows |
+| Caches | the jobs `cache-save` and `cache-restore` of `ci.yml` | The composite action `.github/actions/restore-caches`, which the agent and verify jobs run. `cache-save` saves a cache as [caches](configuration.md#caches) says, and `cache-restore` checks that the action finds it and skips a missing one |
 | Plugin | `claude plugin validate --strict .` | The plugin's manifest and skills |
 | Docs | `tests/test_docs.py` | Each check that rule 9 of [how the docs stay correct](writing-docs.md#how-the-docs-stay-correct) lists, one test each. A test compares that list with the file. |
 | The engine's image | `release.yml` | The image builds from the pinned base and gives every answer of the [conformance suite](engine.md#conformance) over HTTP. `update-image.yml` proposes a new base, and its pull request needs this check |
@@ -71,12 +72,14 @@ and fails when the runner's result, or its output, does not fit the protocol's s
 what it covers.
 
 Run it when changing `scripts/smoke.py`, `engine/prompts/`, `engine/prompt.py`,
-`engine/textutil.py`, `agent.py`, `schema.py`, `runtimes/` or a pin. CI runs it on such a pull
-request from a branch of this repository, never from a fork, because a fork's pull request gets no
-secrets. CI also runs it on the pull request of `update-agents.yml` for the runtime it updates. A
-ruleset on `main` requires its job, `smoke-claude-code`, which GitHub counts as passed when CI
-skips it. So a pull request from a branch of this repository that breaks real Claude Code does not
-merge.
+`engine/textutil.py`, `agent.py`, `schema.py`, `runtimes/` or a runtime's pin in `nexkit/__init__.py`.
+CI runs it on such a pull request from a branch of this repository, never from a fork, because a
+fork's pull request gets no secrets. CI also runs it on the pull request of `update-agents.yml` for
+the runtime it updates. The other pins, of the image's base, the runner and Python, start no smoke
+test. Neither does the pull request of `update-image.yml`, which starts CI with no runtime: the
+image's base has its own check, `release.yml`. A ruleset on `main` requires its job,
+`smoke-claude-code`, which GitHub counts as passed when CI skips it. So a pull request from a branch
+of this repository that breaks real Claude Code does not merge.
 
 The reasons for pinning each version the pipeline installs in one place, and testing only the pinned versions, are in
 [D9](decisions/d9-pins-live-in-one-place.md).
@@ -94,12 +97,11 @@ Until NexKit 7.0 ships, changes move NexKit 6's decisions into the engine one by
   labels), the preview and `nexkit status`. Sequences of several rounds and sweeps matter most.
   The pull request gives the scenario counts and explains every difference.
 - Walks the engine at random against invariants (`tests/walk.py`), including the invariants of its
-  own rules:
-  - the protocol's schemas;
-  - only the transitions that the states table names;
-  - the outbox;
-  - every open item is carried on, so none is stuck or brought back;
-  - counts within the policies.
+  own rules. `INVARIANTS` in that file says what each one guards, and names them: `schema`,
+  `transition`, `outbox`, `carried`, `counts`, `budget`, `give-back`, `due`, `automatic`,
+  `diagnosis`, `usage-limit`, `retry`, `lost`, `hold`, `answers`, `questions`, `after-failure`,
+  `split`, `parent-end`, `trust`, `start`, `accept-conflict`, `sweep`, `required-checks`,
+  `accept-behind`, `behind-checks`, `accept-again`, `approvals` and `refusals`.
 - Adds to `tests/differential/` ([its README](../tests/differential/README.md)), which holds the
   differential check and a CI job that plays a fixed sample of it on every pull request: a family
   of scenarios for what it moves, and each difference it calls out in `known.py`.

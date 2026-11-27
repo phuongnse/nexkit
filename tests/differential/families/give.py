@@ -115,9 +115,9 @@ def run_report(sc, gh, cfg, res):
 
     def stopped():
         progress.start(gh, d)
+        seed(gh, cfg)
         return report(gh, d, cfg, needs, art.path, workflow_ref=WORKFLOW, default_branch="main")
 
-    seed(gh, cfg)
     res["report"] = attempt(stopped)
     art.close()
 

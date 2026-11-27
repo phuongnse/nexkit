@@ -19,6 +19,7 @@ import itertools
 import json
 import os
 import re
+import sys
 import tempfile
 import unittest
 import zipfile
@@ -3724,9 +3725,30 @@ class ScenarioTests(unittest.TestCase):
         self.same_item(imported, plain, "closed")
         self.assertEqual([c for c, *_ in imported.played].count("go"), 2)
 
+    def freeze_clock(self):
+        """Make `datetime.now` read one time in every module of NexKit and in the fake GitHub.
+        Two pipelines built and played one after the other then stamp the same time in their
+        records, so a slow build cannot make them differ by a second."""
+        started = datetime.now(UTC)
+
+        class Clock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return started
+
+        clocks = contextlib.ExitStack()
+        self.addCleanup(clocks.close)
+        for name, module in list(sys.modules.items()):
+            if name.startswith(("nexkit.", "tests.support")) and (
+                getattr(module, "datetime", None) is datetime
+            ):
+                clocks.enter_context(mock.patch.object(module, "datetime", Clock))
+
     def test_a_merge_waiting_for_required_checks_is_imported_and_merges_as_before(self):
         def script(pipe, inputs):
             return plan() if inputs["command"] == "plan" else done()
+
+        self.freeze_clock()
 
         def built():
             pipe = Pipeline(self, config(), script)

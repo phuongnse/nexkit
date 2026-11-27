@@ -313,7 +313,9 @@ KNOWN += [
             "`blockers` and its `issue_comments` with nothing in them, where NexKit 6's flow "
             "never read them. Only a record that differs by such an empty entry is excused."
         ),
-        "match": lambda sc, old, new: _without_empty_blockers(old) == _without_empty_blockers(new),
+        "match": lambda sc, old, new: (
+            _without_empty_reads_in_steps(old) == _without_empty_reads_in_steps(new)
+        ),
     }
     for family in FAMILIES_646
 ]
@@ -365,6 +367,20 @@ def _without_empty_reads(record):
     return found
 
 
+def _without_empty_reads_in_steps(record):
+    """`_without_empty_reads` of `record`, also without the empty `blockers` and `issue_comments`
+    entries of what GitHub holds after each `step` of a family that plays steps."""
+    found = _without_empty_reads(record)
+    if isinstance(found.get("steps"), list):
+        found["steps"] = [
+            {**step, "gh": _without_empty_reads({"gh": step["gh"]})["gh"]}
+            if isinstance(step, dict) and isinstance(step.get("gh"), dict)
+            else step
+            for step in found["steps"]
+        ]
+    return found
+
+
 def _without_part_ends(record):
     """`record` without the `step` dispatches that send the end of a part to its parent's
     group (`part N`) and the lines of the log that say so."""
@@ -391,34 +407,13 @@ def _without_part_ends(record):
 
 
 def _without_empty_blockers(record):
-    """`record` without the entries of `blockers` and `issue_comments` that hold nothing, in
-    what GitHub holds after the command, after a report, after each sweep and after each step:
-    a read of the issues that block an item or of its comments, which the stored state's import
-    makes, adds such an entry to `FakeGitHub`."""
+    """`record` without the entries of `blockers` that hold no blocker, in what GitHub holds
+    after the command, after a report and after each sweep."""
     found = dict(record)
     for key, item in record.items():
-        if isinstance(item, dict):
-            found[key] = _without_empty(item)
-    if isinstance(found.get("steps"), list):
-        found["steps"] = [
-            {**step, "gh": _without_empty(step["gh"])}
-            if isinstance(step, dict) and isinstance(step.get("gh"), dict)
-            else step
-            for step in found["steps"]
-        ]
-    return found
-
-
-def _without_empty(item):
-    """The state `item` of `FakeGitHub` without the entries of `blockers` that hold no blocker
-    and the empty lists of `issue_comments`."""
-    found = dict(item)
-    if isinstance(found.get("blockers"), dict):
-        found["blockers"] = {number: held for number, held in found["blockers"].items() if held}
-    if isinstance(found.get("issue_comments"), dict):
-        found["issue_comments"] = {
-            number: held for number, held in found["issue_comments"].items() if held
-        }
+        if isinstance(item, dict) and isinstance(item.get("blockers"), dict):
+            kept = {number: held for number, held in item["blockers"].items() if held}
+            found[key] = {**item, "blockers": kept}
     return found
 
 

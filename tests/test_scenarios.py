@@ -3635,7 +3635,13 @@ class ScenarioTests(unittest.TestCase):
 
     def same_item(self, imported, plain, issue_state):
         """`imported`, which stored an import in the middle of its work, plays on as `plain`,
-        which stored none: the same runs, merges, comments of the issue and end."""
+        which stored none: the same runs, merges, comments of the issue and end. Call
+        `freeze_clock` before building either pipeline, so that no wall-clock stamp, such as
+        `waiting_since` or an autopilot record's `at`, decides the comparison."""
+        self.assertTrue(
+            getattr(self, "clock_frozen", False),
+            "call self.freeze_clock() before building the pipelines that same_item compares",
+        )
         self.assertEqual(imported.play(), plain.play())
         self.assertEqual(imported.played, plain.played)
         self.assertEqual(imported.gh.merged, plain.gh.merged)
@@ -3653,6 +3659,8 @@ class ScenarioTests(unittest.TestCase):
         )
 
     def test_a_plan_waiting_for_approval_is_imported_and_waits_as_before(self):
+        self.freeze_clock()
+
         def script(pipe, inputs):
             return plan(questions=[{"question": "Which?", "options": ["a", "b"]}])
 
@@ -3671,6 +3679,8 @@ class ScenarioTests(unittest.TestCase):
         self.assertTrue(imported.gh.comments_matching(5, "a person is needed"))
 
     def test_an_imported_plan_that_a_comment_follows_plays_on_and_stores_the_answer(self):
+        self.freeze_clock()
+
         def script(pipe, inputs):
             return plan(questions=[{"question": "Which?", "options": ["a", "b"]}])
 
@@ -3764,6 +3774,8 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(plain.gh.issues[5]["state"], "open")
 
     def test_a_paused_run_is_imported_and_resumes_as_before(self):
+        self.freeze_clock()
+
         def built():
             pauses = itertools.count()
 
@@ -3803,6 +3815,7 @@ class ScenarioTests(unittest.TestCase):
         """Make `datetime.now` read one time in every module of NexKit and in the fake GitHub.
         Two pipelines built and played one after the other then stamp the same time in their
         records, so a slow build cannot make them differ by a second."""
+        self.clock_frozen = True
         started = datetime.now(UTC)
 
         class Clock(datetime):

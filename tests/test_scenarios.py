@@ -1496,6 +1496,34 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(len(pipe.gh.merged), 1)
         self.assertEqual(pipe.gh.issues[5]["state"], "closed")
 
+    def test_a_label_added_again_while_the_next_round_works_holds_that_round_too(self):
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            # Each round's agent works while the label is added, after `route` took the events.
+            pipe.gh.issues[5]["labels"] = [{"name": "on-hold"}]
+            return done(checks=inputs["command"] == "fix")
+
+        settings = {"labels": {"on-hold": {"hold": True}}}
+        pipe = Pipeline(self, config(autopilot=settings), script)
+        pipe.issue(5)
+        pipe.take_run(5)
+        entries, fallbacks = self.round_ends()
+        pipe.play()
+        self.assertEqual([command for command, _, _ in pipe.played], ["plan", "go"])
+        self.assertEqual(pipe.played[-1][2], "held")
+        self.assertTrue(item_state.read(pipe.gh, 5)[1]["hold"])
+        # The label goes, the item is released and the next round starts; it is added again.
+        pipe.gh.issues[5]["labels"] = []
+        pipe.play()
+        self.assertEqual([command for command, _, _ in pipe.played][-1], "fix")
+        self.assertEqual((pipe.gh.merged, pipe.played[-1][2]), ([], "held"))
+        self.assertTrue(item_state.read(pipe.gh, 5)[1]["hold"])
+        self.assertNotIn("nexkit.host.round_ended", fallbacks)
+        pipe.gh.issues[5]["labels"] = []
+        pipe.play()
+        self.assertEqual(len(pipe.gh.merged), 1)
+
     def test_checks_that_keep_failing_use_their_rounds_then_wait(self):
         def script(pipe, inputs):
             return plan() if inputs["command"] == "plan" else done(checks=False)

@@ -3577,7 +3577,12 @@ def _stage_version(decision):
 
 
 def _hold_events(number, label):
-    return [_event("held", number, None, f"held-{number}", label=str(label))] if label else []
+    """The `held` event of a label that holds the item, if any. Its id holds the run, because
+    the engine drops an event whose id is among its last twenty: a hold of a later round, after
+    the label went and came again, is a new event and not a repeat of the earlier one."""
+    if not label:
+        return []
+    return [_event("held", number, None, f"held-{number}-{_run_event_id()}", label=str(label))]
 
 
 def _hold_row(number, label, *rest):

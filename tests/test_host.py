@@ -4605,6 +4605,32 @@ class StoredStopsTest(HostCase):
         runs = [(a["kind"], a["stage"]) for a in doc["pending"] if a["kind"] == "runAgent"]
         self.assertEqual(runs, [("runAgent", "fix")])
 
+    def test_one_issue_resumes_twice_on_the_stored_state(self):
+        # The second wait of an issue gets its own tick: the engine ignores an id that it holds.
+        self.cfg["retry"]["wait_minutes"] = [15, 30]
+        self.started()
+        self.stored()
+        stop = host.stage_transient
+        first = stop(self.gh, self.cfg, self.PLAN, self.NOW, "Overloaded", write=True)
+        self.assertEqual(first[0], "later")
+        record = {"command": "plan", "number": 5, "at": first[1], "retry": 1}
+        resume = {"resume": record}
+        self.assertTrue(host.resumes(self.gh, self.cfg, resume, 5, self.NOW, write=True))
+        self.assertEqual(self.read()[1]["waits"], [])
+        later = self.NOW + timedelta(minutes=20)
+        with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": "8"}):
+            second = host.stage_transient(
+                self.gh, self.cfg, {**self.PLAN, "retry": 1}, later, "Overloaded", write=True
+            )
+        self.assertEqual(second[0], "later")
+        self.assertNotEqual(second[1], first[1])
+        record = {"command": "plan", "number": 5, "at": second[1], "retry": 2}
+        self.assertTrue(host.resumes(self.gh, self.cfg, {"resume": record}, 5, later, write=True))
+        doc = self.read()[1]
+        self.assertEqual(doc["waits"], [])
+        runs = [(a["kind"], a["stage"]) for a in doc["pending"] if a["kind"] == "runAgent"]
+        self.assertEqual(runs, [("runAgent", "plan")])
+
     def test_the_resume_run_without_a_configuration_raises_and_stores_nothing(self):
         self.stored()
         self.paused()

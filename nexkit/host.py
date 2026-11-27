@@ -3614,7 +3614,9 @@ def resumes(gh, cfg, run, number, now, label=None, write=False):
     item = number
     if pull is not None and pull == number:
         item, pull = _pull_item(gh, number)
-    tick = _event("tick", item, usage.iso(now), f"resume-{number}", wait="w1.1")
+    # The id names this wait by its resume time: the engine ignores an id that it still holds
+    # among its last events, and one issue resumes more than once.
+    tick = _event("tick", item, usage.iso(now), f"resume-{number}-{resume.get('at')}", wait="w1.1")
     _, answers = decide_all(
         gh, cfg, item, _hold_row(item, label, tick), None, pull=pull, wait=kind, write=write
     )

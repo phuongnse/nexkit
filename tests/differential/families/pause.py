@@ -112,7 +112,6 @@ def run(sc):
         d["retry"] = sc["retry"]
     if sc["resumed"]:
         d["resumed"] = True
-    seed(gh, cfg)
     res = {}
     with quiet(), mock.patch.object(reports, "datetime", Clock):
         res["report"] = one_stage(gh, cfg, d, sc["stop"])
@@ -144,6 +143,7 @@ def one_stage(gh, cfg, d, stop):
     except Exception as exc:  # noqa: BLE001
         art.close()
         return f"EXC start {type(exc).__name__}: {exc}"
+    seed(gh, cfg)
     found = attempt(
         report, gh, d, cfg, needs, art.path, workflow_ref=WORKFLOW, default_branch="main"
     )

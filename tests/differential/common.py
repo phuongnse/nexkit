@@ -186,9 +186,11 @@ def seed(gh, cfg):
     """Store the import of each open item (`items`) on the tree as the App's state comment at
     revision 1, as a run in the item's group does before its first event (`host.store_import`),
     and record the comment's writes in `STATES`. Call it once, after the fixtures and before
-    the first event. NexKit 6 has no stored state, so nothing is stored there. Each item uses up
-    one comment id on both trees, so that the comments after it have the same ids, and the issue
-    keeps its `updated_at`: the seed must leave nothing that NexKit 6's tree lacks."""
+    the first event, or, for a stage that stops, just after the run's `progress.start`, so that
+    the stored state holds the run on its way as a run in the item's group stores it. NexKit 6
+    has no stored state, so nothing is stored there. Each item uses up one comment id on both
+    trees, so that the comments after it have the same ids, and the issue keeps its
+    `updated_at`: the seed must leave nothing that NexKit 6's tree lacks."""
     global SEEDED
     try:
         from nexkit import host, item_state

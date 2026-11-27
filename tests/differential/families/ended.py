@@ -115,10 +115,9 @@ def run(sc):
             pub = {"published": True, "pr": 6, "head": HEAD}
             needs = {"publish": {"outputs": {"result": json.dumps(pub)}}}
 
-            seed(gh, cfg)
-
             def first_round():
                 progress.start(gh, d)
+                seed(gh, cfg)
                 return report(
                     gh, d, cfg, needs, art.path, workflow_ref=WORKFLOW, default_branch="main"
                 )

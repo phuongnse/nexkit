@@ -65,7 +65,11 @@ reason stays `merge_refused`, and the new mention says why. A pull request that 
 merged or closed yourself in the meantime, such as right after your approval, is left as it
 is, with no mention (`pull_closed`). Rules that block every automatic merge:
 
-- a required merge queue, or squash merging turned off for the repository.
+- a required merge queue, a base branch that requires signed commits, since NexKit's commits
+  are not signed, or squash merging turned off for the repository.
+
+[The automatic merge was refused](troubleshooting.md#the-automatic-merge-was-refused) says
+what each other refusal needs.
 
 GitHub's *Require branches to be up to date before merging* keeps two pull requests that
 pass alone from breaking the base branch together. Under it, checks count only on a head
@@ -163,8 +167,10 @@ sub-issues are all closed under *Needs a person*. See
 [Work NexKit starts by itself](work-without-a-command.md#work-without-a-command).
 
 The workflow must listen to `issues: closed`, as `nexkit init` writes it; `nexkit doctor`
-warns when it does not. With the setting off, a closed issue starts a short run that ends
-at once.
+warns when it does not. With the setting off and autopilot on, a closed issue's run still
+stores the close in the issue's state, sends a sub-issue's end to its parent's queue and
+starts a sweep. It closes no parent. Only when both settings are off does a closed issue start
+a short run that ends at once.
 
 ## Mentions
 

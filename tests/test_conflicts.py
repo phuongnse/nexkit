@@ -794,7 +794,8 @@ class ConflictReportTests(ReportCase):
             "on_base": "b" * 40,
         }
         self.write("nexkit-agent", "result.json", found)
-        outcome = self.run_report(d=decision("fix", pr=6, target=6, head=HEAD, auto=True))
+        d = decision("fix", pr=6, target=6, head=HEAD, auto=True)
+        outcome = self.run_report(d=d, stored=True)
         self.assertEqual(outcome["outcome"], "already_on_base")
         self.assertEqual(self.gh.pulls[6]["state"], "closed")
         self.assertEqual(self.gh.issues[5]["state_reason"], "completed")

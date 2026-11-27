@@ -308,7 +308,9 @@ both send, would be a duplicate. `after_go` and `round_carried_on` no longer go 
 pass no document of the markers. Nor do `stage_limited`, `stage_transient` and `resumes`, which
 decide on the stored state alone, and so do `checks_waited`, `refusal_cleared` and `change_seen`:
 the sweep's looks at a merge that waits for required checks or that GitHub refused, and what the
-merge finds. The last move to the stored document removes `resync`.
+merge finds. `stopped_counts` too: whether a stopped round gives its count back is the stored
+`rounds.automatic` and the pending fix run, never a flag of its caller. The last move to the
+stored document removes `resync`.
 
 A row of events, such as a hold and then the stop, or a round's result and then a comment, is one
 write: the state after the last event, at the revision read plus one, since `item_state.write`
@@ -3506,18 +3508,27 @@ def on_base_found(gh, cfg, decision, write=False):
     (`decide`). Raises `Refused` for any other answer."""
     number, pr, head = decision["issue"], decision["pr"], decision.get("head")
     change = {"id": pr, "version": head or pr}
-    doc, version = _stage_doc("fix", number, change, int(decision.get("retry") or 0))
-    doc["observed"] = {
-        "changeId": str(pr),
-        "version": version,
-        "conflicts": False,
-        "merged": False,
-        "empty": False,
-    }
+    retry = int(decision.get("retry") or 0)
+    version = _stage_doc("fix", number, change, retry)[1]
+
+    def built(state):
+        doc = _stage_doc("fix", number, change, retry)[0]
+        doc["observed"] = {
+            "changeId": str(pr),
+            "version": version,
+            "conflicts": False,
+            "merged": False,
+            "empty": False,
+        }
+        # The round's own mark, so that the engine's cancel of its agent gives its count back.
+        if state is not None and (state.get("rounds") or {}).get("automatic"):
+            doc["rounds"]["automatic"] = True
+        return doc
+
     seen = {"conflicts": False, "version": version, "merged": False, "empty": True}
     name = f"onbase-{pr}-{version}"
     event = _event("changeObserved", number, None, name, changeId=str(pr), **seen)
-    state, actions = decide(gh, cfg, number, event, doc, pull=pr, write=write)
+    state, actions = decide(gh, cfg, number, event, built, pull=pr, write=write)
     if state["state"] == "noChange" and any(action["kind"] == "close" for action in actions):
         return "noChange"
     kinds = sorted({action["kind"] for action in actions})
@@ -3609,35 +3620,20 @@ def part_ended(gh, cfg, parent, subs, part, state, write=False):
     return "stays"
 
 
-def stopped_counts(
-    gh, cfg, issue, pr, head, auto_fixes, automatic, by_host, checking=False, write=False
-):
+def stopped_counts(gh, cfg, issue, pr, head, by_host, write=False):
     """How many automatic fix rounds of the NexKit pull request `pr` count after its round on
-    `head` stopped, as the engine decides it: an automatic one (`automatic`) that the host
+    `head` stopped, as the engine decides it from the stored state alone: a round that the host
     stopped before its review ended (`by_host`), such as for an agent it may not run, a change
-    already on the base branch, or checks that the base branch's move stopped (`checking`),
-    gives its count back; a round whose agent stopped by itself keeps it
-    (`report._stop_round`, `maintain._give_back`). The count is read from the stored
-    `rounds.counted`, or `auto_fixes` when no state can be read (`_stored_count`). The host's own
-    stops, and what follows them, stay NexKit 6's, so the host reports one as `stopped`; no policy
-    decides a stop. With `write`, which only a run of the item's group passes, the answer is
-    stored (`decide`); `maintain._give_back` runs in the push run's or the sweep's group and
-    never does: it only previews, and the run that the push run starts in the item's group stores
-    the give-back (`command`, `base_moved` with `automatic`). Raises `Refused`."""
-
-    def built(state):
-        counted = _stored_count(state, auto_fixes, "counted")
-        doc = _pull_doc(None, issue, pr, head, "checking" if checking else "fixing", counted)
-        version = doc["change"]["version"]
-        if checking:
-            run = {"id": first_state.RUN_ID, "next": None, "kind": "runChecks"}
-            doc["pending"] = [{**run, "changeVersion": version}]
-        else:
-            doc["pending"] = [first_state.agent_run("fix", version)]
-        if automatic and counted:
-            doc["rounds"]["automatic"] = True
-        return doc
-
+    already on the base branch, or checks that the base branch's move stopped, gives its count
+    back when the stored `rounds.automatic` marks it and the stored state still holds its pending
+    fix run or checks (`machine.give_back`); a round whose agent stopped by itself keeps it
+    (`report._stop_round`, `maintain._give_back`). The count is the stored `rounds.counted`.
+    The host's own stops, and what follows them, stay NexKit 6's, so the host reports one as
+    `stopped`; no policy decides a stop. With `write`, which only a run of the item's group
+    passes, the answer is stored (`decide`); `maintain._give_back` runs in the push run's or the
+    sweep's group and never does: it only previews, and the run that the push run starts in the
+    item's group stores the give-back (`command`, `base_moved` with `automatic`). Raises
+    `Refused`."""
     version = str(head or pr)
     action = None
     if by_host:
@@ -3647,9 +3643,9 @@ def stopped_counts(
         result = {**AGENT, "changeVersion": version, "output": None, "error": "The round stopped."}
         fields = {"action": first_state.RUN_ID, "changeVersion": version, "result": result}
         event = _event("actionFinished", issue, None, f"stop-{pr}-{version}", **fields)
-        action = ("runChecks", None) if checking else ("runAgent", "fix")
+        action = ("runAgent", "fix")
     state, _ = decide(
-        gh, cfg, issue, event, built, pull=pr, found_policies={}, action=action, write=write
+        gh, cfg, issue, event, None, pull=pr, found_policies={}, action=action, write=write
     )
     return state["rounds"]["counted"]
 

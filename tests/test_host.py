@@ -2395,14 +2395,34 @@ class CountTest(ReportCase):
     def test_a_round_nexkit_stopped_gives_its_count_back_only_when_automatic(self):
         head, cfg = "c" * 40, make_config()
         counts = host.stopped_counts
-        # Two automatic fix rounds are used, as the pull request's state comment says.
-        state = {"version": 2, "issue": 5, "auto_fixes": 2, "feedback": None}
-        self.gh.comment(6, render_state(state))
-        self.assertEqual(counts(self.gh, cfg, 5, 6, head, 2, True, True), 1)
-        self.assertEqual(counts(self.gh, cfg, 5, 6, head, 2, True, True, checking=True), 1)
-        # A person's round counts nothing, and an agent that stopped by itself keeps its count.
-        self.assertEqual(counts(self.gh, cfg, 5, 6, head, 2, False, True), 2)
-        self.assertEqual(counts(self.gh, cfg, 5, 6, head, 2, True, False), 2)
+        first = seed(self.gh, cfg, 5)[1]
+
+        def stored(state="fixing", pending="fix", **rounds):
+            """Store a round on its way: two automatic fix rounds used, the round's own pending
+            run, and `rounds` over the stored ones."""
+            run = {"id": "a1.1", "next": None, "kind": "runChecks", "changeVersion": head}
+            runs = {None: [], "fix": [first_state.agent_run("fix", head)], "checks": [run]}
+            rounds = {**first["rounds"], "counted": 2, "automatic": True, **rounds}
+            rounds = {key: value for key, value in rounds.items() if value is not None}
+            change = {"id": "6", "version": head}
+            return restate(
+                self.gh, 5, state=state, change=change, pending=runs[pending], rounds=rounds
+            )
+
+        # The host stops an automatic round that is on its way, in its agent or its checks.
+        stored()
+        self.assertEqual(counts(self.gh, cfg, 5, 6, head, True), 1)
+        stored("checking", "checks")
+        self.assertEqual(counts(self.gh, cfg, 5, 6, head, True), 1)
+        # A person's round counts nothing: the stored state does not mark it as automatic.
+        stored(automatic=None)
+        self.assertEqual(counts(self.gh, cfg, 5, 6, head, True), 2)
+        # With no pending run of the round there is nothing to stop, whatever a caller says.
+        stored("ready", None)
+        self.assertEqual(counts(self.gh, cfg, 5, 6, head, True), 2)
+        # An agent that stopped by itself keeps its count, even for an automatic round.
+        stored()
+        self.assertEqual(counts(self.gh, cfg, 5, 6, head, False), 2)
 
 
 class AcceptAnswerTest(ReportCase):
@@ -3707,17 +3727,36 @@ class RoundDecideTest(ReportCase):
 
     def test_a_stopped_round_stores_its_count_given_back(self):
         counts = host.stopped_counts
-        args = (self.gh, self.cfg, 5, 6, HEAD, 2, True, True)
-        self.store(counted=2)
+        args = (self.gh, self.cfg, 5, 6, HEAD, True)
+
+        def store(counted):
+            """Store an automatic fix round on its way with `counted` rounds used, a new round
+            that no event of an earlier one is seen for."""
+            doc = self.read()[1]
+            rounds = {**doc["rounds"], "counted": counted, "automatic": True}
+            pending = [first_state.agent_run("fix", HEAD)]
+            change = {"id": "6", "version": HEAD}
+            return restate(
+                self.gh,
+                5,
+                state="fixing",
+                change=change,
+                pending=pending,
+                rounds=rounds,
+                recentEvents=[],
+            )
+
+        revision = store(2)["revision"]
         self.assertEqual(counts(*args, write=True), 1)
         _, doc = self.read()
-        self.assertEqual((doc["revision"], doc["rounds"]["counted"]), (3, 1))
+        self.assertEqual((doc["revision"], doc["rounds"]["counted"]), (revision + 1, 1))
         # The stored count is the one that is given back.
-        self.store(counted=3)
+        store(3)
         self.assertEqual(counts(*args), 2)
         # An agent that stopped by itself finishes its round and keeps its count.
+        revision = store(3)["revision"]
         self.assertEqual(counts(*args[:-1], False, write=True), 3)
-        self.assertEqual(self.read()[1]["revision"], 5)
+        self.assertGreater(self.read()[1]["revision"], revision)
 
     def test_a_base_branch_move_and_a_diagnosis_leave_the_state_as_it_is(self):
         before = copy.deepcopy(self.gh.comments(5)), copy.deepcopy(self.gh.comments(6))

@@ -1157,7 +1157,6 @@ def _stop_round(gh, cfg, decision, agent, outcome, message, reason=None, **field
     if state and state.get("auto_fixes") and not waiting:
         from .host import Refused, stopped_counts
 
-        automatic = bool(decision.get("auto")) and not decision.get("conflicts")
         try:
             counted = stopped_counts(
                 gh,
@@ -1165,8 +1164,6 @@ def _stop_round(gh, cfg, decision, agent, outcome, message, reason=None, **field
                 decision["issue"],
                 decision["pr"],
                 decision["head"],
-                state["auto_fixes"],
-                automatic,
                 outcome in UNCOUNTED,
                 write=True,
             )

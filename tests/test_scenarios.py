@@ -173,6 +173,10 @@ class Pipeline:
         self.split_sweeps = set()
         # How many `step` runs GitHub drops from the queue before they run.
         self.lose_steps = 0
+        # The commands whose start stores the item's state, as a run in its group does when the
+        # item has none (`host.store_import`), so that a stop of that round is decided on a stored
+        # state that holds the round on its way. The others decide on the markers alone.
+        self.stored_at = set()
         self.runs = itertools.count(100)
         self.heads = itertools.count(1)
         self.played = []  # (command, number, outcome) for each run
@@ -437,6 +441,8 @@ class Pipeline:
             return
         self.first_state(decision.get("issue"))
         progress.start(self.gh, decision)
+        if inputs["command"] in self.stored_at:
+            host.store_import(self.gh, self.cfg, decision["issue"], now=IMPORTED_AT)
         if outcome == "stall":
             # The runner was lost: report never ran, and the run's `finish` job starts a
             # sweep that waits for the run to end.
@@ -2647,6 +2653,7 @@ class ScenarioTests(unittest.TestCase):
             return done(checks=False) if inputs["command"] == "go" else {"agent": found}
 
         pipe = Pipeline(self, config(), script)
+        pipe.stored_at = {"fix"}
         pipe.issue(5)
         self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("fix", 6)])
         self.assertEqual(pipe.played[-1][2], "already_on_base")

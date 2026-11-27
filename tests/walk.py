@@ -51,6 +51,9 @@ INVARIANTS = {
     "cancel or its loss; a close is pending only on a final item; a notice stands",
     "carried": "every open item has work, a wait, a hold or attention, so none is stuck",
     "counts": "a fix round is counted when its run is issued, one at a time, within `fixRounds`",
+    "budget": "each agent run's budget is its stage's, and an implement, fix or review run's is "
+    "capped by what the item has left; none of those starts on a spent item budget, and an item "
+    "fails for its budget only when it has none left",
     "give-back": "only an automatic fix round stopped before its review ends gives its count "
     "back, and the count of one whose change conflicted stands, or that a person's push "
     "found published",

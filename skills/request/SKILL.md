@@ -74,8 +74,10 @@ succeeds. Help the user write issues that one session can finish and test.
    marks at all when `autopilot.labels` gives a label a `wave`: give it the label of a
    higher wave than the rest, and new issues and the parts of a split hold it back by
    themselves. Issues of one wave run side by side, so a milestone's journey and then its
-   docs sweep take waves 1 and 2. A label of `autopilot.priority`, such as `bug`, puts an
-   issue first, also without a milestone.
+   docs sweep take waves 1 and 2. A label that the repository lists in `autopilot.priority`
+   puts an issue first, also without a milestone. `bug` counts only once the repository adds
+   it there: the default lists only NexKit's own labels
+   ([Autopilot](../../docs/autopilot.md#autopilot)).
 
    Touching the same files, or a tidier order, is no reason to wait: a fix round merges the
    base branch and resolves the conflict. NexKit starts that round itself only with

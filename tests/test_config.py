@@ -262,7 +262,6 @@ class ConfigTests(unittest.TestCase):
                 "trusted_workflows": [],
                 "priority": ["nexkit:ci", "nexkit:dependabot", "nexkit:flaky"],
                 "labels": {},
-                "last_in_milestone_label": None,
                 "dependabot": None,
             },
         )
@@ -589,21 +588,27 @@ class ConfigTests(unittest.TestCase):
             with self.subTest(settings), self.assertRaisesRegex(ConfigError, "autopilot"):
                 validate({"autopilot": settings})
 
-    def test_the_label_to_run_last_is_a_label_of_wave_1(self):
-        cfg = validate({"autopilot": {"last_in_milestone_label": "last"}})
-        self.assertEqual(autopilot_labels(cfg), {"last": {"wave": 1}})
-        # `labels` decides for a label it names too.
-        cfg = validate(
-            {"autopilot": {"last_in_milestone_label": "last", "labels": {"last": {"wave": 3}}}}
-        )
-        self.assertEqual(autopilot_labels(cfg), {"last": {"wave": 3}})
-
-    def test_last_in_milestone_label(self):
-        found = validate({"autopilot": {"last_in_milestone_label": "last"}})
-        self.assertEqual(found["autopilot"]["last_in_milestone_label"], "last")
-        for value in ("", " ", 5, "x" * 51):
-            with self.assertRaisesRegex(ConfigError, "autopilot.last_in_milestone_label"):
+    def test_last_in_milestone_label_was_removed(self):
+        with self.assertRaisesRegex(
+            ConfigError,
+            r"last_in_milestone_label was removed in NexKit 7\.0; in autopilot, replace it "
+            r'with "labels": \{"last": \{"wave": 1\}\}',
+        ):
+            validate({"autopilot": {"last_in_milestone_label": "last"}})
+        for value in ("", 5):
+            with (
+                self.subTest(value),
+                self.assertRaisesRegex(ConfigError, "was removed in NexKit 7.0"),
+            ):
                 validate({"autopilot": {"last_in_milestone_label": value}})
+
+    def test_a_null_last_in_milestone_label_sets_nothing(self):
+        cfg = validate({"autopilot": {"last_in_milestone_label": None}})
+        self.assertNotIn("last_in_milestone_label", cfg["autopilot"])
+
+    def test_autopilot_labels_are_the_labels_setting(self):
+        cfg = validate({"autopilot": {"labels": {"last": {"wave": 3}}}})
+        self.assertEqual(autopilot_labels(cfg), {"last": {"wave": 3}})
 
     def test_trusted_workflows(self):
         self.assertEqual(validate({})["autopilot"]["trusted_workflows"], [])

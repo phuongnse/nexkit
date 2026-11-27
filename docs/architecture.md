@@ -141,8 +141,8 @@ Three modules read and write it. `state.py` keeps the pipeline's state in the Ap
 that names the newest source the host took from GitHub, and `first_state.py` reads the first state
 document from NexKit 6's markers. `progress.py` writes the pipeline's state comment only on the
 state its writer read, and `autopilot.py` does the same for autopilot's record comment. `host.py`
-takes an item's events from their sources after that cursor and stores the engine's answers through
-`item_state.py`.
+stores an open item's first import, takes its events from their sources after that cursor and
+stores the engine's answers through `item_state.py`.
 
 ## The engine and its hosts
 

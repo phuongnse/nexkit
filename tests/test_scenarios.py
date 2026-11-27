@@ -26,7 +26,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
-from nexkit import autopilot, cli, host, item_state, progress, state
+from nexkit import autopilot, cli, first_state, host, item_state, progress, state
 from nexkit.checks import check_matrix
 from nexkit.github import GitHubError
 from nexkit.maintain import maintain, paused_runs, within_reach
@@ -48,8 +48,43 @@ from tests.test_item_state import CREATED, HELD, RELEASED
 from tests.test_item_state import step as engine_step
 
 WORKFLOW = "acme/app/.github/workflows/nexkit.yml@refs/heads/main"
+# The time at which the first import of an item is read, so that two imports are equal.
+IMPORTED_AT = datetime(2026, 1, 3, tzinfo=UTC)
 # The jobs of a run in each stage, as GitHub lists them while it runs there.
 STAGES = ["route", "agent", "publish", "verify", "review", "report"]
+# A time as NexKit writes it, and a marker that holds base64 JSON.
+TIME = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
+MARKER = re.compile(r"(<!-- nexkit:[a-z-]+ )([A-Za-z0-9+/=]+)( -->)")
+
+
+def timeless(body):
+    """`body` with every ISO time, in its text and in NexKit's base64 JSON markers, replaced:
+    two items played in different seconds then read the same."""
+
+    def walk(value):
+        if isinstance(value, str):
+            return "<time>" if TIME.fullmatch(value) else value
+        if isinstance(value, list):
+            return [walk(item) for item in value]
+        if isinstance(value, dict):
+            return {key: walk(item) for key, item in value.items()}
+        return value
+
+    def marker(match):
+        try:
+            data = json.loads(base64.b64decode(match.group(2), validate=True))
+        except ValueError:
+            return match.group(0)
+        text = json.dumps(walk(data), sort_keys=True).encode()
+        return f"{match.group(1)}{base64.b64encode(text).decode()}{match.group(3)}"
+
+    return TIME.sub("<time>", MARKER.sub(marker, body))
+
+
+def people_read(pipe, numbers=(5, 6)):
+    """The comments on `numbers` that are not state comments, with times set aside."""
+    found = [c["body"] for n in numbers for c in pipe.gh.comments(n)]
+    return [timeless(t) for t in found if not t.startswith("### NexKit state")]
 
 
 def jobs_in(stage):
@@ -199,6 +234,24 @@ class Pipeline:
         return self.gh.add_issue(number, title=f"Issue {number}", milestone=1, **kw)
 
     # -- playing ------------------------------------------------------------------
+
+    def take_run(self, number):
+        """The start of a run in item `number`'s group, as `nexkit route` makes it
+        (`cli._take`): it stores the item's first state when there is none, then takes its
+        events. The import is read at `IMPORTED_AT`. Returns what it printed."""
+        real = host.store_import
+
+        def fixed(gh, cfg, item, now=None):
+            return real(gh, cfg, item, now=IMPORTED_AT)
+
+        out = io.StringIO()
+        with mock.patch.object(host, "store_import", fixed), contextlib.redirect_stdout(out):
+            cli._take(self.gh, self.cfg, "workflow_dispatch", {"inputs": {"number": str(number)}})
+        return out.getvalue()
+
+    def state_comments(self, number):
+        """The state comments of item `number`, which the App posted."""
+        return [c for c in self.gh.comments(number) if c["body"].startswith("### NexKit state")]
 
     def play(self):
         """Run every dispatch, and the ones they start, then the hourly sweeps that time
@@ -576,17 +629,24 @@ class ItemGroup:
     """One work item's concurrency group, as GitHub keeps it: one run runs and one waits, and a
     run queued while another waits replaces it, so its event is never answered by its own run.
     Each run takes the item's events from their sources as `nexkit route` does at its start
-    (`cli._take`, docs/engine-hosts.md#hosts), on a state comment that is already stored."""
+    (`cli._take`, docs/engine-hosts.md#hosts), on a state comment that is already stored, or,
+    with `stored` off, with none, so that the first run stores the item's import. With `routes`,
+    a run that is queued with the comment of its event also routes it (`route`) on what it took,
+    as `nexkit route` does, and `decisions` holds each run's decision."""
 
     NUMBER = 5
 
-    def __init__(self, test):
+    def __init__(self, test, stored=True, routes=False):
         self.test = test
+        self.routes = routes
+        self.comments = {}  # the comment that gave a run its event
+        self.decisions = {}  # what each run that routed decided
         self.gh = FakeGitHub()
         self.cfg = make_config(autopilot={"enabled": True})
         self.gh.add_issue(self.NUMBER)
-        first, _, _ = engine_step(None, {**CREATED, "item": str(self.NUMBER)})
-        test.assertTrue(item_state.write(self.gh, self.NUMBER, first, (None, None)))
+        if stored:
+            first, _, _ = engine_step(None, {**CREATED, "item": str(self.NUMBER)})
+            test.assertTrue(item_state.write(self.gh, self.NUMBER, first, (None, None)))
         self.running = None
         self.waiting = None
         self.replaced = []  # the runs that a newer one replaced, which never ran
@@ -599,9 +659,11 @@ class ItemGroup:
         at = f"2026-01-02T00:00:{next(self.clock):02d}Z"
         return self.gh.human_comment(self.NUMBER, body, login=login, at=at)
 
-    def queue(self, run):
-        """A run of the item's group starts when none runs, and otherwise waits, replacing
-        the one that waits."""
+    def queue(self, run, comment=None):
+        """A run of the item's group, whose event is the posted `comment`, starts when none
+        runs, and otherwise waits, replacing the one that waits."""
+        if comment is not None:
+            self.comments[run] = comment
         if self.running is None:
             self._start(run)
             return
@@ -629,14 +691,23 @@ class ItemGroup:
             return take(gh, cfg, number, sleep=lambda seconds: None)
 
         # The event of a run in the item's group: a comment on the item.
-        event = {"action": "created", "issue": {"number": self.NUMBER}, "comment": {"id": 1}}
+        comment = self.comments.get(run) if self.routes else None
+        event = {
+            "action": "created",
+            "issue": {"number": self.NUMBER},
+            "comment": comment or {"id": 1},
+        }
         with (
             mock.patch.object(host, "step", spy),
             mock.patch.object(host, "take", quick),
             contextlib.redirect_stdout(io.StringIO()),
         ):
             try:
-                cli._take(self.gh, self.cfg, "issue_comment", event)
+                taken = cli._take(self.gh, self.cfg, "issue_comment", event)
+                if comment is not None:
+                    self.decisions[run] = route(
+                        self.gh, "issue_comment", event, cfg=self.cfg, taken=taken
+                    )
             except item_state.Moved:
                 self.failed.append(run)
                 self.finish()
@@ -995,7 +1066,7 @@ class ScenarioTests(unittest.TestCase):
                 pipe.issue(8)
             return done()
 
-        pipe = Pipeline(self, config(autopilot={"last_in_milestone_label": "last"}), script)
+        pipe = Pipeline(self, config(autopilot={"labels": {"last": {"wave": 1}}}), script)
         pipe.issue(5, labels=("last",))
         pipe.issue(6)
         played = pipe.play()
@@ -1015,7 +1086,7 @@ class ScenarioTests(unittest.TestCase):
             big = inputs["number"] == "6"
             return plan(too_large=big, split=parts if big else [])
 
-        settings = {"last_in_milestone_label": "last"}
+        settings = {"labels": {"last": {"wave": 1}}}
         pipe = Pipeline(self, config(autopilot=settings, close_parent_issues=True), script)
         pipe.issue(5, labels=("last",))
         pipe.issue(6)
@@ -1029,7 +1100,7 @@ class ScenarioTests(unittest.TestCase):
                 return plan(questions=[{"question": "Which?", "options": ["a", "b"]}])
             return plan() if inputs["command"] == "plan" else done()
 
-        pipe = Pipeline(self, config(autopilot={"last_in_milestone_label": "last"}), script)
+        pipe = Pipeline(self, config(autopilot={"labels": {"last": {"wave": 1}}}), script)
         pipe.issue(5, labels=("last",))
         pipe.issue(6)
         self.assertEqual(pipe.play(), [("plan", 6)])
@@ -1139,7 +1210,7 @@ class ScenarioTests(unittest.TestCase):
             big = inputs["number"] == "5"
             return plan(too_large=big, split=parts if big else [])
 
-        settings = {"last_in_milestone_label": "last"}
+        settings = {"labels": {"last": {"wave": 1}}}
         pipe = Pipeline(self, config(autopilot=settings, close_parent_issues=True), script)
         pipe.issue(5, labels=("last",))
         pipe.issue(6, labels=("last",))
@@ -1263,6 +1334,32 @@ class ScenarioTests(unittest.TestCase):
         pipe.play()
         self.assertEqual(pipe.gh.issues[5]["state"], "closed")
         self.assertEqual(len(pipe.gh.comments_matching(6, "a person is needed")), 1)
+
+    def test_an_approval_stores_its_answer_only_from_the_items_group(self):
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        pipe.gh.review_states[6] = {"decision": "REVIEW_REQUIRED"}
+        pipe.gh.files["CODEOWNERS"] = "* @olivia\n"
+        pipe.gh.pr_files[6] = [{"filename": "app.py", "additions": 3, "deletions": 1}]
+        pipe.gh.merge_error = GitHubError(405, "Waiting on code owner review from olivia.")
+        pipe.play()
+        self.assertEqual(pipe.played[-1][2], "merge_refused")
+        # The item's group stores the state comment, as the run that took it did.
+        pipe.take_run(5)
+        [comment] = copy.deepcopy(pipe.state_comments(5))
+        pipe.gh.merge_error = None
+        # The approval's own run, in its group `approved-N`, only previews: nothing is stored.
+        self.assertEqual(pipe.approve(), ["#6: sent @olivia's approval to #5's queue."])
+        self.assertEqual(pipe.state_comments(5), [comment])
+        # The step run in the item's group stores the engine's answer, at the next revision.
+        pipe.drain()
+        self.assertEqual(len(pipe.gh.merged), 1)
+        stored = item_state.read(pipe.gh, 5)[1]
+        self.assertEqual(stored["revision"], item_state.find([comment])[1]["revision"] + 1)
+        self.assertIn("approval-6-" + pipe.gh.pulls[6]["head"]["sha"], stored["recentEvents"])
 
     def test_an_approval_of_a_commit_that_is_no_longer_the_head_merges_nothing(self):
         def script(pipe, inputs):
@@ -3013,6 +3110,80 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(len(mention), 1)
         self.assertIn("Its plan lists 3 parts, but it has 2 sub-issues.", mention[0]["body"])
 
+    def parts_of_a_parent(self, cfg):
+        """The parent 1 with the completed part 2 and the open part 5, imported into its
+        state, and the part 5 closed as completed after it."""
+        gh = FakeGitHub()
+        gh.add_milestone(1)
+        gh.add_issue(1, title="Epic", milestone=1)
+        gh.add_issue(2, title="Part", state="closed", reason="completed", milestone=1)
+        gh.add_issue(5, title="Part", milestone=1)
+        gh.parents.update({2: 1, 5: 1})
+        self.assertTrue(host.store_import(gh, cfg, 1))
+        self.assertEqual(item_state.read(gh, 1)[1]["state"], "split")
+        gh.close_issue(5, "completed")
+        return gh
+
+    def close_a_part(self, gh, cfg):
+        """The `issues: closed` run of the part 5, as the part's group runs it, and the `step`
+        run that it sent into the parent's group. Returns the calls that the first made to
+        `item_state.apply` and `item_state.write`, and the lines of both."""
+        calls = []
+
+        def spied(real):
+            def spy(client, number, *args, **kwargs):
+                calls.append(number)
+                return real(client, number, *args, **kwargs)
+
+            return spy
+
+        before = copy.deepcopy(gh.issue_comments)
+        decision = {"action": "maintain", "task": "parents", "issue": 5}
+        with (
+            mock.patch.object(item_state, "apply", spied(item_state.apply)),
+            mock.patch.object(item_state, "write", spied(item_state.write)),
+        ):
+            first = maintain(gh, decision, cfg, workflow="nexkit.yml", ref="main")
+        # The part's run never stores the parent's state.
+        self.assertNotIn(1, calls)
+        self.assertEqual(
+            [c for c in gh.issue_comments[1] if "nexkit:item-state" in c["body"]],
+            [c for c in before[1] if "nexkit:item-state" in c["body"]],
+        )
+        [step] = [d["inputs"] for d in gh.dispatches if d["inputs"]["command"] == "step"]
+        self.assertEqual((step["number"], step["note"]), ("1", "part 5"))
+        self.assertEqual(queue_item(gh, "workflow_dispatch", {"inputs": step}), 1)
+        self.assertEqual(item_state.read(gh, 1)[1]["revision"], 1)
+        from tests.support import play_steps
+
+        return first, play_steps(gh, cfg)
+
+    def test_the_last_part_s_close_ends_its_parent_through_the_parent_s_stored_state(self):
+        cfg = config(close_parent_issues=True)
+        gh = self.parts_of_a_parent(cfg)
+        first, played = self.close_a_part(gh, cfg)
+        self.assertIn("Closed #1 as completed: all its sub-issues are closed.", first)
+        self.assertIn("Sent the end of #5 to #1's queue.", first)
+        # The step run of the parent's group stores the end, and writes nothing else on GitHub.
+        self.assertEqual(played[0], ["Recorded the end of #5 in #1's state: close."])
+        _, doc = item_state.read(gh, 1)
+        self.assertEqual((doc["revision"], doc["state"]), (2, "accepted"))
+        self.assertIn("part-1-5", doc["recentEvents"])
+        self.assertTrue(any(action["kind"] == "close" for action in doc["pending"]))
+        self.assertEqual(gh.issues[1]["state"], "closed")
+        self.assertEqual(len(gh.comments_matching(1, "<!-- nexkit:parent-closed -->")), 1)
+
+    def test_without_close_parent_issues_a_parent_s_stored_end_waits_for_a_person(self):
+        cfg = config(close_parent_issues=False)
+        gh = self.parts_of_a_parent(cfg)
+        first, played = self.close_a_part(gh, cfg)
+        self.assertNotIn("Closed #1", " ".join(first))
+        _, doc = item_state.read(gh, 1)
+        self.assertEqual((doc["revision"], doc["state"]), (2, "split"))
+        self.assertIn("part-1-5", doc["recentEvents"])
+        self.assertEqual(doc["attention"]["reason"], "splitIncomplete")
+        self.assertEqual(gh.issues[1]["state"], "open")
+
     def test_a_stopped_go_plans_again_once_a_person_answers_or_its_blocker_closes(self):
         def script():
             gos = itertools.count()
@@ -3476,6 +3647,381 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(state["state"], "planning")
         self.assertEqual(state["recentEvents"][-1], ids[0])
         self.assertEqual(group.cursor()[1], ids[1])
+
+    # -- the first state of an item ------------------------------------------------------
+
+    def stored_import(self, pipe, number=5, pull=None):
+        """Run `take_run` on `pipe` and check that it stored one state comment, at revision 1,
+        which holds what `first_state.import_item` makes of the item now. Returns the document."""
+        out = pipe.take_run(number)
+        self.assertIn(f"Stored the first state of #{number}", out)
+        [comment] = pipe.state_comments(number)
+        stored = item_state.find([comment])[1]
+        expected = first_state.import_item(pipe.gh, pipe.cfg, number, pull, now=IMPORTED_AT)
+        self.assertEqual(stored, expected)
+        self.assertEqual(stored["revision"], 1)
+        # A second run finds it and stores nothing more.
+        self.assertNotIn("Stored the first state", pipe.take_run(number))
+        self.assertEqual(pipe.state_comments(number), [comment])
+        return stored
+
+    def same_item(self, imported, plain, issue_state, skew=timedelta(0)):
+        """`imported`, which stored an import in the middle of its work, plays on as `plain`,
+        which stored none: the same runs, merges, comments of the issue and end. `plain` plays
+        with its clock `skew` behind, as a slow runner plays it in another second."""
+
+        class Behind(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return datetime.now(tz) - skew
+
+        played = imported.play()
+        with mock.patch.object(autopilot, "datetime", Behind):
+            self.assertEqual(played, plain.play())
+        self.assertEqual(imported.played, plain.played)
+        self.assertEqual(imported.gh.merged, plain.gh.merged)
+        self.assertEqual(imported.gh.issues[5]["state"], issue_state)
+        self.assertEqual(plain.gh.issues[5]["state"], issue_state)
+
+        self.assertEqual(people_read(imported), people_read(plain))
+        self.assertEqual(
+            collect(imported.gh, imported.cfg, workers=1)["needs_person"],
+            collect(plain.gh, plain.cfg, workers=1)["needs_person"],
+        )
+
+    def test_what_people_read_sets_aside_the_times_of_records(self):
+        def body(at, basis):
+            record = {"basis": basis, "command": "plan", "at": at}
+            return f"Text at 2026-01-01T00:00:00Z\n{autopilot.record_marker(record)}"
+
+        first = body("2026-01-01T00:00:00Z", [1, 0])
+        self.assertNotEqual(first, body("2026-01-01T00:00:01Z", [1, 0]))
+        self.assertEqual(timeless(first), timeless(body("2026-01-01T00:00:01Z", [1, 0])))
+        self.assertNotEqual(timeless(first), timeless(body("2026-01-01T00:00:00Z", [2, 0])))
+
+    def test_a_plan_waiting_for_approval_is_imported_and_waits_as_before(self):
+        def script(pipe, inputs):
+            return plan(questions=[{"question": "Which?", "options": ["a", "b"]}])
+
+        def built():
+            pipe = Pipeline(self, config(autopilot={"answer": "never"}), script)
+            pipe.issue(5)
+            autopilot.request(pipe.gh, "nexkit.yml", "main")
+            pipe.drain()
+            self.assertEqual([c for c, *_ in pipe.played], ["plan"])
+            return pipe
+
+        imported, plain = built(), built()
+        stored = self.stored_import(imported)
+        self.assertEqual(stored["itemKind"], "change")
+        self.same_item(imported, plain, "open")
+        self.assertTrue(imported.gh.comments_matching(5, "a person is needed"))
+
+    def test_an_imported_plan_that_a_comment_follows_plays_on_and_stores_the_answer(self):
+        def script(pipe, inputs):
+            return plan(questions=[{"question": "Which?", "options": ["a", "b"]}])
+
+        def built():
+            pipe = Pipeline(self, config(autopilot={"answer": "never"}), script)
+            pipe.issue(5)
+            autopilot.request(pipe.gh, "nexkit.yml", "main")
+            pipe.drain()
+            self.assertEqual([c for c, *_ in pipe.played], ["plan"])
+            return pipe
+
+        imported, plain = built(), built()
+        self.stored_import(imported)
+        for pipe in (imported, plain):
+            pipe.gh.human_comment(5, "Please keep it small.")
+        # Force the records of the two plays a second apart, as a slow runner does.
+        self.same_item(imported, plain, "open", skew=timedelta(seconds=1))
+        # The runs of the item's group stored their answers past the import's revision, while
+        # the item that stored no import still has no state comment.
+        [comment] = imported.state_comments(5)
+        self.assertGreater(item_state.find([comment])[1]["revision"], 1)
+        self.assertEqual(plain.state_comments(5), [])
+
+    def test_a_pull_request_in_its_checks_is_imported_and_carries_on_as_before(self):
+        def built(import_there):
+            seen = []
+
+            def checking(pipe, pull):
+                if import_there and not seen:
+                    seen.append(self.stored_import(pipe, 5, pull))
+
+            def script(pipe, inputs):
+                if inputs["command"] == "plan":
+                    return plan()
+                return {**done(), "checking": checking}
+
+            pipe = Pipeline(self, config(), script)
+            pipe.issue(5)
+            pipe.play()
+            return pipe, seen
+
+        imported, seen = built(True)
+        plain, _ = built(False)
+        # The import was read while the round checked its pull request.
+        self.assertEqual(seen[0]["change"]["id"], "6")
+        self.assertEqual(imported.played, plain.played)
+        self.assertEqual(imported.gh.merged, plain.gh.merged)
+        self.assertEqual(imported.gh.issues[5]["state"], "closed")
+        self.assertEqual(plain.gh.issues[5]["state"], "closed")
+        self.assertEqual(len(imported.state_comments(5)), 1)
+
+    def test_a_paused_run_is_imported_and_resumes_as_before(self):
+        def built():
+            pauses = itertools.count()
+
+            def script(pipe, inputs):
+                if inputs["command"] == "plan":
+                    return plan()
+                if inputs["command"] == "go" and next(pauses) < 1:
+                    at = autopilot.iso(datetime.now(UTC) + timedelta(minutes=30))
+                    limit = "You've hit your session limit"
+                    return {
+                        "agent": {
+                            "status": "paused",
+                            "error": f"Claude hit the account's usage limit: {limit}",
+                            "limit": limit,
+                            "resume_at": at,
+                            "reset_known": True,
+                        }
+                    }
+                return done()
+
+            pipe = Pipeline(self, config(), script)
+            pipe.issue(5)
+            autopilot.request(pipe.gh, "nexkit.yml", "main")
+            while pipe.gh.dispatches[pipe.handled]["inputs"]["command"] != "resume":
+                pipe.drain_one()
+            self.assertEqual(pipe.gh.run_comments(5)[-1]["run"]["status"], "paused")
+            return pipe
+
+        imported, plain = built(), built()
+        self.stored_import(imported)
+        for pipe in (imported, plain):
+            pipe.later(timedelta(minutes=31))
+        self.same_item(imported, plain, "closed")
+        self.assertEqual([c for c, *_ in imported.played].count("go"), 2)
+
+    def test_a_merge_waiting_for_required_checks_is_imported_and_merges_as_before(self):
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else done()
+
+        def built():
+            pipe = Pipeline(self, config(), script)
+            pipe.issue(5)
+            pipe.gh.required = {"e2e"}
+            pipe.gh.merge_error = GitHubError(405, 'Required status check "e2e" is expected.')
+            autopilot.request(pipe.gh, "nexkit.yml", "main")
+            pipe.drain()
+            self.assertEqual([o for *_, o in pipe.played], ["planned", "merge_waiting"])
+            return pipe
+
+        imported, plain = built(), built()
+        stored = self.stored_import(imported, 5, 6)
+        self.assertEqual(stored["change"]["id"], "6")
+        for pipe in (imported, plain):
+            # The required check passes: the next sweep merges.
+            pipe.gh.merge_error = None
+            pipe.head(6)
+        self.same_item(imported, plain, "closed")
+        self.assertEqual(len(imported.gh.merged), 1)
+
+    def test_a_merge_waiting_for_required_checks_keeps_its_first_wait_and_ends_for_a_person(self):
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else done()
+
+        def built():
+            pipe = Pipeline(self, config(), script)
+            pipe.issue(5)
+            pipe.gh.required = {"e2e"}
+            pipe.gh.merge_error = GitHubError(405, 'Required status check "e2e" is expected.')
+            autopilot.request(pipe.gh, "nexkit.yml", "main")
+            pipe.drain()
+            self.assertEqual([o for *_, o in pipe.played], ["planned", "merge_waiting"])
+            return pipe
+
+        def sweep(pipe, hours):
+            """A sweep `hours` after the wait began, and the runs it starts."""
+
+            class Later(datetime):
+                @classmethod
+                def now(cls, tz=None):
+                    return datetime.now(tz) + timedelta(hours=hours)
+
+            with mock.patch.object(autopilot, "datetime", Later):
+                pipe.sweep()
+                pipe.drain()
+
+        stored, plain = built(), built()
+        # Force the two items' record times apart, as a slow runner does between two plays.
+        plain.later(timedelta(seconds=1))
+        self.stored_import(stored, 5, 6)
+        first = item_state.read(stored.gh, 5)[1]
+        self.assertEqual([wait["for"] for wait in first["waits"]], ["requiredChecks"])
+        since = first["checksSince"]["at"]
+        revision = first["revision"]
+        for hours in (2, 4):
+            for pipe in (stored, plain):
+                sweep(pipe, hours)
+            # A sweep that merges again stores the answer of the engine: the revision grows and
+            # the first wait's time stays.
+            document = item_state.read(stored.gh, 5)[1]
+            self.assertGreater(document["revision"], revision)
+            revision = document["revision"]
+            self.assertEqual(document["checksSince"]["at"], since)
+            self.assertEqual(document["state"], "accepting")
+            self.assertEqual(stored.gh.merged, [])
+        # More than six hours after the first wait the engine hands the merge to a person.
+        for pipe in (stored, plain):
+            sweep(pipe, 7)
+        document = item_state.read(stored.gh, 5)[1]
+        self.assertGreater(document["revision"], revision)
+        self.assertEqual(document["state"], "ready")
+        self.assertEqual(document["attention"]["reason"], "acceptRefused")
+        self.assertEqual(stored.gh.merged, [])
+        mentions = [c for n in (5, 6) for c in stored.gh.comments_matching(n, "a person is needed")]
+        self.assertEqual(len(mentions), 1)
+
+        # What people read is what a plain run leaves.
+        self.assertEqual(people_read(stored), people_read(plain))
+        self.assertEqual(stored.played, plain.played)
+        self.assertEqual(stored.gh.issues[5]["state"], plain.gh.issues[5]["state"])
+
+    def test_the_sweep_and_status_only_preview_a_waiting_merge_and_the_step_run_stores_it(self):
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        pipe.gh.required = {"e2e"}
+        pipe.gh.merge_error = GitHubError(405, 'Required status check "e2e" is expected.')
+        autopilot.request(pipe.gh, "nexkit.yml", "main")
+        pipe.drain()
+        self.stored_import(pipe, 5, 6)
+        before = copy.deepcopy(pipe.gh.comments(5)), copy.deepcopy(pipe.gh.comments(6))
+        issue = pipe.gh.issue(5)
+        # What the sweep and `nexkit status` read decides the tick and stores nothing.
+        step = autopilot.assess(pipe.gh, pipe.cfg, issue, autopilot.nexkit_pulls(pipe.gh))
+        self.assertEqual(step["state"], "merge")
+        autopilot.preview(pipe.gh, pipe.cfg)
+        collect(pipe.gh, pipe.cfg, workers=1)
+        self.assertEqual((pipe.gh.comments(5), pipe.gh.comments(6)), before)
+        self.assertEqual(item_state.read(pipe.gh, 5)[1]["revision"], 1)
+        # The `step` run in the issue's group stores the engine's answer to the tick.
+        head = pipe.gh.pulls[6]["head"]["sha"]
+        with contextlib.redirect_stdout(io.StringIO()):
+            autopilot.step(pipe.gh, pipe.cfg, 5, "nexkit.yml", "main")
+        document = item_state.read(pipe.gh, 5)[1]
+        self.assertGreater(document["revision"], 1)
+        self.assertIn(f"merge-6-{head}", document["recentEvents"])
+
+    def test_a_state_comment_that_someone_else_changed_gets_no_second_one_and_waits_for_a_person(
+        self,
+    ):
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        pipe.gh.required = {"e2e"}
+        pipe.gh.merge_error = GitHubError(405, 'Required status check "e2e" is expected.')
+        autopilot.request(pipe.gh, "nexkit.yml", "main")
+        pipe.drain()
+        self.stored_import(pipe, 5, 6)
+        [comment] = pipe.state_comments(5)
+        comment["editors"] = [BOT_LOGIN, "mallory"]
+        out = pipe.take_run(5)
+        self.assertIn("::warning::", out)
+        self.assertIn("@mallory changed a comment of NexKit's", out)
+        self.assertEqual(pipe.state_comments(5), [comment])
+        needs = collect(pipe.gh, pipe.cfg, workers=1)["needs_person"]
+        found = [item for item in needs if autopilot.CHANGED_ENTRY in item["reason"]]
+        self.assertTrue(found and all("@mallory" in item["reason"] for item in found), needs)
+        # Deleting the comment imports the item again, at revision 1, on the next run.
+        pipe.gh.issue_comments[5].remove(comment)
+        self.assertIn("Stored the first state of #5", pipe.take_run(5))
+        [again] = pipe.state_comments(5)
+        self.assertNotEqual(again["id"], comment["id"])
+        self.assertEqual(item_state.find([again])[1]["revision"], 1)
+
+    def test_the_first_run_of_an_item_imports_and_a_later_run_answers_a_replaced_command(self):
+        group = ItemGroup(self, stored=False)
+        self.assertEqual(group.gh.comments(group.NUMBER), [])
+        group.queue("first")
+        # The first run stored the import at revision 1, before any comment of a person.
+        [comment] = group.gh.comments(group.NUMBER)
+        self.assertEqual(group.state()["revision"], 1)
+        self.assertIsNone(item_state.since(comment))
+        self.assertEqual(group.answered, [])
+        # While it runs, a command is posted and its run waits, and a remark's run replaces it.
+        asked = group.post("/nexkit plan Keep it short")
+        group.queue("asked")
+        group.post("Thanks, that helps", login="bob")
+        group.queue("remark")
+        self.assertEqual(group.replaced, ["asked"])
+        group.finish()
+        self.assertIn(f"comment-{asked['id']}", group.answered)
+        self.assertEqual(group.state()["state"], "planning")
+        self.assertEqual(len(group.gh.comments(group.NUMBER)), 3)
+        # The cursor moved past the command's comment.
+        at = asked["created_at"]
+        self.assertGreaterEqual(
+            item_state.order(group.cursor()), item_state.order((at, f"comment-{asked['id']}"))
+        )
+
+    def test_a_plan_command_starts_its_plan_once_and_stores_one_revision(self):
+        for stored in (True, False):
+            with self.subTest(stored=stored):
+                group = ItemGroup(self, stored=stored, routes=True)
+                if not stored:
+                    group.queue("import")
+                    group.finish()
+                before = group.state()["revision"]
+                asked = group.post("/nexkit plan Keep it short")
+                name = f"comment-{asked['id']}"
+                group.queue("asked", comment=asked)
+                decision = group.decisions["asked"]
+                found = (decision["action"], decision["comment_id"])
+                self.assertEqual(found, ("plan", asked["id"]))
+                # The engine answered it once, when `take` stored its answer, and the state
+                # comment moved by that one revision.
+                self.assertEqual(group.answered.count(name), 1)
+                state = group.state()
+                self.assertEqual(state["revision"], before + 1)
+                self.assertEqual(state["recentEvents"].count(name), 1)
+                self.assertEqual(state["state"], "planning")
+                # A remark's run, and a run again of the command, which an earlier run took,
+                # start nothing and reply nothing.
+                group.finish()
+                remark = group.post("Thanks, that helps", login="bob")
+                group.queue("remark", comment=remark)
+                self.assertEqual(group.decisions["remark"]["action"], "none")
+                group.finish()
+                group.queue("again", comment=asked)
+                again = group.decisions["again"]
+                self.assertEqual((again["action"], again.get("reply_to")), ("none", None))
+                self.assertEqual(group.state()["recentEvents"].count(name), 1)
+
+    def test_a_command_whose_run_was_replaced_starts_its_stage_in_the_run_that_ran(self):
+        group = ItemGroup(self, routes=True)
+        group.queue("running")
+        asked = group.post("/nexkit plan Keep it short")
+        group.queue("asked", comment=asked)
+        remark = group.post("Thanks, that helps", login="bob")
+        group.queue("remark", comment=remark)
+        self.assertEqual((group.replaced, group.waiting), (["asked"], "remark"))
+        group.finish()
+        # The remark's run, which ran, starts the plan that the command asked for, and the
+        # command's comment is the one that gets 👀 (`progress.start` reacts to `comment_id`).
+        decision = group.decisions["remark"]
+        self.assertEqual((decision["action"], decision["comment_id"]), ("plan", asked["id"]))
+        self.assertNotIn("also_reply", decision)
+        self.assertEqual(group.state()["state"], "planning")
+        self.assertEqual(group.state()["recentEvents"].count(f"comment-{asked['id']}"), 1)
+        self.assertNotIn("asked", group.decisions)
 
 
 if __name__ == "__main__":

@@ -4602,7 +4602,7 @@ class WaveTests(unittest.TestCase):
         self.assertIsNone(self.wait())
 
     def test_the_label_to_run_last_is_wave_1(self):
-        cfg = make_config(autopilot={"enabled": True, "last_in_milestone_label": "last"})
+        cfg = make_config(autopilot={"enabled": True, "labels": {"last": {"wave": 1}}})
         self.gh.issues[5]["labels"] = [{"name": "last"}]
         self.gh.add_issue(6, milestone=1)
         self.gh.add_issue(7, milestone=1, labels=("last",))
@@ -5370,3 +5370,58 @@ class EveryStartFollowsTheEngine(unittest.TestCase):
     def test_a_kind_that_is_not_asked_for_is_not_checked(self):
         source = 'def waits(issue):\n    return _step(issue, "merge", "x")\n'
         self.assertEqual(unanswered_steps(source, kinds=("start",)), [])
+
+
+class StoredStateDecisionsTests(AutopilotCase):
+    """The decisions after a plan, for a first plan and after a writer's vouch read the item's
+    stored state and, only in the `step` run of its group, store the engine's answer
+    (`host.decide`)."""
+
+    AFTER = "2026-01-02T00:00:00Z"
+
+    def setUp(self):
+        super().setUp()
+        self.gh.add_milestone(1)
+        # 5: its plan waits to be carried on, 6: a new issue, 7: a round that stopped on an
+        # untrusted edit, which a writer vouched for after it.
+        self.issue(5)
+        self.planned(5)
+        self.issue(6)
+        self.issue(7, user="bob")
+        self.run_comment(7, "go", status="failure", outcome="agent_untrusted")
+        self.planned(7)
+        self.gh.human_comment(7, "/nexkit trust", "alice")
+        self.gh.edits[7] = [("bob", self.AFTER)]
+        self.gh.comments(7)[-1]["created_at"] = "2026-01-03T00:00:00Z"
+        for number in (5, 6, 7):
+            self.assertTrue(host.store_import(self.gh, self.cfg, number))
+
+    def revisions(self):
+        return {n: item_state.read(self.gh, n)[1]["revision"] for n in (5, 6, 7)}
+
+    def bodies(self):
+        return {n: copy.deepcopy(self.gh.comments(n)) for n in (5, 6, 7)}
+
+    def test_the_sweep_s_preview_stores_nothing_and_the_step_run_stores_a_revision(self):
+        before = self.bodies()
+        _, steps = autopilot.preview(self.gh, self.cfg)
+        states = {step["number"]: step for step in steps}
+        self.assertEqual(
+            [(n, states[n]["state"], states[n]["command"]) for n in (5, 6, 7)],
+            [(5, "start", "go"), (6, "start", "plan"), (7, "start", "go")],
+        )
+        self.assertEqual(self.bodies(), before)
+        self.assertEqual(self.revisions(), {5: 1, 6: 1, 7: 1})
+        for number in (5, 6, 7):
+            autopilot.assess(self.gh, self.cfg, self.gh.issues[number], {}, write=True)
+            self.assertEqual(item_state.read(self.gh, number)[1]["revision"], 2, number)
+        # What was stored is the engine's answer, and the sweep still reads the same steps.
+        _, again = autopilot.preview(self.gh, self.cfg)
+        self.assertEqual(
+            [(s["number"], s["state"], s.get("command")) for s in again],
+            [(s["number"], s["state"], s.get("command")) for s in steps],
+        )
+
+    def test_the_step_run_stores_the_answer_of_its_own_issue(self):
+        autopilot.step(self.gh, self.cfg, 5, "nexkit.yml", "main")
+        self.assertEqual(self.revisions(), {5: 2, 6: 1, 7: 1})

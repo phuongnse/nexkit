@@ -182,7 +182,8 @@ wait in this queue; other comments do not. GitHub keeps one waiting run, so a co
 posted while another waits replaces it, also one on the issue that waits behind a round of
 its pull request. A command that never got 👀 did not run; post it again. Each run in the
 queue first takes the item's events from their sources, so a command whose run GitHub
-replaced is still answered by the run that ran: [Hosts](engine-hosts.md#hosts) says how.
+replaced is still answered by the run that ran, and starts there, when that run has nothing
+else to start, and gets 👀 then: [Hosts](engine-hosts.md#hosts) says how.
 
 Four kinds of run keep a group of their own, so they never replace a command that waits:
 sweeps and the issue and milestone events that bring issues into scope share
@@ -206,6 +207,17 @@ So the merge is no second writer of the item's state, and it waits behind the ro
 commands already in the queue. A head that moved since the approval is not merged. GitHub
 keeps one waiting run per group, so a command that waits and the approval's `step` can
 replace each other: approve again if the merge did not come.
+
+When a sub-issue closes, its `issues: closed` run, in the part's own group, sends one `step`
+dispatch into its parent's group, `nexkit-<parent>`, with `part N` as its note. That run
+reads the part back from GitHub, checks that it is a closed sub-issue of the parent, decides
+the part's end on the parent's stored state and stores the answer there. It writes nothing
+else on GitHub. The part's run still closes the parent, or leaves its note for a person, by
+the same rules as before: it only previews the parent's answer and never writes the parent's
+state. A parent with no state comment stores nothing. The `step` is sent only when the check
+of parents runs, which needs `close_parent_issues` or autopilot. GitHub keeps one waiting
+run per group, so this `step` can replace a command that waits in the parent's group: the
+part's end then reaches the parent's stored state at the parent's next decision.
 
 A sweep in `nexkit-autopilot` carries out no issue's step (start, split, close, merge,
 settle or mention) itself. For each issue whose next step writes, it sends a `step` dispatch, which joins the issue's own group, `nexkit-<item>`, and
@@ -410,6 +422,14 @@ output still compares as before, and the fix prompt says that NexKit kept less o
 output. With autopilot, each issue
 it worked on has one record comment, edited in place, that names the command it started
 last. Apart from those artifacts, nothing else is stored, so there is nothing to migrate or repair.
+
+On each open issue, and on each person's pull request that gets a non-approving review or a
+`/nexkit` command, the App also keeps one `### NexKit state` comment, which the first run of the
+item posts. It holds the engine's state document, imported from the markers above, and its
+revision. The runs of the item take its comments, reviews and hold labels from after that
+comment. Nothing is decided from the document yet: decisions still read the markers above, so the
+document goes stale until the host decides from it. A comment of it that someone other than the App
+changed counts for nothing, and the item waits for a person ([troubleshooting](troubleshooting.md#a-comment-of-nexkit-was-changed-by-someone-else)).
 
 A writer edits the state comment, and autopilot's record comment, only while the comment still
 holds what the writer read: it reads the comment again just before the edit

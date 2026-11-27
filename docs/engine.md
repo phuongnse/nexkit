@@ -6,14 +6,17 @@ at a time, and its `prompt` call, which writes each stage's prompt as NexKit 6 d
 `nexkit-engine step` and `nexkit-engine prompt` and over HTTP as `nexkit-engine serve`; its
 `sweep` call, which orders and limits the items that start, as `nexkit-engine sweep`, which
 NexKit 6's autopilot takes its starts from; the
-GitHub host's state comment, its import of NexKit 6's open work and its taking of an item's events
-from their sources (`host.take`), which `route` calls at the start of each run in an item's
-concurrency group; and
+GitHub host's state comment, its import of NexKit 6's open work, which the first run in an open
+item's concurrency group stores as the item's state comment, and its taking of an item's events
+from their sources (`host.take`), which `route` calls at the start of each run in that group; and
 the decisions that follow a plan, a blocked `/nexkit go` and a round on a pull request, its
 review, diagnosis and conflict rounds, the end of a round's wait and which rounds count, and the
 start of a new issue's first plan, which
 NexKit 6's autopilot, `route`, `report` and `maintain` take from `step` (see
-[getting there](#getting-there)). The rest of this page is not built yet, and NexKit 6 runs as
+[getting there](#getting-there)); the decisions that follow a plan, a new issue's first plan, a
+writer's vouch, a merge with its refusals, a blocked or stopped round, a usage limit or a transient error, a resume that
+comes due and a lost command also read the item's stored state document and, in the item's
+concurrency group, store the engine's answer. The rest of this page is not built yet, and NexKit 6 runs as
 [How it works](how-it-works.md) says._
 
 NexKit 7 splits NexKit into an **engine** that decides what happens to a piece of work, and
@@ -498,9 +501,13 @@ adapter's tests and the answers as what its adapter carries out.
 ## Getting there
 
 1. The engine grew inside NexKit 6: decisions moved behind the protocol one by one, and every
-   decision of the loop is now its own. The GitHub host builds each item's document from NexKit
-   6's markers, as its import reads them, sends the event that GitHub shows, and carries out the
-   answer in NexKit 6's words, comments and statuses. A start, a merge, a branch update, a close,
+   decision of the loop is now its own. Most of the GitHub host's decisions still build the
+   item's document from NexKit 6's markers, as its import reads them. The ones that follow a plan,
+   start a new issue's first plan, follow a writer's vouch, follow a merge and its refusals, follow a blocked or stopped round,
+   a usage limit or a transient error, start a resume that comes due and answer a lost command
+   read the stored document, which they use only where it says what the markers say, and store
+   the engine's answer in the item's group, a row of events as one write. The host sends the event that GitHub shows, and carries out the answer in NexKit 6's
+   words, comments and statuses. A start, a merge, a branch update, a close,
    a cancel or a rerun follows an answer of the engine. `tests/test_answers.py` keeps it so: it
    reads every module outside `nexkit/engine/` and fails on a write that no call of the engine
    comes before. The writes that serve no item are named in it with their reasons: the sweep's own

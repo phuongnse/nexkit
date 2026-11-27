@@ -103,7 +103,7 @@ jobs:
                 -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
                 commit -qam "Support $runtime $version"
             git push --force origin "$branch"
-            gh pr create --head "$branch" --title "Support $runtime $version" --body \
+            gh pr create --head "$branch" --label dependencies --title "Support $runtime $version" --body \
               "$runtime $version is the newest stable version. CI on this branch runs the unit tests and the live smoke test with it. Merge when CI is green, then release."
             # Pull requests opened with the Actions token do not start CI; dispatch it.
             gh workflow run ci.yml --ref "$branch" -f runtime="$runtime"

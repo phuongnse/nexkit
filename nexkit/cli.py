@@ -293,22 +293,29 @@ def cmd_app(args):
 def _take(gh, cfg, event_name, event):
     """Take the events of the work item whose group this run joins from their sources
     (`host.take`), before the run's own work, so that a command whose run GitHub replaced is
-    answered by the run that ran (docs/engine-hosts.md#hosts). A run in a group of its own
-    takes nothing. The engine refusing an event, or GitHub failing while the sources are read,
-    only warns: the run goes on. Raises `item_state.Moved` when every write lost."""
-    from . import host
+    answered by the run that ran (docs/engine-hosts.md#hosts). An open item with no state
+    comment first stores its first state, imported from NexKit 6's markers
+    (`host.store_import`). A run in a group of its own takes nothing. The engine refusing an
+    event, a state comment that someone else changed, a state that cannot be stored, or GitHub
+    failing while the sources are read, only warns: the run goes on. Raises `item_state.Moved`
+    when every write lost. Gives what `host.take` stored, [(event, actions)], for `route` to
+    carry out the run's own command from, or None when nothing was taken."""
+    from . import host, item_state
     from .github import GitHubError
     from .route import queue_item
 
     number = queue_item(gh, event_name, event)
     if number is None:
-        return
+        return None
     try:
+        if host.store_import(gh, cfg, number):
+            print(f"Stored the first state of #{number}, imported from NexKit 6's records.")
         taken = host.take(gh, cfg, number)
-    except (host.Refused, GitHubError) as exc:
+    except (host.Refused, item_state.StateError, GitHubError) as exc:
         print(f"::warning::Could not take the events of #{number} from their sources: {exc}")
-        return
+        return None
     print(f"Took {len(taken)} event(s) of #{number} from their sources.")
+    return taken
 
 
 def cmd_route(args):
@@ -334,9 +341,10 @@ def cmd_route(args):
             f"belongs to {minted}; correct {configuration.CONFIG_PATH}"
         )
         return 1
+    taken = None
     if loaded:
         try:
-            _take(gh, loaded, os.environ["GITHUB_EVENT_NAME"], event)
+            taken = _take(gh, loaded, os.environ["GITHUB_EVENT_NAME"], event)
         except item_state.Moved:
             print(
                 "::error::Every write of the item's state lost to another; its events stay at "
@@ -344,7 +352,12 @@ def cmd_route(args):
             )
             return 1
     decision = route(
-        gh, os.environ["GITHUB_EVENT_NAME"], event, event.get("inputs") or {}, cfg=loaded
+        gh,
+        os.environ["GITHUB_EVENT_NAME"],
+        event,
+        event.get("inputs") or {},
+        cfg=loaded,
+        taken=taken,
     )
     cfg = None
     if decision["action"] != "none":
@@ -365,6 +378,12 @@ def cmd_route(args):
     if decision["action"] == "none" and decision.get("reply_to"):
         try:
             gh.comment(decision["reply_to"], decision["reason"])
+        except GitHubError as exc:
+            print(f"Could not reply: {exc}", file=sys.stderr)
+    if decision.get("also_reply"):
+        # The reply to the run's own command, which this run did not start.
+        try:
+            gh.comment(decision["also_reply"]["to"], decision["also_reply"]["reason"])
         except GitHubError as exc:
             print(f"Could not reply: {exc}", file=sys.stderr)
     refused = _refused_dispatch(args, decision, event.get("inputs"))

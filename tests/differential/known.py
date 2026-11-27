@@ -6,6 +6,8 @@ the scenario and both records that holds only where the difference is reachable.
 differs from NexKit 6 on purpose, such as one that fixes a NexKit 6 bug, adds its entry here,
 and its pull request calls it out."""
 
+import re
+
 KNOWN = [
     {
         "name": "mergeable race",
@@ -121,14 +123,15 @@ KNOWN = [
             "While GitHub refuses a dispatch, the sweep sends no `step`, so it makes none of "
             "the writes NexKit 6's sweep made itself, and says so in its log. The next sweep "
             "sends the step again. Only that is excused: GitHub holds the same after each "
-            "sweep as before the first."
+            "sweep as before the first, apart from the empty `blockers` entries that the "
+            "stored state's import reads (see the entries for it below)."
         ),
         "match": lambda sc, old, new: (
             sc["refusal"] == "dispatch_fails"
             and any(line.startswith("Could not send a step to") for line in _lines(new))
             and isinstance(new.get("gh"), dict)
-            and new.get("gh1") == new["gh"]
-            and new.get("gh2") == new["gh"]
+            and _without_empty_blockers(new).get("gh1") == _without_empty_blockers(new)["gh"]
+            and _without_empty_blockers(new).get("gh2") == _without_empty_blockers(new)["gh"]
         ),
     },
     {
@@ -171,6 +174,189 @@ KNOWN = [
         ),
     },
 ]
+
+_READ = (
+    "reads the item's stored state, which is the import in memory when the item has no state "
+    "comment, and the import reads the issues that block it. A read by `FakeGitHub` adds the "
+    "issue to its `blockers` with no blocker, where NexKit 6's flow never read it. Only a "
+    "record that differs by such an empty entry is excused."
+)
+
+KNOWN += [
+    {
+        "name": "the stored state is read before the decision",
+        "family": family,
+        "by": by,
+        "why": f"{what} {_READ}",
+        "match": lambda sc, old, new: _without_empty_blockers(old) == _without_empty_blockers(new),
+    }
+    for by, what, families in (
+        (
+            "#643",
+            "A decision after a plan, for a first plan or after a writer's vouch",
+            ("replan", "vouch"),
+        ),
+        (
+            "#645",
+            "A decision after a blocked or stopped round, at a usage limit or a transient "
+            "error, at a resume or for a lost command",
+            (
+                "stop",
+                "lost",
+                "pause",
+                "report",
+                "required",
+                "give",
+                "conflict",
+                "review",
+                "waits",
+                "refusals",
+                "conflicted",
+                "behind",
+            ),
+        ),
+    )
+    for family in families
+]
+
+KNOWN += [
+    {
+        "name": "the stored state is read before a command or an approval is decided",
+        "family": family,
+        "by": "#644",
+        "why": (
+            "A command, a closing command and an approval read the item's stored state, which is "
+            "the import in memory when the item has no state comment, and the import reads the "
+            "issues that block it. So do the families whose flows send NexKit's own dispatch of "
+            "a command or an approval: the waits, refusals, ends, conflicts, branches behind "
+            "their base and parents. A read by `FakeGitHub` adds the issue to its `blockers` "
+            "with no blocker, where NexKit 6's flow never read it. Only a record that differs "
+            "by such an empty entry is excused."
+        ),
+        "match": lambda sc, old, new: _without_empty_blockers(old) == _without_empty_blockers(new),
+    }
+    for family in (
+        "command",
+        "approvals",
+        "waits",
+        "refusals",
+        "ended",
+        "conflicted",
+        "behind",
+        "parents",
+    )
+]
+
+KNOWN += [
+    {
+        "name": "the stored state is read before a merge decision",
+        "family": family,
+        "by": "#647",
+        "why": (
+            "A decision at a merge, for a refusal, a wait for required checks, a branch update "
+            "or what the merge found, reads the item's stored state, which is the import in "
+            "memory when the item has no state comment, and the import reads the issues that "
+            "block it. A read by `FakeGitHub` adds the issue to its `blockers` with no "
+            "blocker, where NexKit 6's flow never read it. Only a record that differs by such "
+            "an empty entry is excused."
+        ),
+        "match": lambda sc, old, new: _without_empty_blockers(old) == _without_empty_blockers(new),
+    }
+    for family in (
+        "required",
+        "waits",
+        "refusals",
+        "behind",
+        "conflicted",
+        "cleared",
+        "ended",
+        "approvals",
+        "sweep",
+        "parents",
+    )
+]
+
+
+KNOWN += [
+    {
+        "name": "the parent's stored state is read before its end is decided",
+        "family": family,
+        "by": "#648",
+        "why": (
+            "The engine decides the end of a part on the parent's stored state, which is the "
+            "import in memory when the parent has no state comment, and the import reads the "
+            "issues that block it. A read by `FakeGitHub` adds the parent to its `blockers` "
+            "and its comments with nothing in them, where NexKit 6's flow never read them. "
+            "Only a record that differs by such an empty entry is excused."
+        ),
+        "match": lambda sc, old, new: _without_empty_reads(old) == _without_empty_reads(new),
+    }
+    for family in ("ended", "parents")
+]
+
+KNOWN += [
+    {
+        "name": "a part's end is sent to its parent's group",
+        "family": "parents",
+        "by": "#648",
+        "why": (
+            "When a sub-issue closes, its run sends the end of the part as one `step` into its "
+            "parent's group, whose run stores the answer in the parent's stored state. The "
+            "part's run still closes the parent and leaves its notes as NexKit 6 did, and the "
+            "`step` run writes nothing else on GitHub. Only that dispatch and its line in the "
+            "log are excused, and nothing else may differ."
+        ),
+        "match": lambda sc, old, new: _without_empty_reads(old)
+        == _without_empty_reads(_without_part_ends(new)),
+    }
+]
+
+
+def _without_empty_reads(record):
+    """`_without_empty_blockers` of `record`, also without the entries of `issue_comments` that
+    hold no comment."""
+    found = _without_empty_blockers(record)
+    for key, item in found.items():
+        if isinstance(item, dict) and isinstance(item.get("issue_comments"), dict):
+            kept = {number: held for number, held in item["issue_comments"].items() if held}
+            found[key] = {**item, "issue_comments": kept}
+    return found
+
+
+def _without_part_ends(record):
+    """`record` without the `step` dispatches that send the end of a part to its parent's
+    group (`part N`) and the lines of the log that say so."""
+    found = dict(record)
+    for key in ("gh", "gh1", "gh2"):
+        item = record.get(key)
+        if isinstance(item, dict) and isinstance(item.get("dispatches"), list):
+            kept = [
+                dispatch
+                for dispatch in item["dispatches"]
+                if not (
+                    dispatch["inputs"].get("command") == "step"
+                    and re.fullmatch(r"part \d+", dispatch["inputs"].get("note") or "")
+                )
+            ]
+            found[key] = {**item, "dispatches": kept}
+    if isinstance(record.get("out"), list):
+        found["out"] = [
+            line
+            for line in record["out"]
+            if not (isinstance(line, str) and line.startswith("Sent the end of #"))
+        ]
+    return found
+
+
+def _without_empty_blockers(record):
+    """`record` without the entries of `blockers` that hold no blocker, in what GitHub holds
+    after the command, after a report and after each sweep."""
+    found = dict(record)
+    for key, item in record.items():
+        if isinstance(item, dict) and isinstance(item.get("blockers"), dict):
+            kept = {number: held for number, held in item["blockers"].items() if held}
+            found[key] = {**item, "blockers": kept}
+    return found
 
 
 def _lines(record):

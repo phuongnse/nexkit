@@ -1,16 +1,19 @@
 """The GitHub host's calls of the engine: what follows a plan is the engine's answer, which
-autopilot and `route` carry out in NexKit 6's words, storing no state
+autopilot and `route` carry out in NexKit 6's words. Most decisions store no state; those after
+a plan, for a first plan and after a vouch store the answer in the item's group
 (docs/engine.md#getting-there)."""
 
 import base64
+import contextlib
 import copy
+import io
 import json
 import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import TestCase, mock
 
-from nexkit import agent, autopilot, engine, host, item_state
+from nexkit import agent, autopilot, cli, engine, first_state, host, item_state
 from nexkit import config as configuration
 from nexkit import report as reports
 from nexkit.checks import recorded
@@ -22,12 +25,15 @@ from nexkit.state import (
     PLAN_MARKER,
     answers_marker,
     empty_state,
+    latest_plan,
+    plan_data,
     plan_data_record,
     profile_record,
     questions,
     read_state,
     render_run,
     render_state,
+    run_comments,
 )
 from tests.support import BOT_LOGIN, FakeGitHub, make_config, play_resume, profile_config
 from tests.test_autopilot import AutopilotCase, pilot, plan_output
@@ -565,6 +571,89 @@ class TakeTest(TestCase):
         self.assertIsNone(item_state.since(edited))
 
 
+class StoreImportTest(TestCase):
+    """The first run of an open item stores its state, imported from NexKit 6's markers
+    (docs/engine-hosts.md#hosts)."""
+
+    CFG = make_config(autopilot={"enabled": True})
+    NOW = datetime(2026, 1, 3, tzinfo=UTC)
+
+    def setUp(self):
+        self.gh = FakeGitHub()
+        self.gh.add_issue(42)
+
+    def states(self):
+        return [c for c in self.gh.comments(42) if c["body"].startswith("### NexKit state")]
+
+    def test_an_open_item_with_no_state_comment_stores_its_import_at_revision_1(self):
+        self.assertTrue(host.store_import(self.gh, self.CFG, 42, now=self.NOW))
+        [comment] = self.states()
+        doc = item_state.read(self.gh, 42)[1]
+        self.assertEqual(doc, first_state.import_item(self.gh, self.CFG, 42, now=self.NOW))
+        self.assertEqual(doc["revision"], 1)
+        # The import keeps no cursor: `take` answers what came after the comment.
+        self.assertIsNone(item_state.since(comment))
+        # A second run finds it and stores nothing.
+        self.assertFalse(host.store_import(self.gh, self.CFG, 42, now=self.NOW))
+        self.assertEqual(len(self.states()), 1)
+
+    def test_an_open_pull_request_of_the_issue_is_the_change_of_the_import(self):
+        self.gh.add_pull(6, 42, head_sha=HEAD)
+        self.gh.add_pull(7, 42, head_sha=HEAD, branch="nexkit/issue-42", repo="fork/app")
+        self.assertTrue(host.store_import(self.gh, self.CFG, 42, now=self.NOW))
+        doc = item_state.read(self.gh, 42)[1]
+        self.assertEqual(doc["change"]["id"], "6")
+        self.assertEqual(doc, first_state.import_item(self.gh, self.CFG, 42, 6, now=self.NOW))
+
+    def test_a_person_s_pull_request_is_imported_as_its_own_item(self):
+        self.gh.add_pull(9, 9, branch="feature")
+        self.assertTrue(host.store_import(self.gh, self.CFG, 9, now=self.NOW))
+        self.assertEqual(item_state.read(self.gh, 9)[1]["item"], "9")
+
+    def test_a_closed_item_stores_nothing(self):
+        self.gh.issues[42]["state"] = "closed"
+        self.assertFalse(host.store_import(self.gh, self.CFG, 42, now=self.NOW))
+        self.assertEqual(self.gh.comments(42), [])
+
+    def test_a_state_comment_that_someone_else_changed_stores_and_takes_nothing(self):
+        self.assertTrue(host.store_import(self.gh, self.CFG, 42, now=self.NOW))
+        [comment] = self.states()
+        comment["editors"] = [BOT_LOGIN, "mallory"]
+        calls = []
+        with (
+            mock.patch.object(self.gh, "comment", side_effect=lambda *a: calls.append(a)),
+            mock.patch.object(self.gh, "update_comment", side_effect=lambda *a: calls.append(a)),
+        ):
+            for call in (host.store_import, host.take):
+                with self.subTest(call=call.__name__):
+                    with self.assertRaises(host.Refused) as raised:
+                        call(self.gh, self.CFG, 42)
+                    self.assertIn("@mallory changed a comment of NexKit's", str(raised.exception))
+        self.assertEqual(calls, [])
+        self.assertEqual(len(self.states()), 1)
+
+    def test_a_deleted_state_comment_is_imported_again_by_the_next_run(self):
+        event = {"issue": {"number": 42}, "comment": {"id": 1, "body": "/nexkit plan"}}
+        with mock.patch("sys.stdout"):
+            cli._take(self.gh, self.CFG, "issue_comment", event)
+            [comment] = self.states()
+            self.gh.issue_comments[42].remove(comment)
+            cli._take(self.gh, self.CFG, "issue_comment", event)
+        [again] = self.states()
+        self.assertNotEqual(again["id"], comment["id"])
+        self.assertEqual(item_state.read(self.gh, 42)[1]["revision"], 1)
+
+    def test_a_run_that_cannot_store_the_import_warns_and_goes_on(self):
+        event = {"issue": {"number": 42}, "comment": {"id": 1, "body": "/nexkit plan"}}
+        with (
+            mock.patch.object(first_state, "import_item", side_effect=item_state.StateError("x")),
+            mock.patch("sys.stdout") as out,
+        ):
+            cli._take(self.gh, self.CFG, "issue_comment", event)
+        self.assertIn("::warning::", "".join(c.args[0] for c in out.write.call_args_list))
+        self.assertEqual(self.states(), [])
+
+
 class RefusedTest(HostCase):
     def setUp(self):
         super().setUp()
@@ -609,6 +698,263 @@ class RefusedTest(HostCase):
             self.assertEqual((refusal["action"], refusal["reply_to"]), ("none", 5))
             self.assertIn("passes the limit", refusal["reason"])
         self.assertEqual(route(self.gh, "issue_comment", event)["task"], "close_answer")
+
+
+class DecideTest(HostCase):
+    """A decision after a plan that runs in the item's group stores the engine's answer at the
+    next revision, on the stored state document, and one that does not only previews it
+    (`host.decide`)."""
+
+    PLAN_RUN = {"url": "https://github.com/acme/app/actions/runs/1", "command": "plan"}
+    START = {"basis": "b", "target": 5, "note": "", "remember": {}}
+
+    def setUp(self):
+        super().setUp()
+        self.cfg = pilot(answer="recommended")
+        self.issue(5)
+        self.plan(5, {"questions": [ASKED]})
+        self.assertTrue(host.store_import(self.gh, self.cfg, 5))
+
+    def read(self, number=5):
+        return item_state.read(self.gh, number)
+
+    def after_plan(self, number=5, **options):
+        comments = self.gh.comments(number)
+        plan = latest_plan(comments)
+        issue = self.gh.issues[number]
+        return host.after_plan(
+            self.gh, self.cfg, issue, plan, self.PLAN_RUN, {}, self.START, comments, **options
+        )
+
+    def spied(self):
+        """A stand-in for `host.step` that calls it and keeps its requests and answers."""
+        seen, real = [], host.step
+
+        def spy(state, event, found_policies):
+            found = real(state, event, found_policies)
+            seen.append((state, event, found))
+            return found
+
+        return seen, spy
+
+    def decision(self):
+        return {"issue": 5, "pr": None, "action": "plan"}
+
+    def carried_on(self, **options):
+        return host.plan_carried_on(
+            self.gh, self.cfg, self.gh.issues[5], self.decision(), {"questions": [ASKED]}, **options
+        )
+
+    def test_after_plan_stores_the_engine_s_answer_at_the_next_revision(self):
+        seen, spy = self.spied()
+        with mock.patch.object(host, "step", spy):
+            step = self.after_plan(write=True)
+        self.assertEqual(step["state"], "start")
+        [(sent, event, found)] = seen
+        self.assertEqual((sent["revision"], found["state"]["revision"]), (1, 2))
+        self.assertEqual(self.read()[1], found["state"])
+        # The plan's result is the answer of the plan run that the outbox holds.
+        self.assertEqual(event["kind"], "actionFinished")
+        self.assertEqual(event["action"], first_state.RUN_ID)
+
+    def test_plan_carried_on_stores_the_engine_s_answer_at_the_next_revision(self):
+        seen, spy = self.spied()
+        with mock.patch.object(host, "step", spy):
+            self.assertTrue(self.carried_on(write=True))
+        [(sent, _, found)] = seen
+        self.assertEqual((sent["revision"], found["state"]["revision"]), (1, 2))
+        self.assertEqual(self.read()[1], found["state"])
+
+    def test_without_write_nothing_is_stored(self):
+        before = copy.deepcopy(self.gh.comments(5))
+        self.after_plan()
+        self.carried_on()
+        self.assertEqual(self.gh.comments(5), before)
+        self.assertEqual(self.read()[1]["revision"], 1)
+
+    def test_the_second_send_of_the_same_run_is_not_a_duplicate(self):
+        # `report` stores the answer to the plan's run, and the step run sends the result of the
+        # same run again: the engine would start nothing, so that one is decided on the markers.
+        self.assertTrue(self.carried_on(write=True))
+        stored = self.read()[1]
+        self.assertIn(host._run_event_id(), stored["recentEvents"])
+        self.assertEqual(self.after_plan(write=True)["state"], "start")
+        self.assertEqual(self.read()[1]["revision"], 3)
+
+    def test_a_write_that_lost_is_decided_again_after_a_wait_and_stored_next(self):
+        seen, spy = self.spied()
+
+        def racing(state, event, found_policies):
+            found = spy(state, event, found_policies)
+            if len(seen) == 1:
+                comment, doc = self.read()
+                other = {**doc, "revision": doc["revision"] + 1}
+                self.assertTrue(item_state.write(self.gh, 5, other, (comment, doc)))
+            return found
+
+        with (
+            mock.patch.object(host, "step", racing),
+            mock.patch.object(host.time, "sleep") as sleep,
+        ):
+            self.assertEqual(self.after_plan(write=True)["state"], "start")
+        self.assertEqual([sent["revision"] for sent, _, _ in seen], [1, 2])
+        self.assertEqual(sleep.call_count, 1)
+        self.assertEqual(self.read()[1]["revision"], 3)
+
+    def test_writes_that_all_lose_warn_and_still_give_the_answer(self):
+        real = host.step
+
+        def racing(state, event, found_policies):
+            found = real(state, event, found_policies)
+            comment, doc = self.read()
+            other = {**doc, "revision": doc["revision"] + 1}
+            item_state.write(self.gh, 5, other, (comment, doc))
+            return found
+
+        out = io.StringIO()
+        with mock.patch.object(host, "step", racing), mock.patch.object(host.time, "sleep"):
+            with contextlib.redirect_stdout(out):
+                step = self.after_plan(write=True)
+        self.assertEqual(step["state"], "start")
+        self.assertIn("::warning::", out.getvalue())
+        # Each lost try was another write: the answer itself was never stored.
+        self.assertEqual(self.read()[1]["revision"], 1 + item_state.TRIES)
+
+    def test_with_no_state_comment_a_decision_posts_none(self):
+        self.issue(6)
+        self.plan(6)
+        before = copy.deepcopy(self.gh.comments(6))
+        step = self.after_plan(6, write=True)
+        self.assertEqual(step["state"], "start")
+        self.assertEqual(self.gh.comments(6), before)
+        self.assertEqual(self.read(6), (None, None))
+
+    def test_an_edited_state_comment_refuses_every_decision(self):
+        comment, _ = self.read()
+        comment["editors"] = [BOT_LOGIN, "mallory"]
+        for options in ({}, {"write": True}):
+            with self.assertRaises(host.Refused):
+                self.after_plan(**options)
+        with self.assertRaises(host.Refused):
+            self.carried_on(write=True)
+        with self.assertRaises(host.Refused):
+            host.plan_waits_for({}, self.gh, self.cfg, 5)
+
+    def test_what_a_plan_waits_for_is_read_on_the_stored_state_and_never_stored(self):
+        output = {"questions": [ASKED]}
+        before = copy.deepcopy(self.gh.comments(5))
+        waits = host.plan_waits_for(output, self.gh, self.cfg, 5)
+        self.assertEqual(waits, host.plan_waits_for(output))
+        self.assertEqual(waits, "question")
+        self.assertEqual(self.gh.comments(5), before)
+
+    def test_a_state_comment_that_cannot_be_read_holds_up_nothing_and_is_not_written_over(self):
+        comment, _ = self.read()
+        comment["body"] = f"### NexKit state\n\n{item_state.PREFIX}{'QQ=='} -->"
+        before = copy.deepcopy(self.gh.comments(5))
+        self.assertEqual(self.after_plan(write=True)["state"], "start")
+        self.assertEqual(self.gh.comments(5), before)
+
+    def test_pending_id_names_the_action_that_a_result_answers(self):
+        doc = host._planning(host._document({"number": 5}, {}), 0, False)
+        self.assertEqual(host.pending_id(doc, "runAgent", "plan"), first_state.RUN_ID)
+        doc["pending"][0]["id"] = "a3.1"
+        self.assertEqual(host.pending_id(doc, "runAgent"), "a3.1")
+        self.assertEqual(host.pending_id(doc, "runAgent", "plan"), "a3.1")
+        self.assertEqual(host.pending_id(doc, "runAgent", "fix"), first_state.RUN_ID)
+        self.assertEqual(host.pending_id(doc, "runChecks"), first_state.RUN_ID)
+
+    def test_the_stored_state_decides_only_where_it_agrees_with_the_markers(self):
+        built = host._planning(host._document({"number": 5}, {}), 0, False)
+        event = {"id": "run-1"}
+        state = copy.deepcopy(built)
+        state.update(revision=4, recentEvents=["comment-9"])
+        state["pending"][0].update(id="a4.1", next="x")
+        # It agrees, apart from its revision, its events seen and the ids of its outbox.
+        self.assertIs(host.resync(state, built, event), state)
+        # An event it holds is decided on the markers, at its revision, with no duplicate.
+        state["recentEvents"] = ["comment-9", "run-1"]
+        base = host.resync(state, built, event)
+        self.assertEqual((base["revision"], base["recentEvents"]), (4, ["comment-9"]))
+        self.assertEqual(host._core(base), host._core(built))
+        # So is a state that says something else, or none.
+        state["recentEvents"] = []
+        state["state"] = "awaitingApproval"
+        self.assertEqual(host.resync(state, built, event)["state"], "planning")
+        self.assertEqual(host.resync(state, built, event)["revision"], 4)
+        self.assertIs(host.resync(None, built, event), built)
+
+    def test_a_stage_result_names_the_pending_action_of_the_stored_outbox(self):
+        comment, doc = self.read()
+        built = host._planning(copy.deepcopy(doc), 0, False)
+        stored = copy.deepcopy(built)
+        stored.update(revision=2)
+        stored["pending"][0]["id"] = "a2.1"
+        self.assertTrue(item_state.write(self.gh, 5, stored, (comment, doc)))
+        plan = latest_plan(self.gh.comments(5))
+        event = host._result(5, plan, plan_data(plan), self.PLAN_RUN)
+        seen, spy = self.spied()
+        with mock.patch.object(host, "step", spy):
+            host.decide(self.gh, self.cfg, 5, event, built, action=("runAgent", "plan"), write=True)
+        [(sent, _, found)] = seen
+        # The stored document agrees with the markers, so it is what the result is decided on.
+        self.assertEqual((sent["revision"], sent["pending"][0]["id"]), (2, "a2.1"))
+        self.assertEqual(seen[0][1]["action"], "a2.1")
+        self.assertNotEqual(seen[0][1]["action"], first_state.RUN_ID)
+        self.assertEqual(self.read()[1], found["state"])
+
+    def test_a_tick_names_the_wait_of_the_document_it_is_decided_on(self):
+        doc = {"waits": [{"id": "w2.1", "for": "usageLimit"}, {"id": "w2.2", "for": "time"}]}
+        self.assertEqual(host.wait_id(doc, "usageLimit"), "w2.1")
+        self.assertEqual(host.wait_id(doc, "time"), "w2.2")
+        self.assertEqual(host.wait_id({"waits": []}, "time"), "w1.1")
+        self.assertEqual(host.wait_id({}, "usageLimit"), "w1.1")
+
+    def test_events_sent_in_a_row_give_one_state_at_the_next_revision(self):
+        built = host._planning(host._document({"number": 5}, {}), 0, False)
+        events = [
+            host._event("held", 5, None, "held-5", label="on-hold"),
+            host._event("tick", 5, None, "tick-5", wait="w1.1"),
+        ]
+        seen, spy = self.spied()
+        before = copy.deepcopy(self.gh.comments(5))
+        with mock.patch.object(host, "step", spy):
+            state, answers = host.decide_all(
+                self.gh, self.cfg, 5, events, built, wait="time", until=lambda actions: False
+            )
+        self.assertEqual([sent["kind"] for sent, _ in answers], ["held", "tick"])
+        self.assertEqual(self.gh.comments(5), before)
+        # The second event is sent on the state that the first gave.
+        self.assertEqual(seen[1][0], seen[0][2]["state"])
+        self.assertEqual(seen[1][1]["wait"], "w1.1")
+        self.assertEqual(state["revision"], 2)
+        # The row stops after the event whose actions satisfy `until`.
+        with mock.patch.object(host, "step", spy):
+            _, answers = host.decide_all(
+                self.gh, self.cfg, 5, events, built, until=lambda actions: True
+            )
+        self.assertEqual([sent["kind"] for sent, _ in answers], ["held"])
+
+    def test_with_no_configuration_the_markers_decide_and_nothing_is_read(self):
+        built = host._planning(host._document({"number": 5}, {}), 0, False)
+        event = host._event("held", 5, None, "held-5", label="on-hold")
+        gh = mock.Mock()
+        state, answers = host.decide_all(gh, None, 5, [event], built, found_policies={})
+        self.assertEqual(state["revision"], 2)
+        self.assertEqual(len(answers), 1)
+        self.assertEqual(gh.mock_calls, [])
+
+    def test_the_stored_state_that_holds_any_event_of_a_row_is_decided_on_the_markers(self):
+        built = host._planning(host._document({"number": 5}, {}), 0, False)
+        state = copy.deepcopy(built)
+        state.update(revision=4, recentEvents=["comment-9"])
+        events = [{"id": "held-5"}, {"id": "resume-5"}]
+        self.assertIs(host.resync(state, built, events), state)
+        state["recentEvents"] = ["comment-9", "held-5"]
+        base = host.resync(state, built, events)
+        self.assertEqual((base["revision"], base["recentEvents"]), (4, ["comment-9"]))
+        state["recentEvents"] = ["resume-5", "held-5", "comment-9"]
+        self.assertEqual(host.resync(state, built, events)["recentEvents"], ["comment-9"])
 
 
 class SweepTest(HostCase):
@@ -1035,19 +1381,26 @@ class AfterGoTest(HostCase):
     """What follows a `/nexkit go` that stopped as blocked, with questions, protected paths or
     nothing to answer, is the engine's answer, in NexKit 6's words."""
 
+    def stored(self, number, comment):
+        """`comment`, once the item has the state comment that `nexkit route` stores before its
+        first event: a decision then reads it, where it would import the item in memory and
+        send the engine the round's result a second time."""
+        host.store_import(self.gh, self.cfg, number)
+        return comment
+
     def blocked(self, number, **fields):
         """A plan, then a `/nexkit go` that stopped as blocked with nothing to answer."""
         self.issue(number)
         self.plan(number)
         run = {"outcome": "agent_blocked", "attention": "It needs a secret.", **fields}
-        return self.run_comment(number, "go", status="failure", **run)
+        return self.stored(number, self.run_comment(number, "go", status="failure", **run))
 
     def failed(self, number, **fields):
         """A plan, then a `/nexkit go` that failed on an agent error with no pull request."""
         self.issue(number)
         self.plan(number)
         run = {"outcome": "agent_error", "attention": "The agent crashed.", **fields}
-        return self.run_comment(number, "go", status="failure", **run)
+        return self.stored(number, self.run_comment(number, "go", status="failure", **run))
 
     def stopped(self, number, asked=(), **fields):
         """A plan, then a `/nexkit go` that stopped as blocked with the questions `asked`, as
@@ -1056,7 +1409,8 @@ class AfterGoTest(HostCase):
         self.plan(number)
         found = questions([dict(item) for item in asked])
         run = {"outcome": "agent_blocked", "questions": found, **fields}
-        return self.run_comment(number, "go", status="failure", attention="Answer them.", **run)
+        comment = self.run_comment(number, "go", status="failure", attention="Answer them.", **run)
+        return self.stored(number, comment)
 
     def test_the_engine_hears_the_round_s_result_then_a_comment_after_it(self):
         self.stopped(5, [{**ASKED, "recommended": 0}])
@@ -1547,9 +1901,9 @@ class CountTest(ReportCase):
     def test_required_checks_that_fail_at_the_merge_follow_the_engine(self):
         cfg = make_config(merge={"auto": True}, fix={"max_auto_rounds": 2})
         wait = {"bug": 77, "workflow": "ci.yml", "branch": "main", "run": 50}
-        self.assertEqual(host.required_failed(cfg, 5, 6, "c" * 40, 1, None), "auto_fix")
-        self.assertEqual(host.required_failed(cfg, 5, 6, "c" * 40, 1, wait), "ci_waiting")
-        self.assertEqual(host.required_failed(cfg, 5, 6, "c" * 40, 2, wait), "needs_human")
+        self.assertEqual(host.required_failed(self.gh, cfg, 5, 6, "c" * 40, 1, None), "auto_fix")
+        self.assertEqual(host.required_failed(self.gh, cfg, 5, 6, "c" * 40, 1, wait), "ci_waiting")
+        self.assertEqual(host.required_failed(self.gh, cfg, 5, 6, "c" * 40, 2, wait), "needs_human")
 
     def test_required_checks_read_the_base_failure_only_when_a_fix_round_is_left(self):
         head = "c" * 40
@@ -1591,7 +1945,9 @@ class AcceptAnswerTest(ReportCase):
         cfg = cfg or make_config(merge={"auto": True}, fix={"max_auto_rounds": 2})
         refusal = result if isinstance(result, dict) else {"accepted": False, "refusal": result}
         refusal = {"text": "Refused.", **refusal}
-        return host.accept_answer(cfg, 5, 6, self.HEAD, used, refusal, at=self.AT, **fields)
+        return host.accept_answer(
+            self.gh, cfg, 5, 6, self.HEAD, used, refusal, at=self.AT, **fields
+        )
 
     def test_a_merge_that_went_through_is_accepted(self):
         end, state = self.answer({"accepted": True, "refusal": None})
@@ -1646,7 +2002,7 @@ class AcceptAnswerTest(ReportCase):
     def test_an_update_that_failed_is_a_person_s(self):
         resolve = make_config(merge={"auto": True}, conflicts={"auto_resolve": True})
         with mock.patch.object(host, "step", wraps=host.step) as step:
-            end = host.update_failed(resolve, 5, 6, self.HEAD, 0, "It failed.", 1)
+            end = host.update_failed(self.gh, resolve, 5, 6, self.HEAD, 0, "It failed.", 1)
         self.assertEqual(end, "person")
         state, event = step.call_args.args[:2]
         self.assertEqual(state["rounds"]["updates"], 1)
@@ -1654,7 +2010,7 @@ class AcceptAnswerTest(ReportCase):
         self.assertEqual(event["result"], failed)
         with mock.patch.object(host, "step", side_effect=host.Refused("no")):
             with self.assertRaises(host.Refused):
-                host.update_failed(resolve, 5, 6, self.HEAD, 0, "It failed.")
+                host.update_failed(self.gh, resolve, 5, 6, self.HEAD, 0, "It failed.")
 
     def test_a_merge_that_was_not_accepted_fails_the_item(self):
         end, state = self.answer("notAccepted")
@@ -1742,7 +2098,10 @@ class ApprovedTest(TestCase):
         run = {"outcome": outcome, "head": self.HEAD, "status": "success"}
         if decide:
             run["decide"] = [1]
-        return host.approved(cfg, 5, 6, run, commit, "olivia")
+        gh = FakeGitHub()
+        gh.add_issue(5)
+        gh.add_pull(6, 5, head_sha=self.HEAD)
+        return host.approved(gh, cfg, 5, 6, run, commit, "olivia")
 
     def test_an_approval_after_a_refusal_or_a_reopen_merges_only_with_merge_auto(self):
         for outcome in ("merge_refused", autopilot.PULL_CLOSED):
@@ -1770,6 +2129,192 @@ class ApprovedTest(TestCase):
                 self.answer("merge_refused", True)
 
 
+class MergeDecideTest(ReportCase):
+    """A merge decision that runs in the item's group stores the engine's answer at the next
+    revision, and one that does not only previews it (`host.decide`)."""
+
+    HEAD = "c" * 40
+    MOVED = "d" * 40
+    AT = "2026-11-23T15:01:11Z"
+    CFG = make_config(
+        merge={"auto": True}, fix={"max_auto_rounds": 2}, conflicts={"auto_resolve": True}
+    )
+
+    def setUp(self):
+        super().setUp()
+        self.assertTrue(host.store_import(self.gh, self.CFG, 5))
+
+    def read(self):
+        return item_state.read(self.gh, 5)[1]
+
+    def refused(self, kind):
+        return {"accepted": False, "refusal": kind, "text": "Refused."}
+
+    def spied(self):
+        """A stand-in for `host.step` that calls it and keeps its requests."""
+        seen, real = [], host.step
+
+        def spy(state, event, found_policies):
+            found = real(state, event, found_policies)
+            seen.append((state, event, found))
+            return found
+
+        return seen, spy
+
+    def test_a_branch_behind_its_base_stores_its_update_and_the_updates_used(self):
+        refusal = self.refused("behind")
+        end, state = host.accept_answer(
+            self.gh, self.CFG, 5, 6, self.HEAD, 0, refusal, updates=1, write=True
+        )
+        self.assertEqual(end, "update")
+        stored = self.read()
+        self.assertEqual(stored, state)
+        self.assertEqual(stored["revision"], 2)
+        self.assertEqual([action["kind"] for action in stored["pending"]], ["updateChange"])
+        # The update counts once it is done, so the stored count is what was used before it.
+        self.assertEqual(stored["rounds"]["updates"], 1)
+
+    def test_a_branch_whose_updates_are_used_up_stores_the_wait_for_a_person(self):
+        cfg = make_config(merge={"auto": True}, conflicts={"auto_resolve": True, "max_rounds": 2})
+        end, _ = host.accept_answer(
+            self.gh, cfg, 5, 6, self.HEAD, 0, self.refused("behind"), updates=2, write=True
+        )
+        self.assertEqual(end, "person")
+        stored = self.read()
+        self.assertEqual(
+            (stored["state"], stored["attention"]["reason"]), ("ready", "acceptRefused")
+        )
+        self.assertEqual(stored["rounds"]["updates"], 2)
+
+    def test_a_conflict_stores_the_conflict_rounds_the_engine_counts(self):
+        end, state = host.accept_answer(
+            self.gh, self.CFG, 5, 6, self.HEAD, 0, self.refused("conflict"), conflicts=1, write=True
+        )
+        self.assertEqual(end, "fix")
+        stored = self.read()
+        self.assertEqual(stored, state)
+        self.assertEqual(stored["revision"], 2)
+        self.assertEqual(stored["rounds"]["conflicts"], 2)
+        self.assertEqual([action["stage"] for action in stored["pending"]], ["fix"])
+
+    def test_a_conflict_with_no_round_left_stores_the_wait_for_a_person(self):
+        cfg = make_config(merge={"auto": True}, conflicts={"auto_resolve": True, "max_rounds": 1})
+        end, _ = host.accept_answer(
+            self.gh, cfg, 5, 6, self.HEAD, 0, self.refused("conflict"), conflicts=1, write=True
+        )
+        self.assertEqual(end, "person")
+        stored = self.read()
+        self.assertEqual(
+            (stored["state"], stored["attention"]["reason"]), ("ready", "acceptRefused")
+        )
+        self.assertEqual(stored["rounds"]["conflicts"], 1)
+
+    def test_a_head_that_moved_is_stored_before_the_merge_s_result_is_decided_on_it(self):
+        before = [host.head_observed(5, 6, self.MOVED)]
+        seen, spy = self.spied()
+        with mock.patch.object(host, "step", spy):
+            end, state = host.accept_answer(
+                self.gh,
+                self.CFG,
+                5,
+                6,
+                self.HEAD,
+                0,
+                self.refused("headMoved"),
+                before=before,
+                at=self.AT,
+                write=True,
+            )
+        self.assertEqual(end, "review")
+        # The observation is decided on the stored revision and stored at the next, and the
+        # result, which the engine hears next, is decided on that stored document.
+        [(first, observed, found), (second, result, _)] = seen
+        self.assertEqual((first["revision"], found["state"]["revision"]), (1, 2))
+        self.assertEqual(observed["kind"], "changeObserved")
+        self.assertEqual(second["revision"], 2)
+        self.assertIn(observed["id"], second["recentEvents"])
+        self.assertEqual(result["kind"], "actionFinished")
+        stored = self.read()
+        self.assertEqual(stored["revision"], 2)
+        self.assertEqual(stored["change"]["version"], self.MOVED)
+        self.assertIn(observed["id"], stored["recentEvents"])
+        self.assertEqual(state["change"]["version"], self.MOVED)
+
+    def test_a_merge_decision_without_write_stores_nothing(self):
+        before = copy.deepcopy(self.gh.comments(5))
+        cfg, now = self.CFG, datetime(2026, 11, 23, 15, 0, 0, tzinfo=UTC)
+        run = {"head": self.HEAD, "outcome": "merge_refused"}
+        seen = {"version": self.HEAD, "merged": False, "empty": True}
+        answers = [
+            lambda: host.required_failed(self.gh, cfg, 5, 6, self.HEAD, 0, None),
+            lambda: host.accept_answer(
+                self.gh, cfg, 5, 6, self.HEAD, 0, self.refused("behind"), updates=1
+            ),
+            lambda: host.accept_answer(
+                self.gh,
+                cfg,
+                5,
+                6,
+                self.HEAD,
+                0,
+                self.refused("headMoved"),
+                before=[host.head_observed(5, 6, self.MOVED)],
+            ),
+            lambda: host.checks_waited(self.gh, cfg, 5, 6, self.HEAD, now, now),
+            lambda: host.refusal_cleared(self.gh, cfg, 5, 6, run, True),
+            lambda: host.update_failed(self.gh, cfg, 5, 6, self.HEAD, 0, "It failed."),
+            lambda: host.change_seen(self.gh, cfg, 5, 6, self.HEAD, 0, seen),
+        ]
+        for answer in answers:
+            answer()
+        self.assertEqual(self.gh.comments(5), before)
+        self.assertEqual(self.read()["revision"], 1)
+
+    def test_each_merge_decision_stores_one_answer_at_the_next_revision(self):
+        cfg, now = self.CFG, datetime(2026, 11, 23, 15, 0, 0, tzinfo=UTC)
+        seen = {"version": self.HEAD, "merged": False, "empty": True}
+        answers = {
+            "required_failed": lambda: host.required_failed(
+                self.gh, cfg, 5, 6, self.HEAD, 0, None, write=True
+            ),
+            "checks_waited": lambda: host.checks_waited(
+                self.gh, cfg, 5, 6, self.HEAD, now, now, write=True
+            ),
+            "update_failed": lambda: host.update_failed(
+                self.gh, cfg, 5, 6, self.HEAD, 0, "It failed.", write=True
+            ),
+            "change_seen": lambda: host.change_seen(
+                self.gh, cfg, 5, 6, self.HEAD, 0, seen, write=True
+            ),
+        }
+        for name, answer in answers.items():
+            with self.subTest(name):
+                self.gh.issue_comments[5] = [
+                    c for c in self.gh.comments(5) if not c["body"].startswith("### NexKit state")
+                ]
+                self.assertTrue(host.store_import(self.gh, cfg, 5))
+                answer()
+                self.assertEqual(self.read()["revision"], 2)
+
+    def test_a_tick_names_the_wait_of_the_document_it_is_decided_on(self):
+        self.assertEqual(host.wait_id(self.read(), "requiredChecks"), "w1.1")
+        refusal = self.refused("waitingForChecks")
+        host.accept_answer(self.gh, self.CFG, 5, 6, self.HEAD, 0, refusal, at=self.AT, write=True)
+        waiting = self.read()
+        named = host.wait_id(waiting, "requiredChecks")
+        self.assertTrue(named and named != "w1.1")
+        self.assertEqual(host.wait_id(waiting, "baseFailure"), "w1.1")
+        event = host._event("tick", 5, self.AT, "merge-6-x", wait="w1.1")
+        seen, spy = self.spied()
+        with mock.patch.object(host, "step", spy):
+            host.decide(self.gh, self.CFG, 5, event, waiting, pull=6, wait="requiredChecks")
+            host.decide(self.gh, self.CFG, 5, event, waiting, pull=6)
+        # With `wait`, the tick names the stored document's wait, and without it, its own.
+        [(_, with_wait, _), (_, without, _)] = seen
+        self.assertEqual(with_wait["wait"], named)
+        self.assertEqual(without["wait"], "w1.1")
+
+
 class ChecksWaitedTest(ReportCase):
     """A sweep's tick of a merge that waits for required checks: the six hours are the
     engine's."""
@@ -1777,7 +2322,7 @@ class ChecksWaitedTest(ReportCase):
     def waited(self, hours):
         since = datetime(2026, 11, 23, 15, 0, 0, tzinfo=UTC)
         cfg = make_config(merge={"auto": True})
-        return host.checks_waited(cfg, 5, 6, "c" * 40, since, since + hours)
+        return host.checks_waited(self.gh, cfg, 5, 6, "c" * 40, since, since + hours)
 
     def test_the_merge_is_tried_again_for_six_hours_and_then_a_person_looks(self):
         self.assertEqual(self.waited(timedelta(hours=1)), "merge")
@@ -1792,11 +2337,11 @@ class ChecksWaitedTest(ReportCase):
                 conflicts = {"auto_resolve": resolve}
                 cfg = make_config(merge={"auto": True}, conflicts=conflicts)
                 with mock.patch.object(host, "step", wraps=host.step) as step:
-                    end = host.checks_waited(cfg, 5, 6, "c" * 40, since, late, behind=True)
+                    end = host.checks_waited(self.gh, cfg, 5, 6, "c" * 40, since, late, behind=True)
                 self.assertEqual(end, expected)
                 self.assertTrue(step.call_args.args[0]["observed"]["behind"])
         with mock.patch.object(host, "step", wraps=host.step) as step:
-            host.checks_waited(cfg, 5, 6, "c" * 40, since, late)
+            host.checks_waited(self.gh, cfg, 5, 6, "c" * 40, since, late)
         self.assertNotIn("behind", step.call_args.args[0]["observed"])
 
     def test_a_tick_the_engine_refuses_is_refused(self):
@@ -1808,7 +2353,7 @@ class ChecksWaitedTest(ReportCase):
         cfg = make_config(merge={"auto": True})
         now = datetime(2026, 11, 23, 15, 0, 0, tzinfo=UTC)
         with mock.patch.object(host, "step", wraps=host.step) as step:
-            end = host.checks_waited(cfg, 5, 6, "c" * 40, None, now)
+            end = host.checks_waited(self.gh, cfg, 5, 6, "c" * 40, None, now)
         self.assertEqual(end, "merge")
         self.assertNotIn("checksSince", step.call_args.args[0])
 
@@ -1822,7 +2367,7 @@ class RefusalClearedTest(ReportCase):
         run = {"head": "c" * 40, "outcome": "merge_refused"}
         if refused_clean:
             run["refused_clean"] = "c" * 40
-        return host.refusal_cleared(cfg, 5, 6, run, acceptable)
+        return host.refusal_cleared(self.gh, cfg, 5, 6, run, acceptable)
 
     def test_an_acceptable_head_is_merged_whatever_merge_auto_says(self):
         for auto in (True, False):
@@ -2387,7 +2932,7 @@ class ChangeSeenTest(ReportCase):
     def seen(self, merged=False, empty=False, version=None, waiting=False, cfg=None):
         cfg = cfg or make_config(merge={"auto": True})
         seen = {"version": version or self.HEAD, "merged": merged, "empty": empty}
-        return host.change_seen(cfg, 5, 6, self.HEAD, 0, seen, waiting=waiting)
+        return host.change_seen(self.gh, cfg, 5, 6, self.HEAD, 0, seen, waiting=waiting)
 
     def test_a_pull_request_a_person_merged_ends_the_item_as_accepted(self):
         self.assertEqual(self.seen(merged=True), "accepted")
@@ -2424,13 +2969,14 @@ class NoChangeFoundTest(ReportCase):
 
     def test_a_valid_finding_ends_the_item_without_a_change(self):
         cfg = make_config()
-        self.assertEqual(host.no_change_found(cfg, {"issue": 5}, "Fixed by 8b9cb87."), "noChange")
+        found = host.no_change_found(self.gh, cfg, {"issue": 5}, "Fixed by 8b9cb87.")
+        self.assertEqual(found, "noChange")
         decision = {"issue": 5, "pr": 6, "head": "c" * 40}
-        self.assertEqual(host.on_base_found(cfg, decision), "noChange")
+        self.assertEqual(host.on_base_found(self.gh, cfg, decision), "noChange")
 
     def test_the_implement_round_sends_its_result_with_the_finding(self):
         with mock.patch.object(host, "step", wraps=host.step) as step:
-            host.no_change_found(make_config(), {"issue": 5}, "Fixed by 8b9cb87.")
+            host.no_change_found(self.gh, make_config(), {"issue": 5}, "Fixed by 8b9cb87.")
         [event] = [call.args[1] for call in step.call_args_list]
         self.assertEqual(event["kind"], "actionFinished")
         self.assertEqual(event["result"]["output"]["no_change"], "Fixed by 8b9cb87.")
@@ -2438,7 +2984,7 @@ class NoChangeFoundTest(ReportCase):
     def test_the_fix_round_sends_an_empty_change_while_its_agent_is_pending(self):
         decision = {"issue": 5, "pr": 6, "head": "c" * 40}
         with mock.patch.object(host, "step", wraps=host.step) as step:
-            host.on_base_found(make_config(), decision)
+            host.on_base_found(self.gh, make_config(), decision)
         [call] = step.call_args_list
         self.assertEqual(call.args[0]["state"], "fixing")
         event = call.args[1]
@@ -2447,14 +2993,36 @@ class NoChangeFoundTest(ReportCase):
             ("changeObserved", "6", True, False),
         )
 
+    def stored(self):
+        self.assertTrue(host.store_import(self.gh, make_config(), 5))
+        self.assertEqual(item_state.read(self.gh, 5)[1]["revision"], 1)
+        return copy.deepcopy(self.gh.comments(5))
+
+    def test_the_implement_round_stores_the_engine_s_answer_only_with_write(self):
+        before = self.stored()
+        host.no_change_found(self.gh, make_config(), {"issue": 5}, "Fixed by 8b9cb87.")
+        self.assertEqual(self.gh.comments(5), before)
+        host.no_change_found(self.gh, make_config(), {"issue": 5}, "Fixed by 8b9cb87.", write=True)
+        _, doc = item_state.read(self.gh, 5)
+        self.assertEqual((doc["revision"], doc["state"]), (2, "noChange"))
+
+    def test_the_fix_round_stores_the_engine_s_answer_only_with_write(self):
+        before = self.stored()
+        decision = {"issue": 5, "pr": 6, "head": "c" * 40}
+        host.on_base_found(self.gh, make_config(), decision)
+        self.assertEqual(self.gh.comments(5), before)
+        host.on_base_found(self.gh, make_config(), decision, write=True)
+        _, doc = item_state.read(self.gh, 5)
+        self.assertEqual((doc["revision"], doc["state"]), (2, "noChange"))
+
     def test_an_answer_that_ends_nothing_is_refused(self):
         cfg = make_config()
         # An empty finding is no finding: the engine publishes the round's change.
         with self.assertRaises(host.Refused):
-            host.no_change_found(cfg, {"issue": 5}, "")
+            host.no_change_found(self.gh, cfg, {"issue": 5}, "")
         for call in (
-            lambda: host.no_change_found(cfg, {"issue": 5}, "Fixed."),
-            lambda: host.on_base_found(cfg, {"issue": 5, "pr": 6, "head": "c" * 40}),
+            lambda: host.no_change_found(self.gh, cfg, {"issue": 5}, "Fixed."),
+            lambda: host.on_base_found(self.gh, cfg, {"issue": 5, "pr": 6, "head": "c" * 40}),
         ):
             with mock.patch.object(engine, "answer", return_value={"error": "no"}):
                 with self.assertRaises(host.Refused):
@@ -2465,6 +3033,10 @@ class PartEndedTest(ReportCase):
     """A part that NexKit merged ends its parent only as the engine decides, under `parentEnd`:
     `close_parent_issues` on gives `whenPartAccepted`, off gives `person`."""
 
+    def setUp(self):
+        super().setUp()
+        self.gh.add_issue(1, title="Epic")
+
     def subs(self, *states):
         """The sub-issues of the parent 1: issue 5, and one for each of `states`."""
         found = [{"number": 5, "state": "closed", "state_reason": "completed"}]
@@ -2474,7 +3046,7 @@ class PartEndedTest(ReportCase):
 
     def ended(self, *states, close=True, subs=None):
         cfg = make_config(close_parent_issues=close)
-        return host.part_ended(cfg, 1, subs or self.subs(*states), 5, "accepted")
+        return host.part_ended(self.gh, cfg, 1, subs or self.subs(*states), 5, "accepted")
 
     def test_the_parent_closes_when_every_part_ended_and_one_was_completed(self):
         self.assertEqual(self.ended(), "close")
@@ -2487,7 +3059,8 @@ class PartEndedTest(ReportCase):
     def test_a_person_decides_when_no_part_was_completed(self):
         subs = [{"number": 5, "state": "closed", "state_reason": "completed"}]
         with mock.patch.object(host, "step", wraps=host.step) as step:
-            self.assertEqual(host.part_ended(make_config(), 1, subs, 7, "dropped"), "person")
+            found = host.part_ended(self.gh, make_config(), 1, subs, 7, "dropped")
+        self.assertEqual(found, "person")
         self.assertEqual(step.call_args.args[1]["part"], "7")
 
     def test_without_close_parent_issues_the_engine_gets_person_and_a_person_decides(self):
@@ -2516,7 +3089,7 @@ class PartEndedTest(ReportCase):
         subs = self.many(("closed", "completed"))
         with mock.patch.object(host, "step", wraps=host.step) as step:
             # The completed part is beyond the first ten, and the reduced list keeps it.
-            self.assertEqual(host.part_ended(cfg, 1, subs, 5, "dropped"), "close")
+            self.assertEqual(host.part_ended(self.gh, cfg, 1, subs, 5, "dropped"), "close")
         parts = step.call_args.args[0]["parts"]
         self.assertEqual(len(parts), MOST["split"])
         self.assertIn({"item": "99", "state": "accepted"}, parts)
@@ -2526,7 +3099,7 @@ class PartEndedTest(ReportCase):
         self,
     ):
         cfg = make_config(close_parent_issues=True)
-        self.assertEqual(host.part_ended(cfg, 1, self.many(), 5, "dropped"), "person")
+        self.assertEqual(host.part_ended(self.gh, cfg, 1, self.many(), 5, "dropped"), "person")
 
     def test_a_parent_with_more_parts_than_a_state_holds_stays_while_one_is_open(self):
         subs = self.many(("open", None))
@@ -2568,7 +3141,7 @@ class MergeFindsTest(ReportCase):
         with mock.patch.object(host, "change_seen", wraps=host.change_seen) as seen:
             outcome = self.merge()
         self.assertEqual(outcome["outcome"], "pull_closed")
-        self.assertEqual(seen.call_args.args[5], {"version": HEAD, "merged": True, "empty": False})
+        self.assertEqual(seen.call_args.args[6], {"version": HEAD, "merged": True, "empty": False})
         self.merged_by_person()
         with mock.patch.object(host, "change_seen", side_effect=host.Refused("no")):
             outcome = self.merge()
@@ -2589,14 +3162,14 @@ class MergeFindsTest(ReportCase):
         with mock.patch.object(host, "change_seen", wraps=host.change_seen) as seen:
             outcome = self.merge()
         self.assertEqual(outcome["outcome"], "pull_closed")
-        self.assertTrue(seen.call_args.args[5]["merged"])
+        self.assertTrue(seen.call_args.args[6]["merged"])
 
     def test_a_change_the_base_branch_holds_is_closed_only_when_the_engine_ends_it(self):
         self.gh.on_base.add(HEAD)
         with mock.patch.object(host, "change_seen", wraps=host.change_seen) as seen:
             outcome = self.merge()
         self.assertEqual(outcome["outcome"], "already_on_base")
-        self.assertEqual(seen.call_args.args[5], {"version": HEAD, "merged": False, "empty": True})
+        self.assertEqual(seen.call_args.args[6], {"version": HEAD, "merged": False, "empty": True})
         self.assertEqual(self.gh.pulls[6]["state"], "closed")
         self.gh = FakeGitHub()
         self.gh.add_issue(5)
@@ -2621,7 +3194,7 @@ class MergeFindsTest(ReportCase):
         with mock.patch.object(host, "part_ended", return_value="stays") as ended:
             self.assertEqual(self.merge(cfg)["outcome"], "merged")
         self.assertEqual(self.gh.issues[1]["state"], "open")
-        self.assertEqual(ended.call_args.args[1:], (1, ended.call_args.args[2], 5, "accepted"))
+        self.assertEqual(ended.call_args.args[2:], (1, ended.call_args.args[3], 5, "accepted"))
         self.gh.reopen(6, 5)
         self.gh.pulls[6]["state"] = "open"
         with mock.patch.object(host, "part_ended", return_value="close"):
@@ -2679,7 +3252,7 @@ class MergeStepTest(ReportCase):
         with mock.patch.object(host, "change_seen", wraps=host.change_seen) as seen:
             step = self.step()
         self.assertEqual((step["state"], step["command"]), ("start", "review"))
-        self.assertEqual(seen.call_args.args[5]["version"], "d" * 40)
+        self.assertEqual(seen.call_args.args[6]["version"], "d" * 40)
         self.assertTrue(seen.call_args.kwargs["waiting"])
 
     def test_a_head_the_engine_refuses_waits_for_a_person(self):
@@ -2703,14 +3276,25 @@ class LostAgainTest(TestCase):
     # The minutes after the last start that the n-th start waits.
     DUE = (0, 30, 60, 120)
 
+    def github(self):
+        """A repository with the issue and its pull request, which the item's state is read
+        from."""
+        gh = FakeGitHub()
+        gh.add_issue(5, title="Add it")
+        gh.add_pull(6, 5)
+        return gh
+
     def lost(self, command="plan", target=5, tries=0, now=None, at=None, **kwargs):
+        gh = kwargs.pop("gh", None) or self.github()
         record = {"command": command, "target": target, "at": at or self.AT, "tries": tries}
         record.update(kwargs.pop("record", {}))
         fields = {"command": command, "target": target, "note": "", "remember": {}}
         fields.update(kwargs.pop("fields", {}))
         now = now or self.NOW
         with mock.patch.object(host, "step", wraps=host.step) as sent:
-            found = host.lost_again(self.CFG, self.ISSUE, record, now, self.WHAT, fields, **kwargs)
+            found = host.lost_again(
+                gh, self.CFG, self.ISSUE, record, now, self.WHAT, fields, **kwargs
+            )
         return found, [call.args for call in sent.call_args_list]
 
     def test_a_lost_command_starts_again_when_it_is_due(self):
@@ -2825,6 +3409,232 @@ class LostAgainTest(TestCase):
 
     def test_autopilot_waits_for_a_person_when_the_engine_refuses(self):
         fields = {"command": "close", "target": 5, "note": "", "remember": {}}
-        found = autopilot._again(self.CFG, self.ISSUE, {}, self.NOW, self.WHAT, fields)
+        found = autopilot._again(
+            self.github(), self.CFG, self.ISSUE, {}, self.NOW, self.WHAT, fields
+        )
         self.assertEqual(found["state"], "waits")
         self.assertIn("refused to decide", found["reason"])
+
+
+class StoredStopsTest(HostCase):
+    """A blocked or failed `/nexkit go`, a stopped or timed-out round, a usage limit, a transient
+    error, a resume that comes due and a lost command store the engine's answer at the next
+    revision when they run in the item's group, and only preview it otherwise."""
+
+    NOW = datetime(2026, 10, 11, 5, 0, tzinfo=UTC)
+    START = {"basis": "b", "target": 5, "note": "", "remember": {}}
+    GO = {"issue": 5, "pr": None, "action": "implement"}
+    PLAN = {"issue": 5, "pr": None, "action": "plan"}
+
+    def setUp(self):
+        super().setUp()
+        self.cfg = pilot(answer="recommended", labels={"on-hold": {"hold": True}})
+        self.issue(5)
+        self.plan(5)
+
+    def stored(self):
+        """The item has the state comment that `nexkit route` stores before its first event."""
+        self.assertTrue(host.store_import(self.gh, self.cfg, 5))
+
+    def read(self):
+        return item_state.read(self.gh, 5)
+
+    def blocked(self):
+        run = {"outcome": "agent_blocked", "questions": questions([{**ASKED, "closes": 0}])}
+        return self.run_comment(5, "go", status="failure", attention="Answer them.", **run)
+
+    def timed_out(self):
+        return self.run_comment(5, "go", status="failure", outcome="agent_error", timed_out=True)
+
+    def after_go(self, write=False):
+        comments = self.gh.comments(5)
+        comment, run = [(c, r) for c, r in run_comments(comments) if "command" in r][-1]
+        record = autopilot.find_record(comments)[1]
+        issue = self.gh.issues[5]
+        return host.after_go(
+            self.gh, self.cfg, issue, comment, run, record, self.START, comments, write=write
+        )
+
+    def stopped(self, write=False):
+        comments = self.gh.comments(5)
+        _, run = [(c, r) for c, r in run_comments(comments) if "command" in r][-1]
+        record = autopilot.find_record(comments)[1]
+        issue = self.gh.issues[5]
+        return host.stopped(
+            self.gh, self.cfg, issue, run, record, self.START, comments, write=write
+        )
+
+    def paused(self, command="plan", at="2026-10-11T04:40:00Z", **resume):
+        record = {"command": command, "number": 5, "note": "", "auto": "resume", "at": at}
+        run = {"url": "https://x/runs/1", "command": command, "status": "paused"}
+        run["resume"] = {**record, **resume}
+        self.gh.comment(5, render_run(run, "⏸️ Paused."))
+        return run
+
+    def lost(self, write=False, now=None):
+        record = {"command": "go", "target": 5, "at": "2026-10-11T04:50:00Z", "tries": 1}
+        fields = {"command": "go", "target": 5, "note": "", "remember": {}}
+        return host.lost_again(
+            self.gh,
+            self.cfg,
+            self.gh.issues[5],
+            record,
+            now or self.NOW,
+            "the run ended without a report",
+            fields,
+            write=write,
+        )
+
+    def calls(self):
+        """(name, setup, call) of each decision, where `call(write)` carries it out."""
+        agent = {"status": "blocked", "output": {"questions": [{**ASKED, "closes": 0}]}}
+        timed_out = {"timed_out": True}
+        return [
+            ("after_go", self.blocked, self.after_go),
+            (
+                "round_carried_on",
+                self.blocked,
+                lambda write: host.round_carried_on(
+                    self.gh, self.cfg, self.gh.issues[5], self.GO, agent, write=write
+                ),
+            ),
+            ("stopped", self.timed_out, self.stopped),
+            (
+                "stop_carried_on",
+                self.timed_out,
+                lambda write: host.stop_carried_on(
+                    self.gh, self.cfg, self.gh.issues[5], self.GO, timed_out, write=write
+                ),
+            ),
+            (
+                "stage_limited",
+                lambda: None,
+                lambda write: host.stage_limited(
+                    self.gh, self.cfg, self.PLAN, "2026-10-11T04:40:00Z", write=write
+                ),
+            ),
+            (
+                "stage_transient",
+                lambda: None,
+                lambda write: host.stage_transient(
+                    self.gh, self.cfg, self.PLAN, self.NOW, "Overloaded", write=write
+                ),
+            ),
+            (
+                "resumes",
+                self.paused,
+                lambda write: host.resumes(
+                    self.gh, self.cfg, {"resume": self.resume_record()}, 5, self.NOW, write=write
+                ),
+            ),
+            ("lost_again", lambda: None, self.lost),
+        ]
+
+    def resume_record(self):
+        return {"command": "plan", "number": 5, "at": "2026-10-11T04:40:00Z"}
+
+    def spied(self):
+        seen, real = [], host.step
+
+        def spy(state, event, found_policies):
+            found = real(state, event, found_policies)
+            seen.append(found)
+            return found
+
+        return seen, spy
+
+    def test_each_decision_stores_the_engine_s_answer_at_the_next_revision(self):
+        for name, setup, call in self.calls():
+            with self.subTest(decision=name):
+                self.setUp()
+                setup()
+                self.stored()
+                before = self.read()[1]["revision"]
+                seen, spy = self.spied()
+                with mock.patch.object(host, "step", spy):
+                    call(True)
+                doc = self.read()[1]
+                self.assertEqual(doc["revision"], before + 1)
+                # The row of events is one write: the state after the last of them.
+                self.assertEqual({**doc, "revision": 0}, {**seen[-1]["state"], "revision": 0})
+
+    def test_without_write_the_comments_and_the_revision_stay(self):
+        for name, setup, call in self.calls():
+            with self.subTest(decision=name):
+                self.setUp()
+                setup()
+                self.stored()
+                before = copy.deepcopy(self.gh.comments(5))
+                call(False)
+                self.assertEqual(self.gh.comments(5), before)
+                self.assertEqual(self.read()[1]["revision"], 1)
+
+    def test_a_due_tick_of_a_lost_command_is_a_second_answer_stored_after_the_first(self):
+        self.stored()
+        before = self.read()[1]["revision"]
+        seen, spy = self.spied()
+        with mock.patch.object(host, "step", spy):
+            # Due: the loss is answered with a wait, and its tick, named by that wait, starts it.
+            step = self.lost(write=True, now=self.NOW + timedelta(hours=5))
+        self.assertEqual((step["state"], step["command"]), ("start", "go"))
+        self.assertEqual([found["state"]["revision"] for found in seen], [before + 1, before + 2])
+        doc = self.read()[1]
+        self.assertEqual(doc, seen[-1]["state"])
+        self.assertEqual([w for w in doc["waits"]], [])
+
+    def test_a_decision_with_no_state_comment_stores_nothing(self):
+        self.blocked()
+        before = copy.deepcopy(self.gh.comments(5))
+        self.after_go(write=True)
+        self.assertEqual(self.gh.comments(5), before)
+        self.assertEqual(self.read(), (None, None))
+
+    def test_a_comment_after_the_round_is_stored_with_its_result_as_one_answer(self):
+        # A round with nothing to answer waits for a person, until the comment plans it again.
+        self.run_comment(5, "go", status="failure", outcome="agent_blocked", attention="Secret.")
+        self.gh.human_comment(5, "Keep it, but only for a day.")
+        self.stored()
+        before = self.read()[1]["revision"]
+        seen, spy = self.spied()
+        with mock.patch.object(host, "step", spy):
+            self.after_go(write=True)
+        self.assertEqual(len(seen), 2)
+        self.assertEqual(self.read()[1]["revision"], before + 1)
+
+    def test_an_edited_state_comment_refuses_each_decision(self):
+        for name, setup, call in self.calls():
+            with self.subTest(decision=name):
+                self.setUp()
+                setup()
+                self.stored()
+                comment, _ = self.read()
+                comment["editors"] = [BOT_LOGIN, "mallory"]
+                with self.assertRaises(host.Refused):
+                    call(True)
+
+    def test_a_run_paused_at_a_usage_limit_that_the_step_starts_clears_its_wait(self):
+        cfg = pilot(answer="recommended")
+        self.cfg = cfg
+        self.stored()
+        d = {"issue": 5, "pr": None, "action": "plan"}
+        until = host.stage_limited(self.gh, cfg, d, "2026-10-11T04:40:00Z", write=True)
+        self.assertEqual(until, "2026-10-11T04:40:00Z")
+        waiting = self.read()[1]
+        [wait] = waiting["waits"]
+        self.assertEqual(wait["for"], "usageLimit")
+        self.paused()
+        lines, _ = play_resume(self.gh, cfg, self.NOW)
+        self.assertEqual(lines, ["Resumed /nexkit plan on #5."])
+        doc = self.read()[1]
+        self.assertEqual([w for w in doc["waits"] if w["for"] == "usageLimit"], [])
+        self.assertEqual([(a["kind"], a["stage"]) for a in doc["pending"]], [("runAgent", "plan")])
+        self.assertEqual(doc["revision"], waiting["revision"] + 1)
+
+    def test_the_resume_run_without_a_configuration_stores_nothing(self):
+        self.stored()
+        before = copy.deepcopy(self.gh.comments(5))
+        self.paused()
+        with_run = copy.deepcopy(self.gh.comments(5))
+        self.assertTrue(host.resumes(self.gh, None, {"resume": self.resume_record()}, 5, self.NOW))
+        self.assertEqual(self.gh.comments(5), with_run)
+        self.assertNotEqual(before, with_run)

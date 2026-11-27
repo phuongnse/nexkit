@@ -658,7 +658,8 @@ def _no_change(gh, cfg, decision, agent):
     finding = no_change_finding(agent)
     try:
         # The issue closes only as the engine ends the item, on the agent's own finding.
-        no_change_found(cfg, decision, filled(((agent or {}).get("output") or {}).get("no_change")))
+        found = filled(((agent or {}).get("output") or {}).get("no_change"))
+        no_change_found(gh, cfg, decision, found, write=True)
     except Refused as exc:
         message = f"No change is needed, but NexKit did not close #{issue}: the engine refused"
         return {
@@ -696,7 +697,7 @@ def _already_on_base(gh, cfg, decision, agent):
     target = {**decision, "merge_base": agent.get("merge_base") or decision["base"]}
     try:
         # The pull request and its issue close only as the engine ends the item.
-        on_base_found(cfg, decision)
+        on_base_found(gh, cfg, decision, write=True)
     except Refused as exc:
         outcome, commit, reason = "on_base_failed", agent.get("on_base"), refused_reason(exc)
         by = f", brought by {commit}" if commit else ""
@@ -797,7 +798,16 @@ def _question_lines(items):
 
 
 def needs_person(
-    outcome, cfg, plan=None, resume=None, confirm=(), decide=(), evidence=None, found=None
+    outcome,
+    cfg,
+    plan=None,
+    resume=None,
+    confirm=(),
+    decide=(),
+    evidence=None,
+    found=None,
+    gh=None,
+    number=None,
 ):
     """The reason a person is needed after a run, or None: what to do, then why NexKit does
     not, with what the run found that shows where to look (see `autopilot.person`). It
@@ -808,10 +818,11 @@ def needs_person(
     may name `questions` (a blocked round's), `pull` (the run is a pull request's round),
     `error`, `failing` (the names of checks that still fail), `findings` (the review's
     blocking findings), `refused` (`refusal.explain` for a refused merge) and
-    `timed_out`."""
+    `timed_out`. For a plan, `gh` and the item's `number` let the engine decide on the item's
+    stored document, which it only reads."""
     found = found or {}
     if outcome == "planned":
-        return _planned(plan or {})
+        return _planned(plan or {}, gh, cfg, number)
     if outcome == "merge_waiting":
         # Only a round whose issue autopilot's sweeps look at waits like this.
         return None
@@ -913,14 +924,14 @@ def needs_person(
     return autopilot.person(do, why)
 
 
-def _planned(plan):
+def _planned(plan, gh=None, cfg=None, number=None):
     """Why a person is needed after the plan `plan`, without automatic approval: what the
     engine waits for, in NexKit 6's words (`host.plan_waits_for`). A clean plan waits for
     the `/nexkit go` of whoever asked for it, and mentions nobody."""
     from .host import Refused, plan_waits_for, refused_reason
 
     try:
-        reason = plan_waits_for(plan)
+        reason = plan_waits_for(plan, gh, cfg, number)
     except Refused as error:
         return refused_reason(error)
     if reason == "approval" and plan.get("too_large"):
@@ -1219,10 +1230,12 @@ def _paused_agent(gh, decision, cfg, agent):
     refused = None
     try:
         until = host.stage_limited(
+            gh,
             cfg,
             decision,
             limit_reset(agent, cfg, resumed),
             _held(gh, cfg, decision["issue"]),
+            write=True,
         )
     except host.Refused as error:
         until, refused = None, host.refused_reason(error)
@@ -1349,7 +1362,9 @@ def merge_pull(gh, cfg, target, row, message, workflow, default_branch):
     (see `maintain.close_on_base`). One that a person merged or closed first ends the round
     as `pull_closed`, before its issue counts, since that merge closes the issue too. The
     engine decides what a merge by a person and an emptied change end (`host.change_seen`), and
-    whether a parent ends once its part ended (`host.part_ended`)."""
+    whether a parent ends once its part ended (`host.part_ended`). It runs only in the issue's
+    concurrency group (the round's `report`, the `step` run, the approval's merge), so each
+    answer of the engine that it asks for is stored (`write`)."""
     pr, head = target["pr"], target["head"]
     number = pr
     try:
@@ -1365,12 +1380,12 @@ def merge_pull(gh, cfg, target, row, message, workflow, default_branch):
             "comment `/nexkit review` on the pull request to try the merge again",
             f"NexKit could not read #{number}: {autopilot.quoted(str(exc), 200)}",
         )
-        return _guarded(cfg, target, "merge_refused", message.strip(), found)
+        return _guarded(gh, cfg, target, "merge_refused", message.strip(), found)
     if ended:
         # A person merged or closed it first, which may also have closed its issue: there
         # is nothing left to merge, and nobody to ask. A merge is the engine's to end.
         if _merged(pull):
-            refused = _seen(cfg, target, message, _seen_by(pull, head, merged=True), "accepted")
+            refused = _seen(gh, cfg, target, message, _seen_by(pull, head, merged=True), "accepted")
             if refused:
                 return refused
         return autopilot.PULL_CLOSED, _passed_but(head, ended)
@@ -1380,17 +1395,17 @@ def merge_pull(gh, cfg, target, row, message, workflow, default_branch):
             f" NexKit did not merge it: #{target['issue']} is closed. Merge the pull request "
             "or close it yourself."
         )
-        return _guarded(cfg, target, "merge_issue_closed", message.strip())
+        return _guarded(gh, cfg, target, "merge_issue_closed", message.strip())
     if edited:
         message += (
             f" NexKit did not merge it: {edited}. Read #{target['issue']}, and comment "
             f"`/nexkit trust` there if you trust it; NexKit then reviews this pull request again."
         )
-        return _guarded(cfg, target, autopilot.UNTRUSTED_MERGE, message.strip())
+        return _guarded(gh, cfg, target, autopilot.UNTRUSTED_MERGE, message.strip())
     merge_base = on_base(gh, target["base"], head)
     if merge_base:
         empty = {"version": head, "merged": False, "empty": True}
-        refused = _seen(cfg, target, message, empty, "noChange")
+        refused = _seen(gh, cfg, target, message, empty, "noChange")
         if refused:
             return refused
         outcome, text, commit = close_on_base(gh, cfg, {**target, "merge_base": merge_base})
@@ -1462,7 +1477,7 @@ def _seen_by(pull, head, merged):
     return {"version": version, "merged": merged, "empty": not merged}
 
 
-def _seen(cfg, target, message, seen, expect):
+def _seen(gh, cfg, target, message, seen, expect):
     """None when the engine ends the item as `expect` after the observation `seen` that the
     host made at the merge (`host.change_seen`); otherwise (outcome, message) for a person,
     since the engine refused to decide."""
@@ -1470,7 +1485,8 @@ def _seen(cfg, target, message, seen, expect):
 
     auto_fixes = (target.get("state") or {}).get("auto_fixes", 0)
     try:
-        end = change_seen(cfg, target["issue"], target["pr"], target["head"], auto_fixes, seen)
+        issue, pr, head = target["issue"], target["pr"], target["head"]
+        end = change_seen(gh, cfg, issue, pr, head, auto_fixes, seen, write=True)
         if end != expect:
             raise Refused(f"The engine answers {end!r}, not {expect!r}, to what the merge found.")
     except Refused as error:
@@ -1497,12 +1513,15 @@ def _parent_ends(gh, cfg, target):
             return []
         auto_fixes = (target.get("state") or {}).get("auto_fixes", 0)
         accepted = {"accepted": True, "refusal": None, "text": ""}
-        end, state = accept_answer(cfg, issue, target["pr"], target["head"], auto_fixes, accepted)
+        end, state = accept_answer(
+            gh, cfg, issue, target["pr"], target["head"], auto_fixes, accepted, write=True
+        )
         if end != "accepted":
             raise Refused(f"The engine answers {end!r} to a merge that went through.")
         if cfg["close_parent_issues"]:
             return close_parents_safely(gh, cfg, issue)
-        part_ended(cfg, parent["number"], gh.sub_issues(parent["number"]), issue, state["state"])
+        subs = gh.sub_issues(parent["number"])
+        part_ended(gh, cfg, parent["number"], subs, issue, state["state"])
     except GitHubError as exc:
         return [f"Could not check the parent issue of #{issue}: {exc}"]
     except Refused as error:
@@ -1518,7 +1537,7 @@ def _passed_but(head, ended):
     return f"✅ Checks and AI review passed on `{head[:7]}`. {ended}"
 
 
-def _guarded(cfg, target, outcome, message, found=None):
+def _guarded(gh, cfg, target, outcome, message, found=None):
     """`(outcome, message)` of a merge that one of its guards stopped: a closed issue, one
     edited after a writer vouched for it, or one NexKit could not read. A person decides each,
     as the engine does when it is sent as a refusal only a person clears. `found` is what the
@@ -1526,7 +1545,7 @@ def _guarded(cfg, target, outcome, message, found=None):
     from .host import Refused
 
     try:
-        end = _engine_accept(cfg, target, "needsPerson", "NexKit did not try the merge.")
+        end = _engine_accept(gh, cfg, target, "needsPerson", "NexKit did not try the merge.")
         if end != "person":
             raise Refused(f"The engine answers {end!r} to a merge that a guard stopped.")
     except Refused as error:
@@ -1536,7 +1555,7 @@ def _guarded(cfg, target, outcome, message, found=None):
     return outcome, message
 
 
-def _engine_accept(cfg, target, kind, text, before=()):
+def _engine_accept(gh, cfg, target, kind, text, before=()):
     """What the engine decides after the accept of `target`'s pull request ended with the
     refusal `kind`, and `text` for a person, once it has heard the events `before`
     (`host.accept_answer`'s end). Raises `host.Refused`."""
@@ -1545,6 +1564,7 @@ def _engine_accept(cfg, target, kind, text, before=()):
     auto_fixes = (target.get("state") or {}).get("auto_fixes", 0)
     result = {"accepted": False, "refusal": kind, "text": text}
     end, _ = accept_answer(
+        gh,
         cfg,
         target["issue"],
         target["pr"],
@@ -1553,6 +1573,7 @@ def _engine_accept(cfg, target, kind, text, before=()):
         result,
         before=before,
         at=iso(datetime.now(UTC)),
+        write=True,
     )
     return end
 
@@ -1589,7 +1610,7 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch, after
         # A person merged or closed it while NexKit tried, which GitHub then refused. A merge
         # is the engine's to end.
         if _merged(pull):
-            refused = _seen(cfg, target, message, _seen_by(pull, head, merged=True), "accepted")
+            refused = _seen(gh, cfg, target, message, _seen_by(pull, head, merged=True), "accepted")
             if refused:
                 return refused
         return autopilot.PULL_CLOSED, _passed_but(head, ended)
@@ -1604,7 +1625,7 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch, after
         used = conflict_rounds_of(gh, pr, row)
         try:
             end, _ = accept_answer(
-                cfg, target["issue"], pr, head, auto_fixes, result, conflicts=used
+                gh, cfg, target["issue"], pr, head, auto_fixes, result, conflicts=used, write=True
             )
             if end not in ("fix", "person"):
                 raise Refused(f"The engine answers {end!r} to a conflict at the merge.")
@@ -1661,6 +1682,7 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch, after
         auto_fixes = (target.get("state") or {}).get("auto_fixes", 0)
         try:
             ends, answer = accept_answer(
+                gh,
                 cfg,
                 target["issue"],
                 pr,
@@ -1669,6 +1691,7 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch, after
                 result,
                 since=row.get("waiting_since"),
                 at=iso(datetime.now(UTC)),
+                write=True,
             )
             if ends != "waiting":
                 raise Refused(f"The engine answers {ends!r} to required checks that wait.")
@@ -1695,7 +1718,7 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch, after
         try:
             used = 0 if auto_resolve else conflict_rounds_of(gh, pr, row)
             end, _ = accept_answer(
-                cfg, target["issue"], pr, head, auto_fixes, result, conflicts=used
+                gh, cfg, target["issue"], pr, head, auto_fixes, result, conflicts=used, write=True
             )
             if end != "person":
                 raise Refused(f"The engine answers {end!r} to a conflict at the merge.")
@@ -1710,7 +1733,9 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch, after
         result = {"accepted": False, "refusal": "behind", "text": f"It is behind `{base}`."}
         auto_fixes = (target.get("state") or {}).get("auto_fixes", 0)
         try:
-            end, _ = accept_answer(cfg, target["issue"], pr, head, auto_fixes, result)
+            end, _ = accept_answer(
+                gh, cfg, target["issue"], pr, head, auto_fixes, result, write=True
+            )
             if end != "person":
                 raise Refused(f"The engine answers {end!r} to a branch that is behind.")
             do, why = _not_up_to_date("behind", base)
@@ -1721,7 +1746,7 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch, after
 
         kind = "transient" if after_move else "needsPerson"
         try:
-            end = _engine_accept(cfg, target, kind, "GitHub refused the merge.")
+            end = _engine_accept(gh, cfg, target, kind, "GitHub refused the merge.")
             if end != "person":
                 raise Refused(f"The engine answers {end!r} to a merge that GitHub refused.")
         except Refused as error:
@@ -1855,7 +1880,9 @@ def _required_failed(gh, cfg, target, row, message, names, workflow, default_bra
     from .host import Refused, refused_parts, required_failed
 
     try:
-        ends = required_failed(cfg, target["issue"], pr, head, state["auto_fixes"], wait)
+        ends = required_failed(
+            gh, cfg, target["issue"], pr, head, state["auto_fixes"], wait, write=True
+        )
     except Refused as error:
         save()
         target["found"] = {"refused": refused_parts(error)}
@@ -1909,7 +1936,8 @@ def _head_moved(gh, cfg, target, row, message, workflow, default_branch):
         unread = str(error)
     before = [head_observed(target["issue"], pr, head)] if head else []
     try:
-        end = _engine_accept(cfg, target, "headMoved", "The change moved after its checks.", before)
+        text = "The change moved after its checks."
+        end = _engine_accept(gh, cfg, target, "headMoved", text, before)
         if end not in ("review", "person"):
             raise Refused(f"The engine answers {end!r} to a change that moved.")
     except Refused as error:
@@ -1973,7 +2001,15 @@ def _update_branch(gh, cfg, target, row, message, limit, workflow, default_branc
     used = updates_used(gh.comments(pr))
     try:
         end, _ = accept_answer(
-            cfg, target["issue"], pr, target["head"], auto_fixes, result, updates=used
+            gh,
+            cfg,
+            target["issue"],
+            pr,
+            target["head"],
+            auto_fixes,
+            result,
+            updates=used,
+            write=True,
         )
         if end not in ("update", "person"):
             raise Refused(f"The engine answers {end!r} to a branch that is behind.")
@@ -1988,7 +2024,9 @@ def _update_branch(gh, cfg, target, row, message, limit, workflow, default_branc
     if why and updating:
         # An update that GitHub refused goes back to the engine, which hands it to a person.
         try:
-            update_failed(cfg, target["issue"], pr, target["head"], auto_fixes, why, used)
+            update_failed(
+                gh, cfg, target["issue"], pr, target["head"], auto_fixes, why, used, write=True
+            )
         except Refused as error:
             do, why = refused_parts(error)
             target["found"] = {"refused": (do, why)}
@@ -2458,7 +2496,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
 
                 try:
                     label = _held(gh, cfg, decision["issue"])
-                    answer = host.stage_transient(cfg, decision, now, error, label)
+                    answer = host.stage_transient(gh, cfg, decision, now, error, label, write=True)
                 except host.Refused as exc:
                     refused = host.refused_reason(exc)
                 else:
@@ -2514,7 +2552,8 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             return _no_change(gh, cfg, decision, agent)
         if action == "plan":
             plan = publish.get("comment")
-            reason = needs_person("planned", cfg, plan=agent.get("output"))
+            output = agent.get("output")
+            reason = needs_person("planned", cfg, plan=output, gh=gh, number=decision["issue"])
             summary = f"[Plan]({plan}) posted." if plan else ""
             if reason and autopilot.carries_on(gh, cfg, decision, "planned", agent, ran=agent_ran):
                 reason = None

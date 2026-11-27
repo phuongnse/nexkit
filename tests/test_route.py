@@ -2,7 +2,7 @@ import json
 import unittest
 from unittest import mock
 
-from nexkit import config
+from nexkit import config, first_state, host, item_state
 from nexkit.github import GitHubError
 from nexkit.host import Refused
 from nexkit.route import (
@@ -25,6 +25,8 @@ from nexkit.state import (
     setup_fingerprint,
 )
 from tests.support import APP, BOT_LOGIN, FakeGitHub, make_config, profile_config, with_claude
+from tests.test_item_state import CREATED
+from tests.test_item_state import step as engine_step
 
 
 def config_text():
@@ -672,6 +674,20 @@ class RouteTests(unittest.TestCase):
         for note in ("resume", "resume x", "resume 12 3", "resumed 12", "approval 1234"):
             self.assertEqual(step(note)["task"], "step", note)
 
+    def test_a_step_with_a_part_note_becomes_the_storing_of_that_part_s_end(self):
+        def step(note, number="1"):
+            inputs = {"command": "step", "number": number, "note": note, "auto": "false"}
+            return route(self.gh, "workflow_dispatch", {}, inputs)
+
+        self.assertEqual(
+            step("part 5"),
+            {"action": "maintain", "task": "part_ended", "issue": 1, "part": 5},
+        )
+        # A note that is not the pattern is a sweep's step, and routes nothing of its own.
+        for note in ("part", "part x", "part 5 6", "parts 5", "part 5\n6", "resume 5"):
+            self.assertNotEqual(step(note).get("task"), "part_ended", note)
+        self.assertEqual(step("part").get("task"), "step")
+
     def test_dispatch(self):
         self.gh.add_pull(9, 5)
         event = {"sender": {"login": BOT_LOGIN}}
@@ -776,6 +792,104 @@ class RouteTests(unittest.TestCase):
 
     def test_other_events_are_ignored(self):
         self.assertEqual(route(self.gh, "push", {})["action"], "none")
+
+
+class TakenCommandTests(unittest.TestCase):
+    """A command is carried out from the answer that `host.take` stored for it, and from the
+    item's stored state, not by sending its event to the engine a second time."""
+
+    def setUp(self):
+        self.gh = FakeGitHub()
+        self.gh.add_issue(7)
+        self.cfg = make_config()
+        self.first, _, _ = engine_step(None, {**CREATED, "item": "7"})
+        self.asked = host._event(
+            "requested",
+            7,
+            None,
+            "comment-7",
+            what="plan",
+            by=host._person("alice", "writer"),
+            note="",
+            plan=None,
+        )
+
+    def store(self, doc):
+        self.assertTrue(item_state.write(self.gh, 7, doc, (None, None)))
+
+    def route(self, taken, body="/nexkit plan", event=None):
+        return route(
+            self.gh, "issue_comment", event or comment_event(7, body), cfg=self.cfg, taken=taken
+        )
+
+    def test_a_command_that_an_earlier_run_took_starts_nothing_and_gets_no_reply(self):
+        planning, _, _ = engine_step(self.first, self.asked)
+        self.store(planning)
+        found = self.route([])
+        self.assertEqual(found["action"], "none")
+        self.assertIsNone(found["reply_to"])
+        self.assertEqual(found["reason"], "An earlier run of this item already took this command")
+        # Nothing was sent to the engine again: the state is as stored.
+        self.assertEqual(item_state.read(self.gh, 7)[1], planning)
+
+    def test_a_command_that_this_run_took_starts_the_stage_its_answer_names(self):
+        planning, actions, _ = engine_step(self.first, self.asked)
+        self.store(planning)
+        with mock.patch("nexkit.host.step", side_effect=AssertionError("sent a second time")):
+            found = self.route([(self.asked, actions)])
+        self.assertEqual((found["action"], found["issue"]), ("plan", 7))
+        self.assertEqual(found["comment_id"], 7)
+        self.assertEqual(item_state.read(self.gh, 7)[1], planning)
+
+    def test_a_command_on_a_closed_issue_is_answered_closed_whatever_was_stored(self):
+        waiting = {**self.first, "state": "awaitingApproval"}
+        waiting["attention"] = {
+            "reason": "approval",
+            "text": first_state.SAYS["approval"],
+            "ref": None,
+        }
+        self.store(waiting)
+        planning, actions, _ = engine_step(waiting, self.asked)
+        self.assertTrue(any(a["kind"] == "runAgent" for a in actions))
+        self.gh.issues[7]["state"] = "closed"
+        found = self.route([(self.asked, actions)])
+        self.assertEqual((found["action"], found["reason"]), ("none", "The issue is closed"))
+        self.assertEqual(found["reply_to"], 7)
+
+    def test_a_replaced_command_starts_in_this_run_and_keeps_the_reply_to_its_own(self):
+        asked = self.gh.human_comment(7, "/nexkit plan")
+        event = host._event(
+            "requested",
+            7,
+            None,
+            f"comment-{asked['id']}",
+            what="plan",
+            by=host._person("alice", "writer"),
+            note="",
+            plan=None,
+        )
+        planning, actions, _ = engine_step(self.first, event)
+        self.store(planning)
+        # This run's own comment is a command that an issue does not take.
+        own = comment_event(7, "/nexkit fix")
+        found = self.route([(event, actions)], event=own)
+        self.assertEqual((found["action"], found["comment_id"]), ("plan", asked["id"]))
+        self.assertEqual(found["also_reply"]["to"], 7)
+        self.assertIn("is not an issue command", found["also_reply"]["reason"])
+
+    def test_a_dispatch_of_a_command_starts_each_time_it_is_sent(self):
+        self.store(self.first)
+        inputs = {"command": "plan", "number": "7", "auto": "false"}
+        for _ in range(2):
+            found = route(
+                self.gh,
+                "workflow_dispatch",
+                {"sender": {"login": "bot"}},
+                inputs,
+                cfg=self.cfg,
+                taken=[],
+            )
+            self.assertEqual(found["action"], "plan")
 
 
 class EngineStartsTests(unittest.TestCase):

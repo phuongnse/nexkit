@@ -146,8 +146,10 @@ secrets. Run them in a clean container to reproduce.
 branch. The comment's first line must start with `/nexkit`. Edited comments are ignored;
 post a new one.
 
-**A command never got 👀.** Another command replaced it while it waited. Post it again
-once the running command finishes. See [One run at a time](how-it-works.md#one-run-at-a-time).
+**A command never got 👀.** Another command replaced it while it waited. The run that ran
+starts it when that run has nothing else to start, so wait for the running command to finish.
+If it still has no 👀 then, post it again. See
+[One run at a time](how-it-works.md#one-run-at-a-time).
 
 **"needs write access".** The commenter must be a collaborator with write, maintain or
 admin permission.
@@ -773,7 +775,10 @@ Read the comment and its history. Then either:
 
 - Delete the comment, which hands the item back to autopilot. When it is the pull request's
   state comment, the state starts again from nothing, including the count of automatic fix
-  rounds, so check that `fix.max_auto_rounds` still bounds what you want.
+  rounds, so check that `fix.max_auto_rounds` still bounds what you want. When it is the
+  item's `### NexKit state` comment, the next run of the item imports it again from NexKit's
+  other records and stores a new one. Until then, NexKit takes none of the item's comments,
+  reviews or labels.
 - Carry the item on yourself with `/nexkit` commands. They ignore the changed comment.
 
 `/nexkit trust` does not clear it: it vouches for an issue's text, not for NexKit's records.

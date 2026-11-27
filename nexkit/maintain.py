@@ -23,6 +23,7 @@ from .github import GitHubError
 from .route import (
     APPROVAL,
     BRANCH_PREFIX,
+    PART_ENDED,
     RESUMED,
     RUN_ID,
     implementing,
@@ -52,6 +53,9 @@ from .usage import PAUSE_WINDOW, iso, parse_iso
 # runs.
 TASKS = {
     "parents": ("close_parent_issues", "autopilot.enabled"),
+    # The run of a part's end in its parent's queue: it only stores the end in the parent's
+    # state, which no setting gates, since the part's run sent it.
+    "part_ended": (),
     "schedule": (
         "usage_limit.resume",
         "retry.wait_minutes",
@@ -199,7 +203,8 @@ def close_parent(gh, cfg, number, part=None):
     # A list that GitHub has not caught up with may miss the part, which has closed.
     state = first_state._ended(found or gh.issue(part)) or "accepted"
     try:
-        answer = host.part_ended(cfg, number, subs, part, state)
+        # A preview: only the `step` run of the parent's group stores the parent's state.
+        answer = host.part_ended(gh, cfg, number, subs, part, state)
     except host.Refused as error:
         why = autopilot.quoted(str(error), 300)
         return [f"Left #{number} as it is: NexKit's engine refused to decide: {why}"], False
@@ -244,6 +249,43 @@ def close_parent(gh, cfg, number, part=None):
             f"closed:\n\n{listing}",
         )
     return [f"Closed #{number} as completed: all its sub-issues are closed."], True
+
+
+def send_part_end(gh, number, workflow, ref):
+    """After sub-issue `number` closed: send its end to its parent's queue, a `step` whose run
+    stores it in the parent's state (`record_part_end`), since only the run of the item's group
+    writes that state. Sends nothing for an issue with no parent in this repository. Returns
+    lines for the log; a dispatch that fails becomes a line."""
+    try:
+        parent = gh.parent_issue(number)
+        if not parent or not in_repository(gh, parent):
+            return []
+        note = PART_ENDED.format(number)
+        autopilot.request_step(gh, workflow, ref, parent["number"], note=note, auto="false")
+    except GitHubError as exc:
+        return [f"Could not send the end of #{number} to its parent's queue: {exc}"]
+    return [f"Sent the end of #{number} to #{parent['number']}'s queue."]
+
+
+def record_part_end(gh, cfg, decision):
+    """In the queue of the parent issue `decision["issue"]`: decide the end of its sub-issue
+    `decision["part"]` on the parent's stored state and store the answer
+    (`host.part_ended`). It reads the part back from GitHub, which must be a closed sub-issue
+    of the parent, and writes nothing else on GitHub. Returns lines for the log."""
+    from . import first_state, host  # host imports this module
+
+    parent, part = decision["issue"], decision["part"]
+    found, issue = gh.parent_issue(part), gh.issue(part)
+    if not found or found["number"] != parent or issue.get("state") != "closed":
+        return [f"#{part} is not a closed sub-issue of #{parent}: nothing is recorded."]
+    state = first_state._ended(issue) or "accepted"
+    try:
+        subs = gh.sub_issues(parent)
+        answer = host.part_ended(gh, cfg, parent, subs, part, state, write=True)
+    except host.Refused as error:
+        why = autopilot.quoted(str(error), 300)
+        return [f"Recorded nothing for #{part}: NexKit's engine refused to decide: {why}"]
+    return [f"Recorded the end of #{part} in #{parent}'s state: {answer}."]
 
 
 def close_or_find_closed(gh, number, reason="completed"):
@@ -607,7 +649,7 @@ def _engine_resumes(gh, cfg, run, number, now, comment, lines, inputs):
             # The engine starts a paused run under a hold too, so this changes nothing.
             label = "a label it could not read"
     try:
-        return host.resumes(cfg, run, number, now, label)
+        return host.resumes(gh, cfg, run, number, now, label, write=True)
     except host.Refused as error:
         run.pop("resume", None)
         run.update(status=FAILURE, attention=host.refused_reason(error))
@@ -1277,18 +1319,20 @@ def _unapprovable(gh, decision):
     return None, comment, run
 
 
-def _approval(cfg, decision, run):
+def _approval(gh, cfg, decision, run, write=False):
     """What the engine says a writer's approval does after the round `run` (`host.approved`):
     `(answer, line)`, `answer` being `merge`, `accept` or `none`, and `line` the log line that
     says why nothing starts, or None. When the engine refuses to answer, the approval starts
-    nothing and `line` says so. The texts stay as NexKit 6's."""
+    nothing and `line` says so. The texts stay as NexKit 6's. The answer is a preview in the
+    approval's own group `approved-N` (`send_approval`), and `write`, which only the `step` run
+    in the item's group passes (`merge_approved`), stores it."""
     # `report` and `host` import this module.
     from . import host
 
     pr, issue = decision["pr"], decision["issue"]
     commit = decision.get("commit")
     try:
-        answer = host.approved(cfg, issue, pr, run, commit, decision.get("actor"))
+        answer = host.approved(gh, cfg, issue, pr, run, commit, decision.get("actor"), write=write)
     except host.Refused as exc:
         return None, f"#{pr}: NexKit could not decide what the approval does: {exc}"
     if answer != "none":
@@ -1304,16 +1348,17 @@ def _approval(cfg, decision, run):
 
 
 def send_approval(gh, cfg, decision, workflow, ref):
-    """The run of a writer's approval of a NexKit pull request: it writes nothing on GitHub
-    but a `step` dispatch for the pull request's issue, so the merge runs in the issue's
-    queue behind the rounds and commands already there (`merge_approved`). It sends the step
+    """The run of a writer's approval of a NexKit pull request, in its own group
+    `approved-N`: it writes nothing on GitHub, and no state, but a `step` dispatch for the pull
+    request's issue, so the merge runs in the issue's queue behind the rounds and commands
+    already there (`merge_approved`). It sends the step
     only when the engine answers that the approval merges or accepts (`host.approved`) and the
     read-only checks of `merge_approved` pass, since GitHub keeps one waiting run for the
     queue and a needless step could replace a command that waits. Returns lines for the log."""
     line, _, run = _unapprovable(gh, decision)
     if line:
         return [line]
-    answer, line = _approval(cfg, decision, run)
+    answer, line = _approval(gh, cfg, decision, run)
     if line:
         return [line]
     pr, issue = decision["pr"], decision["issue"]
@@ -1332,7 +1377,8 @@ def send_approval(gh, cfg, decision, workflow, ref):
 
 def merge_approved(gh, cfg, decision, workflow, ref):
     """Merge a NexKit pull request that a writer approved, in the issue's queue (the `step`
-    that `send_approval` sent), as the engine answers (`host.approved`): its latest round ended
+    that `send_approval` sent), as the engine answers (`host.approved`), whose answer it stores
+    in the item's state, as the item's group is the one writer of it: its latest round ended
     as `merge_refused`, `ready`, or `pull_closed` before it was reopened, on the head that its
     checks and review passed, with the guards of every merge (see `report.merge_pull`): a
     head that moved since gets a review instead. A round on its way, any other outcome, or, for
@@ -1350,7 +1396,7 @@ def merge_approved(gh, cfg, decision, workflow, ref):
     line, comment, run = _unapprovable(gh, decision)
     if line:
         return [line]
-    answer, line = _approval(cfg, decision, run)
+    answer, line = _approval(gh, cfg, decision, run, write=True)
     if line:
         return [line]
     if answer == "accept":
@@ -1386,7 +1432,10 @@ def maintain(gh, decision, cfg, *, workflow="", ref="", alerts=None):
     if task == "parents":
         issue = decision["issue"]
         lines = close_parents_safely(gh, cfg, issue) if cfg["close_parent_issues"] else []
+        lines += send_part_end(gh, issue, workflow, ref)
         return lines + autopilot.request_safely(gh, cfg, workflow, ref, issue)
+    if task == "part_ended":
+        return record_part_end(gh, cfg, decision)
     if task == "autopilot":
         # Even an event that changes nothing in scope, such as a milestoned issue with
         # `null`, starts a sweep: its run joins the group `nexkit-autopilot`, where it may

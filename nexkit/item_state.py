@@ -15,7 +15,9 @@ refused leaves its event at its source, past the cursor, for the next run to tak
 Every writer of one item's state runs in one concurrency group keyed by the work item, an
 issue's commands and its pull request's rounds alike, so the check below only catches what
 that misses. A person who may write to the repository can edit the App's comment, and it
-still reads as the App's: phuongnse/nexkit#329 closes that for every marker of NexKit.
+still has the App as its author: a state comment that someone else changed counts for nothing,
+and `find` raises `Edited` for it, so that nothing posts a second state comment over it and
+the item waits for a person (phuongnse/nexkit#329 closes that for every other marker).
 """
 
 from __future__ import annotations
@@ -27,7 +29,7 @@ import time
 
 from . import protocol
 from .protocol.size import STATE_LIMIT, decoded, encoded, size
-from .state import TEXT_LIMIT, bot_record
+from .state import TEXT_LIMIT, bot_record, by_bot, changed_by
 
 PREFIX = "<!-- nexkit:item-state "
 # Only the marker that ends the comment.
@@ -52,6 +54,15 @@ LOST_TEXT = "### NexKit state\n\nAnother write stored this work item's first sta
 
 class StateError(ValueError):
     """A state document that cannot be stored or read, such as one that breaks its schema."""
+
+
+class Edited(Exception):
+    """The App's state comment, `.comment`, was changed by someone else. It counts for nothing
+    and is not absent: a writer that took it for absent would post a second state comment."""
+
+    def __init__(self, comment):
+        super().__init__(f"The state comment {comment['id']} was changed by someone else.")
+        self.comment = comment
 
 
 class Moved(Exception):
@@ -115,10 +126,24 @@ def since(comment):
 _stored_since = since
 
 
+def _edited(comment):
+    """Whether `comment` is the App's, was changed by someone else and still looks like a
+    state comment: its heading or its marker is left."""
+    body = comment.get("body") or ""
+    return (
+        by_bot(comment)
+        and bool(changed_by(comment))
+        and (body.startswith("### NexKit state") or PREFIX in body)
+    )
+
+
 def find(comments):
     """(comment, state) of the oldest state comment among `comments`, or (None, None). A
-    newer one can only be a first write that lost (see `write`)."""
+    newer one can only be a first write that lost (see `write`). Raises `Edited` for a
+    state comment that someone other than the App changed."""
     for comment in comments:
+        if _edited(comment):
+            raise Edited(comment)
         state = _document(comment)
         if state is not None:
             return comment, state
@@ -126,7 +151,8 @@ def find(comments):
 
 
 def read(gh, number):
-    """(comment, state) of work item `number`, or (None, None) before its first write."""
+    """(comment, state) of work item `number`, or (None, None) before its first write. Raises
+    `Edited` when someone other than the App changed its state comment."""
     return find(gh.comments(number))
 
 

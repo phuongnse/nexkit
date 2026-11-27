@@ -417,20 +417,12 @@ class InitDoctorTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("spells the label `Last`", found)
 
-    def test_doctor_names_the_replacement_of_the_label_to_run_last(self):
-        found = self.label_findings({"last_in_milestone_label": "last"}, {"labels/last": "last\n"})
-        self.assertEqual(
-            found,
-            [
-                (
-                    True,
-                    "Deprecated: autopilot.last_in_milestone_label still works as a label of "
-                    'wave 1, but NexKit 7.0 removes it: in autopilot, replace it with "labels": '
-                    '{"last": {"wave": 1}}',
-                ),
-                (True, "autopilot.last_in_milestone_label: acme/app has the label `last`"),
-            ],
+    def test_doctor_says_nothing_of_the_removed_label_to_run_last(self):
+        found = self.label_findings(
+            {"last_in_milestone_label": None, "labels": {"last": {"wave": 1}}},
+            {"labels/last": "last\n"},
         )
+        self.assertEqual(found, [(True, "autopilot.labels: acme/app has the label `last`")])
 
     def test_doctor_asks_about_no_label_without_the_setting(self):
         cli.main(["init", "--repo", str(self.root), "--check", "test=true"])
@@ -1311,6 +1303,8 @@ class PipelineCommandTests(unittest.TestCase):
         raw = json.loads(path.read_text())
         raw["limits"] = {"setup_timeout_minutes": 10}
         path.write_text(json.dumps(raw))
+        # Another comment: an earlier run took the first, and a command starts only once.
+        event["comment"]["id"] = 4
         out = self.run_route("issue_comment", event)
         timeout = json.loads(out["check_matrix"])["include"][0]["timeout"]
         self.assertEqual((out["agent_timeout"], timeout), ("55", 15 + 10 + 10))
@@ -1413,7 +1407,7 @@ class PipelineCommandTests(unittest.TestCase):
         self.assertEqual(out["agent_timeout"], str(5 + 40 + 30))
         self.assertIsNone(json.loads(out["decision"])["previous_profile"])
         # Other runs get the profile's settings in the configuration they pass on.
-        event["comment"]["body"] = "/nexkit go"
+        event["comment"].update(id=4, body="/nexkit go")
         out = self.run_route("issue_comment", event)
         self.assertEqual(json.loads(out["decision"])["profile"], "standard")
         cfg = json.loads(out["config"])
@@ -1454,7 +1448,7 @@ class PipelineCommandTests(unittest.TestCase):
         out = self.run_route("issue_comment", event)
         self.assertEqual(json.loads(out["agent_secrets"]), sorted([*claude, *team]))
         # Without a plan, go runs on default_profile: implement and review on Claude.
-        event["comment"]["body"] = "/nexkit go"
+        event["comment"].update(id=4, body="/nexkit go")
         out = self.run_route("issue_comment", event)
         self.assertEqual(json.loads(out["agent_secrets"]), claude)
         self.assertEqual(json.loads(out["review_secrets"]), claude)
@@ -1480,20 +1474,35 @@ class PipelineCommandTests(unittest.TestCase):
             "issue": {"number": 7},
             "comment": {"id": 9, "body": "/nexkit trust", "user": {"login": "alice"}},
         }
-        self.assertEqual(self.run_route("issue_comment", event)["action"], "none")
+        # The import of the item's first state is not what this test is about.
+        with mock.patch.object(host, "store_import", return_value=False):
+            self.assertEqual(self.run_route("issue_comment", event)["action"], "none")
         [reply] = self.gh.comments(7)
         self.assertIn("autopilot.enabled off", reply["body"])
 
+    def test_the_run_that_follows_a_close_stores_no_state_comment_and_an_open_one_does(self):
+        # Every closed issue starts a run in its group, also one that NexKit never touched.
+        self.gh.issues[5]["state"] = "closed"
+        self.run_route("issues", {"action": "closed", "issue": {"number": 5}})
+        self.assertEqual(self.gh.issue_comments[5], [])
+        self.gh.issues[5]["state"] = "open"
+        self.run_route("issues", {"action": "closed", "issue": {"number": 5}})
+        [state] = self.gh.issue_comments[5]
+        self.assertEqual(item_state.find([state])[1]["revision"], 1)
+
     def test_route_hands_closed_issues_to_maintain_only_when_enabled(self):
         event = {"action": "closed", "issue": {"number": 5}}
-        out = self.run_route("issues", event)
+        # The import of the item's first state is not what this test is about.
+        with mock.patch.object(host, "store_import", return_value=False):
+            out = self.run_route("issues", event)
         self.assertEqual(out["action"], "none")
         self.assertFalse(self.gh.issue_comments[5])
         path = self.root / "repo/.nexkit/config.json"
         raw = json.loads(path.read_text())
         raw["close_parent_issues"] = True
         path.write_text(json.dumps(raw))
-        out = self.run_route("issues", event)
+        with mock.patch.object(host, "store_import", return_value=False):
+            out = self.run_route("issues", event)
         self.assertEqual(out["action"], "maintain")
         self.assertEqual(json.loads(out["decision"])["task"], "parents")
         self.assertEqual(out["maintain_timeout"], "15")
@@ -2804,11 +2813,15 @@ class WorkItemGroupTests(unittest.TestCase):
     def test_every_run_in_an_items_group_takes_its_events_before_it_routes(self):
         calls = []
 
+        def imported(gh, cfg, number, **kwargs):
+            calls.append(("import", number))
+            return False
+
         def take(gh, cfg, number, **kwargs):
             calls.append(("take", number))
             return []
 
-        def routed(gh, event_name, event, inputs=None, cfg=None):
+        def routed(gh, event_name, event, inputs=None, cfg=None, taken=None):
             calls.append(("route", None))
             return {"action": "none", "reason": "test"}
 
@@ -2832,6 +2845,7 @@ class WorkItemGroupTests(unittest.TestCase):
                         mock.patch.object(cli, "_gh", return_value=self.gh),
                         mock.patch.object(cli.configuration, "load", return_value=cfg),
                         mock.patch.object(route, "route", routed),
+                        mock.patch.object(host, "store_import", imported),
                         mock.patch.object(host, "take", take),
                         mock.patch.dict(os.environ, env),
                         contextlib.redirect_stdout(io.StringIO()),
@@ -2839,8 +2853,11 @@ class WorkItemGroupTests(unittest.TestCase):
                         self.assertEqual(cli.main(["route", "--repo", tmp]), 0)
                     item = re.fullmatch(r"nexkit-(\d+)", group)
                     if item:
-                        # The run is in an item's group: it takes the item's events first.
-                        self.assertEqual(calls, [("take", int(item[1])), ("route", None)], group)
+                        # The run is in an item's group: it stores the item's first state, then
+                        # takes the item's events, then routes.
+                        number = int(item[1])
+                        expected = [("import", number), ("take", number), ("route", None)]
+                        self.assertEqual(calls, expected, group)
                     else:
                         self.assertEqual(calls, [("route", None)], group)
 
@@ -2859,6 +2876,7 @@ class WorkItemGroupTests(unittest.TestCase):
             for raised, code in (
                 (item_state.Moved(), 1),
                 (host.Refused("a state it refuses"), 0),
+                (item_state.StateError("a state that cannot be stored"), 0),
                 (nexkit.github.GitHubError(502, "Bad Gateway"), 0),
             ):
                 with self.subTest(raised=type(raised).__name__):
@@ -2868,6 +2886,7 @@ class WorkItemGroupTests(unittest.TestCase):
                         mock.patch.object(cli, "_gh", return_value=self.gh),
                         mock.patch.object(cli.configuration, "load", return_value=cfg),
                         mock.patch.object(route, "route", routed),
+                        mock.patch.object(host, "store_import", return_value=False),
                         mock.patch.object(host, "take", side_effect=raised),
                         mock.patch.dict(os.environ, env),
                         contextlib.redirect_stdout(out),
@@ -2975,7 +2994,8 @@ class UpdateImageWorkflowTests(unittest.TestCase):
     def test_the_updates_run_every_week_with_the_least_permissions(self):
         """Both workflows that propose a pin run once a week, not after merges, since they check
         no behaviour; autopilot watches their runs, and they hold only what they need to push
-        and open a pull request."""
+        and open a pull request. Each pull request they open carries `dependencies`, as
+        docs/delivery.md says of one that updates a pin."""
         cfg = nexkit.config.load(ROOT)
         after = {
             entry["workflow"] if isinstance(entry, dict) else entry
@@ -3014,6 +3034,10 @@ class UpdateImageWorkflowTests(unittest.TestCase):
                 self.assertIn("$'1\\t1\\tnexkit/__init__.py'", jobs["update"])
                 self.assertNotIn("secrets.", text)
                 self.assertNotIn("gh issue", text)
+                creates = re.findall(r"gh pr create\b[^\n]*", jobs["update"])
+                self.assertTrue(creates)
+                for create in creates:
+                    self.assertIn("--label dependencies", create)
 
     def test_proposes_only_a_moved_digest_on_one_branch(self):
         propose, job = self.jobs["propose"], self.jobs["update"]

@@ -2064,6 +2064,31 @@ class ReportTests(ReportCase):
         self.assertEqual([f["body"] for f in last["findings"]], [f["body"] for f in findings])
         self.assertNotIn("left_out", last)
 
+    def test_a_blocked_run_comment_shows_its_blocker(self):
+        reason = "The plan forbids a known.py entry"
+        self.write(
+            "nexkit-agent",
+            "result.json",
+            {"status": "blocked", "error": reason, "output": {"blocker": reason, "questions": []}},
+        )
+        outcome = self.run_report(published=False)
+        self.assertEqual(outcome["outcome"], "agent_blocked")
+        self.assertTrue(self.gh.comments_matching(5, f"NexKit stopped during implement: {reason}"))
+
+    def test_a_blocked_run_with_questions_and_no_blocker_lists_the_decisions(self):
+        self.write(
+            "nexkit-agent",
+            "result.json",
+            {
+                "status": "blocked",
+                "error": "The agent reported it was blocked.",
+                "output": {"blocker": "", "questions": [{"question": "Which port?"}]},
+            },
+        )
+        self.run_report(published=False)
+        self.assertTrue(self.gh.comments_matching(5, "Decisions needed"))
+        self.assertTrue(self.gh.comments_matching(5, "Which port?"))
+
     def test_blocked_conflicts_are_listed_for_a_person(self):
         open_conflict = {
             "file": "Program.cs",

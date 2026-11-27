@@ -207,7 +207,8 @@ large again](#a-plan-is-too-large-again).
 **Autopilot waits after a `/nexkit go` that was blocked or failed.** Answer in a comment on
 the issue, or mark the issue the round waits for as its blocker (GitHub's *blocked by*):
 the next sweep after your comment, or after that blocker closes, starts `/nexkit plan` by
-itself, so the plan holds the change. You need not post the command. A round that ran out
+itself, so the plan holds the change. You need not post the command. The run's comment says
+why the agent stopped, in its `blocker` or its questions. A round that ran out
 of time follows the rules above instead.
 
 **Autopilot does not start an issue.** Run `nexkit status`: its *Autopilot* section says,
@@ -388,6 +389,7 @@ each outcome of a run is:
 | plan or round needs protected paths | make the change in the protected paths (…) by hand, as the plan says. Only a person changes protected paths | the paths |
 | a recommended close | answer the questions: an answer that is the option to close the issue closes it as not planned. The agent recommends closing the issue, and NexKit closes it by itself only when that is a round's one recommendation, with its finding that no change is needed | |
 | `agent_blocked` | answer the questions in the run's comment with `/nexkit plan <answers>`, or `/nexkit go <answers>` when they leave the plan as it is (on a pull request: with `/nexkit fix <answers>`). The agent stopped at a decision that is the owner's to make | every question, with its options |
+| `agent_blocked`, nothing to answer | read why the agent stopped in the run's comment, then answer with `/nexkit go <instructions>` or `/nexkit plan <changes>` (on a pull request: read why the agent stopped in the round's comment, then comment `/nexkit fix <instructions>` on the pull request, or `/nexkit plan <changes>` on the issue to plan it anew). The agent stopped before it finished and asked no question, and NexKit never runs a blocked round again by itself | |
 | `agent_error` | read the error in the run's comment and log, remove its cause, then post the command again. The run stopped on an error, and NexKit runs a command again by itself only after an error of the service, the network or the runner | the error |
 | `agent_error`, out of time | comment `/nexkit plan` to split the issue into parts that each fit one session, or raise the stage's `timeout_minutes`. The agent ran out of time before it finished | |
 | `agent_failed` | read the agent job's log for why it ended, then post the command again. The agent job ended without a result, so NexKit had nothing to go on | |

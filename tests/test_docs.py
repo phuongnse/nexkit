@@ -721,6 +721,11 @@ def mention_texts():
         "`ready`, with `merge.auto` off": (report.READY,),
         "`paused`, not resumed": (report.PAUSED_REASON,),
         "`pull_closed`, reopened": (autopilot.person(*autopilot.REOPENED),),
+        "`agent_blocked`, nothing to answer": (
+            report.BLOCKED_NOTHING[0],
+            report.BLOCKED_NOTHING[1][:1].upper() + report.BLOCKED_NOTHING[1][1:],
+            report.BLOCKED_NOTHING_PULL_DO,
+        ),
         "`agent_error`, out of time": (
             report.needs_person("agent_error", cfg, found={"timed_out": True}),
         ),

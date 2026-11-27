@@ -1,9 +1,11 @@
 """A fixed sample of the engine's random walks (`tests/walk.py`), and a check that it sees a
 broken rule. The script plays longer walks and `tests/mutants.py` breaks the engine for it."""
 
+import ast
 import functools
 import random
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from nexkit import protocol
@@ -27,6 +29,42 @@ def report(found):
         where = f"walk {info['walk']} step {info['step']}: {info['trail']}"
         lines.append(f"{count} × {name}\n  {where}")
     return "\n".join(lines)
+
+
+def callee(call):
+    """The name a call calls: `f` in `f(...)`, and `flag` in `self.flag(...)`."""
+    if isinstance(call.func, ast.Name):
+        return call.func.id
+    if isinstance(call.func, ast.Attribute):
+        return call.func.attr
+    return None
+
+
+def flagged_invariants():
+    """The invariants that tests/walk.py flags, from the source. Each `flag("name", ...)` call
+    names one. A sweep check binds `functools.partial(self.flag, "sweep")` and calls it with a
+    problem, so the calls in that function name none: the partial's second argument does."""
+    tree = ast.parse(Path(walk.__file__).read_text())
+    flagged, problems = set(), set()
+    for function in ast.walk(tree):
+        if not isinstance(function, ast.FunctionDef):
+            continue
+        for node in ast.walk(function):
+            if isinstance(node, ast.Call) and callee(node) == "partial" and len(node.args) > 1:
+                bound = node.args[0]
+                if isinstance(bound, ast.Attribute) and bound.attr == "flag":
+                    flagged.add(node.args[1].value)
+                    problems.update(
+                        id(call)
+                        for call in ast.walk(function)
+                        if isinstance(call, ast.Call) and callee(call) == "flag"
+                    )
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and callee(node) == "flag" and id(node) not in problems:
+            first = node.args[0] if node.args else None
+            if isinstance(first, ast.Constant) and isinstance(first.value, str):
+                flagged.add(first.value)
+    return flagged
 
 
 class SampleTests(unittest.TestCase):
@@ -84,6 +122,18 @@ class SampleTests(unittest.TestCase):
         with mock.patch.object(machine.Step, "stop_for_budget", lambda step: False):
             found = walk.sample(WALKS)
         self.assertIn("budget: a implement run starts on a spent budget", found["problems"])
+
+
+class InvariantsTests(unittest.TestCase):
+    def test_each_invariant_the_walker_flags_is_in_invariants_and_each_is_flagged(self):
+        flagged = flagged_invariants()
+        self.assertTrue(flagged, "tests/walk.py flags no invariant")
+        for name in sorted(flagged - set(walk.INVARIANTS)):
+            with self.subTest(invariant=name):
+                self.fail(f"tests/walk.py flags {name!r}, which INVARIANTS lacks")
+        for name in sorted(set(walk.INVARIANTS) - flagged):
+            with self.subTest(invariant=name):
+                self.fail(f"INVARIANTS has {name!r}, which tests/walk.py never flags")
 
 
 if __name__ == "__main__":

@@ -40,6 +40,7 @@ from nexkit import (
 )
 from nexkit.engine import machine, prompt, textutil
 from nexkit.runtimes import claude_code
+from tests import walk
 from tests.support import make_config, with_claude
 from tests.test_cli import jobs_of, permissions_of
 
@@ -92,6 +93,7 @@ PERMISSION_NAMES = {
 }
 KEYS_HEADER = "| Key | Default | Meaning |"
 STAGE_KEYS_HEADER = "| Key | Meaning |"
+RENAMED_HEADER = "| Before | Now |"
 TRIGGERS_HEADER = "| Trigger | Starts NexKit for |"
 WORKFLOW_TEMPLATE = ROOT / "nexkit/templates/workflow.yml"
 # Step 5 of the App upgrade: the workflow permissions as names, then their one level.
@@ -160,6 +162,12 @@ CI_TITLES_HEADER = "| Failure | Title |"
 WRITING_DOCS = DOCS / "writing-docs.md"
 # Rule 9 of how the docs stay correct, with its indented lines, up to the next unindented line.
 RULE_9 = re.compile(r"^9\. \*\*Checks catch what a machine can\.\*\*(.*?)(?=^\S|\Z)", re.M | re.S)
+TESTING_PAGE = DOCS / "testing.md"
+# The names of the walker's invariants on the testing page, after its sentence that introduces them.
+WALK_INVARIANTS = re.compile(
+    r"`INVARIANTS` in that file says what each one guards, and names them: "
+    r"((?:`[\w-]+`(?:, | and )?)+)\."
+)
 
 
 def anchors(path):
@@ -231,6 +239,26 @@ class ChecksListTests(unittest.TestCase):
                     f"docs/writing-docs.md rule 9 lists {name}, "
                     "which tests/test_docs.py does not define"
                 )
+
+
+class WalkInvariantsTests(unittest.TestCase):
+    def test_the_page_names_each_invariant_of_the_walker_and_no_other(self):
+        # Lines are wrapped, so the page is searched with its spaces made one each.
+        text = " ".join(TESTING_PAGE.read_text().split())
+        page = f"docs/{TESTING_PAGE.name}"
+        named = WALK_INVARIANTS.search(text)
+        if named is None:
+            self.fail(f"{page} does not name the invariants that tests/walk.py's INVARIANTS lists")
+        listed = re.findall(r"`([\w-]+)`", named.group(1))
+        for name in sorted({n for n in listed if listed.count(n) > 1}):
+            with self.subTest(invariant=name):
+                self.fail(f"{page} names {name!r} more than once")
+        for name in sorted(set(walk.INVARIANTS) - set(listed)):
+            with self.subTest(invariant=name):
+                self.fail(f"{page} does not name {name!r}, which tests/walk.py's INVARIANTS has")
+        for name in sorted(set(listed) - set(walk.INVARIANTS)):
+            with self.subTest(invariant=name):
+                self.fail(f"{page} names {name!r}, which tests/walk.py's INVARIANTS lacks")
 
 
 class DocsMapTests(unittest.TestCase):
@@ -887,6 +915,15 @@ def stage_key_rows():
     return []
 
 
+def dotted(cell):
+    """The dotted key of a table cell: `"fix": {"max_auto_rounds": 2}` gives fix.max_auto_rounds."""
+    value, path = json.loads("{" + cell.strip("`") + "}"), []
+    while isinstance(value, dict) and len(value) == 1:
+        key, value = next(iter(value.items()))
+        path.append(key)
+    return ".".join(path)
+
+
 def is_key(key):
     """Whether config.DEFAULTS defines `key`, top-level or `group.sub` of a group."""
     head, _, sub = key.partition(".")
@@ -1037,6 +1074,25 @@ class ConfigurationTests(unittest.TestCase):
         for key in sorted(listed - config.CACHE_KEYS):
             with self.subTest(key=key):
                 self.fail(f"docs/configuration.md lists {key}, which CACHE_KEYS does not define")
+
+    def test_the_renamed_table_lists_each_key_the_code_renames_and_no_other(self):
+        rows = table(CONFIG_PAGE, RENAMED_HEADER)
+        self.assertTrue(rows, "docs/configuration.md has no table of the keys renamed in 2.0")
+        listed = {dotted(row[0]): dotted(row[1]) for row in rows}
+        for key in sorted(set(config.RENAMED) - set(listed)):
+            with self.subTest(key=key):
+                self.fail(f"docs/configuration.md does not list the renamed key {key}")
+        for key in sorted(set(listed) - set(config.RENAMED)):
+            with self.subTest(key=key):
+                self.fail(f"docs/configuration.md lists {key}, which RENAMED does not define")
+        for key in sorted(set(listed) & set(config.RENAMED)):
+            with self.subTest(key=key):
+                self.assertEqual(
+                    listed[key],
+                    config.RENAMED[key],
+                    f"docs/configuration.md moves {key} to {listed[key]}, "
+                    f"but RENAMED moves it to {config.RENAMED[key]}",
+                )
 
     def test_the_pages_list_each_secret_an_older_workflow_can_pass_and_no_other(self):
         code = {*runtimes.DECLARED_SECRETS, *config.APP_SECRETS.values()}
@@ -1767,6 +1823,26 @@ VALUES = (
     ("stages.md", f"cut to {publish.PLAN_FLOOR} characters"),
     ("stages.md", f"more than {checks.FAILED_TESTS_LIMIT} failing tests"),
     ("stages.md", f"deletes up to {NUMBERS[maintain.STALE_BRANCHES]}"),
+    ("configuration.md", f"At most {config.MAX_CACHES} entries"),
+    (
+        "configuration.md",
+        f"in at most {config.MAX_CHECKLIST_ITEM} characters; a list holds at most "
+        f"{config.MAX_CHECKLIST}",
+    ),
+    (
+        "configuration.md",
+        f"plan {config.DEFAULTS['stages']['plan']['timeout_minutes']}, "
+        f"implement {config.DEFAULTS['stages']['implement']['timeout_minutes']}, "
+        f"review {config.DEFAULTS['stages']['review']['timeout_minutes']} and "
+        f"triage {config.TRIAGE_DEFAULTS['timeout_minutes']} by default; "
+        f"triage at most {config.MAX_TRIAGE_MINUTES}, other stages at most "
+        f"{config.MAX_STAGE_MINUTES}",
+    ),
+    ("configuration.md", f"up to {config.MAX_STAGE_MINUTES} minutes for a stage"),
+    ("configuration.md", f"toward the {runtimes.SECRET_SLOTS} per job"),
+    ("configuration.md", f"at most {runtimes.SECRET_SLOTS} per job"),
+    ("configuration.md", f"download artifacts for {artifact_days()} days"),
+    ("configuration.md", f"first and last {runlog.HEAD_LINES} lines of its output"),
 )
 # The redaction list of how it works: its heading, and the regex that finds the words of its first
 # bullet. Its other bullets name the token shapes and the passwords, each in a code span.
@@ -1846,6 +1922,10 @@ AUTOPILOT_STATES = re.compile(r"- `autopilot`(?:(?!- `).)*?a `state` \(([^)]*)\)
 # group keeps the word `as` before the first outcome, which the outcomes are found after.
 APPROVAL_PAGE = DOCS / "work-without-a-command.md"
 APPROVAL_OUTCOMES = re.compile(r"latest round ended (as .+?), merges it on the head")
+# The states in which GitHub reports a pull request as mergeable, in the brackets of the sentence
+# of Automatic merge. The text is searched with its whitespace collapsed, since the sentence wraps.
+MERGE_PAGE = DOCS / "merges-and-waits.md"
+MERGEABLE_LIST = re.compile(r"reports the pull request as mergeable \(([^)]*)\)")
 # The row of failure handling that gives the retry delays of `publish` and of every other GitHub API
 # call. Its first cell starts with PUBLISH_ROW; its second cell is the one the regexes read.
 FAILURE_PAGE = DOCS / "failure-handling.md"
@@ -2307,6 +2387,32 @@ class ApprovableTests(unittest.TestCase):
                 self.fail(
                     f"docs/work-without-a-command.md lists {outcome!r}, which "
                     "maintain.APPROVABLE does not hold"
+                )
+
+
+class MergeableStatesTests(unittest.TestCase):
+    def test_the_page_lists_each_mergeable_state_the_code_accepts_and_no_other(self):
+        # Lines are wrapped, so the page is searched with its spaces made one each.
+        text = " ".join(MERGE_PAGE.read_text().split())
+        match = MERGEABLE_LIST.search(text)
+        if match is None:
+            self.fail(
+                "docs/merges-and-waits.md has no list of the states in which GitHub reports "
+                "a pull request as mergeable"
+            )
+        listed = set(re.findall(r"`([^`]+)`", match.group(1)))
+        code = set(autopilot.MERGEABLE_STATES)
+        for mergeable in sorted(code - listed):
+            with self.subTest(mergeable=mergeable):
+                self.fail(
+                    f"docs/merges-and-waits.md does not list {mergeable!r}, which "
+                    "autopilot.MERGEABLE_STATES has"
+                )
+        for mergeable in sorted(listed - code):
+            with self.subTest(mergeable=mergeable):
+                self.fail(
+                    f"docs/merges-and-waits.md lists {mergeable!r}, which "
+                    "autopilot.MERGEABLE_STATES lacks"
                 )
 
 

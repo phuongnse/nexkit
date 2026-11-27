@@ -40,7 +40,6 @@ from .state import (
     SUPERSEDED,
     bot_record,
     conflict_rounds_used,
-    counted_fix,
     next_round,
     passed_checks,
     read_state,
@@ -1147,20 +1146,18 @@ def _give_back(gh, cfg, issue, number, comments, run):
     which only previews here: this runs in the push run's or the sweep's group, and only the
     item's own group stores its state. The run that the push run starts in that group, the
     conflict round or the review after the update, stores the give-back (`host.command`,
-    `host.base_moved` with `automatic`). A conflict round, and a retried or resumed one, counts
-    toward no automatic fix round here."""
+    `host.base_moved` with `automatic`). Whether the round was an automatic one that counts is
+    the stored `rounds.automatic`, which the import marks for a counted automatic fix round
+    (`state.counted_fix`); a conflict round, and a retried or resumed one, counts toward no
+    automatic fix round here."""
     from .host import Refused, stopped_counts
 
-    automatic = counted_fix(run)
     state_id, state = read_state(comments)
     if not (state and state.get("auto_fixes")):
         return
     read = json.loads(json.dumps(state))
     try:
-        found = state["auto_fixes"]
-        counted = stopped_counts(
-            gh, cfg, issue, number, run.get("head"), found, automatic, True, True
-        )
+        counted = stopped_counts(gh, cfg, issue, number, run.get("head"), True)
     except Refused:
         return
     if counted != state["auto_fixes"]:

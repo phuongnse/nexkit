@@ -330,6 +330,9 @@ when a list of what the code defines misses an entry. These rules close each of 
    - `test_the_cache_field_list_names_each_cache_key_the_code_defines_and_no_other`: the list of a
      cache entry's fields in [the configuration reference](configuration.md#caches) names each field
      `nexkit/config.py` accepts and no other.
+   - `test_the_renamed_table_lists_each_key_the_code_renames_and_no_other`: the table of [the keys
+     renamed in 2.0](configuration.md#keys-renamed-in-20) lists each key `nexkit/config.py` renames,
+     with where it moved, and no other.
    - `test_the_pages_list_each_secret_an_older_workflow_can_pass_and_no_other`: the configuration
      reference and [troubleshooting](troubleshooting.md) list each secret an older workflow can
      pass, and no other.
@@ -392,7 +395,8 @@ when a list of what the code defines misses an entry. These rules close each of 
    - `test_each_value_a_page_repeats_is_its_constant`: each value that [agents and
      profiles](agents-and-profiles.md), [how it works](how-it-works.md), [work without a
      command](work-without-a-command.md), [failure handling](failure-handling.md),
-     [stages](stages.md) and [autopilot](autopilot.md) repeat equals its constant in the code.
+     [stages](stages.md), [autopilot](autopilot.md) and [the configuration
+     reference](configuration.md) repeat equals its constant in the code.
    - `test_the_page_lists_the_secret_words_and_names_the_code_has`: the words and names of the
      redaction list in [how it works](how-it-works.md#what-is-redacted) are those of
      `SECRET_WORDS` and `SECRET_NAMES` in `nexkit/redact.py`, and no other.
@@ -426,6 +430,13 @@ when a list of what the code defines misses an entry. These rules close each of 
      which a writer's approval merges, which [work without a
      command](work-without-a-command.md#work-without-a-command) lists, are those of `APPROVABLE` in
      `nexkit/maintain.py`.
+   - `test_the_page_lists_each_mergeable_state_the_code_accepts_and_no_other`: the states in which
+     GitHub reports a pull request as mergeable, which [Automatic
+     merge](merges-and-waits.md#automatic-merge) lists, are those of `MERGEABLE_STATES` in
+     `nexkit/autopilot.py`.
    - `test_the_title_table_lists_each_title_the_code_writes_and_no_other`: the table of CI issue
      titles on [the autopilot page](autopilot.md) shows the titles that `ci_title` and `red_title`
      write, for each kind and form, and no other.
+   - `test_the_page_names_each_invariant_of_the_walker_and_no_other`: the walker's invariants that
+     [Moving decisions into the engine](testing.md#moving-decisions-into-the-engine) names are the
+     keys of `INVARIANTS` in `tests/walk.py`, and no other.

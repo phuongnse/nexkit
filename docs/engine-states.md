@@ -41,8 +41,10 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
 - **What follows a plan.** Under `person`, every plan waits for a person, a plan that finds no
   change too, for what NexKit 6 asks of them first: the approval of a plan that is too large or
   finds no change, a hand-made change, answers, or the approval of a clean plan. A person may
-  answer a plan's questions whatever its attention names first, under `autoWhenClean` too. Under
-  `autoWhenClean`, as NexKit 6's autopilot decides:
+  answer a plan's questions whatever its attention names first, under `autoWhenClean` too. A
+  writer's answer that picks the option that only closes the item drops it under either policy,
+  with no agent run, since another plan could only stop at the same place; on an item with a
+  change, the answer goes to the next plan. Under `autoWhenClean`, as NexKit 6's autopilot decides:
   - A plan that is too large is split into its parts, all of them, when splits are on and the
     item has no change, or has one and the plan is the one that a round which ran out of time
     asked for (`supersede`). A split of an item with a change withdraws the change. A split is
@@ -64,9 +66,7 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
     answers count only for the plan they started: a plan that ends without a result, such as one
     that fails, forgets them, and the next plan's questions are answered again.
   - A person's comment on a plan that waits, on an item with no change, plans it again, since the
-    plan did not hold what the comment says. A writer's answer that picks the option that only
-    closes the item drops it, with no agent run, since another plan could only stop at the same
-    place; on an item with a change, the answer goes to the next plan.
+    plan did not hold what the comment says.
 - **A round that stops as blocked.** An implement or fix round that asks questions waits in
   `awaitingApproval` for their answers, and the state keeps the round's questions while they
   wait. One whose change needs paths only a person changes waits for that person
@@ -126,8 +126,10 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   did not find its cause, so the next automatic fix round looks into that cause first: its
   `runAgent` names those checks in `diagnose`, as NexKit 6's `route` makes it a diagnosis round, the
   first ten of them as NexKit 6 does. The checks after an implement round, a person's push or a
-  person's request for a review are no fix round's, so nothing repeats in them; a conflict round is
-  a fix round, and its checks compare too. Only an automatic fix round diagnoses, and so does the
+  person's request for a review are no fix round's, so nothing repeats in them; a conflict round
+  that resolves the conflict is a fix round, and its checks compare too. A conflict round that makes
+  the change again starts a new change with an implement run, so its checks have no earlier checks
+  of that change to compare with. Only an automatic fix round diagnoses, and so does the
   same round run again after a wait; a person's fix round, a conflict round and the round that the
   engine's answers run again name no check. A fix round that waits for the base branch's failure
   forgets what repeated, since that failure is the base branch's, and a round whose change conflicts
@@ -353,11 +355,9 @@ Three things sit beside the state, never in place of it:
 | `close` | Ends the work item with its outcome | Done |
 | `cancel` | Stops an action that runs | Done |
 | `needPerson` | Tells the people who decide, once, with the reason and what they decide on (`ref`) | Done |
-| `show` | Shows, where people read the work, a plan (`plan`), a round (`round`), a review (`review`), the answers the engine gave to a plan's or a round's questions (`answers`), a stop (`stop`) or a notice (`notice`) | Done |
+| `show` | Shows, where people read the work, a plan (`plan`), a review (`review`) or the answers the engine gave to a plan's or a round's questions (`answers`). The protocol also allows `round`, `stop` and `notice`, which the engine never asks for | Done |
 | `wait` | Sends a `tick` naming the wait at its time | Done |
 
-**A chain of actions.** An action may name the action that follows when it ends as expected,
-such as implement, publish, checks and review. A host that runs a round as one pipeline, as
-GitHub runs one workflow, carries out the chain and then sends each result in order. The engine
-answers each as if it had come alone, and ignores a following action it no longer wants, by its
-id. NexKit 6's round, from `route` to `report`, stays one workflow run.
+**One action at a time.** Every action has a `next` field, which the protocol allows to name
+another action's id or to be null. The engine sets it to null on every action it asks for, so a
+host carries out each action and sends its result on its own, as an `actionFinished` event.

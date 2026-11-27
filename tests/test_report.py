@@ -133,18 +133,29 @@ class ReportCase(unittest.TestCase):
             self.write("nexkit-review", "result.json", review or review_result())
 
     def run_report(
-        self, d=None, cfg=None, published=True, head=HEAD, needs_review=None, start=False
+        self,
+        d=None,
+        cfg=None,
+        published=True,
+        head=HEAD,
+        needs_review=None,
+        start=False,
+        stored=False,
     ):
         """With `start`, the stage is started first, as the run of a stage that stops is: a stop
-        is decided on the stored state, which holds the run that is on its way."""
+        is decided on the stored state, which holds the run that is on its way. With `stored`,
+        the item's state is stored just after, as a run in its group does (`host.store_import`),
+        so that the stored state holds the round on its way, and whether it is automatic."""
         needs = {"review": {"result": needs_review}} if needs_review else {}
         if published:
             needs["publish"] = {
                 "outputs": {"result": json.dumps({"published": True, "pr": 6, "head": head})}
             }
         os.environ["GITHUB_RUN_ID"] = str(next(self.run_ids))
-        if start:
+        if start or stored:
             progress.start(self.gh, d or decision())
+        if stored:
+            host.store_import(self.gh, cfg or make_config(), 5)
         return report(
             self.gh,
             d or decision(),
@@ -182,7 +193,7 @@ class EditedIssueTests(ReportCase):
             "nexkit-agent", "result.json", {"status": "untrusted", "error": "@bob edited it"}
         )
         d = decision("fix", pr=6, target=6, head=HEAD, auto=True)
-        outcome = self.run_report(d, published=False)
+        outcome = self.run_report(d, published=False, stored=True)
         self.assertEqual(outcome["outcome"], "agent_untrusted")
         self.assertEqual(self.gh.dispatches, [])
         self.assertEqual(read_state(self.gh.comments(6))[1]["auto_fixes"], 0)
@@ -511,7 +522,7 @@ class ReportTests(ReportCase):
         self.write("nexkit-agent", "result.json", found)
         d = decision("fix", pr=6, target=6, head=HEAD, auto=True)
         with mock.patch.object(host, "on_base_found", side_effect=host.Refused("no")):
-            outcome = self.run_report(d=d, published=False)
+            outcome = self.run_report(d=d, published=False, stored=True)
         self.assertEqual(outcome["outcome"], "on_base_failed")
         self.assertIn("NexKit's engine refused to decide", outcome["attention"])
         self.assertEqual(self.gh.pulls[6]["state"], "open")

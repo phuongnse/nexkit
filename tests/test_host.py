@@ -2476,14 +2476,34 @@ class CountTest(ReportCase):
     def test_a_round_nexkit_stopped_gives_its_count_back_only_when_automatic(self):
         head, cfg = "c" * 40, make_config()
         counts = host.stopped_counts
-        # Two automatic fix rounds are used, as the pull request's state comment says.
-        state = {"version": 2, "issue": 5, "auto_fixes": 2, "feedback": None}
-        self.gh.comment(6, render_state(state))
-        self.assertEqual(counts(self.gh, cfg, 5, 6, head, 2, True, True), 1)
-        self.assertEqual(counts(self.gh, cfg, 5, 6, head, 2, True, True, checking=True), 1)
-        # A person's round counts nothing, and an agent that stopped by itself keeps its count.
-        self.assertEqual(counts(self.gh, cfg, 5, 6, head, 2, False, True), 2)
-        self.assertEqual(counts(self.gh, cfg, 5, 6, head, 2, True, False), 2)
+        first = seed(self.gh, cfg, 5)[1]
+
+        def stored(state="fixing", pending="fix", **rounds):
+            """Store a round on its way: two automatic fix rounds used, the round's own pending
+            run, and `rounds` over the stored ones."""
+            run = {"id": "a1.1", "next": None, "kind": "runChecks", "changeVersion": head}
+            runs = {None: [], "fix": [first_state.agent_run("fix", head)], "checks": [run]}
+            rounds = {**first["rounds"], "counted": 2, "automatic": True, **rounds}
+            rounds = {key: value for key, value in rounds.items() if value is not None}
+            change = {"id": "6", "version": head}
+            return restate(
+                self.gh, 5, state=state, change=change, pending=runs[pending], rounds=rounds
+            )
+
+        # The host stops an automatic round that is on its way, in its agent or its checks.
+        stored()
+        self.assertEqual(counts(self.gh, cfg, 5, 6, head, True), 1)
+        stored("checking", "checks")
+        self.assertEqual(counts(self.gh, cfg, 5, 6, head, True), 1)
+        # A person's round counts nothing: the stored state does not mark it as automatic.
+        stored(automatic=None)
+        self.assertEqual(counts(self.gh, cfg, 5, 6, head, True), 2)
+        # With no pending run of the round there is nothing to stop, whatever a caller says.
+        stored("ready", None)
+        self.assertEqual(counts(self.gh, cfg, 5, 6, head, True), 2)
+        # An agent that stopped by itself keeps its count, even for an automatic round.
+        stored()
+        self.assertEqual(counts(self.gh, cfg, 5, 6, head, False), 2)
 
 
 class AcceptAnswerTest(ReportCase):
@@ -3796,17 +3816,36 @@ class RoundDecideTest(ReportCase):
 
     def test_a_stopped_round_stores_its_count_given_back(self):
         counts = host.stopped_counts
-        args = (self.gh, self.cfg, 5, 6, HEAD, 2, True, True)
-        self.store(counted=2)
+        args = (self.gh, self.cfg, 5, 6, HEAD, True)
+
+        def store(counted):
+            """Store an automatic fix round on its way with `counted` rounds used, a new round
+            that no event of an earlier one is seen for."""
+            doc = self.read()[1]
+            rounds = {**doc["rounds"], "counted": counted, "automatic": True}
+            pending = [first_state.agent_run("fix", HEAD)]
+            change = {"id": "6", "version": HEAD}
+            return restate(
+                self.gh,
+                5,
+                state="fixing",
+                change=change,
+                pending=pending,
+                rounds=rounds,
+                recentEvents=[],
+            )
+
+        revision = store(2)["revision"]
         self.assertEqual(counts(*args, write=True), 1)
         _, doc = self.read()
-        self.assertEqual((doc["revision"], doc["rounds"]["counted"]), (3, 1))
+        self.assertEqual((doc["revision"], doc["rounds"]["counted"]), (revision + 1, 1))
         # The stored count is the one that is given back.
-        self.store(counted=3)
+        store(3)
         self.assertEqual(counts(*args), 2)
         # An agent that stopped by itself finishes its round and keeps its count.
+        revision = store(3)["revision"]
         self.assertEqual(counts(*args[:-1], False, write=True), 3)
-        self.assertEqual(self.read()[1]["revision"], 5)
+        self.assertGreater(self.read()[1]["revision"], revision)
 
     def test_a_base_branch_move_and_a_diagnosis_leave_the_state_as_it_is(self):
         before = copy.deepcopy(self.gh.comments(5)), copy.deepcopy(self.gh.comments(6))
@@ -4223,91 +4262,198 @@ class NoChangeFoundTest(ReportCase):
 
 
 class PartEndedTest(ReportCase):
-    """A part that NexKit merged ends its parent only as the engine decides, under `parentEnd`:
-    `close_parent_issues` on gives `whenPartAccepted`, off gives `person`."""
+    """A part that NexKit merged ends its parent only as the engine decides it on the parent's
+    stored state, under `parentEnd`: `close_parent_issues` on gives `whenPartAccepted`, off gives
+    `person`. Each test stores the parent's state while its parts are open, as the run that
+    split it did, and then closes parts on GitHub."""
 
     def setUp(self):
         super().setUp()
         self.gh.add_issue(1, title="Epic")
+        self.cfg = make_config(close_parent_issues=True)
 
-    def subs(self, *states):
-        """The sub-issues of the parent 1: issue 5, and one for each of `states`."""
-        found = [{"number": 5, "state": "closed", "state_reason": "completed"}]
-        for number, (state, reason) in enumerate(states, 20):
-            found.append({"number": number, "state": state, "state_reason": reason})
-        return found
+    def parts(self, *numbers):
+        """Sub-issues of the parent 1: issue 5 and each of `numbers`, all open, and the
+        parent's state stored as it is while they are."""
+        for number in (5, *numbers):
+            if number != 5:
+                self.gh.add_issue(number)
+            self.gh.parents[number] = 1
+        return seed(self.gh, self.cfg, 1)[1]
 
-    def ended(self, *states, close=True, subs=None):
-        cfg = make_config(close_parent_issues=close)
-        return host.part_ended(self.gh, cfg, 1, subs or self.subs(*states), 5, "accepted")
+    def close(self, number, reason="completed"):
+        self.gh.issues[number].update(state="closed", state_reason=reason)
+
+    def ended(self, part=5, state="accepted", cfg=None, write=False):
+        subs = self.gh.sub_issues(1)
+        return host.part_ended(self.gh, cfg or self.cfg, 1, subs, part, state, write=write)
 
     def test_the_parent_closes_when_every_part_ended_and_one_was_completed(self):
-        self.assertEqual(self.ended(), "close")
-        self.assertEqual(self.ended(("closed", "not_planned")), "close")
-        self.assertEqual(self.ended(("closed", "completed")), "close")
+        self.parts(20, 21)
+        for number, reason in ((5, "not_planned"), (20, "completed"), (21, "not_planned")):
+            self.close(number, reason)
+        before = item_state.read(self.gh, 1)
+        comments = copy.deepcopy(self.gh.comments(1))
+        # The end of the part that closed last answers for the earlier ones too, as a preview.
+        self.assertEqual(self.ended(21, "dropped"), "close")
+        self.assertEqual(item_state.read(self.gh, 1), before)
+        self.assertEqual(self.gh.comments(1), comments)
+
+    def test_the_end_of_an_earlier_part_that_never_reached_the_parent_still_counts(self):
+        self.parts(20)
+        self.close(5)
+        self.close(20)
+        with mock.patch.object(host, "step", wraps=host.step) as step:
+            self.assertEqual(self.ended(20), "close")
+        sent = [call.args[1] for call in step.call_args_list]
+        ends = [(e["kind"], e["part"]) for e in sent]
+        self.assertEqual(ends, [("partEnded", "5"), ("partEnded", "20")])
+        self.assertEqual(step.call_args_list[-1].args[2]["parentEnd"], "whenPartAccepted")
 
     def test_the_parent_stays_while_a_part_is_open(self):
-        self.assertEqual(self.ended(("open", None)), "stays")
+        self.parts(20)
+        self.close(5)
+        self.assertEqual(self.ended(), "stays")
 
     def test_a_person_decides_when_no_part_was_completed(self):
-        subs = [{"number": 5, "state": "closed", "state_reason": "completed"}]
+        self.parts(20)
+        self.close(5, "not_planned")
+        self.close(20, "not_planned")
         with mock.patch.object(host, "step", wraps=host.step) as step:
-            found = host.part_ended(self.gh, make_config(), 1, subs, 7, "dropped")
-        self.assertEqual(found, "person")
-        self.assertEqual(step.call_args.args[1]["part"], "7")
+            self.assertEqual(self.ended(20, "dropped"), "person")
+        self.assertEqual(step.call_args.args[1]["part"], "20")
 
     def test_without_close_parent_issues_the_engine_gets_person_and_a_person_decides(self):
+        self.parts(20)
+        self.close(5)
+        self.close(20)
+        off = make_config(close_parent_issues=False)
         with mock.patch.object(host, "step", wraps=host.step) as step:
-            self.assertEqual(self.ended(close=False), "person")
+            self.assertEqual(self.ended(20, cfg=off), "person")
             self.assertEqual(step.call_args.args[2]["parentEnd"], "person")
-            self.assertEqual(self.ended(close=True), "close")
+            self.assertEqual(self.ended(20, cfg=self.cfg), "close")
             self.assertEqual(step.call_args.args[2]["parentEnd"], "whenPartAccepted")
 
     def test_a_list_that_misses_the_part_still_counts_it(self):
-        self.assertEqual(self.ended(subs=[]), "close")
+        self.parts()
+        self.close(5)
+        found = host.part_ended(self.gh, self.cfg, 1, [], 5, "accepted")
+        self.assertEqual(found, "close")
 
-    def many(self, last=("closed", "not_planned")):
-        """The part 5, closed as not planned, and more sub-issues than a state holds: nine
-        closed as not planned, then `last`."""
-        found = [{"number": 5, "state": "closed", "state_reason": "not_planned"}]
-        for number in range(20, 20 + MOST["split"] - 1):
-            found.append({"number": number, "state": "closed", "state_reason": "not_planned"})
-        state, reason = last
-        found.append({"number": 99, "state": state, "state_reason": reason})
-        self.assertGreater(len(found), MOST["split"])
-        return found
+    def test_record_part_end_stores_one_row_in_the_parents_state(self):
+        self.parts(20)
+        self.close(5)
+        self.close(20)
+        _, before = item_state.read(self.gh, 1)
+        lines = maintain.record_part_end(self.gh, self.cfg, {"issue": 1, "part": 5})
+        self.assertIn("close", lines[0])
+        _, after = item_state.read(self.gh, 1)
+        # Both ends, a sibling's and the part's own, are one write.
+        self.assertEqual(after["revision"], before["revision"] + 1)
+        self.assertEqual(
+            after["parts"],
+            [{"item": "5", "state": "accepted"}, {"item": "20", "state": "accepted"}],
+        )
 
-    def test_a_parent_with_more_parts_than_a_state_holds_goes_by_a_reduced_list(self):
-        cfg = make_config(close_parent_issues=True)
-        subs = self.many(("closed", "completed"))
-        with mock.patch.object(host, "step", wraps=host.step) as step:
-            # The completed part is beyond the first ten, and the reduced list keeps it.
-            self.assertEqual(host.part_ended(self.gh, cfg, 1, subs, 5, "dropped"), "close")
-        parts = step.call_args.args[0]["parts"]
-        self.assertEqual(len(parts), MOST["split"])
-        self.assertIn({"item": "99", "state": "accepted"}, parts)
-        self.assertEqual(step.call_args.args[1]["part"], "5")
+    def test_a_sibling_s_end_after_the_parents_close_was_stored_and_done_still_closes(self):
+        self.parts(20)
+        self.close(5)
+        maintain.record_part_end(self.gh, self.cfg, {"issue": 1, "part": 5})
+        self.close(20)
+        self.gh.issues[1].update(state="closed", state_reason="completed")
+        maintain.record_part_end(self.gh, self.cfg, {"issue": 1, "part": 20})
+        _, doc = item_state.read(self.gh, 1)
+        self.assertEqual((doc["state"], doc["pending"]), ("accepted", []))
+        before = item_state.read(self.gh, 1)
+        self.assertEqual(self.ended(5), "close")
+        lines = maintain.record_part_end(self.gh, self.cfg, {"issue": 1, "part": 5})
+        self.assertIn("close", lines[0])
+        self.assertEqual(item_state.read(self.gh, 1), before)
 
-    def test_a_parent_with_more_parts_than_a_state_holds_waits_for_a_person_when_none_completed(
+    def test_a_parent_with_an_eleventh_sub_issue_stays_while_it_is_open(self):
+        numbers = range(20, 20 + MOST["split"])
+        doc = self.parts(*numbers)
+        self.assertEqual(len(doc["parts"]), MOST["split"])
+        for number in (5, *numbers[:-1]):
+            self.close(number)
+        before = item_state.read(self.gh, 1)
+        self.assertEqual(self.ended(), "stays")
+        self.assertEqual(item_state.read(self.gh, 1), before)
+        self.assertEqual(self.ended(write=True), "stays")
+        self.assertEqual(item_state.read(self.gh, 1), before)
+        self.assertEqual(maintain.close_parent(self.gh, self.cfg, 1, 5), ([], False))
+
+    def test_a_parent_whose_only_completed_part_is_beyond_the_ones_a_state_holds_waits_for_a_person(
         self,
     ):
-        cfg = make_config(close_parent_issues=True)
-        self.assertEqual(host.part_ended(self.gh, cfg, 1, self.many(), 5, "dropped"), "person")
+        numbers = range(20, 20 + MOST["split"])
+        self.parts(*numbers)
+        for number in (5, *numbers[:-1]):
+            self.close(number, "not_planned")
+        self.close(numbers[-1])
+        self.assertEqual(self.ended(5, "dropped"), "person")
 
-    def test_a_parent_with_more_parts_than_a_state_holds_stays_while_one_is_open(self):
-        subs = self.many(("open", None))
-        self.assertEqual(self.ended(subs=subs), "stays")
+    def test_a_sub_issue_added_after_the_split_keeps_the_parent_open(self):
+        self.parts(20)
+        self.close(5)
+        self.close(20)
+        self.gh.add_issue(30)
+        self.gh.parents[30] = 1
+        before = item_state.read(self.gh, 1)
+        self.assertEqual(self.ended(20), "stays")
+        self.assertEqual(item_state.read(self.gh, 1), before)
+        # Once it closes, the parent's own parts decide.
+        self.close(30)
+        self.assertEqual(self.ended(20), "close")
 
-    def test_a_parent_with_more_parts_than_a_state_holds_closes_when_all_ended_and_one_completed(
-        self,
-    ):
-        subs = self.many(("closed", "completed"))
-        self.assertEqual(self.ended(subs=subs), "close")
+    def test_a_parent_stored_before_it_had_sub_issues_is_left_to_a_person(self):
+        seed(self.gh, self.cfg, 1)
+        for number in (5, 20):
+            if number != 5:
+                self.gh.add_issue(number)
+            self.gh.parents[number] = 1
+            self.close(number)
+        before = item_state.read(self.gh, 1)
+        with self.assertRaises(host.Refused) as refused:
+            self.ended(20)
+        self.assertIn("a person decides", str(refused.exception))
+        lines, closed = maintain.close_parent(self.gh, self.cfg, 1, 20)
+        self.assertFalse(closed)
+        self.assertIn("refused to decide", lines[0])
+        self.assertEqual(self.gh.issues[1]["state"], "open")
+        self.assertEqual(item_state.read(self.gh, 1), before)
+
+    def test_a_parent_waiting_for_its_parts_to_be_filed_closes_once_the_filed_parts_close(self):
+        seed(self.gh, self.cfg, 1)
+        body = "<!-- nexkit:part 1 -->\nDo it."
+        for number in (20, 21):
+            self.gh.add_issue(number, body=body, user=BOT_LOGIN)
+            self.gh.parents[number] = 1
+        making = [
+            {"key": key, "title": f"Part {key}", "needs": [], "body": {"name": "n", "ref": "r"}}
+            for key in (1, 2)
+        ]
+        action = {"id": "a1.1", "kind": "createParts", "next": None, "parts": making}
+        wait = {"id": "w1.1", "for": "parts", "until": None, "on": None}
+        restate(self.gh, 1, state="split", pending=[action], parts=[], waits=[wait])
+        self.assertEqual(self.ended(20), "stays")
+        self.close(20, "not_planned")
+        self.close(21)
+        self.assertEqual(self.ended(21, write=True), "close")
+        _, doc = item_state.read(self.gh, 1)
+        self.assertEqual(
+            doc["parts"],
+            [{"item": "20", "state": "dropped"}, {"item": "21", "state": "accepted"}],
+        )
+        self.assertEqual([a["kind"] for a in doc["pending"]], ["close"])
 
     def test_the_engine_may_refuse_to_decide(self):
+        self.parts(20)
+        self.close(5)
+        self.close(20)
         with mock.patch.object(host, "step", side_effect=host.Refused("no")):
             with self.assertRaises(host.Refused):
-                self.ended()
+                self.ended(20)
 
     def test_a_round_keeps_the_policies_it_started_with_without_the_parents_end(self):
         doc = host._pull_doc(make_config(), 5, 6, "c" * 40, "fixing", 0)

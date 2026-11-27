@@ -65,7 +65,11 @@ reason stays `merge_refused`, and the new mention says why. A pull request that 
 merged or closed yourself in the meantime, such as right after your approval, is left as it
 is, with no mention (`pull_closed`). Rules that block every automatic merge:
 
-- a required merge queue, or squash merging turned off for the repository.
+- a required merge queue, a base branch that requires signed commits, since NexKit's commits
+  are not signed, or squash merging turned off for the repository.
+
+[The automatic merge was refused](troubleshooting.md#the-automatic-merge-was-refused) says
+what each other refusal needs.
 
 GitHub's *Require branches to be up to date before merging* keeps two pull requests that
 pass alone from breaking the base branch together. Under it, checks count only on a head
@@ -150,13 +154,23 @@ and how each closed. When all of them were closed as not planned, the parent sta
 with a note for a person, as does a parent that autopilot split whose plan lists more parts
 than it has sub-issues. NexKit then checks the parent's own parent. It works the same
 whether a person or NexKit merged the work, and autopilot's sweeps close such a parent too,
-instead of asking a person to. Without the setting, autopilot lists a parent whose
+instead of asking a person to.
+
+NexKit decides this on the parent's stored state, which lists at most ten sub-issues. So a
+parent stays open while GitHub shows an open sub-issue that its state does not list, such as an
+eleventh one or one added after the split. A parent that NexKit stored before it had
+sub-issues, for example one that a person split by hand later, is left to a person: NexKit does
+not close it, and its run's log and `nexkit status` say why. With more than ten sub-issues, only
+the first ten count towards a completed part, so a parent whose only completed part is the
+eleventh waits for a person too. Without the setting, autopilot lists a parent whose
 sub-issues are all closed under *Needs a person*. See
 [Work NexKit starts by itself](work-without-a-command.md#work-without-a-command).
 
 The workflow must listen to `issues: closed`, as `nexkit init` writes it; `nexkit doctor`
-warns when it does not. With the setting off, a closed issue starts a short run that ends
-at once.
+warns when it does not. With the setting off and autopilot on, a closed issue's run still
+stores the close in the issue's state, sends a sub-issue's end to its parent's queue and
+starts a sweep. It closes no parent. Only when both settings are off does a closed issue start
+a short run that ends at once.
 
 ## Mentions
 

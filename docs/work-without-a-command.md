@@ -12,14 +12,20 @@ and no agent credential is used.
 sub-issue, NexKit looks at its parent's sub-issues:
 
 - When all of them are closed and at least one was completed, NexKit closes the parent as
-  completed. Its comment lists each sub-issue and how it closed. It then checks the
+  completed, unless it waits for a person (see the last item). Its comment lists each sub-issue and how it closed. It then checks the
   parent's own parent the same way.
 - When every sub-issue was closed as not planned or as a duplicate, the parent stays open,
   and NexKit comments that a person should decide.
 - When autopilot filed parts of the parent and its latest plan lists more parts than it
   has sub-issues, such as a split that stopped partway, the parent stays open, and NexKit
   comments both counts and that a person should open the missing parts as sub-issues or
-  close it. A parent that a person split by hand has the parts that person chose.
+  close it. A parent that a person split by hand has the parts that person chose, but see
+  the next item for one that NexKit stored before it was split.
+- NexKit decides on the parent's stored state, which lists at most ten sub-issues. A parent
+  with an open sub-issue that its state does not list stays open. A parent that NexKit stored
+  before it had sub-issues, such as one a person split by hand after a plan that was too
+  large, waits for a person, and so does a parent whose only completed sub-issue is the
+  eleventh. See [Parent issues](merges-and-waits.md#parent-issues).
 - A parent that is already closed, or that still has an open sub-issue, stays as it is.
   Reopening a sub-issue does not reopen its parent.
 - A parent in another repository is left alone.

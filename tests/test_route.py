@@ -37,15 +37,31 @@ def config_text():
     return json.dumps(with_claude({"checks": [{"name": "test", "run": "true"}], "github_app": APP}))
 
 
-def comment_event(number, body, login="alice", on_pull=False, user_type="User"):
+def comment_event(number, body, login="alice", on_pull=False, user_type="User", comment_id=7):
     issue = {"number": number}
     if on_pull:
         issue["pull_request"] = {}
     return {
         "action": "created",
         "issue": issue,
-        "comment": {"id": 7, "body": body, "user": {"login": login, "type": user_type}},
+        "comment": {"id": comment_id, "body": body, "user": {"login": login, "type": user_type}},
     }
+
+
+def reported(gh, pull, head):
+    """The round that the implement run which opened the NexKit pull request `pull` posts. With
+    none, the item is in its checks, waiting for a round that never reports, and the engine
+    starts no command on it."""
+    gh.round_comment(
+        pull,
+        1,
+        head,
+        "passed",
+        command="go",
+        trigger="implement",
+        outcome="ready",
+        verdict="approve",
+    )
 
 
 class ParseCommandTests(unittest.TestCase):
@@ -205,15 +221,29 @@ class ClosingAnswerTests(unittest.TestCase):
     """A person's answer that picks the option that only closes the issue."""
 
     def setUp(self):
-        self.gh = FakeGitHub()
         self.cfg = make_config()
+        self.start()
+
+    def start(self):
+        """Issue 5 with the questions of a blocked round that wait for answers, stored."""
+        self.gh = FakeGitHub()
         self.gh.add_issue(5)
+        planned = {"url": "u", "command": "plan", "status": "success", "outcome": "planned"}
+        self.gh.comment(5, render_run(planned, "Planned."))
+        self.gh.comment(5, f"{PLAN_MARKER}\n## Plan\n\nAdd it.")
         url = "https://github.com/acme/app/actions/runs/9"
         run = {"url": url, "command": "go", "status": "failure", "outcome": "agent_blocked"}
         self.gh.comment(5, render_run({**run, "questions": [ASKED]}, "Blocked."))
+        # The state that the questions leave: the round waits for their answers.
+        self.assertTrue(host.store_import(self.gh, self.cfg, 5))
+        self.next_id = 100
 
     def decide(self, body):
-        return route(self.gh, "issue_comment", comment_event(5, body), cfg=self.cfg)
+        """The decision for a new comment: a command is a request that its run stores, so each
+        comment has an id of its own."""
+        self.next_id += 1
+        event = comment_event(5, body, comment_id=self.next_id)
+        return {**route(self.gh, "issue_comment", event, cfg=self.cfg)}
 
     def test_an_answer_that_picks_the_closing_option_closes_without_an_agent(self):
         for body in (
@@ -232,7 +262,7 @@ class ClosingAnswerTests(unittest.TestCase):
                     "answer": NOT_REPRODUCED,
                     "asked": "https://github.com/acme/app/actions/runs/9",
                     "actor": "alice",
-                    "comment_id": 7,
+                    "comment_id": self.next_id,
                 },
                 body,
             )
@@ -244,6 +274,8 @@ class ClosingAnswerTests(unittest.TestCase):
             "/nexkit go 1",
             "/nexkit go",
         ):
+            # Each command is a request that its run stores: it starts on the questions' state.
+            self.start()
             self.assertEqual(self.decide(body)["action"], "implement", body)
 
     def test_a_number_closes_only_when_one_question_was_asked(self):
@@ -256,8 +288,26 @@ class ClosingAnswerTests(unittest.TestCase):
         self.assertEqual(closing_answer("2", [ASKED]), NOT_REPRODUCED)
 
     def test_an_open_pull_request_keeps_its_issue_for_a_person(self):
-        self.gh.add_pull(6, 5)
-        self.assertEqual(self.decide(f"/nexkit plan {NOT_REPRODUCED}")["action"], "plan")
+        gh = self.gh = FakeGitHub()
+        gh.add_issue(5)
+        gh.add_pull(6, 5)
+        reported(gh, 6, "a" * 40)
+        self.assertTrue(host.store_import(gh, self.cfg, 5))
+        decision = self.decide(f"/nexkit plan {NOT_REPRODUCED}")
+        self.assertEqual(decision["action"], "none")
+        self.assertIn("Pull request #6 is already open for this issue", decision["reason"])
+        self.assertEqual(decision["reply_to"], 5)
+
+    def test_a_closing_command_is_the_engines_to_close_on_the_stored_state(self):
+        # The engine is asked once, with the answer, and the stored state is not changed.
+        before = item_state.read(self.gh, 5)
+        with mock.patch("nexkit.host.engine.answer", wraps=host.engine.answer) as answer:
+            decision = self.decide(f"/nexkit go {NOT_REPRODUCED}")
+        self.assertEqual(decision["task"], "close_answer")
+        asked = [call.args[0] for call in answer.call_args_list if call.args[0]["call"] == "step"]
+        self.assertEqual([request["event"]["kind"] for request in asked], ["answered"])
+        self.assertEqual(asked[0]["state"], before[1])
+        self.assertEqual(item_state.read(self.gh, 5)[1]["revision"], 1)
 
     def test_a_plan_question_with_a_closing_option_is_answered_the_same_way(self):
         from nexkit.state import plan_data_record
@@ -270,6 +320,7 @@ class ClosingAnswerTests(unittest.TestCase):
         del question["closing"]
         record = plan_data_record({"questions": [question]})
         gh.comment(5, f"{PLAN_MARKER}\n## Plan\n\nAsk.\n\n{record}")
+        self.assertTrue(host.store_import(gh, self.cfg, 5))
         decision = self.decide(f"/nexkit plan {NOT_REPRODUCED}")
         self.assertEqual((decision["task"], decision["answer"]), ("close_answer", NOT_REPRODUCED))
 
@@ -355,6 +406,7 @@ class RouteTests(unittest.TestCase):
 
     def test_fix_gets_the_run_whose_failing_checks_kept_result_files(self):
         self.gh.add_pull(6, 5, head_sha="c" * 40)
+        reported(self.gh, 6, "c" * 40)
         self.assertNotIn("results_run", self.fix_on_pull())  # no state yet
         failing = {"name": "e2e", "run": "x", "exit_code": 1, "passed": False, "output": ""}
         state = empty_state(5)
@@ -375,6 +427,7 @@ class RouteTests(unittest.TestCase):
 
     def test_only_an_automatic_fix_round_diagnoses_repeated_failures(self):
         self.gh.add_pull(6, 5, head_sha="c" * 40)
+        reported(self.gh, 6, "c" * 40)
         state = empty_state(5)
         state["feedback"] = {"head": "c" * 40, "checks": [], "repeated": ["e2e"]}
         self.gh.comment(6, render_state(state))
@@ -565,6 +618,7 @@ class RouteTests(unittest.TestCase):
 
     def test_fix_and_review_on_nexkit_pull_request(self):
         self.gh.add_pull(9, 5, head_sha="b" * 40)
+        reported(self.gh, 9, "b" * 40)
         fix = route(
             self.gh,
             "issue_comment",
@@ -605,6 +659,7 @@ class RouteTests(unittest.TestCase):
 
     def test_changes_requested_review_starts_fix(self):
         self.gh.add_pull(9, 5)
+        reported(self.gh, 9, "a" * 40)
         event = {
             "action": "submitted",
             "review": {
@@ -766,6 +821,7 @@ class RouteTests(unittest.TestCase):
 
     def test_dispatch(self):
         self.gh.add_pull(9, 5)
+        reported(self.gh, 9, "a" * 40)
         event = {"sender": {"login": BOT_LOGIN}}
         decision = route(
             self.gh,
@@ -797,6 +853,7 @@ class RouteTests(unittest.TestCase):
 
     def test_a_pull_request_that_changes_nothing_goes_to_maintain(self):
         self.gh.add_pull(9, 5, head_sha="c" * 40)
+        reported(self.gh, 9, "c" * 40)
         self.gh.on_base.add("c" * 40)
         event = {"sender": {"login": BOT_LOGIN}}
         inputs = {"command": "review", "number": "9", "auto": "true"}
@@ -830,6 +887,7 @@ class RouteTests(unittest.TestCase):
 
     def test_dispatch_marks_resumed_and_conflict_rounds(self):
         self.gh.add_pull(9, 5)
+        reported(self.gh, 9, "a" * 40)
         event = {"sender": {"login": BOT_LOGIN}}
         inputs = {"command": "fix", "number": "9", "auto": "true,resume"}
         decision = route(self.gh, "workflow_dispatch", event, inputs, cfg=self.cfg)
@@ -859,6 +917,7 @@ class RouteTests(unittest.TestCase):
 
     def test_the_review_after_a_branch_update_may_carry_the_approval_over(self):
         self.gh.add_pull(9, 5, head_sha="e" * 40)
+        reported(self.gh, 9, "e" * 40)
         event = {"sender": {"login": BOT_LOGIN}}
         inputs = {"command": "review", "number": "9", "note": "", "auto": "true,carry"}
         # Without an approving review there is nothing to carry over.
@@ -1048,17 +1107,17 @@ class TakenCommandTests(unittest.TestCase):
 
     def test_a_dispatch_of_a_command_starts_each_time_it_is_sent(self):
         self.store(self.first)
-        inputs = {"command": "plan", "number": "7", "auto": "false"}
+
+        def dispatch(auto):
+            inputs = {"command": "plan", "number": "7", "auto": auto}
+            event = {"sender": {"login": "bot"}}
+            return route(self.gh, "workflow_dispatch", event, inputs, cfg=self.cfg, taken=[])
+
+        # NexKit's own dispatch: the first stores the plan run, the second carries it out again.
         for _ in range(2):
-            found = route(
-                self.gh,
-                "workflow_dispatch",
-                {"sender": {"login": "bot"}},
-                inputs,
-                cfg=self.cfg,
-                taken=[],
-            )
-            self.assertEqual(found["action"], "plan")
+            self.assertEqual(dispatch("true")["action"], "plan")
+        # A person's dispatch is a new request on the stored state, where the plan runs already.
+        self.assertEqual(dispatch("false")["action"], "none")
 
 
 class EngineStartsTests(unittest.TestCase):
@@ -1072,6 +1131,7 @@ class EngineStartsTests(unittest.TestCase):
         self.gh.add_issue(5)
         self.gh.add_issue(7)
         self.gh.add_pull(6, 5)
+        reported(self.gh, 6, "a" * 40)
         self.gh.add_pull(10, 8, branch="upgrade/nexkit")
         self.gh.add_issue(8)
 
@@ -1262,6 +1322,7 @@ class ProfileTests(unittest.TestCase):
     def resolve(self, command, number=5):
         if number == 9 and 9 not in self.gh.pulls:
             self.gh.add_pull(9, 5)
+            reported(self.gh, 9, "a" * 40)
         event = comment_event(number, f"/nexkit {command}", on_pull=number == 9)
         return with_profile(self.gh, route(self.gh, "issue_comment", event, cfg=self.cfg), self.cfg)
 

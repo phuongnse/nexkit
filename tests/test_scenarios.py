@@ -251,6 +251,14 @@ class Pipeline:
             cli._take(self.gh, self.cfg, "workflow_dispatch", {"inputs": {"number": str(number)}})
         return out.getvalue()
 
+    def take_group_run(self, inputs):
+        """The start of a run of an item's group, which `nexkit route` makes before it routes
+        (`take_run`), for a dispatch that names an item by its number. A command decides on the
+        stored state, which the item's first run stores before anything is decided."""
+        number = str(inputs.get("number") or "")
+        if number.isdigit():
+            self.take_run(int(number))
+
     def state_comments(self, number):
         """The state comments of item `number`, which the App posted."""
         return [c for c in self.gh.comments(number) if c["body"].startswith("### NexKit state")]
@@ -319,6 +327,7 @@ class Pipeline:
         self.steps += 1
         self.test.assertLess(self.steps, MAX_STEPS, f"a loop: {self.played}")
         before = len(self.gh.dispatches)
+        self.take_group_run(dispatch["inputs"])
         decision = route(self.gh, "workflow_dispatch", {}, dispatch["inputs"])
         if decision["action"] == "none":
             # As `nexkit route` ends it: a step with nothing to do, such as an approval of a
@@ -394,6 +403,7 @@ class Pipeline:
             return
         os.environ["GITHUB_RUN_ID"] = str(run_id)
         self.gh.runs[run_id] = {"status": "in_progress"}
+        self.take_group_run(inputs)
         decision = route(
             self.gh, "workflow_dispatch", {"sender": {"login": BOT_LOGIN}}, inputs, cfg=self.cfg
         )
@@ -540,7 +550,11 @@ class Pipeline:
 
     def later(self, step):
         """Move every record and comment of NexKit, and the time each issue closed, back by
-        `step`, as if that much time passed."""
+        `step`, as if that much time passed. Each call adds a second more than the one before,
+        so that two waits that end within the same real second still end at different times, as
+        the waits of a real clock do: the engine names a resume by its time."""
+        self.moves = getattr(self, "moves", 0) + 1
+        step += timedelta(seconds=self.moves)
         self.elapsed += step
         for issue in self.gh.issues.values():
             if issue.get("closed_at"):
@@ -568,6 +582,29 @@ class Pipeline:
                     comment["body"] = autopilot.RECORD_PATTERN.sub(
                         autopilot.record_marker(record), comment["body"]
                     )
+                self.shift_state(comment, step)
+
+    @staticmethod
+    def shift_state(comment, step):
+        """Move the times that the state document in `comment`, if it is one, holds back by
+        `step`, such as the time a wait ends, and keep its revision and its cursor."""
+        if not comment["body"].startswith("### NexKit state"):
+            return
+        held = item_state.find([comment])[1]
+        if held is None:
+            return
+
+        def moved(value):
+            if isinstance(value, str) and re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", value):
+                at = datetime.fromisoformat(value.replace("Z", "+00:00")) - step
+                return at.strftime("%Y-%m-%dT%H:%M:%SZ")
+            if isinstance(value, dict):
+                return {key: moved(item) for key, item in value.items()}
+            if isinstance(value, list):
+                return [moved(item) for item in value]
+            return value
+
+        comment["body"] = item_state.render(moved(held), item_state.since(comment))
 
     # -- the invariant --------------------------------------------------------------
 
@@ -1548,7 +1585,7 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(pipe.gh.issues[5]["state"], "closed")
         self.assertFalse(pipe.gh.comments_matching(5, "a person is needed"))
 
-    def test_a_new_command_replaces_a_run_that_waits_to_run_again(self):
+    def test_a_go_while_a_run_waits_to_run_again_is_refused_and_the_wait_goes_on(self):
         def script(pipe, inputs):
             if inputs["command"] == "plan":
                 return plan()
@@ -1566,8 +1603,9 @@ class ScenarioTests(unittest.TestCase):
         steps = {s["number"]: s for s in collect(pipe.gh, pipe.cfg)["autopilot"]["issues"]}
         self.assertEqual(steps[5]["state"], "active")
         self.assertIn("runs again after", steps[5]["reason"])
-        # A person posts the command while the waiting run waits: it replaces the wait, so
-        # that run starts nothing once the time comes.
+        # A person posts `/nexkit go` while the waiting run waits: the engine takes no go on a
+        # round that waits, so NexKit 6's replacement of the wait is gone. The person gets the
+        # engine's reply, and the wait goes on: that run starts once the time comes.
         waiting = pipe.gh.dispatches[pipe.handled]
         pipe.handled += 1
         go = {"command": "go", "number": "5", "note": "", "auto": ""}
@@ -1578,13 +1616,15 @@ class ScenarioTests(unittest.TestCase):
         pipe.waited(waiting["inputs"])
         pipe.drain()
         played = [(c, o) for c, _, o in pipe.played]
-        expected = [("plan", "planned"), ("go", "retry_waiting"), ("go", "merged")]
-        self.assertEqual(played[:3], expected)
+        self.assertEqual([found[0] for found in played], ["plan", "go", "go", "go"])
+        self.assertEqual(
+            [played[0][1], played[1][1], played[3][1]], ["planned", "retry_waiting", "merged"]
+        )
+        self.assertIn("starts nothing for '/nexkit go'", played[2][1])
         self.assertEqual(pipe.gh.issues[5]["state"], "closed")
-        replaced = pipe.gh.run_comments(5)[1]["run"]
-        self.assertEqual(replaced["status"], "continued")
-        self.assertNotIn("resume", replaced)
-        self.assertEqual([c for c, _ in played].count("go"), 2, played)
+        resumed = pipe.gh.run_comments(5)[1]["run"]
+        self.assertEqual(resumed["status"], "continued")
+        self.assertNotIn("resume", resumed)
 
     def test_a_resume_is_started_by_a_step_in_the_items_queue_and_the_waiting_run_writes_nothing(
         self,
@@ -3661,7 +3701,13 @@ class ScenarioTests(unittest.TestCase):
 
     def stored_import(self, pipe, number=5, pull=None):
         """Run `take_run` on `pipe` and check that it stored one state comment, at revision 1,
-        which holds what `first_state.import_item` makes of the item now. Returns the document."""
+        which holds what `first_state.import_item` makes of the item now. Returns the document.
+        The runs before it stored the item's state, as every run of the group does; the item is
+        as an upgrade finds it, with the work of NexKit 6 and no state comment, so that comment
+        is deleted first."""
+        pipe.gh.issue_comments[number] = [
+            c for c in pipe.gh.issue_comments[number] if c not in pipe.state_comments(number)
+        ]
         out = pipe.take_run(number)
         self.assertIn(f"Stored the first state of #{number}", out)
         [comment] = pipe.state_comments(number)
@@ -3755,11 +3801,11 @@ class ScenarioTests(unittest.TestCase):
             pipe.gh.human_comment(5, "Please keep it small.")
         # Force the records of the two plays a second apart, as a slow runner does.
         self.same_item(imported, plain, "open", skew=timedelta(seconds=1))
-        # The runs of the item's group stored their answers past the import's revision, while
-        # the item that stored no import still has no state comment.
-        [comment] = imported.state_comments(5)
-        self.assertGreater(item_state.find([comment])[1]["revision"], 1)
-        self.assertEqual(plain.state_comments(5), [])
+        # The runs of the item's group stored their answers past the import's revision, and the
+        # item that was never imported stored its own from its first run.
+        for pipe in (imported, plain):
+            [comment] = pipe.state_comments(5)
+            self.assertGreater(item_state.find([comment])[1]["revision"], 1)
 
     def test_a_pull_request_in_its_checks_is_imported_and_carries_on_as_before(self):
         def built(import_there):

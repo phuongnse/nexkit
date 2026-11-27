@@ -287,22 +287,26 @@ def _own_id(event_name, event):
 def _taken_start(gh, cfg, taken, decision, event_name, event):
     """`decision`, which starts nothing, or the decision that the first command taken in this
     run starts, other than the run's own: its comment or review is routed as its own run
-    would have routed it, and the run that ran gives it 👀 and starts its stage. A reply that
+    would have routed it, and the run that ran gives it 👀 and starts its stage. A writer's
+    closing command that `take` stored as an answer whose actions hold a `close` counts too: its
+    run carries out the close (`host.closing_command`). A reply that
     `decision` had stays as `also_reply`."""
     from .host import starts
 
     own = _own_id(event_name, event)
     for taken_event, actions in taken:
         name = taken_event["id"]
-        if name == own or taken_event["kind"] not in ("requested", "changesRequested"):
+        closes = taken_event["kind"] == "answered" and any(a["kind"] == "close" for a in actions)
+        if name == own or not (closes or taken_event["kind"] in ("requested", "changesRequested")):
             continue
-        if not starts(actions):
+        if not (closes or starts(actions)):
             continue
         try:
             found = _again(gh, cfg, taken, name, taken_event)
         except (GitHubError, KeyError, ValueError):
             continue
-        if found is None:
+        if found is None or (closes and found.get("task") != "close_answer"):
+            # A plain comment that closed the issue is a comment, which no command carries out.
             continue
         if decision.get("reply_to"):
             found["also_reply"] = {"to": decision["reply_to"], "reason": decision["reason"]}
@@ -371,9 +375,9 @@ def _route(gh, event_name, event, inputs, cfg, taken, problem=None):
                 source_id=event["comment"]["id"],
                 taken=taken,
                 problem=problem,
+                asked=True,
             )
             decision = _one_round(gh, decision)
-            decision = _closing(gh, decision, event["comment"], cfg)
         decision.update(actor=actor, comment_id=event["comment"]["id"])
         return decision
 
@@ -401,6 +405,7 @@ def _route(gh, event_name, event, inputs, cfg, taken, problem=None):
             review_id=review.get("id"),
             taken=taken,
             problem=problem,
+            asked=True,
         )
         decision = _one_round(gh, decision)
         decision["actor"] = actor
@@ -624,19 +629,6 @@ def _approval_step(gh, issue, pr, review_id):
     }
 
 
-def _closing(gh, decision, command, cfg):
-    """A person's `/nexkit plan` or `/nexkit go` whose note picks the option, of the
-    questions NexKit asked last on the issue, that only closes it: the `maintain` job
-    closes the issue as not planned, and no agent runs, since another round could only
-    stop at the same place. Any other note goes to its round as it is. `command` is the
-    comment of the command. With `cfg`, the engine answers on the item's stored state."""
-    if decision["action"] not in ("plan", "implement") or not decision.get("note"):
-        return decision
-    from .host import closing_command
-
-    return closing_command(gh, decision, gh.comments(decision["issue"]), command, cfg=cfg)
-
-
 def _trust(issue, note):
     """A writer's `/nexkit trust` on `issue`: the `maintain` job answers it and starts a
     sweep, which reads the comment. With a note it vouches for nothing, since words after
@@ -736,12 +728,15 @@ def _decide(
     problem=None,
     observe_conflict=False,
     updated=False,
+    asked=False,
 ):
     """The decision for a person's command, or NexKit's own dispatch of one. A command starts
-    its stage only as the engine answers it (`host.command`); what stays here are the facts
-    that only GitHub shows: an unknown command, a fork, a person's pull request, which takes
-    no `/nexkit fix`, and a closed issue or pull request, which gets NexKit 6's reply before the
-    engine is asked, so that the item's stored state never hears a command on it.
+    its stage only as the engine answers it (`host.command`), on the item's stored state alone;
+    a writer's note that picks the option that only closes the issue is carried out before as
+    the engine's close of the issue (`host.closing_command`), with no stage; what stays here are
+    the facts that only GitHub shows: an unknown command, a fork, a person's pull request, which
+    takes no `/nexkit fix`, and a closed issue or pull request, which gets NexKit 6's reply before
+    the engine is asked, so that the item's stored state never hears a command on it.
     `cfg` is the configuration, or None when it did not load: then `problem` says why, and
     the reply is the configuration error, in place of the engine's answer, which needs the
     configuration for its policies. `taken` is what `host.take` stored in this run: the answer
@@ -752,7 +747,9 @@ def _decide(
     run counts in the item's state (`host.command`), unless the same conflict was tried
     already. `updated` says that this is the first dispatch of the review after NexKit updated a
     pull request's branch (`maintain.update_branch`), which its own run stores in the item's
-    state (`host.command`), except for a person's pull request."""
+    state (`host.command`), except for a person's pull request. `asked` says that a person's
+    comment or *Request changes* review gave the command: on a pull request whose implement round
+    still runs it is refused in NexKit 6's words, before the engine, which refuses it too."""
     from . import host
 
     carried = []
@@ -794,6 +791,13 @@ def _decide(
         change = {"id": str(number), "version": pull["head"]["sha"]}
         observe_conflict = observe_conflict and not person
         updated = updated and not person
+        if asked and not person:
+            # A person's command while the implement round still checks the pull request: the
+            # engine refuses it too, but only this says why (`_one_round`).
+            stub = {"issue": item, "pr": number}
+            busy = _one_round(gh, stub)
+            if busy is not stub:
+                return busy
         if observe_conflict:
             # Before the round is counted: a second starter on the same base commit has
             # nothing to add and must not use up a round (`_conflicts_tried` below).
@@ -804,7 +808,6 @@ def _decide(
                 item=item,
                 what=command,
                 change=change,
-                review_only=person,
                 empty=bool(merged),
                 review_id=review_id,
                 observe_conflict=observe_conflict,
@@ -895,8 +898,28 @@ def _decide(
     action = ISSUE_COMMANDS[command]
     change = plan = None
     existing = []
-    if action == "implement":
+    if source_id is not None and action in ("plan", "implement") and note:
+        # A writer's note that picks the option that only closes the issue, among the questions
+        # that the stored state waits for, closes it as not planned, and no agent runs.
+        try:
+            closing = host.closing_command(
+                gh,
+                cfg,
+                number,
+                note,
+                gh.comments(number),
+                source_id,
+                branch=branch,
+                by=by,
+                taken=taken,
+            )
+        except host.Refused as exc:
+            return _none(host.refused_reason(exc), number)
+        if closing is not None:
+            return {"action": "maintain", "task": "close_answer", "issue": number, **closing}
+    if action in ("plan", "implement"):
         existing = gh.open_pulls(branch)
+    if action == "implement":
         if existing:
             change = {"id": str(existing[0]["number"]), "version": existing[0]["head"]["sha"]}
         plan = latest_plan(gh.comments(number))

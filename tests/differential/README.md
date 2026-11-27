@@ -89,7 +89,7 @@ to `check.sh`, which is how the check shows that the function no longer falls ba
 | `vouch` | #538 | a writer's vouch after an untrusted edit stopped an issue's `/nexkit go`, a round of its pull request or its merge, with no vouch, one before the stop, a reader's or a writer's after it, and automatic fix rounds left or used up, for an automatic round or a person's |
 | `cleared` | #570 | a merge that GitHub refused, which the sweep tries again once GitHub reports the pull request as mergeable: `mergeable_state` `clean`, `unstable`, `has_hooks`, `blocked`, `behind` or `dirty`, a head that moved, a head refused while mergeable (`refused_clean`), `merge.auto` on or off, and the retried merge going through or refused again. A sweep's merge with no `waiting_since` is the `waits` family's, and a parent whose parts all closed before any close run is the `parents` family's |
 | `approvals` | #569 | a writer's approval of a NexKit pull request, which the approval's `step` runs as the `approved` task: after a merge GitHub refused, after a ready round, a ready round with a checklist item a person decides, a pull request reopened after its round found it closed and a round that needs a person, with `merge.auto` on and off, the approval of the head, of no commit and of another one, a hold label, an implement round that still runs and a head that moved. NexKit 6 has no run that only sends the `step`, so only the merge is played on both trees. 240 scenarios |
-| `command` | #568 | a person's command, a *Request changes* review and NexKit's own dispatch (an automatic fix round, a conflict round, a review), for plan, go, fix, review, trust and an unknown command, on an open issue with a plan or none, a closed one, one whose pull request is open or closed, a NexKit pull request that is open, closed, whose base branch holds its change or whose implement round runs, a person's pull request that is open, closed or on the base branch, a fork's, and a note that picks the option that only closes the issue. 323 scenarios |
+| `command` | #568 | a person's command, a *Request changes* review and NexKit's own dispatch (an automatic fix round, a conflict round, a review), for plan, go, fix, review, trust and an unknown command, on an open issue with a plan or none, a closed one, one whose pull request is open or closed, a NexKit pull request that is open or closed (with the round that the implement run which opened it posts), whose base branch holds its change or whose implement round runs, a person's pull request that is open, closed or on the base branch, a fork's, and a note that picks the option that only closes the issue. 323 scenarios |
 
 A family is a module with `scenarios()`, which yields each scenario as plain JSON in a fixed
 order whatever tree plays it, and `run(sc)`, which plays one and returns what it recorded. A time
@@ -130,8 +130,9 @@ round that finds no change, a fix round whose change is on the base branch, the 
 its parent's state and about a pull request's rounds, which store their answer in the item's
 state comment but decide from the markers' document wherever it differs from the stored one. The
 decisions after a blocked or failed `/nexkit go`, a usage limit, a transient error and a resume
-decide on the stored state alone, and `check.sh` fails if the usage limit, the transient error or
-the resume falls back. Every family stores the import of its items before its first event, so
+decide on the stored state alone, and so do a person's command, NexKit's own dispatch of one and
+a closing command (`command`, `_on_base`, `closing_command`); `check.sh` fails if the usage limit,
+the transient error, the resume, a command or a closing command falls back. Every family stores the import of its items before its first event, so
 those decisions meet a stored state, and `--fallbacks` lists where they still decide from the
 markers' document. The counts of conflict rounds and automatic fix rounds are the stored ones,
 so a round that the stored state counts and NexKit 6's markers do not yet can differ, which

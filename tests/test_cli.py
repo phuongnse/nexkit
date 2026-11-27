@@ -1254,6 +1254,19 @@ class PipelineCommandTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def round_opened(self, pull, head):
+        """The round that the implement run which opened the NexKit pull request `pull` posts:
+        with none, the item is in its checks, and the engine starts no command on it."""
+        self.gh.round_comment(
+            pull, 1, head, "passed", command="go", trigger="implement", outcome="ready"
+        )
+
+    def start_over(self):
+        """Issue 5 as it was before the last command: no comment of NexKit's, so that the run of
+        the next command stores its first state again. A command that started a stage is stored
+        as that stage, and a second command on the same item is the engine's to refuse."""
+        self.gh.issue_comments[5] = []
+
     def outputs(self):
         text = self.output.read_text()
         pattern = r"^(\w+)<<(EOF_\w+)\n(.*?)\n\2$"
@@ -1305,6 +1318,7 @@ class PipelineCommandTests(unittest.TestCase):
         raw["limits"] = {"setup_timeout_minutes": 10}
         path.write_text(json.dumps(raw))
         # Another comment: an earlier run took the first, and a command starts only once.
+        self.start_over()
         event["comment"]["id"] = 4
         out = self.run_route("issue_comment", event)
         timeout = json.loads(out["check_matrix"])["include"][0]["timeout"]
@@ -1408,6 +1422,7 @@ class PipelineCommandTests(unittest.TestCase):
         self.assertEqual(out["agent_timeout"], str(5 + 40 + 30))
         self.assertIsNone(json.loads(out["decision"])["previous_profile"])
         # Other runs get the profile's settings in the configuration they pass on.
+        self.start_over()
         event["comment"].update(id=4, body="/nexkit go")
         out = self.run_route("issue_comment", event)
         self.assertEqual(json.loads(out["decision"])["profile"], "standard")
@@ -1449,6 +1464,7 @@ class PipelineCommandTests(unittest.TestCase):
         out = self.run_route("issue_comment", event)
         self.assertEqual(json.loads(out["agent_secrets"]), sorted([*claude, *team]))
         # Without a plan, go runs on default_profile: implement and review on Claude.
+        self.start_over()
         event["comment"].update(id=4, body="/nexkit go")
         out = self.run_route("issue_comment", event)
         self.assertEqual(json.loads(out["agent_secrets"]), claude)
@@ -1456,6 +1472,7 @@ class PipelineCommandTests(unittest.TestCase):
 
     def test_route_on_pull_request_marks_the_round_running(self):
         self.gh.add_pull(6, 5, head_sha="b" * 40)
+        self.round_opened(6, "b" * 40)
         event = {
             "action": "created",
             "issue": {"number": 6, "pull_request": {}},
@@ -1916,6 +1933,7 @@ class PipelineCommandTests(unittest.TestCase):
         checks = json.loads((artifact / "checks.json").read_text())
         state["feedback"] = {"head": head, "checks": checks, "run_id": 4242}
         self.gh.comment(6, render_state(state))
+        self.round_opened(6, head)
 
         event = {
             "action": "created",

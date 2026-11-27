@@ -292,8 +292,9 @@ and its comment lists every error the command's runs stopped on.
   which uses no agent and no repository code and also resumes runs paused at the [usage
   limit](#usage-limits); it may wait as long as the longest of these waits. The hourly
   `schedule` starts what that run missed, so `nexkit doctor` warns when it is missing.
-- A new command on the same issue or pull request replaces the wait, which then starts
-  nothing. A job a person cancelled is never run again.
+- A new command on the same issue or pull request starts only when the engine takes it on the
+  item's stored state. A `/nexkit go` or `/nexkit plan` while the round waits is refused with
+  the engine's reply, and the wait goes on. A job a person cancelled is never run again.
 - The runs again count against neither `fix.max_auto_rounds` nor `conflicts.max_rounds`.
 - `[0]` runs the command again once, at once; a 0 among other waits runs it again at once at
   that place. `[]` waits for a person at the first such stop.

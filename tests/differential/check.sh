@@ -20,5 +20,6 @@ fi
 # Each part that moves a host function to the stored state alone adds its own --forbid.
 python3 "$root/tests/differential/harness.py" --v6 "$dir" --sample "${NEXKIT_DIFF_SAMPLE:-400}" \
   --fallbacks --forbid nexkit.host.close_done --forbid nexkit.host.stage_limited \
-  --forbid nexkit.host.stage_transient --forbid nexkit.host.resumes
+  --forbid nexkit.host.stage_transient --forbid nexkit.host.resumes --forbid nexkit.host.command \
+  --forbid nexkit.host._on_base --forbid nexkit.host.closing_command
 python3 "$root/tests/walk.py" --walks "${NEXKIT_DIFF_WALKS:-1000}"

@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
-from nexkit import cli, host
+from nexkit import cli, host, progress
 from nexkit.context import gather
 from nexkit.github import GitHubError
 from nexkit.maintain import WAIT_INPUTS
@@ -132,13 +132,19 @@ class ReportCase(unittest.TestCase):
         if review is not False:
             self.write("nexkit-review", "result.json", review or review_result())
 
-    def run_report(self, d=None, cfg=None, published=True, head=HEAD, needs_review=None):
+    def run_report(
+        self, d=None, cfg=None, published=True, head=HEAD, needs_review=None, start=False
+    ):
+        """With `start`, the stage is started first, as the run of a stage that stops is: a stop
+        is decided on the stored state, which holds the run that is on its way."""
         needs = {"review": {"result": needs_review}} if needs_review else {}
         if published:
             needs["publish"] = {
                 "outputs": {"result": json.dumps({"published": True, "pr": 6, "head": head})}
             }
         os.environ["GITHUB_RUN_ID"] = str(next(self.run_ids))
+        if start:
+            progress.start(self.gh, d or decision())
         return report(
             self.gh,
             d or decision(),
@@ -540,7 +546,7 @@ class ReportTests(ReportCase):
 
     def test_agent_failures_are_explained_on_the_issue(self):
         # The last run again after a job that failed as a whole: a person decides.
-        outcome = self.run_report(d=decision(retry=3), published=False)
+        outcome = self.run_report(d=decision(retry=3), published=False, start=True)
         self.assertEqual(outcome["outcome"], "retry_failed")
         self.assertEqual(
             outcome["attention"],
@@ -565,7 +571,8 @@ class ReportTests(ReportCase):
         self.write(
             "nexkit-agent", "result.json", {"status": "error", "error": error, "transient": True}
         )
-        outcome = self.run_report(d=decision(note="Use the cache."), cfg=cfg, published=False)
+        d = decision(note="Use the cache.")
+        outcome = self.run_report(d=d, cfg=cfg, published=False, start=True)
         self.assertEqual(outcome["outcome"], "retry")
         self.assertIsNone(outcome.get("attention"))
         [dispatch] = self.gh.dispatches
@@ -578,13 +585,13 @@ class ReportTests(ReportCase):
         self.assertIn("API Error: 529", run["transient_error"])
         self.assertFalse(self.gh.comments_matching(5, "@olivia"))
         # The retry stops the same way: a person decides, with both errors in the comment.
-        retry = decision(note="Use the cache.", retry=True)
+        retry = decision(note="Use the cache.", retry=1)
         self.write(
             "nexkit-agent",
             "result.json",
             {"status": "error", "error": "Connection error", "transient": True},
         )
-        outcome = self.run_report(d=retry, cfg=cfg, published=False)
+        outcome = self.run_report(d=retry, cfg=cfg, published=False, start=True)
         self.assertEqual(outcome["outcome"], "retry_failed")
         self.assertIn(
             "Transient errors so far:\n\n1. Claude stopped (success). API Error: 529 overloaded"
@@ -605,7 +612,7 @@ class ReportTests(ReportCase):
             )
             before = datetime.now(UTC)
             d = decision(note="Use the cache.", **({"retry": tries} if tries else {}))
-            outcome = self.run_report(d=d, cfg=cfg, published=False)
+            outcome = self.run_report(d=d, cfg=cfg, published=False, start=True)
             run = self.gh.run_comments(5)[-1]
             if wait is None:
                 break
@@ -669,7 +676,7 @@ class ReportTests(ReportCase):
 
         cloudflare = "Failed to authenticate. API Error: 403 Attention Required! | Cloudflare"
         self.write("nexkit-agent", "result.json", stop(cloudflare))
-        outcome = self.run_report(published=False)
+        outcome = self.run_report(published=False, start=True)
         self.assertEqual(outcome["outcome"], "retry_waiting")
         self.assertIsNone(outcome.get("attention"))
         run = self.gh.run_comments(5)[-1]
@@ -680,7 +687,7 @@ class ReportTests(ReportCase):
         self.assertNotIn("remove its cause", run["body"])
         refused = "Failed to authenticate. API Error: 403 Your API key does not have permission"
         self.write("nexkit-agent", "result.json", stop(refused, "req_1"))
-        outcome = self.run_report(published=False)
+        outcome = self.run_report(published=False, start=True)
         self.assertEqual(outcome["outcome"], "agent_error")
         self.assertIn("remove its cause", outcome["attention"])
         self.assertEqual(len(self.gh.dispatches), 1)
@@ -692,7 +699,7 @@ class ReportTests(ReportCase):
             {"status": "error", "error": "API 529", "transient": True},
         )
         cfg = make_config(retry={"wait_minutes": []})
-        outcome = self.run_report(cfg=cfg, published=False)
+        outcome = self.run_report(cfg=cfg, published=False, start=True)
         self.assertEqual(outcome["outcome"], "retry_failed")
         self.assertIn("with `retry.wait_minutes` empty NexKit does not run", outcome["attention"])
         self.assertNotIn("Transient errors so far", outcome["summary"])
@@ -707,7 +714,8 @@ class ReportTests(ReportCase):
         result["asked_again"] = True
         self.write("nexkit-agent", "result.json", result)
         cfg = make_config(retry={"wait_minutes": [0]})
-        outcome = self.run_report(d=decision(note="Keep it small."), cfg=cfg, published=False)
+        first = decision(note="Keep it small.")
+        outcome = self.run_report(d=first, cfg=cfg, published=False, start=True)
         self.assertEqual(outcome["outcome"], "retry")
         self.assertIn("even when asked for it alone", outcome["summary"])
         self.assertNotIn("from the service, the network", outcome["summary"])
@@ -719,8 +727,8 @@ class ReportTests(ReportCase):
         # A session that NexKit could not ask: only that there was none.
         self.assertIn("gave no result that fits. Another run", retry_line({"unfit": "x"}))
         # A second such stop waits for a person.
-        retry = decision(note="Keep it small.", retry=True)
-        outcome = self.run_report(d=retry, cfg=cfg, published=False)
+        retry = decision(note="Keep it small.", retry=1)
+        outcome = self.run_report(d=retry, cfg=cfg, published=False, start=True)
         self.assertEqual(outcome["outcome"], "retry_failed")
         self.assertEqual(len(self.gh.dispatches), 1)
 
@@ -730,6 +738,7 @@ class ReportTests(ReportCase):
         result = {"published": False, "error": error, "transient": True}
         needs = {"publish": {"outputs": {"result": json.dumps(result)}}}
         os.environ["GITHUB_RUN_ID"] = str(next(self.run_ids))
+        progress.start(self.gh, decision())
         outcome = report(
             self.gh,
             decision(),
@@ -747,6 +756,7 @@ class ReportTests(ReportCase):
         result = {"published": False, "error": "protected branch hook declined"}
         needs = {"publish": {"outputs": {"result": json.dumps(result)}}}
         os.environ["GITHUB_RUN_ID"] = str(next(self.run_ids))
+        progress.start(self.gh, decision())
         outcome = report(
             self.gh,
             decision(),
@@ -761,6 +771,7 @@ class ReportTests(ReportCase):
         # A publish job that ended without its outcome, such as out of time, runs once more.
         needs = {"publish": {"result": "failure", "outputs": {}}}
         os.environ["GITHUB_RUN_ID"] = str(next(self.run_ids))
+        progress.start(self.gh, decision())
         outcome = report(
             self.gh,
             decision(),
@@ -814,6 +825,7 @@ class ReportTests(ReportCase):
         for auto, expected in ((True, "retry"), (False, "publish_failed")):
             os.environ["GITHUB_RUN_ID"] = str(next(self.run_ids))
             fix = decision("fix", pr=6, target=6, head=HEAD, auto=auto)
+            progress.start(self.gh, fix)
             outcome = report(
                 self.gh,
                 fix,
@@ -2260,7 +2272,7 @@ class ReportTests(ReportCase):
     def test_a_plan_at_the_usage_limit_pauses_with_its_resume_record(self):
         self.write("nexkit-agent", "result.json", LIMIT)
         d = decision("plan", note="Keep the old endpoint", comment_id=3)
-        outcome = self.run_report(d=d, published=False)
+        outcome = self.run_report(d=d, published=False, start=True)
         self.assertEqual(outcome["outcome"], "paused")
         [run] = self.gh.run_comments(5)
         self.assertEqual(run["run"]["status"], "paused")
@@ -2281,7 +2293,8 @@ class ReportTests(ReportCase):
             "04:40 UTC on 2026-10-11.",
             run["body"],
         )
-        self.assertEqual(self.gh.reactions, [])  # keeps 👀 until it finishes
+        # Only the 👀 of the start stays: no 🚀 or 😕 until it finishes.
+        self.assertEqual(self.gh.reactions, [(3, "eyes")])
         # The reset is within usage_limit.wait_minutes: a run waits for it.
         [wait] = self.gh.dispatches
         self.assertEqual(wait["inputs"], WAIT_INPUTS)
@@ -2289,7 +2302,7 @@ class ReportTests(ReportCase):
     def test_a_fix_round_at_the_usage_limit_keeps_the_statuses_pending(self):
         self.write("nexkit-agent", "result.json", {**LIMIT, "reset_known": False})
         d = decision("fix", pr=6, target=6, head=HEAD, auto=True)
-        outcome = self.run_report(d=d, published=False)
+        outcome = self.run_report(d=d, published=False, start=True)
         self.assertEqual(outcome["outcome"], "paused")
         self.assertEqual(
             self.statuses(), {("nexkit/checks", "pending"), ("nexkit/review", "pending")}
@@ -2348,7 +2361,7 @@ class ReportTests(ReportCase):
     def test_a_resumed_run_with_an_unknown_reset_does_not_resume_again(self):
         self.write("nexkit-agent", "result.json", {**LIMIT, "reset_known": False})
         d = decision("fix", pr=6, target=6, head=HEAD, resumed=True)
-        self.assertEqual(self.run_report(d=d, published=False)["outcome"], "paused")
+        self.assertEqual(self.run_report(d=d, published=False, start=True)["outcome"], "paused")
         [row] = self.gh.run_comments(6)
         self.assertNotIn("resume", row["run"])
         self.assertIn("Comment `/nexkit fix` after the reset", row["body"])

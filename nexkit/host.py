@@ -110,8 +110,11 @@ answer.
 It decides when a plan, implement or fix stage runs again after its agent stopped at a usage
 limit or on a transient error (`stage_limited`, `stage_transient`, called by `report`), and when
 a paused or waiting run starts at its time (`resumes`, called by `maintain.resume_one`), a hold
-on the issue included. A transient stop of publish goes as a transient stop of the stage's agent.
-A reset stays the host's to give.
+on the issue included. All three decide on the stored state alone: the pending agent run that the
+stop's result answers, the `again.transient` count that the runs again are counted from, and the
+`usageLimit` or `time` wait that a resume's tick names. A hold goes first as `held` only when the
+stored state is not held already, as the engine ignores a second one. A transient stop of publish
+goes as a transient stop of the stage's agent. A reset stays the host's to give.
 
 It decides what follows a command that autopilot started and lost, whose run GitHub never
 started, or that ended without a report, or that handed the work on to a run that never started
@@ -269,7 +272,9 @@ the decision is the markers' document at the stored revision, with the stored `c
 `first_state.empty` never gives a budget back, and so that NexKit 6's answers stay
 exactly as they are: a finished plan's import is `awaitingApproval`, which cannot take the plan's
 result, and a second send of one event, such as the plan's result that `report` and the step run
-both send, would be a duplicate. The last move to the stored document removes `resync`.
+both send, would be a duplicate. `stage_limited`, `stage_transient` and `resumes` pass no markers'
+document, and so decide on the stored state alone. The last move to the stored document removes
+`resync`.
 
 A row of events, such as a hold and then the stop, or a round's result and then a comment, is one
 write: the state after the last event, at the revision read plus one, since `item_state.write`
@@ -287,8 +292,8 @@ item's own, and the `resume` run, which only sends the `step`. None of them is a
 item, so the conflict round that the push run, the schedule or a merge dispatches, the review
 after a branch update and the give-back of a stopped automatic fix round are stored by the run that
 they start in the item's group (`command`), so that the stored `counted`, `conflicts` and `updates`
-are current after such a stop. With no configuration, `resumes` and `lost_again` decide on the
-markers' document and read and store nothing. An item with no state
+are current after such a stop. With no configuration, `lost_again` decides on the markers'
+document and reads and stores nothing, and `resumes` raises `Refused`. An item with no state
 comment stores nothing here, since only `store_import` posts the first one, and one whose state
 comment someone other than the App changed is refused (`autopilot.changed_comment`). `pending_id`
 names the action of the outbox that a result answers. A merge that waits for required checks keeps
@@ -1025,7 +1030,9 @@ def decide_all(
     the stored document, which it reads on each try, so that a count comes from the state that
     is decided on (`_stored_count`), or None, which decides on the stored document alone: the caller
     makes sure a state is stored, since with none `built` has nothing to fall back on and the
-    call raises `Refused`. The events after the first
+    call raises `Refused`. `events` may be a function of the stored document too, which is read
+    on each try, so that a hold is sent only while the state decided on is not held (`_hold_row`).
+    The events after the first
     are sent on the state that the one before it gave, and the row stops after the event whose
     actions satisfy `until`, when given. `found_policies` default to the configuration's, and
     with no `cfg` the decision is read from `built` alone and nothing is read or stored.
@@ -1045,12 +1052,13 @@ def decide_all(
     fell = []
 
     def answer(state):
-        base = resync(state, built(state) if callable(built) else built, events)
+        rows = events(state) if callable(events) else events
+        base = resync(state, built(state) if callable(built) else built, rows)
         if base is None:
             raise Refused("The item has no state to decide on.")
-        fell[:] = [_why(state, base, events)]
+        fell[:] = [_why(state, base, rows)]
         revision, state, answers, changed = base["revision"], base, [], False
-        for event in events:
+        for event in rows:
             sent = event
             if action is not None and event["kind"] in ("actionFinished", "actionLost"):
                 sent = {**sent, "action": pending_id(state, *action)}
@@ -3396,40 +3404,49 @@ def _stage_doc(stage, item, change, retry):
     return doc, version
 
 
-def _stopped_doc(decision):
-    """(document, change version) of the plan, implement or fix stage of `decision` while its
-    agent runs."""
+def _stage_version(decision):
+    """The version of the change that the stage of `decision` runs on: a fix round's pull
+    request head, or None for a plan and an implement round, which have no change yet."""
     pr = decision.get("pr")
-    change = {"id": pr, "version": decision.get("head") or pr} if pr else None
-    retry = int(decision.get("retry") or 0)
-    return _stage_doc(decision["action"], decision["issue"], change, retry)
+    return str(decision.get("head") or pr) if pr else None
 
 
 def _hold_events(number, label):
     return [_event("held", number, None, f"held-{number}", label=str(label))] if label else []
 
 
+def _hold_row(number, label, *rest):
+    """The events of a stop or a tick, as a function of the stored document: `held` first only
+    while the state decided on is not held already, since the engine ignores a second hold."""
+
+    def row(state):
+        held = [] if (state or {}).get("hold") else _hold_events(number, label)
+        return [*held, *rest]
+
+    return row
+
+
 def stage_limited(gh, cfg, decision, reset, label=None, write=False):
     """Until when the run of `decision`, a plan, implement or fix stage whose agent stopped at
     the usage limit, waits to run again as the engine decides it (`report.pause`), or None
     when it leaves the run to a person. `reset` is the time the host gives, or None when it
-    does not resume the run, and `label` the label that holds the issue, if any. With `write`,
-    which the `report` of the item's group passes, the answer is stored (`decide_all`).
-    Raises `Refused`."""
+    does not resume the run, and `label` the label that holds the issue, if any. It decides on
+    the stored state alone, on its pending agent run, and sends `held` first only when the
+    state is not held. With `write`, which the `report` of the item's group passes, the answer
+    is stored (`decide_all`). Raises `Refused`."""
     number = decision["issue"]
-    doc, version = _stopped_doc(decision)
+    version = _stage_version(decision)
     message = "The agent stopped at its usage limit."
     limit = {"message": message, "reset": _time(reset)}
     result = {**AGENT, "changeVersion": version, "output": None, "limit": limit}
     fields = {"action": first_state.RUN_ID, "changeVersion": version, "result": result}
-    events = _hold_events(number, label)
-    events.append(_event("actionFinished", number, None, _run_event_id(), **fields))
+    finished = _event("actionFinished", number, None, _run_event_id(), **fields)
     _, answers = decide_all(
         gh,
         cfg,
         number,
-        events,
-        doc,
+        _hold_row(number, label, finished),
+        None,
         pull=decision.get("pr"),
         action=("runAgent", decision["action"]),
         write=write,
@@ -3447,22 +3464,23 @@ def stage_transient(gh, cfg, decision, now, error, label=None, write=False):
     stage, or of its publish, which goes as the same stop, at `now` (`report._retry`), as the
     engine decides it: `("now", count)` to run it
     again at once, `("later", until, count)` after the next wait of `retry.wait_minutes`, or
-    `("failed",)` for a person after the last. `count` is the number of the run again. With
-    `write`, which the `report` of the item's group passes, the answer is stored
-    (`decide_all`). Raises `Refused`."""
+    `("failed",)` for a person after the last. `count` is the number of the run again, counted
+    from the stored `again.transient`. It decides on the stored state alone, on its pending
+    agent run, and sends `held` first only when the state is not held. With `write`, which the
+    `report` of the item's group passes, the answer is stored (`decide_all`). Raises
+    `Refused`."""
     number = decision["issue"]
-    doc, version = _stopped_doc(decision)
+    version = _stage_version(decision)
     result = {**AGENT, "changeVersion": version, "output": None, "transient": True}
     result["error"] = str(error)
     fields = {"action": first_state.RUN_ID, "changeVersion": version, "result": result}
-    events = _hold_events(number, label)
-    events.append(_event("actionFinished", number, usage.iso(now), _run_event_id(), **fields))
+    finished = _event("actionFinished", number, usage.iso(now), _run_event_id(), **fields)
     state, answers = decide_all(
         gh,
         cfg,
         number,
-        events,
-        doc,
+        _hold_row(number, label, finished),
+        None,
         pull=decision.get("pr"),
         action=("runAgent", decision["action"]),
         write=write,
@@ -3487,34 +3505,57 @@ def _transient_answer(state, actions, stage):
     raise Refused(f"The engine answers {sorted(kinds)} after a transient stop, which it cannot do.")
 
 
+def _pull_item(gh, number):
+    """(item, pull) of a run that paused on `number`, which is a pull request when its fix round
+    or review ran on it: the issue of a NexKit pull request of this repository, which holds
+    the state, and the pull request, or `number` itself and None for an issue and for any other
+    pull request, as `route.work_item` keys the queue. Raises `Refused` when GitHub cannot be
+    read."""
+    from .route import issue_from_branch
+
+    try:
+        if "pull_request" not in gh.issue(number):
+            return number, None
+        head = gh.pull(number).get("head") or {}
+    except GitHubError as error:
+        raise Refused(f"GitHub could not be read for #{number}: {error}") from None
+    issue = issue_from_branch(head.get("ref"))
+    if issue is not None and (head.get("repo") or {}).get("full_name") == gh.repository:
+        return issue, number
+    return number, None
+
+
 def resumes(gh, cfg, run, number, now, label=None, write=False):
     """Whether the engine runs again the command of the resume record of `run`, which `number`
     paused at the usage limit or which waits to run again after a transient error, at `now`
     (`maintain.resume_one`): True to start it, which a hold on the issue, the `label`, does
     not stop. With `write`, which the `step` run of the item's group passes, the answer is
     stored and the wait is gone from the stored document (`decide_all`); the `resume` run
-    only previews it. With no `cfg` it decides on the markers' document alone and reads and
-    stores nothing. Raises `Refused`, for a command that NexKit never writes too."""
+    only previews it. It decides on the stored state alone: the tick names its `usageLimit` or
+    `time` wait, and `held` goes first only when the state is not held. A run paused on a
+    NexKit pull request of this repository (`number` is the pull request) is decided on the state of
+    its issue (`_pull_item`). Raises `Refused` with no `cfg`, before it reads anything, and for
+    a command that NexKit never writes."""
+    if cfg is None:
+        raise Refused("The configuration did not load, so there is no state to resume on.")
     resume = run["resume"]
     command = str(resume.get("command") or "")
     if command not in RESUMED:
         raise Refused(f"NexKit writes no resume of the command `{command}`.")
     stage = RESUMED[command]
     target = str(resume.get("number") or number)
-    # A fix round and a review run on their pull request.
-    change = {"id": target, "version": target} if stage in ("fix", "review") else None
     retry = resume.get("retry")
     retry = retry if isinstance(retry, int) and not isinstance(retry, bool) else 0
-    doc, _ = _stage_doc(stage, number, change, retry)
-    doc["pending"] = []
-    until = _time(resume.get("at")) or NO_TIME
     kind = "time" if retry else "usageLimit"
-    doc["waits"] = [{"id": "w1.1", "for": kind, "until": until, "on": None}]
-    events = _hold_events(number, label)
-    events.append(_event("tick", number, usage.iso(now), f"resume-{number}", wait="w1.1"))
+    # A fix round and a review run on their pull request.
     pull = int(target) if stage in ("fix", "review") and target.isdigit() else None
-    pull = None if pull == number else pull
-    _, answers = decide_all(gh, cfg, number, events, doc, pull=pull, wait=kind, write=write)
+    item = number
+    if pull is not None and pull == number:
+        item, pull = _pull_item(gh, number)
+    tick = _event("tick", item, usage.iso(now), f"resume-{number}", wait="w1.1")
+    _, answers = decide_all(
+        gh, cfg, item, _hold_row(item, label, tick), None, pull=pull, wait=kind, write=write
+    )
     if any(
         action["kind"] in ("runAgent", "runChecks") for _, actions in answers for action in actions
     ):

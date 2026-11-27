@@ -1152,7 +1152,10 @@ def _stop_round(gh, cfg, decision, agent, outcome, message, reason=None, **field
     state_id, state = read_state(comments)
     read = json.loads(json.dumps(state))
     _restore_statuses(gh, decision["head"], (state or {}).get("feedback"), run_url())
-    if state and state.get("auto_fixes"):
+    # A round that waits to run again, or runs again at once, has not stopped: the engine decided
+    # its transient stop (`host.stage_transient`), and its state holds the run that comes next.
+    waiting = outcome in (autopilot.RETRY_WAITING, "retry")
+    if state and state.get("auto_fixes") and not waiting:
         from .host import Refused, stopped_counts
 
         automatic = bool(decision.get("auto")) and not decision.get("conflicts")

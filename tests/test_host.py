@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import TestCase, mock
 
-from nexkit import agent, autopilot, cli, engine, first_state, host, item_state
+from nexkit import agent, autopilot, cli, engine, first_state, host, item_state, maintain, progress
 from nexkit import config as configuration
 from nexkit import report as reports
 from nexkit.checks import recorded
@@ -3328,7 +3328,7 @@ class StageStopTest(ReportCase):
             return found
 
         with mock.patch.object(host.engine, "answer", side_effect=answer):
-            outcome = self.run_report(d=d or decision("plan"), cfg=cfg, published=False)
+            outcome = self.run_report(d=d or decision("plan"), cfg=cfg, published=False, start=True)
         return outcome, asked, answered
 
     def test_a_limit_with_a_known_reset_waits_for_it(self):
@@ -3395,7 +3395,7 @@ class StageStopTest(ReportCase):
         self.write("nexkit-agent", "result.json", {})
         (self.artifacts / "nexkit-agent" / "result.json").unlink()
         with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
-            outcome = self.run_report(d=decision("plan"), cfg=ONCE, published=False)
+            outcome = self.run_report(d=decision("plan"), cfg=ONCE, published=False, start=True)
         self.assertEqual(outcome["outcome"], "retry")
         [call] = answer.call_args_list
         self.assertTrue(call.args[0]["event"]["result"]["transient"])
@@ -3405,6 +3405,7 @@ class StageStopTest(ReportCase):
         error = "git push --quiet origin failed: The requested URL returned error: 500"
         result = {"published": False, "error": error, "transient": True}
         needs = {"publish": {"outputs": {"result": json.dumps(result)}}}
+        progress.start(self.gh, d)
         with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
             outcome = report(
                 self.gh,
@@ -3431,14 +3432,17 @@ class StageStopTest(ReportCase):
         self.assertEqual(outcome["outcome"], "retry_failed")
         self.assertEqual(self.gh.dispatches, [])
 
-    def test_a_hold_is_sent_first_and_changes_nothing_the_engine_answers(self):
+    def test_a_hold_the_state_holds_already_is_not_sent_and_changes_nothing_the_engine_answers(
+        self,
+    ):
         self.hold()
         for result, outcome in ((LIMIT, "paused"), (self.TRANSIENT, "retry")):
             with self.subTest(outcome=outcome):
                 found, requests, _ = self.stop(result, cfg=self.HOLD)
                 self.assertEqual(found["outcome"], outcome)
-                self.assertEqual([r["event"]["kind"] for r in requests], ["held", "actionFinished"])
-                self.assertEqual(requests[0]["event"]["label"], "on-hold")
+                # The import of the labelled issue is held already, so no `held` goes first.
+                self.assertEqual([r["event"]["kind"] for r in requests], ["actionFinished"])
+                self.assertTrue(requests[0]["state"]["hold"])
 
     def test_a_stop_the_engine_refuses_waits_for_a_person(self):
         with mock.patch.object(host, "stage_limited", side_effect=host.Refused("No.")):
@@ -3458,6 +3462,22 @@ class StageStopTest(ReportCase):
         self.assertEqual(request["state"]["change"], {"id": "6", "version": HEAD})
         self.assertEqual(request["state"]["state"], "fixing")
 
+    def test_an_automatic_fix_round_that_waits_to_run_again_stays_in_its_wait(self):
+        # `report` shows the round's stop too, which must not end the item that waits.
+        self.gh.add_pull(6, 5, head_sha=HEAD)
+        self.gh.comment(6, render_state({**empty_state(5), "auto_fixes": 1}))
+        d = decision("fix", pr=6, target=6, head=HEAD, auto=True)
+        cfg = make_config(retry={"wait_minutes": [15]})
+        self.write("nexkit-agent", "result.json", self.TRANSIENT)
+        progress.start(self.gh, d)
+        seed(self.gh, cfg, 5)
+        outcome = self.run_report(d=d, cfg=cfg, published=False)
+        self.assertEqual(outcome["outcome"], "retry_waiting")
+        doc = item_state.read(self.gh, 5)[1]
+        self.assertEqual(doc["state"], "fixing")
+        self.assertEqual([w["for"] for w in doc["waits"]], ["time"])
+        self.assertIsNone(doc["attention"])
+
 
 class ResumeTest(ReportCase):
     """The `step` that `maintain.resume_paused` sends for each due resume sends its tick to the
@@ -3468,10 +3488,20 @@ class ResumeTest(ReportCase):
     def paused(self, command="plan", at="2026-10-11T04:40:00Z", **resume):
         record = {"command": command, "number": 5, "note": "", "auto": "resume", "at": at}
         run = {"url": "https://x/runs/1", "command": command, "status": "paused"}
+        if command == "review":
+            # A round that paused at its review, which the import keeps as `reviewing`.
+            run["verdict"] = "paused"
         run["resume"] = {**record, **resume}
-        return self.gh.comment(5, render_run(run, "⏸️ Paused."))
+        comment = self.gh.comment(5, render_run(run, "⏸️ Paused."))
+        # Paused shortly before `NOW`, so that the import does not find the pause stale.
+        comment["created_at"] = "2026-10-11T04:30:00Z"
+        return comment
 
     def resume(self, cfg=None):
+        """The resume run's step, on the state that the item's first run stored before the
+        pause, as of `NOW`."""
+        cfg = cfg or make_config()
+        host.store_import(self.gh, cfg, 5, now=self.NOW)
         with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
             lines, _ = play_resume(self.gh, cfg, self.NOW)
         return lines, [call.args[0] for call in answer.call_args_list]
@@ -3483,8 +3513,10 @@ class ResumeTest(ReportCase):
         self.paused()
         lines, requests = self.resume(cfg)
         self.assertEqual(lines, ["Resumed /nexkit plan on #5."])
-        self.assertEqual([r["event"]["kind"] for r in requests], ["held", "tick"])
-        self.assertEqual(requests[1]["state"]["waits"][0]["for"], "usageLimit")
+        # The stored import already holds the label, so no `held` goes first.
+        self.assertEqual([r["event"]["kind"] for r in requests], ["tick"])
+        self.assertTrue(requests[0]["state"]["hold"])
+        self.assertEqual(requests[0]["state"]["waits"][0]["for"], "usageLimit")
         [dispatch] = self.gh.dispatches
         self.assertEqual(dispatch["inputs"]["command"], "plan")
 
@@ -3496,7 +3528,7 @@ class ResumeTest(ReportCase):
             ("review", "reviewing"),
         ):
             with self.subTest(command=command):
-                self.gh.dispatches.clear()
+                self.setUp()
                 self.paused(command)
                 _, [request] = self.resume()
                 self.assertEqual(request["state"]["state"], state)
@@ -4032,7 +4064,25 @@ class StoredStopsTest(HostCase):
 
     def stored(self):
         """The item has the state comment that `nexkit route` stores before its first event."""
-        seed(self.gh, self.cfg, 5)
+        seed(self.gh, self.cfg, 5, now=self.NOW)
+
+    def started(self, **fields):
+        """The plan run of issue 5 is on its way, as `progress.start` shows it: the stage
+        that a usage limit or a transient error stops."""
+        decision = {
+            "action": "plan",
+            "issue": 5,
+            "pr": None,
+            "target": 5,
+            "branch": "nexkit/issue-5",
+            "base": "main",
+            "head": None,
+            "note": "",
+            "auto": False,
+            "run_id": "7",
+            **fields,
+        }
+        progress.start(self.gh, decision)
 
     def read(self):
         return item_state.read(self.gh, 5)
@@ -4066,7 +4116,9 @@ class StoredStopsTest(HostCase):
         record = {"command": command, "number": 5, "note": "", "auto": "resume", "at": at}
         run = {"url": "https://x/runs/1", "command": command, "status": "paused"}
         run["resume"] = {**record, **resume}
-        self.gh.comment(5, render_run(run, "⏸️ Paused."))
+        comment = self.gh.comment(5, render_run(run, "⏸️ Paused."))
+        # Paused shortly before `NOW`, so that the import does not find the pause stale.
+        comment["created_at"] = "2026-10-11T04:30:00Z"
         return run
 
     def lost(self, write=False, now=None):
@@ -4106,14 +4158,14 @@ class StoredStopsTest(HostCase):
             ),
             (
                 "stage_limited",
-                lambda: None,
+                self.started,
                 lambda write: host.stage_limited(
                     self.gh, self.cfg, self.PLAN, "2026-10-11T04:40:00Z", write=write
                 ),
             ),
             (
                 "stage_transient",
-                lambda: None,
+                self.started,
                 lambda write: host.stage_transient(
                     self.gh, self.cfg, self.PLAN, self.NOW, "Overloaded", write=write
                 ),
@@ -4211,28 +4263,92 @@ class StoredStopsTest(HostCase):
                     call(True)
 
     def test_a_run_paused_at_a_usage_limit_that_the_step_starts_clears_its_wait(self):
-        cfg = pilot(answer="recommended")
-        self.cfg = cfg
+        self.started()
         self.stored()
-        d = {"issue": 5, "pr": None, "action": "plan"}
-        until = host.stage_limited(self.gh, cfg, d, "2026-10-11T04:40:00Z", write=True)
+        until = host.stage_limited(self.gh, self.cfg, self.PLAN, "2026-10-11T04:40:00Z", write=True)
         self.assertEqual(until, "2026-10-11T04:40:00Z")
         waiting = self.read()[1]
         [wait] = waiting["waits"]
         self.assertEqual(wait["for"], "usageLimit")
-        self.paused()
-        lines, _ = play_resume(self.gh, cfg, self.NOW)
+        # `report` shows the pause on the run's comment, with the record that resumes it.
+        comment, run = [(c, r) for c, r in run_comments(self.gh.comments(5)) if "url" in r][-1]
+        run = {**run, "status": "paused", "resume": {**self.resume_record(), "auto": "resume"}}
+        self.gh.update_comment(comment["id"], render_run(run, "⏸️ Paused."))
+        lines = maintain.resume_one(
+            self.gh, self.cfg, 5, comment["id"], "nexkit.yml", "main", now=self.NOW
+        )
         self.assertEqual(lines, ["Resumed /nexkit plan on #5."])
         doc = self.read()[1]
         self.assertEqual([w for w in doc["waits"] if w["for"] == "usageLimit"], [])
-        self.assertEqual([(a["kind"], a["stage"]) for a in doc["pending"]], [("runAgent", "plan")])
+        # The wait is over; the engine's `wait` notice stays in the outbox, which only a
+        # run of work reads. Exactly one agent run is on its way.
+        runs = [(a["kind"], a["stage"]) for a in doc["pending"] if a["kind"] == "runAgent"]
+        self.assertEqual(runs, [("runAgent", "plan")])
         self.assertEqual(doc["revision"], waiting["revision"] + 1)
 
-    def test_the_resume_run_without_a_configuration_stores_nothing(self):
+    def test_a_third_transient_stop_counts_from_the_stored_runs_again(self):
+        self.cfg = pilot(answer="recommended", labels={"on-hold": {"hold": True}})
+        self.cfg["retry"]["wait_minutes"] = [15, 30]
+        self.started(action="implement", retry=2)
         self.stored()
-        before = copy.deepcopy(self.gh.comments(5))
+        self.assertEqual(self.read()[1]["again"], {"transient": 2})
+        # The run's own input lost its count: the stored one decides.
+        self.assertNotIn("retry", self.GO)
+        found = host.stage_transient(self.gh, self.cfg, self.GO, self.NOW, "Overloaded", write=True)
+        self.assertEqual(found, ("failed",))
+        # An implement round with no change ends for a person as a round that failed.
+        self.assertEqual(self.read()[1]["attention"]["reason"], "roundFailed")
+
+    def test_a_resume_of_a_round_on_a_pull_request_decides_on_its_issue(self):
+        # The paused round's comment is on the pull request, but the state is the issue's.
+        self.cfg["retry"]["wait_minutes"] = [15]
+        self.gh.add_pull(6, 5, head_sha=HEAD)
+        self.started(action="fix", pr=6, target=6, head=HEAD)
+        self.stored()
+        fix = {"issue": 5, "pr": 6, "action": "fix", "head": HEAD}
+        found = host.stage_transient(self.gh, self.cfg, fix, self.NOW, "Overloaded", write=True)
+        self.assertEqual(found[0], "later")
+        waiting = self.read()[1]
+        self.assertEqual([w["for"] for w in waiting["waits"]], ["time"])
+        record = {"command": "fix", "number": 6, "at": found[1], "retry": 1}
+        self.assertTrue(
+            host.resumes(self.gh, self.cfg, {"resume": record}, 6, self.NOW, write=True)
+        )
+        doc = self.read()[1]
+        self.assertEqual(doc["waits"], [])
+        runs = [(a["kind"], a["stage"]) for a in doc["pending"] if a["kind"] == "runAgent"]
+        self.assertEqual(runs, [("runAgent", "fix")])
+
+    def test_the_resume_run_without_a_configuration_raises_and_stores_nothing(self):
+        self.stored()
         self.paused()
-        with_run = copy.deepcopy(self.gh.comments(5))
-        self.assertTrue(host.resumes(self.gh, None, {"resume": self.resume_record()}, 5, self.NOW))
-        self.assertEqual(self.gh.comments(5), with_run)
-        self.assertNotEqual(before, with_run)
+        before = copy.deepcopy(self.gh.comments(5))
+        with self.assertRaises(host.Refused):
+            host.resumes(self.gh, None, {"resume": self.resume_record()}, 5, self.NOW)
+        self.assertEqual(self.gh.comments(5), before)
+
+    def hold(self):
+        self.gh.issues[5].update(labels=[{"name": "on-hold"}], milestone={"number": 1})
+        self.gh.add_milestone(1)
+
+    def hold_kinds(self, seeded_held):
+        """The kinds of the events that a usage limit sends, when the item's state is stored
+        with the hold label already on the issue, or before the label came."""
+        self.started()
+        if seeded_held:
+            self.hold()
+        self.stored()
+        if not seeded_held:
+            self.hold()
+        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+            host.stage_limited(
+                self.gh, self.cfg, self.PLAN, "2026-10-11T04:40:00Z", label="on-hold", write=True
+            )
+        return [call.args[0]["event"]["kind"] for call in answer.call_args_list]
+
+    def test_a_stored_state_that_is_held_gets_no_held_event_before_the_stop(self):
+        self.assertEqual(self.hold_kinds(True), ["actionFinished"])
+
+    def test_a_state_stored_before_the_label_came_gets_held_first(self):
+        self.assertEqual(self.hold_kinds(False), ["held", "actionFinished"])
+        self.assertTrue(self.read()[1]["hold"])

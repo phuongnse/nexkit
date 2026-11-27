@@ -198,13 +198,17 @@ MUTANTS = {
         "seen": ("harness",),
         "families": ("moved",),
     },
-    # The reduced list that a parent with more than ten sub-issues sends leaves out the part
-    # that was completed, so the engine finds none and a person decides, where NexKit 6 closes
-    # the parent (#531).
-    "reduced-list-drops-the-completed-part": {
+    # An open sub-issue that the parent's stored parts lack does not keep the parent open, so
+    # the engine closes a parent of more than ten sub-issues while one of them is open, where
+    # NexKit 6 leaves it open (#720).
+    "unlisted-open-sub-issue-closes-the-parent": {
         "path": HOST,
-        "old": 'for wanted in (None, "accepted", "dropped"):',
-        "new": 'for wanted in (None, "dropped"):',
+        "old": """        and str(sub["number"]) not in listed
+    ]
+    if unlisted:""",
+        "new": """        and str(sub["number"]) not in listed
+    ]
+    if False:""",
         "seen": ("harness",),
         "families": ("parents",),
     },

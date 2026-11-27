@@ -150,7 +150,15 @@ and how each closed. When all of them were closed as not planned, the parent sta
 with a note for a person, as does a parent that autopilot split whose plan lists more parts
 than it has sub-issues. NexKit then checks the parent's own parent. It works the same
 whether a person or NexKit merged the work, and autopilot's sweeps close such a parent too,
-instead of asking a person to. Without the setting, autopilot lists a parent whose
+instead of asking a person to.
+
+NexKit decides this on the parent's stored state, which lists at most ten sub-issues. So a
+parent stays open while GitHub shows an open sub-issue that its state does not list, such as an
+eleventh one or one added after the split. A parent that NexKit stored before it had
+sub-issues, for example one that a person split by hand later, is left to a person: NexKit does
+not close it, and its run's log and `nexkit status` say why. With more than ten sub-issues, only
+the first ten count towards a completed part, so a parent whose only completed part is the
+eleventh waits for a person too. Without the setting, autopilot lists a parent whose
 sub-issues are all closed under *Needs a person*. See
 [Work NexKit starts by itself](work-without-a-command.md#work-without-a-command).
 

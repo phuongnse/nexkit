@@ -413,6 +413,46 @@ KNOWN += [
 ]
 
 
+def _parent_left_open(old, new):
+    """Whether NexKit 6 closed the parent issue 1 and the tree left it open, in a record's
+    GitHub (`gh`, and `gh1`, `gh2` of a record with more than one)."""
+    found = False
+    for key in ("gh", "gh1", "gh2"):
+        was, now = old.get(key), new.get(key)
+        if not (isinstance(was, dict) and isinstance(now, dict)):
+            continue
+        before = (was.get("issues") or {}).get("1") or {}
+        after = (now.get("issues") or {}).get("1") or {}
+        found = found or (before.get("state") == "closed" and after.get("state") == "open")
+    return found
+
+
+KNOWN += [
+    {
+        "name": "a completed part beyond the ten that a state holds leaves the parent to a person",
+        "family": "parents",
+        "by": "#720",
+        "why": (
+            "A parent's state holds at most ten parts (`MOST['split']`), and the engine refuses "
+            "the end of a part it does not hold, which no event carries. NexKit 6 counted every "
+            "sub-issue, so a parent of more than ten whose only completed part was beyond the "
+            "first ten, with the others closed as not planned, closed. Now the engine finds none "
+            "completed and a person closes the parent: the difference only keeps a parent open. "
+            "Only that case is excused: more than ten sub-issues, the part closed as not "
+            "planned, the only completed one a sibling, and NexKit 6 closing the parent where "
+            "the tree leaves it open."
+        ),
+        "match": lambda sc, old, new: (
+            sc["extra"] == "many"
+            and sc["sibling"] == "completed"
+            and sc["reason"] == "not_planned"
+            and sc["close"]
+            and _parent_left_open(old, new)
+        ),
+    }
+]
+
+
 KNOWN += [
     {
         "name": "a stored count of conflict rounds above the markers'",

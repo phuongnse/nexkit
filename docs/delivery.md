@@ -30,6 +30,14 @@ them true and each merge easy to review.
   as context.
 - A change that moves a decision of NexKit 6 into the engine proves it and writes its pull request
   as [Moving decisions into the engine](testing.md#moving-decisions-into-the-engine) says.
+- Every plan and review answers the checklist, `review.checklist` in `.nexkit/config.json`. Each
+  item names one doc, the one section of it, or the Agreed decisions, that holds rules a review
+  checks in the diff, and no rule is named by two items. Each says in a sentence what it covers,
+  and asks the review to check the diff against each of its rules. A new item is due only for such
+  a doc that no item names and no test or script checks: a new rule in a doc that an item names adds
+  no item, and a rule that a test or a script can check is checked there. An item that only the
+  owner decides, such as one that accepts a risk, is marked `person`, and its rules have a section
+  that no other item names.
 
 ## Labels and milestones
 

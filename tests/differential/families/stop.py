@@ -179,13 +179,13 @@ def run(sc):
         d["autopilot"] = "true"
     art = Artifacts()
     art.agent(agent_result(sc))
-    seed(gh, cfg)
     res = {}
     with quiet():
         try:
             progress.start(gh, d)
         except Exception as exc:  # noqa: BLE001
             res["start"] = f"EXC {type(exc).__name__}: {exc}"
+        seed(gh, cfg)
         res["report"] = attempt(
             report, gh, d, cfg, {}, art.path, workflow_ref=WORKFLOW, default_branch="main"
         )

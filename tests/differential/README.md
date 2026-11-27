@@ -35,7 +35,9 @@ state comment at revision 1 (`common.seed`), as a run in the item's group does
 are used up, so that every later comment has the same id on both trees. The state comment is not
 compared, since NexKit 6 never posts it. The harness records each write of it apart, and counts a
 problem when an item's revision moves backward within a scenario. The line of each family says how
-many of its scenarios stored an item (`seeded k of n`).
+many of its scenarios stored an item (`seeded k of n`). The `stop`, `pause` and `ended` families
+store the import just after the stage's `progress.start`, so that the stored state holds the agent
+run on its way, as it does when a stage stops in production.
 
 `--fallbacks` lists under each family the decisions that `host.resync` took from the document that
 NexKit 6's markers give, instead of from the stored state, counted by the host function that

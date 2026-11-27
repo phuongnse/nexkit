@@ -208,6 +208,43 @@ class ImportTest(unittest.TestCase):
         self.assertTrue(state["hold"])
         self.assertEqual([wait["for"] for wait in state["waits"]], ["blocker", "start"])
 
+    def test_a_go_on_its_way_that_runs_again_keeps_its_count(self):
+        def imported(**fields):
+            run = {"command": "go", "status": "running", "url": "https://x/actions/runs/7"}
+            gh = FakeGitHub()
+            gh.add_issue(42)
+            gh.comment(42, render_run({**run, **fields}))
+            return first_state.import_item(gh, make_config(), 42)
+
+        state = imported(retry=2)
+        self.assertEqual(state["state"], "working")
+        agents = [action for action in state["pending"] if action["kind"] == "runAgent"]
+        self.assertEqual([action["stage"] for action in agents], ["implement"])
+        self.assertEqual(state["again"], {"transient": 2})
+        for name, fields, count in (
+            ("a count over the limit", {"retry": 15}, 10),
+            ("a flag", {"retry": True}, None),
+            ("a count of none", {"retry": 0}, None),
+            ("no count", {}, None),
+        ):
+            with self.subTest(name):
+                found = imported(**fields)
+                self.assertEqual((found.get("again") or {}).get("transient"), count)
+                self.assertEqual(found["state"], "working")
+
+    def test_a_fix_round_on_its_way_waits_on_the_pull_request_s_head(self):
+        head = "b" * 40
+        gh = FakeGitHub()
+        gh.add_issue(5)
+        gh.add_pull(6, 5, head_sha=head)
+        running = {"round": 2, "trigger": "fix", "action": "fix", "status": "running"}
+        gh.comment(6, render_run({**running, "url": "https://x/actions/runs/8", "head": head}))
+        state = first_state.import_item(gh, make_config(), 5, 6)
+        agents = [action for action in state["pending"] if action["kind"] == "runAgent"]
+        self.assertEqual([action["stage"] for action in agents], ["fix"])
+        self.assertEqual(agents[0]["changeVersion"], head)
+        self.assertEqual(host.pending_id(state, "runAgent", "fix"), agents[0]["id"])
+
     def test_an_issue_autopilot_does_not_take_gets_no_automatic_answers(self):
         given = json.loads((CASES / "go-answered-by-autopilot-runs-again.json").read_text())
         cfg = make_config(autopilot={**given["config"]["autopilot"], "scope": None})

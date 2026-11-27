@@ -468,7 +468,8 @@ adapter's tests and the answers as what its adapter carries out.
   they start waiting for the sweep to start it. The plan that autopilot asked for after a pull
   request's round ran out of time is imported with `supersede`, so its split withdraws the pull
   request. A NexKit 6 run on its way becomes the action the
-  engine waits for, and an automatic fix round on its way, with a count, is marked
+  engine waits for, keeping the count of its runs again after a transient error when it is one
+  (`again.transient`, as a paused one does), and an automatic fix round on its way, with a count, is marked
   `rounds.automatic`, so that a stop gives its count back. A run paused at a usage limit, or until
   it runs again after a transient stop, becomes a wait with its time, the second keeping the
   count of runs again, unless NexKit 6 would no longer resume it, which fails for a person; an automatic run that ended without a report waits

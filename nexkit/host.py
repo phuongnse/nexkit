@@ -3,10 +3,12 @@
 Every decision that moves an item is the engine's. Most still keep no state document: for each
 one, the host builds the item's document from NexKit 6's markers, as the import reads them
 (`first_state`), sends the event that GitHub shows, and carries out the answer with NexKit 6's
-code, in NexKit 6's words. The decisions after a plan, for a new issue's first plan and after a
-writer's vouch read the item's stored state document too, and store the engine's answer
-(`stored`, `decide`, `resync`, below). After a plan, a stopped round and a review,
-`report` also sends what the runner's `run.json` says the agent spent (`spent`).
+code, in NexKit 6's words. The decisions after a plan, for a new issue's first plan, after a
+writer's vouch, after a blocked or stopped round, at a usage limit or a transient error, when a
+resume comes due and for a lost command read the item's stored state document too, and store
+the engine's answer (`stored`, `decide`, `decide_all`, `resync`, below). After a plan, a stopped
+round and a review, `report` also sends what the runner's `run.json` says the agent spent
+(`spent`).
 
 The engine decides what follows a plan: its approval by autopilot, the answers to its
 questions, once in a row, a writer's answer that only closes the issue, a plan that finds no
@@ -162,15 +164,23 @@ leaves each issue that would start waiting for a person.
 
 It decides whether a person's command starts its stage, too (`command`, called by
 `route._decide`): a `/nexkit` comment, a *Request changes* review and each dispatch of a
-command that NexKit sends. The host builds the small document that NexKit 6's `route` read the
+command that NexKit sends. It carries out the answer that `take` stored for the run's own
+command and does not send it to the engine again, which would take it for a duplicate, so each
+command is stored as one revision. A command that an earlier run took (its event is in the
+state's events seen) starts nothing and gets no reply, and one that no run took is decided on
+the stored state, which a run of the item's group stores (`decide`, `resync`); another command
+taken in this run that already started a stage refuses it. A command whose own run a newer run
+replaced starts in the run that ran, when that run's own event starts nothing
+(`route._taken_start`). The host builds the small document that NexKit 6's `route` read the
 facts of, whether the issue or pull request is open, the latest plan, an open pull request for
-`/nexkit go` and a base branch that already holds the change, sends the command as `requested`
-(a review as `changesRequested`, as `take` sends it), and starts only the stage that the engine
-answers; a change that the engine ends as `noChange` goes to the `on_base` task. A closed issue
-or pull request and an open pull request for `/nexkit go` are the engine's to refuse, and the
-host says each in NexKit 6's words. An engine that refuses, or answers another stage, starts
-nothing, and the person gets a reply. A fork, a person's pull request, which takes no
-`/nexkit fix`, an unknown command and an implement round that still runs stay host checks.
+`/nexkit go` and a base branch that already holds the change, where `take` sent nothing or the
+engine is asked, and starts only the stage that the engine answers; a change that the engine
+ends as `noChange` goes to the `on_base` task. A closed issue or pull request, which a state
+comment outlives, and an open pull request for `/nexkit go` are the engine's to refuse on that
+document, and the host says each in NexKit 6's words. An engine that refuses, or answers
+another stage, starts nothing, and the person gets a reply. A fork, a person's pull request,
+which takes no `/nexkit fix`, an unknown command and an implement round that still runs stay
+host checks.
 
 An item whose document or event the engine refuses waits for a person, and no other item is
 held up by it.
@@ -184,31 +194,41 @@ keep losing fails and leaves its event for the next run. A state comment that so
 the App changed stores and takes nothing: the item waits for a person.
 
 The decisions after a plan (`after_plan`, `plan_carried_on`, `plan_waits_for`), for a new issue's
-first plan (`first_plan`) and after a writer's vouch (`vouched`), and the decisions at a merge
-(`required_failed`, `accept_answer`, `checks_waited`, `refusal_cleared`, `update_failed` and
-`change_seen`) read the item's stored state document (`stored`: the document in its state comment,
-or the import in memory when it has none, or none when GitHub cannot be read) and send their
-event through `decide`. While other decisions still build their document from
-NexKit 6's markers, `resync` uses the stored document only when it says what the markers' document
-says, apart from its revision, its events seen and the ids of its outbox, and does not hold the
-event yet. Otherwise the decision is the markers' document at the stored revision, so that NexKit
+first plan (`first_plan`), after a writer's vouch (`vouched`), at a merge (`required_failed`,
+`accept_answer`, `checks_waited`, `refusal_cleared`, `update_failed`, `change_seen`), after a
+blocked or failed `/nexkit go` (`after_go`, `round_carried_on`), after a stopped or timed-out round
+(`stopped`, `stop_carried_on`), at a usage limit or a transient error (`stage_limited`,
+`stage_transient`), when a resume comes due (`resumes`), for a lost command (`lost_again`), on a
+person's command (`command`), on a closing command (`closing_command`, which only previews, since
+`take` stored its event and the `maintain` job closes) and on an approval (`approved`: the `step`
+run of the item's group stores it, and the approval's own run in `approved-N` previews) read the
+item's stored state document (`stored`: the document in its state comment, or the import in memory
+when it has none) and send their event through `decide`, or their events in a row through
+`decide_all`. While other decisions still build their document from NexKit 6's markers, `resync`
+uses the stored document only when it says what the markers' document says, apart from its
+revision, its events seen and the ids of its outbox, and does not hold the event yet, or any event
+of a row. Otherwise the decision is the markers' document at the stored revision, so that NexKit
 6's answers stay exactly as they are: a finished plan's import is `awaitingApproval`, which cannot
-take the plan's result, and a second send of one event, such as the plan's result that `report`
-and the step run both send, would be a duplicate. The last move to the stored document removes
-`resync`. A run in the item's group stores the answer (`write`: the `report` after a plan or at a
-merge, the `step` run, and the approval's merge), only on top of an existing state comment, at the
-next revision, with `item_state.apply`: a write that lost reads the state again, waits and decides
+take the plan's result, and a second send of one event, such as the plan's result that `report` and
+the step run both send, would be a duplicate. The last move to the stored document removes
+`resync`. A row of events, such as a hold and then the stop, or a round's result and then a
+comment, is one write: the state after the last event, at the revision read plus one, since
+`item_state.write` takes only the next revision, and a tick of a resume names the wait of the
+document it is decided on (`wait_id`). A run in the item's group stores the answer (`write`: the
+`report` after a stage or at a merge, the `step` run, the approval's merge, and the `step` that
+starts a due resume, `maintain.resume_one`), only on top of an existing state comment, at the next
+revision, with `item_state.apply`: a write that lost reads the state again, waits and decides
 again, and when every try lost, the run warns and carries out the answer anyway, which the next
 decision stores again. A run outside that group only previews: the sweep, `nexkit status` and
-`plan_waits_for`, which asks what a plan waits for under no automatic approval, which is no
-answer of the item's own. An item with no state comment stores nothing here, since only
-`store_import` posts the first one, and one whose state comment someone other than the App changed
-is refused (`autopilot.changed_comment`). `pending_id` names the action of the outbox that a result
-answers, and `wait_id` the wait that a tick answers. A merge that waits for required checks keeps
-the time of its first wait in the stored document across the sweeps' previews. `accept_answer`
-decides each event that the host read before the merge's result, such as a head that moved, on the
-answer before it, and stores each as its own revision, since a write takes only the revision that
-follows the stored one.
+`plan_waits_for`, which asks what a plan waits for under no automatic approval, which is no answer
+of the item's own, and the `resume` run, which only sends the `step`. With no configuration,
+`resumes` and `lost_again` decide on the markers' document and read and store nothing. An item with
+no state comment stores nothing here, since only `store_import` posts the first one, and one whose
+state comment someone other than the App changed is refused (`autopilot.changed_comment`).
+`pending_id` names the action of the outbox that a result answers. A merge that waits for required
+checks keeps the time of its first wait in the stored document across the sweeps' previews.
+`accept_answer` decides each event that the host read before the merge's result, such as a head
+that moved, on the answer before it, and stores each as its own revision.
 
 No module outside `nexkit/engine/` writes on GitHub without an answer of the engine before it:
 `tests/test_answers.py` reads their code and fails on a dispatch, a merge, a branch update, a close,
@@ -783,15 +803,6 @@ def pending_id(doc, kind, stage=None):
     return first_state.RUN_ID
 
 
-def wait_id(doc, kind):
-    """The id of the first wait of `doc` that is `for` `kind`, which a tick of that wait names,
-    or None when `doc` has none."""
-    for wait in doc.get("waits") or []:
-        if wait["for"] == kind:
-            return wait["id"]
-    return None
-
-
 def stored(gh, cfg, number, pull=None):
     """(comment, document) of work item `number`: its state comment and the document stored
     in it, or (None, document) with the document that the import builds in memory when it has
@@ -826,22 +837,107 @@ def _core(doc):
     return doc
 
 
+def wait_id(doc, kind):
+    """The id of the first wait of `doc` that is a `kind` (`usageLimit`, `time`, ...), which a
+    tick names, or `w1.1`, the id of the first wait that the engine gives, when `doc` has none."""
+    for wait in doc.get("waits") or []:
+        if wait["for"] == kind:
+            return wait["id"]
+    return "w1.1"
+
+
 def resync(state, built, event):
     """The document that `event` is decided on while decisions still build theirs from NexKit
     6's markers: the stored `state` when it says what `built` says, apart from its revision, its
     ids and its events seen, and does not hold `event` yet. Otherwise `built`, at the
     stored revision and with the events seen of `state`, but `event`, since the engine would
-    take a second send of it for a duplicate. With no `state`, `built` itself. This is
-    transitional: the last part of the move to the stored document removes it."""
+    take a second send of it for a duplicate. `event` may be a list of events that are sent in a
+    row: `state` holds none of them, or `built` is the document. With no `state`, `built` itself.
+    This is transitional: the last part of the move to the stored document removes it."""
     if state is None:
         return built
+    events = event if isinstance(event, list) else [event]
+    names = {one["id"] for one in events}
     seen = state["recentEvents"]
-    if event["id"] not in seen and _core(state) == _core(built):
+    if not names & set(seen) and _core(state) == _core(built):
         return state
     base = copy.deepcopy(built)
     base["revision"] = state["revision"]
-    base["recentEvents"] = [name for name in seen if name != event["id"]]
+    base["recentEvents"] = [name for name in seen if name not in names]
     return base
+
+
+def decide_all(
+    gh,
+    cfg,
+    number,
+    events,
+    built,
+    *,
+    pull=None,
+    found_policies=None,
+    action=None,
+    wait=None,
+    until=None,
+    write=False,
+    with_changed=False,
+):
+    """The engine's answers to `events` sent in a row on work item `number`, as (state,
+    [(event sent, actions), ...]): decided on the stored document where it agrees with `built`
+    (`resync`), with `action`, (kind, stage), as the id of the pending action that an
+    `actionFinished` or `actionLost` event answers (`pending_id`), and with the id of the wait of
+    kind `wait` in the document that a `tick` names (`wait_id`). The events after the first
+    are sent on the state that the one before it gave, and the row stops after the event whose
+    actions satisfy `until`, when given. `found_policies` default to the configuration's, and
+    with no `cfg` the decision is read from `built` alone and nothing is read or stored.
+
+    The state is the one after the last event, at the revision that was read plus one when
+    anything changed, since `item_state.write` takes only the next revision: the row is stored
+    as a single write. See
+    `decide` for `write`. With `with_changed` the result is (state, answers, changed). Raises
+    `Refused`."""
+    found_policies = (policies(cfg) if cfg else {}) if found_policies is None else found_policies
+    last = []
+
+    def answer(state):
+        base = resync(state, built, events)
+        revision, state, answers, changed = base["revision"], base, [], False
+        for event in events:
+            sent = event
+            if action is not None and event["kind"] in ("actionFinished", "actionLost"):
+                sent = {**sent, "action": pending_id(state, *action)}
+            if wait is not None and event["kind"] == "tick":
+                sent = {**sent, "wait": wait_id(state, wait)}
+            found = step(state, sent, found_policies)
+            state, changed = found["state"], changed or found.get("changed", False)
+            answers.append((sent, found["actions"]))
+            if until is not None and until(found["actions"]):
+                break
+        if changed:
+            state = {**state, "revision": revision + 1}
+        last[:] = [(state, answers, changed)]
+        return state, answers, changed
+
+    def given():
+        return last[0] if with_changed else last[0][:2]
+
+    if cfg is None:
+        answer(None)
+        return given()
+    comment, doc = stored(gh, cfg, number, pull)
+    if not write or comment is None:
+        answer(doc)
+        return given()
+    try:
+        item_state.apply(
+            gh, number, lambda state: answer(state), sleep=lambda wait: time.sleep(wait)
+        )
+    except item_state.Edited as edited:
+        raise _edited(edited) from None
+    except item_state.Moved:
+        why = "other writes came first, so its answer is not stored"
+        print(f"::warning::The state of #{number} moved: {why}.")
+    return given()
 
 
 def decide(
@@ -856,6 +952,7 @@ def decide(
     action=None,
     wait=None,
     write=False,
+    with_changed=False,
 ):
     """The engine's answer to `event` on work item `number`, as (state, actions): decided on
     the stored document where it agrees with `built`, the document that NexKit 6's markers
@@ -871,33 +968,25 @@ def decide(
     and failing the run would lose its report or its step. Without `write`, or with no state
     comment, which only `store_import` posts, the answer is a preview and nothing is stored.
     Raises `Refused` when the engine refuses or someone other than the App changed the
-    state comment."""
-    found_policies = policies(cfg) if found_policies is None else found_policies
-    last = []
-
-    def answer(state):
-        sent = event
-        base = resync(state, built, event)
-        if action is not None:
-            sent = {**event, "action": pending_id(base, *action)}
-        if wait is not None:
-            sent = {**sent, "wait": wait_id(base, wait) or event["wait"]}
-        found = step(base, sent, found_policies)
-        last[:] = [(found["state"], found["actions"])]
-        return found["state"], found["actions"], found.get("changed", False)
-
-    comment, doc = stored(gh, cfg, number, pull)
-    if not write or comment is None:
-        answer(doc)
-        return last[0]
-    try:
-        item_state.apply(gh, number, answer, sleep=lambda wait: time.sleep(wait))
-    except item_state.Edited as edited:
-        raise _edited(edited) from None
-    except item_state.Moved:
-        why = "other writes came first, so its answer is not stored"
-        print(f"::warning::The state of #{number} moved: {why}.")
-    return last[0]
+    state comment. With `with_changed` the answer is (state, actions, changed): whether the
+    engine took the event as one that changes the state. `decide_all` sends several events in
+    a row."""
+    state, answers, changed = decide_all(
+        gh,
+        cfg,
+        number,
+        [event],
+        built,
+        pull=pull,
+        found_policies=found_policies,
+        action=action,
+        wait=wait,
+        write=write,
+        with_changed=True,
+    )
+    if with_changed:
+        return state, answers[0][1], changed
+    return state, answers[0][1]
 
 
 # -- what follows a plan -------------------------------------------------------------------
@@ -1333,7 +1422,7 @@ def _plan_doc(issue, record, comments):
     return _document(issue, record, plan, plan_data(plan)) if plan else _document(issue, record)
 
 
-def after_go(gh, cfg, issue, comment, run, record, start, comments):
+def after_go(gh, cfg, issue, comment, run, record, start, comments, write=False):
     """The step after the `/nexkit go` of `issue` whose run comment `comment`, with the
     marker `run`, says it stopped as blocked, with questions or protected paths or with
     nothing to answer, or failed on an error and not on time (`autopilot.engine_round`,
@@ -1341,7 +1430,8 @@ def after_go(gh, cfg, issue, comment, run, record, start, comments):
     picks the option that only closes the issue closes it; otherwise the round's result,
     then a collaborator's comment since, or the close of an issue that blocked it after the
     round started. `record` is autopilot's record and `start` what
-    a command that the step starts begins from. Raises `Refused`."""
+    a command that the step starts begins from. With `write`, which only the run of the item's
+    group passes, the engine's answer is stored (`decide_all`). Raises `Refused`."""
     number = issue["number"]
     said = autopilot._commented_after(comments, comment)
     picked = _picked(said[-1].get("body"), run) if said else None
@@ -1355,7 +1445,7 @@ def after_go(gh, cfg, issue, comment, run, record, start, comments):
         fields = {"by": _person(by, "writer"), "answers": answers, "note": "", "asked": asked}
         at, name = said[-1].get("created_at"), event_id("comment", said[-1])
         event = _event("answered", number, at, name, **fields)
-        return view.carry(step(doc, event, policies(cfg))["actions"])
+        return view.carry(decide(gh, cfg, number, event, doc, write=write)[1])
     doc = _working(_plan_doc(issue, record, comments), autopilot.asked_again(comments))
     events = [_round_result(number, comment, run)]
     if said:
@@ -1378,15 +1468,21 @@ def after_go(gh, cfg, issue, comment, run, record, start, comments):
             )
             for found, done in closed.items()
         ]
+    _, answers = decide_all(
+        gh,
+        cfg,
+        number,
+        events,
+        doc,
+        action=("runAgent", "implement"),
+        until=lambda acts: any(x["kind"] in ("runAgent", "close", "createParts") for x in acts),
+        write=write,
+    )
     actions = []
-    for event in events:
-        found = step(doc, event, policies(cfg))
-        doc = found["state"]
-        if found["actions"]:
-            actions = found["actions"]
-            view.by_event = event["kind"]
-        if any(action["kind"] in ("runAgent", "close", "createParts") for action in actions):
-            break
+    for sent, found in answers:
+        if found:
+            actions = found
+            view.by_event = sent["kind"]
     return view.carry(actions)
 
 
@@ -1500,11 +1596,12 @@ def _carries_on(actions):
     return any(action["kind"] in ("runAgent", "close") for action in actions)
 
 
-def round_carried_on(gh, cfg, issue, decision, agent, ran=None):
+def round_carried_on(gh, cfg, issue, decision, agent, ran=None, write=False):
     """Whether autopilot carries on after the `/nexkit go` that a run of `decision` ran and
     that stopped as blocked, with the agent's result `agent`, as the engine decides what
     follows it, so that `report` mentions nobody. A wait for a person, the closing answer
-    included, makes `report` mention them. Raises `Refused`."""
+    included, makes `report` mention them. With `write`, which the `report` of the item's group
+    passes, the answer is stored (`decide`). Raises `Refused`."""
     from .report import _autopilot_fields
 
     comments = gh.comments(issue["number"])
@@ -1521,7 +1618,16 @@ def round_carried_on(gh, cfg, issue, decision, agent, ran=None):
         changeVersion=None,
         result={**spent(ran), "output": round_output(run)},
     )
-    return _carries_on(step(doc, event, policies(cfg))["actions"])
+    _, actions = decide(
+        gh,
+        cfg,
+        issue["number"],
+        event,
+        doc,
+        action=("runAgent", "implement"),
+        write=write,
+    )
+    return _carries_on(actions)
 
 
 # -- a fix round that stopped, and a round that ran out of time --------------------------
@@ -1589,13 +1695,14 @@ def _stop_event(number, name, doc, output, timed_out, ran=None):
     )
 
 
-def stopped(gh, cfg, issue, run, record, start, comments, pull=None, pull_comments=()):
+def stopped(gh, cfg, issue, run, record, start, comments, pull=None, pull_comments=(), write=False):
     """The step after a round that stopped, whose marker is `run`, as the engine decides it:
     with `pull`, a fix round of that pull request that stopped as blocked with questions or
     protected paths (`autopilot.engine_round`); or a fix round or a `/nexkit go` that ran out
     of time, after which autopilot asks once for a split. `comments` are the issue's,
     `pull_comments` the pull request's, `record` autopilot's record and `start` what a
-    command that the step starts begins from. Raises `Refused`."""
+    command that the step starts begins from. With `write`, which only the run of the item's
+    group passes, the engine's answer is stored (`decide`). Raises `Refused`."""
     number = issue["number"]
     timed_out = bool(run.get("timed_out"))
     place = _split_place(gh, issue, record) if timed_out else (0, False)
@@ -1604,7 +1711,16 @@ def stopped(gh, cfg, issue, run, record, start, comments, pull=None, pull_commen
         again = autopilot.asked_again(pull_comments, comments)
     doc = _round_doc(issue, record, again, pull, run.get("head"), place)
     event = _stop_event(number, _run_event_id(run.get("url")), doc, fix_output(run), timed_out)
-    actions = step(doc, event, policies(cfg))["actions"]
+    _, actions = decide(
+        gh,
+        cfg,
+        number,
+        event,
+        doc,
+        pull=pull,
+        action=("runAgent", "fix" if pull else "implement"),
+        write=write,
+    )
     kinds = {action["kind"]: action for action in actions}
     found = [
         {"question": item["question"], "answer": item["recommended"]}
@@ -1648,11 +1764,12 @@ ROUND_WAITS = {
 }
 
 
-def stop_carried_on(gh, cfg, issue, decision, agent, ran=None):
+def stop_carried_on(gh, cfg, issue, decision, agent, ran=None, write=False):
     """Whether autopilot carries on after a fix round of `decision` that stopped as blocked,
     or an implement or fix round that ran out of time, with the agent's result `agent`, as
     the engine decides what follows it, so that `report` mentions nobody. A wait for a person,
-    the closing answer included, makes `report` mention them. Raises `Refused`."""
+    the closing answer included, makes `report` mention them. With `write`, which the `report`
+    of the item's group passes, the answer is stored (`decide`). Raises `Refused`."""
     from .report import _autopilot_fields
 
     comments = gh.comments(issue["number"])
@@ -1669,20 +1786,32 @@ def stop_carried_on(gh, cfg, issue, decision, agent, ran=None):
     output = fix_output(run) if pr else round_output(run)
     name = _run_event_id()
     event = _stop_event(issue["number"], name, doc, output, timed_out, ran)
-    actions = step(doc, event, policies(cfg))
-    return _carries_on(actions["actions"])
+    _, actions = decide(
+        gh,
+        cfg,
+        issue["number"],
+        event,
+        doc,
+        pull=pr,
+        action=("runAgent", "fix" if pr else "implement"),
+        write=write,
+    )
+    return _carries_on(actions)
 
 
 # -- a person's command ----------------------------------------------------------------
 
 
-def closing_command(gh, decision, comments, command):
+def closing_command(gh, decision, comments, command, cfg=None):
     """A writer's `/nexkit plan` or `/nexkit go` on an issue whose questions NexKit asked
     last, those of its latest plan or of a `/nexkit go` that stopped as blocked
     (`state.asked_last`): when its note picks the option that only closes the issue and the
     engine drops the issue for it, the `maintain` job closes the issue as not planned, with
     no agent run. Otherwise the command goes to its round as it is. `command` is the comment
-    of the command, which names the event."""
+    of the command, which names the event. With `cfg` the engine answers on the item's stored
+    state (`decide`), which a preview only reads: `take` already stored the command's event, and
+    the `maintain` job carries out the close. Without it, the answer is on the document that
+    NexKit 6's markers leave."""
     number = decision["issue"]
     asked = asked_last(comments)
     if asked is None:
@@ -1707,10 +1836,22 @@ def closing_command(gh, decision, comments, command):
     by = _person(decision.get("actor"), "writer")
     event = _event("answered", number, None, event_id("comment", command), by=by, **fields)
     try:
-        found = step(doc, event, {})
+        if cfg is None:
+            actions = step(doc, event, {})["actions"]
+        else:
+            _, actions = decide(
+                gh,
+                cfg,
+                number,
+                event,
+                doc,
+                pull=int(change["id"]) if change else None,
+                found_policies={},
+                write=False,
+            )
     except Refused:
         return decision
-    if not any(action["kind"] == "close" for action in found["actions"]):
+    if not any(action["kind"] == "close" for action in actions):
         # A pull request that is open stays with its issue: a person closes both.
         return decision
     return {
@@ -1726,11 +1867,24 @@ def closing_command(gh, decision, comments, command):
 STARTS = {"plan": "plan", "implement": "implement", "fix": "fix"}
 
 
+def starts(actions):
+    """The stage that the engine's `actions` start, as `STARTS` names it (`review` for
+    `runChecks`), or None when they start none."""
+    for action in actions:
+        if action["kind"] == "runChecks":
+            return "review"
+        if action["kind"] == "runAgent" and action["stage"] in STARTS:
+            return STARTS[action["stage"]]
+    return None
+
+
 def command(
     cfg,
     item,
     what,
     *,
+    gh=None,
+    taken=None,
     by=None,
     note="",
     closed=False,
@@ -1744,10 +1898,20 @@ def command(
     """What the engine answers to a person's command `what` (`plan`, `go`, `fix` or `review`)
     on work item `item` (`route._decide`): `plan`, `implement`, `fix` or `review` for the stage
     it runs (`runChecks` is a `review`), `noChange` when the item ends because its base branch
-    already holds the change, or `refused` when it runs nothing. It raises `Refused` when the
-    engine refuses the document or the event. It writes nothing and stores nothing.
+    already holds the change, `refused` when it runs nothing, or `answered` when an earlier run
+    already took the command, so that this one starts nothing and replies nothing. It raises
+    `Refused` when the engine refuses the document or the event.
 
-    The document holds only the facts that NexKit 6's `route` reads, as `closing_command` and
+    With `gh` and `cfg`, the command is carried out from the item's stored state. When
+    `take` answered it in this run (`taken`, [(event, actions)] as `take` gives them), the
+    actions it stored are carried out and the engine is not asked again, which it would take for a
+    duplicate. Otherwise the stored state says whether an earlier run took it (`answered`), and
+    another command taken in this run that already started a stage refuses it. In any other case it
+    is decided on the stored state (`decide`, which stores the answer in the item's group,
+    `resync`). A closed item, with no `gh` or no `cfg`, is answered on the small document that
+    NexKit 6's `route` read the facts of, which writes nothing.
+
+    That document holds only the facts that NexKit 6's `route` reads, as `closing_command` and
     `_pull_doc` build theirs: `closed` is a closed issue or pull request (`dropped`); `change`,
     `{"id", "version"}` of the open pull request, makes the item `ready`, or `new` for a person's
     pull request (`review_only`); `plan` is the issue's latest plan comment, which makes the item
@@ -1772,21 +1936,23 @@ def command(
         }
     elif plan:
         doc = _waiting(_document({"number": item}, {}, plan, plan_data(plan)))
-    events = []
+    observed = None
     if empty and change and not closed:
         seen = {"version": change["version"], "merged": False, "empty": True}
         name = f"seen-{change['id']}-{change['version']}"
         fields = {"changeId": change["id"], "conflicts": False, **seen}
-        events.append(_event("changeObserved", item, None, name, **fields))
+        observed = _event("changeObserved", item, None, name, **fields)
     kind = "review" if review_id is not None else "comment"
+    sourced = True
     try:
         name = event_id(kind, review_id if review_id is not None else source_id)
     except ValueError:
-        name = f"command-{item}-{what}"
+        # NexKit's own dispatch has no source, and sends the same command again and again.
+        name, sourced = f"command-{item}-{what}", False
     person = _person(by, "writer")
     if review_id is not None:
         found = {"by": person, "note": {"name": "review", "ref": str(review_id)}}
-        events.append(_event("changesRequested", item, None, name, **found))
+        request = _event("changesRequested", item, None, name, **found)
     else:
         found = {
             "what": what,
@@ -1794,16 +1960,38 @@ def command(
             "note": note,
             "plan": str(plan["id"]) if plan and what == "go" else None,
         }
-        events.append(_event("requested", item, None, name, **found))
-    after, actions = _answers(doc, events, policies(cfg) if cfg else {})
-    if after["state"] == "noChange":
+        request = _event("requested", item, None, name, **found)
+    if gh is None or cfg is None or closed:
+        events = [event for event in (observed, request) if event]
+        after, actions = _answers(doc, events, policies(cfg) if cfg else {})
+        if after["state"] == "noChange":
+            return "noChange"
+        return starts(actions) or "refused"
+    pull = int(change["id"]) if change else None
+    mine = [actions for event, actions in taken or [] if event["id"] == name]
+    if mine:
+        if observed and _on_base(gh, cfg, item, observed, doc, pull):
+            return "noChange"
+        return starts(mine[0]) or "refused"
+    _, seen_doc = stored(gh, cfg, item, pull)
+    if sourced and seen_doc is not None and name in seen_doc["recentEvents"]:
+        return "answered"
+    if any(
+        event["kind"] in ("requested", "changesRequested") and starts(actions)
+        for event, actions in taken or []
+    ):
+        return "refused"
+    if observed and _on_base(gh, cfg, item, observed, doc, pull):
         return "noChange"
-    for action in actions:
-        if action["kind"] == "runChecks":
-            return "review"
-        if action["kind"] == "runAgent" and action["stage"] in STARTS:
-            return STARTS[action["stage"]]
-    return "refused"
+    _, actions = decide(gh, cfg, item, request, doc, pull=pull, write=True)
+    return starts(actions) or "refused"
+
+
+def _on_base(gh, cfg, item, observed, doc, pull):
+    """Whether the engine ends the item as `noChange` on the observation `observed` that its
+    base branch already holds the change (`command`)."""
+    state, _ = decide(gh, cfg, item, observed, doc, pull=pull, write=True)
+    return state["state"] == "noChange"
 
 
 # -- what follows a round's checks and review ------------------------------------------
@@ -2410,7 +2598,7 @@ def accept_answer(
     raise Refused(f"The engine answers {sorted(kinds)} after a merge, which the host cannot do.")
 
 
-def approved(cfg, issue, pr, run, commit, actor):
+def approved(gh, cfg, issue, pr, run, commit, actor, write=False):
     """What a writer's approval of the NexKit pull request `pr` of `issue` does, as the engine
     decides it (`maintain.send_approval`, `maintain.merge_approved`): `run` is the marker of
     the pull request's latest round, which passed, and `commit` the commit that the approval
@@ -2421,10 +2609,12 @@ def approved(cfg, issue, pr, run, commit, actor):
     accepts the change; `accept`, when it takes the approval as a person's decision of the
     checklist items and leaves the accept to them; or `none`, when it changes nothing, as for
     an approval of another version of a change that waits for its accept, or with `merge.auto`
-    off. Raises `Refused`."""
-    decide = bool(run.get("decide"))
+    off. The engine answers on the item's stored state (`decide`). Only the `step` run in the
+    item's group passes `write`, which stores the answer; the approval's own run in its group
+    `approved-N` only previews. Raises `Refused`."""
+    decide_items = bool(run.get("decide"))
     doc = _pull_doc(cfg, issue, pr, run.get("head"), "ready", 0)
-    if decide:
+    if decide_items:
         reason = "personChecklistItem"
         doc["rounds"]["checklist"] = ["not_met"]
     elif run.get("outcome") == "merge_refused":
@@ -2438,13 +2628,15 @@ def approved(cfg, issue, pr, run, commit, actor):
     fields = {"by": _person(actor or "someone", "writer"), "changeId": str(pr)}
     fields["changeVersion"] = version
     event = _event("changeApproved", issue, None, f"approval-{pr}-{version}", **fields)
-    answer = step(doc, event, policies(cfg))
-    kinds = {action["kind"] for action in answer["actions"]}
-    if not answer["changed"]:
+    state, actions, changed = decide(
+        gh, cfg, issue, event, doc, pull=pr, write=write, with_changed=True
+    )
+    kinds = {action["kind"] for action in actions}
+    if not changed:
         return "none"
     if "accept" in kinds:
         return "merge"
-    if decide and (answer["state"]["attention"] or {}).get("reason") == "accept":
+    if decide_items and (state["attention"] or {}).get("reason") == "accept":
         return "accept"
     raise Refused(f"The engine answers {sorted(kinds)} to an approval, which the host cannot do.")
 
@@ -2703,12 +2895,13 @@ def _hold_events(number, label):
     return [_event("held", number, None, f"held-{number}", label=str(label))] if label else []
 
 
-def stage_limited(cfg, decision, reset, label=None):
+def stage_limited(gh, cfg, decision, reset, label=None, write=False):
     """Until when the run of `decision`, a plan, implement or fix stage whose agent stopped at
     the usage limit, waits to run again as the engine decides it (`report.pause`), or None
     when it leaves the run to a person. `reset` is the time the host gives, or None when it
-    does not resume the run, and `label` the label that holds the issue, if any. Raises
-    `Refused`."""
+    does not resume the run, and `label` the label that holds the issue, if any. With `write`,
+    which the `report` of the item's group passes, the answer is stored (`decide_all`).
+    Raises `Refused`."""
     number = decision["issue"]
     doc, version = _stopped_doc(decision)
     message = "The agent stopped at its usage limit."
@@ -2717,8 +2910,17 @@ def stage_limited(cfg, decision, reset, label=None):
     fields = {"action": first_state.RUN_ID, "changeVersion": version, "result": result}
     events = _hold_events(number, label)
     events.append(_event("actionFinished", number, None, _run_event_id(), **fields))
-    _, actions = _answers(doc, events, policies(cfg))
-    kinds = {action["kind"]: action for action in actions}
+    _, answers = decide_all(
+        gh,
+        cfg,
+        number,
+        events,
+        doc,
+        pull=decision.get("pr"),
+        action=("runAgent", decision["action"]),
+        write=write,
+    )
+    kinds = {action["kind"]: action for _, actions in answers for action in actions}
     if "wait" in kinds:
         return kinds["wait"]["until"]
     if (kinds.get("needPerson") or {}).get("reason") == "failed":
@@ -2726,13 +2928,14 @@ def stage_limited(cfg, decision, reset, label=None):
     raise Refused(f"The engine answers {sorted(kinds)} after a usage limit, which it cannot do.")
 
 
-def stage_transient(cfg, decision, now, error, label=None):
+def stage_transient(gh, cfg, decision, now, error, label=None, write=False):
     """What follows the transient stop of the agent of `decision`, a plan, implement or fix
     stage, or of its publish, which goes as the same stop, at `now` (`report._retry`), as the
     engine decides it: `("now", count)` to run it
     again at once, `("later", until, count)` after the next wait of `retry.wait_minutes`, or
-    `("failed",)` for a person after the last. `count` is the number of the run again. Raises
-    `Refused`."""
+    `("failed",)` for a person after the last. `count` is the number of the run again. With
+    `write`, which the `report` of the item's group passes, the answer is stored
+    (`decide_all`). Raises `Refused`."""
     number = decision["issue"]
     doc, version = _stopped_doc(decision)
     result = {**AGENT, "changeVersion": version, "output": None, "transient": True}
@@ -2740,7 +2943,17 @@ def stage_transient(cfg, decision, now, error, label=None):
     fields = {"action": first_state.RUN_ID, "changeVersion": version, "result": result}
     events = _hold_events(number, label)
     events.append(_event("actionFinished", number, usage.iso(now), _run_event_id(), **fields))
-    state, actions = _answers(doc, events, policies(cfg))
+    state, answers = decide_all(
+        gh,
+        cfg,
+        number,
+        events,
+        doc,
+        pull=decision.get("pr"),
+        action=("runAgent", decision["action"]),
+        write=write,
+    )
+    actions = [action for _, found in answers for action in found]
     return _transient_answer(state, actions, decision["action"])
 
 
@@ -2760,11 +2973,14 @@ def _transient_answer(state, actions, stage):
     raise Refused(f"The engine answers {sorted(kinds)} after a transient stop, which it cannot do.")
 
 
-def resumes(cfg, run, number, now, label=None):
+def resumes(gh, cfg, run, number, now, label=None, write=False):
     """Whether the engine runs again the command of the resume record of `run`, which `number`
     paused at the usage limit or which waits to run again after a transient error, at `now`
     (`maintain.resume_one`): True to start it, which a hold on the issue, the `label`, does
-    not stop. Raises `Refused`, for a command that NexKit never writes too."""
+    not stop. With `write`, which the `step` run of the item's group passes, the answer is
+    stored and the wait is gone from the stored document (`decide_all`); the `resume` run
+    only previews it. With no `cfg` it decides on the markers' document alone and reads and
+    stores nothing. Raises `Refused`, for a command that NexKit never writes too."""
     resume = run["resume"]
     command = str(resume.get("command") or "")
     if command not in RESUMED:
@@ -2782,8 +2998,12 @@ def resumes(cfg, run, number, now, label=None):
     doc["waits"] = [{"id": "w1.1", "for": kind, "until": until, "on": None}]
     events = _hold_events(number, label)
     events.append(_event("tick", number, usage.iso(now), f"resume-{number}", wait="w1.1"))
-    _, actions = _answers(doc, events, policies(cfg) if cfg else {})
-    if any(action["kind"] in ("runAgent", "runChecks") for action in actions):
+    pull = int(target) if stage in ("fix", "review") and target.isdigit() else None
+    pull = None if pull == number else pull
+    _, answers = decide_all(gh, cfg, number, events, doc, pull=pull, wait=kind, write=write)
+    if any(
+        action["kind"] in ("runAgent", "runChecks") for _, actions in answers for action in actions
+    ):
         return True
     raise Refused("The engine starts nothing at a resume, which the host cannot do.")
 
@@ -2791,13 +3011,17 @@ def resumes(cfg, run, number, now, label=None):
 # -- a command that autopilot started again after it was lost -------------------------------
 
 
-def lost_again(cfg, issue, record, now, what, fields, extra=None, person=False, label=None):
+def lost_again(
+    gh, cfg, issue, record, now, what, fields, extra=None, person=False, label=None, write=False
+):
     """The step for a command whose run GitHub never started, or that ended without a report
     (`autopilot._again`, `_reportless`, `_handed_on`), as the engine decides it, or None for a
     person's command whose comment already shows its end. `what` says which loss it is, `fields`
     the command's start, `record` autopilot's record of its last start, or {} when none counts,
     and `extra` what the step carries besides. With `person`, the command is a person's, which
-    waits for them. Raises `Refused`.
+    waits for them. With `write`, which the `step` run of the item's group passes, the answer is
+    stored (`decide_all`), the due tick of a wait that has already ended as a second answer.
+    Raises `Refused`.
 
     The loss is sent at the time of the last start, as the engine measures a wait from the loss
     and NexKit 6 from that start, and the host keeps nothing that a later sweep could count
@@ -2829,7 +3053,16 @@ def lost_again(cfg, issue, record, now, what, fields, extra=None, person=False, 
         tokens=None,
         seconds=None,
     )
-    state, actions = _answers(doc, [*_hold_events(number, label), lost], found)
+    # The pull request that the command runs on; a start that names the issue itself has none.
+    target = int(fields["target"]) if str(fields["target"]).isdigit() else number
+    pull = target if command in ("fix", "review") and target != number else None
+    stage = RESUMED[command]
+    action = ("runChecks", None) if stage == "review" else ("runAgent", stage)
+    options = {"pull": pull, "found_policies": found, "write": write}
+    state, answers = decide_all(
+        gh, cfg, number, [*_hold_events(number, label), lost], doc, action=action, **options
+    )
+    actions = [item for _, found_actions in answers for item in found_actions]
     kinds = {action["kind"]: action for action in actions}
     if "wait" in kinds:
         due = autopilot.parse_iso(kinds["wait"]["until"])
@@ -2841,7 +3074,8 @@ def lost_again(cfg, issue, record, now, what, fields, extra=None, person=False, 
             return autopilot._step(issue, "active", reason, **extra)
         name, wait = f"lost-tick-{number}-{tries}", kinds["wait"]["wait"]
         tick = _event("tick", number, usage.iso(now), name, wait=wait)
-        state, actions = _answers(state, [tick], found)
+        state, answers = decide_all(gh, cfg, number, [tick], state, **options)
+        actions = [item for _, found_actions in answers for item in found_actions]
         kinds = {action["kind"]: action for action in actions}
     if "runAgent" in kinds or "runChecks" in kinds:
         again = state["again"]

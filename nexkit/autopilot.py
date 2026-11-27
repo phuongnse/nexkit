@@ -1283,7 +1283,7 @@ def _tries(record):
     return 1 if record.get("retried") else 0
 
 
-def _again(cfg, issue, record, now, what, fields, extra=None, person=False):
+def _again(gh, cfg, issue, record, now, what, fields, extra=None, person=False, write=False):
     """The step for a command whose run GitHub never started, or that ended without a
     report (`what` says which): start it again, as `fields` says, `AGAIN[n]` after the
     last start, for its n-th time; wait meanwhile, with the run on its way as far as
@@ -1292,16 +1292,17 @@ def _again(cfg, issue, record, now, what, fields, extra=None, person=False):
     start that `record` names `once` was the one more start of a round that started the
     next by itself, which waits for a person when it does not run either. With `person`,
     the command is a person's, which waits for them. The engine decides each of these
-    (`host.lost_again`)."""
+    (`host.lost_again`), and with `write`, which only the step run of the item's group
+    passes, stores its answer."""
     from .host import Refused, lost_again, refused_reason
 
     try:
-        return lost_again(cfg, issue, record, now, what, fields, extra, person)
+        return lost_again(gh, cfg, issue, record, now, what, fields, extra, person, write=write)
     except Refused as exc:
         return _step(issue, "waits", refused_reason(exc), **(extra or {}))
 
 
-def _stalled(gh, issue, comment, run, record, start, target, now, cfg=None):
+def _stalled(gh, issue, comment, run, record, start, target, now, cfg=None, write=False):
     """The step for a run whose comment says it is running, paused or continued, when that
     no longer carries the issue on, or None. A run that ended without a report starts
     again when NexKit started it by itself (see `_reportless`); a continued run whose new
@@ -1312,10 +1313,13 @@ def _stalled(gh, issue, comment, run, record, start, target, now, cfg=None):
         reason = _not_resumed(comment, run, now)
         return _step(issue, "waits", reason) if reason else None
     if status == CONTINUED:
-        return _handed_on(issue, comment, run, start, now, cfg, "the run that continues it")
+        what = "the run that continues it"
+        return _handed_on(gh, issue, comment, run, start, now, cfg, what, write)
     if status != RUNNING or not _ended(gh, run):
         return None
-    return _reportless(gh, cfg, issue, comment, run, record, start, target, now, stale=True)
+    return _reportless(
+        gh, cfg, issue, comment, run, record, start, target, now, stale=True, write=write
+    )
 
 
 # The jobs of a run whose agent session spends agent time.
@@ -1340,7 +1344,7 @@ def _agent_ran(gh, run):
     )
 
 
-def _reportless(gh, cfg, issue, comment, run, record, start, target, now, stale=False):
+def _reportless(gh, cfg, issue, comment, run, record, start, target, now, stale=False, write=False):
     """The step for a run that ended without a report: it starts again when NexKit started
     it by itself, later each time (see `_again`), or once more only when its agent ran,
     since those starts count toward no budget; a person's command waits for them. Tries
@@ -1361,10 +1365,12 @@ def _reportless(gh, cfg, issue, comment, run, record, start, target, now, stale=
     if auto:
         # The same kind of round: one after failing checks merges the base branch first.
         fields["auto"] = auto
-    return _again(cfg, issue, record, now, REPORTLESS, fields, extra, person=not automatic)
+    return _again(
+        gh, cfg, issue, record, now, REPORTLESS, fields, extra, person=not automatic, write=write
+    )
 
 
-def _handed_on(issue, comment, run, start, now, cfg, what):
+def _handed_on(gh, issue, comment, run, start, now, cfg, what, write=False):
     """The step for a run that handed the work on to a run it started, when that run has
     not started: a continued run, or a round that started the next one by itself. One
     that recorded what it started (`next`) starts it once more after
@@ -1394,7 +1400,7 @@ def _handed_on(issue, comment, run, start, now, cfg, what):
     }
     minutes = cfg["autopilot"]["lost_after_minutes"]
     reason = f"{what} did not start within {minutes} minutes"
-    return _again(cfg, issue, {"once": True}, now, reason, fields)
+    return _again(gh, cfg, issue, {"once": True}, now, reason, fields, write=write)
 
 
 def settle_ended(gh, number, comment, run):
@@ -1455,15 +1461,15 @@ def _pull_step(
     if latest is None:
         return _step(issue, "active", f"pull request #{pull} is open")
     if latest.get("status") in ACTIVE:
-        stalled = _stalled(gh, issue, comment, latest, record, start, pull, now, cfg)
+        stalled = _stalled(gh, issue, comment, latest, record, start, pull, now, cfg, write)
         reason = retry_waits(latest) or f"pull request #{pull} has a round on its way"
         return stalled or _step(issue, "active", reason)
     if latest.get("outcome") in CHAINED:
         what = f"the round that pull request #{pull} started next"
-        lost = _handed_on(issue, comment, latest, start, now, cfg, what)
+        lost = _handed_on(gh, issue, comment, latest, start, now, cfg, what, write)
         return lost or _step(issue, "active", f"pull request #{pull} has a round on its way")
     if latest.get("outcome") == "lost":
-        lost = _reportless(gh, cfg, issue, comment, latest, record, start, pull, now)
+        lost = _reportless(gh, cfg, issue, comment, latest, record, start, pull, now, write=write)
         if lost:
             return lost
     if latest.get("outcome") in (UNTRUSTED_ROUND, UNTRUSTED_MERGE):
@@ -1487,7 +1493,7 @@ def _pull_step(
         return _ci_step(gh, cfg, issue, pull, latest, pull_comments, start)
     if latest.get("status") == FAILURE and (engine_round(latest) or latest.get("timed_out")):
         fields = {"pull": pull, "pull_comments": pull_comments}
-        return _after_stop(gh, cfg, issue, latest, record, start, comments, **fields)
+        return _after_stop(gh, cfg, issue, latest, record, start, comments, write=write, **fields)
     if latest.get("status") == FAILURE:
         failed = person(
             f"read the last round's comment on #{pull} for why, then post its command again",
@@ -1677,7 +1683,7 @@ def _replanned(gh, cfg, issue, plan, last, record, start, comments, pull, write=
     return _after_plan(gh, cfg, issue, plan, last, record, start, comments, pull, write)
 
 
-def _after_go(gh, cfg, issue, comment, last, record, start, comments):
+def _after_go(gh, cfg, issue, comment, last, record, start, comments, write=False):
     """The step after a `/nexkit go` that stopped as blocked, with questions, protected paths
     or nothing to answer, or that failed on an error and not on time, which the engine decides
     (`host.after_go`). An issue whose next step
@@ -1685,7 +1691,7 @@ def _after_go(gh, cfg, issue, comment, last, record, start, comments):
     from .host import Refused, after_go, refused_reason
 
     try:
-        return after_go(gh, cfg, issue, comment, last, record, start, comments)
+        return after_go(gh, cfg, issue, comment, last, record, start, comments, write)
     except Refused as error:
         return _step(issue, "waits", refused_reason(error))
 
@@ -1702,14 +1708,16 @@ def _vouched(gh, cfg, issue, comment, run, record, start, pull=None, write=False
         return _step(issue, "waits", refused_reason(error))
 
 
-def _after_stop(gh, cfg, issue, run, record, start, comments, pull=None, pull_comments=()):
+def _after_stop(
+    gh, cfg, issue, run, record, start, comments, pull=None, pull_comments=(), write=False
+):
     """The step after a fix round that stopped as blocked with questions or protected paths,
     or a round that ran out of time, which the engine decides (`host.stopped`). An issue whose
     next step the engine refuses to decide waits for a person, alone."""
     from .host import Refused, refused_reason, stopped
 
     try:
-        return stopped(gh, cfg, issue, run, record, start, comments, pull, pull_comments)
+        return stopped(gh, cfg, issue, run, record, start, comments, pull, pull_comments, write)
     except Refused as error:
         return _step(issue, "waits", refused_reason(error))
 
@@ -1921,17 +1929,19 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None, write=False):
             **({"auto": record["auto"]} if record.get("auto") else {}),
         }
         what = f"the {command} that autopilot started did not run"
-        return _again(cfg, issue, record, now, what, fields)
+        return _again(gh, cfg, issue, record, now, what, fields, write=write)
     start = {"basis": current, "target": number, "note": "", "remember": {}}
     found = [(c, run) for c, run in run_comments(comments) if "command" in run]
     last = found[-1][1] if found else None
     handed_on = pull and last and in_pull_request(last)
     if last and last.get("status") in ACTIVE and not handed_on:
-        stalled = _stalled(gh, issue, *found[-1], record, start, number, now, cfg)
+        stalled = _stalled(gh, issue, *found[-1], record, start, number, now, cfg, write)
         reason = retry_waits(last) or f"`/nexkit {last['command']}` is {last['status']}"
         return stalled or _step(issue, "active", reason)
     if last and last.get("outcome") == "lost" and not pull:
-        lost = _reportless(gh, cfg, issue, found[-1][0], last, record, start, number, now)
+        lost = _reportless(
+            gh, cfg, issue, found[-1][0], last, record, start, number, now, write=write
+        )
         if lost:
             return lost
     plan = latest_plan(comments)
@@ -1972,10 +1982,10 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None, write=False):
             )
             return _step(issue, "waits", reason)
         if last.get("outcome") == "agent_blocked":
-            return _after_go(gh, cfg, issue, *found[-1], record, start, comments)
+            return _after_go(gh, cfg, issue, *found[-1], record, start, comments, write)
         if last.get("timed_out"):
-            return _after_stop(gh, cfg, issue, last, record, start, comments)
-        return _after_go(gh, cfg, issue, *found[-1], record, start, comments)
+            return _after_stop(gh, cfg, issue, last, record, start, comments, write=write)
+        return _after_go(gh, cfg, issue, *found[-1], record, start, comments, write)
     if last.get("status") != SUCCESS:
         return _step(issue, "waits", last.get("attention") or failed_reason("plan"))
     return _after_plan(gh, cfg, issue, plan, last, record, start, comments, write=write)
@@ -2028,7 +2038,9 @@ def _round_carried_on(gh, cfg, decision, agent, ran=None):
 
     try:
         issue = gh.issue(decision["issue"])
-        return taken(gh, cfg, issue) and round_carried_on(gh, cfg, issue, decision, agent, ran)
+        return taken(gh, cfg, issue) and round_carried_on(
+            gh, cfg, issue, decision, agent, ran, write=True
+        )
     except (GitHubError, Refused):
         return False
 
@@ -2041,7 +2053,9 @@ def _stop_carried_on(gh, cfg, decision, agent, ran=None):
 
     try:
         issue = gh.issue(decision["issue"])
-        return taken(gh, cfg, issue) and stop_carried_on(gh, cfg, issue, decision, agent, ran)
+        return taken(gh, cfg, issue) and stop_carried_on(
+            gh, cfg, issue, decision, agent, ran, write=True
+        )
     except (GitHubError, Refused):
         return False
 

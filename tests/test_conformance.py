@@ -334,6 +334,9 @@ class ConformanceTest(unittest.TestCase):
             covered |= played(request, answer)
             self.assertNotIn("error", answer, where)
             self.assertEqual(protocol.check(answer, "calls/step.answer.schema.json"), [], where)
+            # The engine names no following action, so a host carries out one action at a time.
+            for action in answer["actions"]:
+                self.assertIsNone(action["next"], f"{where}: {action['id']} names a next action")
             self.assertEqual(answer["changed"], step["changed"], where)
             new = answer["state"]
             if answer["changed"]:

@@ -424,6 +424,20 @@ class ProtocolTest(unittest.TestCase):
         what = protocol.load("actions/show.schema.json")["properties"]["what"]["enum"]
         self.assertEqual(kinds, sorted(what))
 
+    def test_the_page_names_what_the_engine_shows(self):
+        # The row names the values the engine asks for, and marks each other value of the enum
+        # as one the engine never asks for.
+        rows = [line for line in section("Actions").splitlines() if line.startswith("| `show` |")]
+        self.assertEqual(len(rows), 1)
+        asked_text, never_text = rows[0].split("|")[2].split("The protocol also allows", 1)
+        asked = set(re.findall(r"`(\w+)`", asked_text))
+        never = set(re.findall(r"`(\w+)`", never_text))
+        source = (HERE.parent / "nexkit" / "engine" / "machine.py").read_text(encoding="utf-8")
+        self.assertEqual(asked, set(re.findall(r'do\(\s*"show",\s*what="(\w+)"', source)))
+        what = set(protocol.load("actions/show.schema.json")["properties"]["what"]["enum"])
+        self.assertEqual(never, what - asked)
+        self.assertEqual(asked | never, what)
+
     def test_the_page_names_each_policy_and_its_default_fits(self):
         policies = protocol.load("policies.schema.json")["properties"]
         self.assertEqual(table_names("What a host decides", every_row=True), sorted(policies))

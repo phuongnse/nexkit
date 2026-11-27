@@ -1895,6 +1895,49 @@ class AfterGoTest(HostCase):
         run = [c for c in self.gh.comments(5) if "actions/runs" in c["body"]][-1]
         self.assertEqual(stored["questions"]["ref"], str(run["id"]))
 
+    def test_a_writer_s_closing_answer_that_take_stored_as_a_comment_is_still_an_answer(self):
+        self.stopped(5, [ASKED])
+        self.gh.human_comment(5, "Close the issue", at=LATER)
+        # The run of the item's group takes the comment first, as a plain comment of the state.
+        host.take(self.gh, self.cfg, 5)
+        sent, spy = self.spy()
+        with mock.patch.object(host, "step", spy):
+            step = self.after_go(5, write=True)
+        self.assertEqual(sent, ["actionFinished", "answered"])
+        self.assertEqual((step["state"], step["by"]), ("close", "alice"))
+        # What the state holds is carried out again and sends nothing.
+        sent.clear()
+        with mock.patch.object(host, "step", spy):
+            step = self.after_go(5, write=True)
+        self.assertEqual((sent, step["state"]), ([], "close"))
+
+    def test_a_writer_s_closing_answer_that_take_stored_on_stored_questions_is_still_an_answer(
+        self,
+    ):
+        comment = self.stopped(5, [ASKED])
+        agent = {"status": "blocked", "output": {"questions": [{**ASKED, "closes": 3}]}}
+        with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": str(self.runs)}):
+            host.round_carried_on(self.gh, self.cfg, self.gh.issues[5], comment, agent, write=True)
+        self.gh.human_comment(5, "Close the issue", at=LATER)
+        ref = item_state.read(self.gh, 5)[1]["questions"]["ref"]
+        [(taken, _)] = host.take(self.gh, self.cfg, 5)
+        # The writer's pick on the questions that the state holds is stored as an answer.
+        self.assertEqual((taken["kind"], taken["asked"]), ("answered", ref))
+        sent, spy = self.spy()
+        with mock.patch.object(host, "step", spy):
+            step = self.after_go(5, write=True)
+        self.assertEqual(sent, [])
+        self.assertEqual((step["state"], step["by"]), ("close", "alice"))
+
+    def test_a_reader_s_comment_that_take_stores_on_stored_questions_stays_a_comment(self):
+        comment = self.stopped(5, [ASKED])
+        agent = {"status": "blocked", "output": {"questions": [{**ASKED, "closes": 3}]}}
+        with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": str(self.runs)}):
+            host.round_carried_on(self.gh, self.cfg, self.gh.issues[5], comment, agent, write=True)
+        self.gh.human_comment(5, "Close the issue", login="bob", at=LATER)
+        [(taken, _)] = host.take(self.gh, self.cfg, 5)
+        self.assertEqual((taken["kind"], taken["by"]["role"]), ("commented", "reader"))
+
     def test_a_blocker_s_close_that_the_stored_state_holds_is_not_sent_again(self):
         stored = self.imported(5, lambda: None, outcome="agent_error", attention="Crashed.")
         comment = [c for c in self.gh.comments(5) if "actions/runs" in c["body"]][-1]

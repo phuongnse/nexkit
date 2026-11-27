@@ -815,7 +815,8 @@ def take(gh, cfg, number, tries=item_state.TRIES, sleep=time.sleep):
     and removing of a label of `autopilot.labels` that holds the item. A comment of someone
     outside the repository's collaborators, or text of a command that is not taken as one, is
     sent with the role `outside`, which the engine ignores, as autopilot ignores it
-    (`autopilot._commented_after`). Each is answered by
+    (`autopilot._commented_after`). A writer's comment that picks the option that only closes the
+    issue, on questions that the state holds, is sent as an `answered` event. Each is answered by
     `item_state.apply`, which moves the cursor past it, even when the answer changes nothing,
     so that an old remark is never answered on a state that moved on. A work item with no
     state comment has nothing to take: `store_import` stores its first state before.
@@ -871,17 +872,36 @@ def _take(gh, cfg, number, tries, sleep):
             continue
         stored = []
 
-        def answer(state, event=event, stored=stored):
+        def answer(state, event=event, stored=stored, one=one):
+            event = _closing_answer(gh, number, event, one, state) or event
             found = step(state, event, found_policies)
-            stored[:] = [found["changed"]]
+            stored[:] = [found["changed"], event]
             return found["state"], found["actions"], found["changed"]
 
         _, actions = item_state.apply(
             gh, number, answer, tries=tries, sleep=sleep, since=one.cursor
         )
         if stored and stored[0]:
-            taken.append((event, actions))
+            taken.append((stored[1], actions))
     return taken
+
+
+def _closing_answer(gh, number, event, one, state):
+    """The `answered` event that the collaborator's comment `event`, taken from the source
+    `one`, is on the questions that `state` holds, when it picks the option that only closes the
+    issue and its author may write, which closing is; otherwise None, and the comment stays a
+    comment. Without it, the questions that wait would be answered by a new plan, and the
+    writer's answer lost (`after_go`)."""
+    asked = state.get("questions")
+    if event["kind"] != "commented" or event["by"]["role"] != "reader" or not asked:
+        return None
+    picked = _picked(one.raw.get("body"), {"questions": asked["items"]})
+    by = (one.raw.get("user") or {}).get("login") or ""
+    if not picked or not by or not gh.can_write(by):
+        return None
+    answers = [{"question": picked[0], "option": picked[1]}]
+    fields = {"by": _person(by, "writer"), "answers": answers, "note": "", "asked": asked["ref"]}
+    return _event("answered", number, one.at, one.name, **fields)
 
 
 # -- the stored document and the decisions that store their answer -------------------------
@@ -1626,6 +1646,8 @@ def after_go(gh, cfg, issue, comment, run, record, start, comments, write=False)
         at, name = said[-1].get("created_at"), event_id("comment", said[-1])
         login = (said[-1].get("user") or {}).get("login") or ""
         if name in seen:
+            # `take` stored it: a writer's pick on the questions as an answer (`_closing_answer`),
+            # any other comment as a comment.
             heard = "commented"
         elif picked and by and gh.can_write(by):
             # Closing is a write: a collaborator who may only read comments on the questions.

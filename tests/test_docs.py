@@ -40,6 +40,7 @@ from nexkit import (
 )
 from nexkit.engine import machine, prompt, textutil
 from nexkit.runtimes import claude_code
+from tests import walk
 from tests.support import make_config, with_claude
 from tests.test_cli import jobs_of, permissions_of
 
@@ -161,6 +162,12 @@ CI_TITLES_HEADER = "| Failure | Title |"
 WRITING_DOCS = DOCS / "writing-docs.md"
 # Rule 9 of how the docs stay correct, with its indented lines, up to the next unindented line.
 RULE_9 = re.compile(r"^9\. \*\*Checks catch what a machine can\.\*\*(.*?)(?=^\S|\Z)", re.M | re.S)
+TESTING_PAGE = DOCS / "testing.md"
+# The names of the walker's invariants on the testing page, after its sentence that introduces them.
+WALK_INVARIANTS = re.compile(
+    r"`INVARIANTS` in that file says what each one guards, and names them: "
+    r"((?:`[\w-]+`(?:, | and )?)+)\."
+)
 
 
 def anchors(path):
@@ -232,6 +239,26 @@ class ChecksListTests(unittest.TestCase):
                     f"docs/writing-docs.md rule 9 lists {name}, "
                     "which tests/test_docs.py does not define"
                 )
+
+
+class WalkInvariantsTests(unittest.TestCase):
+    def test_the_page_names_each_invariant_of_the_walker_and_no_other(self):
+        # Lines are wrapped, so the page is searched with its spaces made one each.
+        text = " ".join(TESTING_PAGE.read_text().split())
+        page = f"docs/{TESTING_PAGE.name}"
+        named = WALK_INVARIANTS.search(text)
+        if named is None:
+            self.fail(f"{page} does not name the invariants that tests/walk.py's INVARIANTS lists")
+        listed = re.findall(r"`([\w-]+)`", named.group(1))
+        for name in sorted({n for n in listed if listed.count(n) > 1}):
+            with self.subTest(invariant=name):
+                self.fail(f"{page} names {name!r} more than once")
+        for name in sorted(set(walk.INVARIANTS) - set(listed)):
+            with self.subTest(invariant=name):
+                self.fail(f"{page} does not name {name!r}, which tests/walk.py's INVARIANTS has")
+        for name in sorted(set(listed) - set(walk.INVARIANTS)):
+            with self.subTest(invariant=name):
+                self.fail(f"{page} names {name!r}, which tests/walk.py's INVARIANTS lacks")
 
 
 class DocsMapTests(unittest.TestCase):

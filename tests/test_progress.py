@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
-from nexkit import item_state, progress
+from nexkit import host, item_state, progress
 from nexkit.github import GitHub, GitHubError
 from nexkit.maintain import (
     WAIT_INPUTS,
@@ -498,7 +498,11 @@ class PausedRunTests(unittest.TestCase):
             # It waits to run again after a transient error rather than for a usage limit.
             resume.update(auto="retry" if retry == 1 else f"retry:{retry}", retry=retry)
         run = {"url": f"https://x/runs/{run_id}", "command": "plan", "status": "paused"}
-        return self.gh.comment(number, render_run({**run, "resume": resume}, "⏸️ Paused."))
+        comment = self.gh.comment(number, render_run({**run, "resume": resume}, "⏸️ Paused."))
+        # The run in the item's group stored the item's state when the run paused, which is
+        # what the resume decides on.
+        host.store_import(self.gh, make_config(), number, now=datetime(2026, 1, 1, tzinfo=UTC))
+        return comment
 
     def test_trigger_labels(self):
         self.assertEqual(progress.trigger({"action": "fix", "auto": True}), "fix (auto)")

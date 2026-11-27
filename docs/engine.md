@@ -507,10 +507,11 @@ adapter's tests and the answers as what its adapter carries out.
    decision of the loop is now its own. Most of the GitHub host's decisions still build the
    item's document from NexKit 6's markers, as its import reads them. The ones that follow a plan,
    start a new issue's first plan, follow a writer's vouch, follow a merge and its refusals,
-   follow a blocked or stopped round, a usage limit or a transient error, start a resume that
-   comes due, answer a lost command, and end a pull request's round, a conflict or a wait read the
-   stored document, which they use only where it says what the markers say, and store the
-   engine's answer in the item's group, a row of events as one write. A command that NexKit
+   follow a blocked or stopped round, answer a lost command, and end a pull request's round, a
+   conflict or a wait read the stored document, which they use only where it says what the
+   markers say, and store the engine's answer in the item's group, a row of events as one write.
+   A usage limit, a transient error and a resume that comes due decide on the stored document
+   alone: its pending agent run, its count of runs again and its wait. A command that NexKit
    dispatches carries out the action that the stored state has pending for it, and takes its
    diagnosed checks from that action; with nothing pending it is a new request, `dispatch-<run id>`.
    The automatic fix rounds and the conflict rounds that they count are the stored count, and

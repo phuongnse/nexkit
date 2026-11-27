@@ -94,12 +94,11 @@ Until NexKit 7.0 ships, changes move NexKit 6's decisions into the engine one by
   labels), the preview and `nexkit status`. Sequences of several rounds and sweeps matter most.
   The pull request gives the scenario counts and explains every difference.
 - Walks the engine at random against invariants (`tests/walk.py`), including the invariants of its
-  own rules:
-  - the protocol's schemas;
-  - only the transitions that the states table names;
-  - the outbox;
-  - every open item is carried on, so none is stuck or brought back;
-  - counts within the policies.
+  own rules. `INVARIANTS` in that file says what each one guards, and names them: `schema`,
+  `transition`, `outbox`, `carried`, `counts`, `budget`, `give-back`, `due`, `automatic`,
+  `diagnosis`, `usage-limit`, `retry`, `lost`, `hold`, `answers`, `questions`, `after-failure`,
+  `split`, `parent-end`, `trust`, `start`, `accept-conflict`, `sweep`, `required-checks`,
+  `accept-behind`, `behind-checks`, `accept-again`, `approvals` and `refusals`.
 - Adds to `tests/differential/` ([its README](../tests/differential/README.md)), which holds the
   differential check and a CI job that plays a fixed sample of it on every pull request: a family
   of scenarios for what it moves, and each difference it calls out in `known.py`.

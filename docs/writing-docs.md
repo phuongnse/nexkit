@@ -432,3 +432,6 @@ when a list of what the code defines misses an entry. These rules close each of 
    - `test_the_title_table_lists_each_title_the_code_writes_and_no_other`: the table of CI issue
      titles on [the autopilot page](autopilot.md) shows the titles that `ci_title` and `red_title`
      write, for each kind and form, and no other.
+   - `test_the_page_names_each_invariant_of_the_walker_and_no_other`: the walker's invariants that
+     [Moving decisions into the engine](testing.md#moving-decisions-into-the-engine) names are the
+     keys of `INVARIANTS` in `tests/walk.py`, and no other.

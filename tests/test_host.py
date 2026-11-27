@@ -2781,13 +2781,14 @@ class NoChangeFoundTest(ReportCase):
 
     def test_a_valid_finding_ends_the_item_without_a_change(self):
         cfg = make_config()
-        self.assertEqual(host.no_change_found(cfg, {"issue": 5}, "Fixed by 8b9cb87."), "noChange")
+        found = host.no_change_found(self.gh, cfg, {"issue": 5}, "Fixed by 8b9cb87.")
+        self.assertEqual(found, "noChange")
         decision = {"issue": 5, "pr": 6, "head": "c" * 40}
-        self.assertEqual(host.on_base_found(cfg, decision), "noChange")
+        self.assertEqual(host.on_base_found(self.gh, cfg, decision), "noChange")
 
     def test_the_implement_round_sends_its_result_with_the_finding(self):
         with mock.patch.object(host, "step", wraps=host.step) as step:
-            host.no_change_found(make_config(), {"issue": 5}, "Fixed by 8b9cb87.")
+            host.no_change_found(self.gh, make_config(), {"issue": 5}, "Fixed by 8b9cb87.")
         [event] = [call.args[1] for call in step.call_args_list]
         self.assertEqual(event["kind"], "actionFinished")
         self.assertEqual(event["result"]["output"]["no_change"], "Fixed by 8b9cb87.")
@@ -2795,7 +2796,7 @@ class NoChangeFoundTest(ReportCase):
     def test_the_fix_round_sends_an_empty_change_while_its_agent_is_pending(self):
         decision = {"issue": 5, "pr": 6, "head": "c" * 40}
         with mock.patch.object(host, "step", wraps=host.step) as step:
-            host.on_base_found(make_config(), decision)
+            host.on_base_found(self.gh, make_config(), decision)
         [call] = step.call_args_list
         self.assertEqual(call.args[0]["state"], "fixing")
         event = call.args[1]
@@ -2804,14 +2805,36 @@ class NoChangeFoundTest(ReportCase):
             ("changeObserved", "6", True, False),
         )
 
+    def stored(self):
+        self.assertTrue(host.store_import(self.gh, make_config(), 5))
+        self.assertEqual(item_state.read(self.gh, 5)[1]["revision"], 1)
+        return copy.deepcopy(self.gh.comments(5))
+
+    def test_the_implement_round_stores_the_engine_s_answer_only_with_write(self):
+        before = self.stored()
+        host.no_change_found(self.gh, make_config(), {"issue": 5}, "Fixed by 8b9cb87.")
+        self.assertEqual(self.gh.comments(5), before)
+        host.no_change_found(self.gh, make_config(), {"issue": 5}, "Fixed by 8b9cb87.", write=True)
+        _, doc = item_state.read(self.gh, 5)
+        self.assertEqual((doc["revision"], doc["state"]), (2, "noChange"))
+
+    def test_the_fix_round_stores_the_engine_s_answer_only_with_write(self):
+        before = self.stored()
+        decision = {"issue": 5, "pr": 6, "head": "c" * 40}
+        host.on_base_found(self.gh, make_config(), decision)
+        self.assertEqual(self.gh.comments(5), before)
+        host.on_base_found(self.gh, make_config(), decision, write=True)
+        _, doc = item_state.read(self.gh, 5)
+        self.assertEqual((doc["revision"], doc["state"]), (2, "noChange"))
+
     def test_an_answer_that_ends_nothing_is_refused(self):
         cfg = make_config()
         # An empty finding is no finding: the engine publishes the round's change.
         with self.assertRaises(host.Refused):
-            host.no_change_found(cfg, {"issue": 5}, "")
+            host.no_change_found(self.gh, cfg, {"issue": 5}, "")
         for call in (
-            lambda: host.no_change_found(cfg, {"issue": 5}, "Fixed."),
-            lambda: host.on_base_found(cfg, {"issue": 5, "pr": 6, "head": "c" * 40}),
+            lambda: host.no_change_found(self.gh, cfg, {"issue": 5}, "Fixed."),
+            lambda: host.on_base_found(self.gh, cfg, {"issue": 5, "pr": 6, "head": "c" * 40}),
         ):
             with mock.patch.object(engine, "answer", return_value={"error": "no"}):
                 with self.assertRaises(host.Refused):
@@ -2822,6 +2845,10 @@ class PartEndedTest(ReportCase):
     """A part that NexKit merged ends its parent only as the engine decides, under `parentEnd`:
     `close_parent_issues` on gives `whenPartAccepted`, off gives `person`."""
 
+    def setUp(self):
+        super().setUp()
+        self.gh.add_issue(1, title="Epic")
+
     def subs(self, *states):
         """The sub-issues of the parent 1: issue 5, and one for each of `states`."""
         found = [{"number": 5, "state": "closed", "state_reason": "completed"}]
@@ -2831,7 +2858,7 @@ class PartEndedTest(ReportCase):
 
     def ended(self, *states, close=True, subs=None):
         cfg = make_config(close_parent_issues=close)
-        return host.part_ended(cfg, 1, subs or self.subs(*states), 5, "accepted")
+        return host.part_ended(self.gh, cfg, 1, subs or self.subs(*states), 5, "accepted")
 
     def test_the_parent_closes_when_every_part_ended_and_one_was_completed(self):
         self.assertEqual(self.ended(), "close")
@@ -2844,7 +2871,8 @@ class PartEndedTest(ReportCase):
     def test_a_person_decides_when_no_part_was_completed(self):
         subs = [{"number": 5, "state": "closed", "state_reason": "completed"}]
         with mock.patch.object(host, "step", wraps=host.step) as step:
-            self.assertEqual(host.part_ended(make_config(), 1, subs, 7, "dropped"), "person")
+            found = host.part_ended(self.gh, make_config(), 1, subs, 7, "dropped")
+        self.assertEqual(found, "person")
         self.assertEqual(step.call_args.args[1]["part"], "7")
 
     def test_without_close_parent_issues_the_engine_gets_person_and_a_person_decides(self):
@@ -2873,7 +2901,7 @@ class PartEndedTest(ReportCase):
         subs = self.many(("closed", "completed"))
         with mock.patch.object(host, "step", wraps=host.step) as step:
             # The completed part is beyond the first ten, and the reduced list keeps it.
-            self.assertEqual(host.part_ended(cfg, 1, subs, 5, "dropped"), "close")
+            self.assertEqual(host.part_ended(self.gh, cfg, 1, subs, 5, "dropped"), "close")
         parts = step.call_args.args[0]["parts"]
         self.assertEqual(len(parts), MOST["split"])
         self.assertIn({"item": "99", "state": "accepted"}, parts)
@@ -2883,7 +2911,7 @@ class PartEndedTest(ReportCase):
         self,
     ):
         cfg = make_config(close_parent_issues=True)
-        self.assertEqual(host.part_ended(cfg, 1, self.many(), 5, "dropped"), "person")
+        self.assertEqual(host.part_ended(self.gh, cfg, 1, self.many(), 5, "dropped"), "person")
 
     def test_a_parent_with_more_parts_than_a_state_holds_stays_while_one_is_open(self):
         subs = self.many(("open", None))
@@ -2978,7 +3006,7 @@ class MergeFindsTest(ReportCase):
         with mock.patch.object(host, "part_ended", return_value="stays") as ended:
             self.assertEqual(self.merge(cfg)["outcome"], "merged")
         self.assertEqual(self.gh.issues[1]["state"], "open")
-        self.assertEqual(ended.call_args.args[1:], (1, ended.call_args.args[2], 5, "accepted"))
+        self.assertEqual(ended.call_args.args[2:], (1, ended.call_args.args[3], 5, "accepted"))
         self.gh.reopen(6, 5)
         self.gh.pulls[6]["state"] = "open"
         with mock.patch.object(host, "part_ended", return_value="close"):

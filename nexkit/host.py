@@ -114,12 +114,16 @@ already holds, and a commit that a person pushed while the merge waited, as obse
 item ends or its new head is checked as the engine answers. An implement round that finds no
 change is needed (`no_change_found`, called by `report._no_change`) and a fix round that finds its
 change on the base branch (`on_base_found`, called by `report._already_on_base`) reach it too, and
-close only when it ends the item as `noChange`. Every parent's end goes through it:
-`part_ended` sends the end of a part to its parent's document, at every level and on every close
-of the part (a merge, a person's close, a change already on the base branch, no change needed,
-autopilot's sweep), and the parent ends only when every part ended and one was completed, under
-`parentEnd`, whatever the number of its sub-issues. Only the facts GitHub knows, such as parts
-never filed as sub-issues, stay with `maintain.close_parent`.
+close only when it ends the item as `noChange`; the `report` of the item's group stores the
+answer of both in the item's state. Every parent's end goes through it: `part_ended` sends the end
+of a part to its parent's document, at every level and on every close of the part (a merge, a
+person's close, a change already on the base branch, no change needed, autopilot's sweep), and
+the parent ends only when every part ended and one was completed, under `parentEnd`, whatever
+the number of its sub-issues. The run of the part only previews that answer, and sends the end
+to the parent's group as a `step` event with the note `part N` (`maintain.send_part_end`); the
+run that takes it there stores the answer in the parent's state (`maintain.record_part_end`),
+and so does the `step` run of a parent whose parts are all closed. Only the facts GitHub knows,
+such as parts never filed as sub-issues, stay with `maintain.close_parent`.
 
 Every round's checks and review reach it (`round_ended`): a review that paused at a usage
 limit, a review that stopped on a transient error, a review that failed, and a person's own pull
@@ -200,24 +204,25 @@ go` (`after_go`, `round_carried_on`), after a stopped or timed-out round (`stopp
 a resume comes due (`resumes`), for a lost command (`lost_again`), on a person's command
 (`command`), on a closing command (`closing_command`, which only previews, since `take` stored its
 event and the `maintain` job closes) and on an approval (`approved`: the `step` run of the item's
-group stores it, and the approval's own run in `approved-N` previews) read the item's stored state
-document (`stored`: the document in its state comment, or the import in memory when it has none) and
-send their event through `decide`, or their events in a row through `decide_all`. While other
-decisions still build their document from NexKit 6's markers, `resync` uses the stored document only
-when it says what the markers' document says, apart from its revision, its events seen and the ids
-of its outbox, and does not hold the event yet, or any event of a row. Otherwise the decision is the
-markers' document at the stored revision, so that NexKit 6's answers stay exactly as they are: a
-finished plan's import is `awaitingApproval`, which cannot take the plan's result, and a second send
-of one event, such as the plan's result that `report` and the step run both send, would be a
-duplicate. The last move to the stored document removes `resync`. A row of events, such as a hold
-and then the stop, or a round's result and then a comment, is one write: the state after the last
-event, at the revision read plus one, since `item_state.write` takes only the next revision, and a
-tick of a resume names the wait of the document it is decided on (`wait_id`). A run in the item's
-group stores the answer (`write`: the `report` after a stage, the `step` run, and the `step` that
-starts a due resume, `maintain.resume_one`), only on top of an existing state comment, at the next
-revision, with `item_state.apply`: a write that lost reads the state again, waits and decides again,
-and when every try lost, the run warns and carries out the answer anyway, which the next decision
-stores again. A run outside that group only previews: the sweep, `nexkit status` and
+group stores it, and the approval's own run in `approved-N` previews) and at an item's end and a
+parent's end (`no_change_found`, `on_base_found`, `part_ended`, as above) read the item's stored
+state document (`stored`: the document in its state comment, or the import in memory when it has
+none) and send their event through `decide`, or their events in a row through `decide_all`. While
+other decisions still build their document from NexKit 6's markers, `resync` uses the stored
+document only when it says what the markers' document says, apart from its revision, its events seen
+and the ids of its outbox, and does not hold the event yet, or any event of a row. Otherwise the
+decision is the markers' document at the stored revision, so that NexKit 6's answers stay exactly as
+they are: a finished plan's import is `awaitingApproval`, which cannot take the plan's result, and a
+second send of one event, such as the plan's result that `report` and the step run both send, would
+be a duplicate. The last move to the stored document removes `resync`. A row of events, such as a
+hold and then the stop, or a round's result and then a comment, is one write: the state after the
+last event, at the revision read plus one, since `item_state.write` takes only the next revision,
+and a tick of a resume names the wait of the document it is decided on (`wait_id`). A run in the
+item's group stores the answer (`write`: the `report` after a stage, the `step` run, and the `step`
+that starts a due resume, `maintain.resume_one`), only on top of an existing state comment, at the
+next revision, with `item_state.apply`: a write that lost reads the state again, waits and decides
+again, and when every try lost, the run warns and carries out the answer anyway, which the next
+decision stores again. A run outside that group only previews: the sweep, `nexkit status` and
 `plan_waits_for`, which asks what a plan waits for under no automatic approval, which is no answer
 of the item's own, and the `resume` run, which only sends the `step`. With no configuration,
 `resumes` and `lost_again` decide on the markers' document and read and store nothing. An item with
@@ -2717,32 +2722,36 @@ def change_seen(cfg, issue, pr, head, auto_fixes, seen, waiting=False):
     raise Refused(f"The engine answers {sorted(kinds)} to what the merge found.")
 
 
-def no_change_found(cfg, decision, finding):
+def no_change_found(gh, cfg, decision, finding, write=False):
     """`noChange` when the engine ends the item of `decision`, an implement round whose agent
     found that no change is needed, with `finding`, where the issue or its plan says to stop
     then (`report._no_change`): the host sends the round's result, which holds the finding, and
-    closes the issue only as the engine ends the item. Raises `Refused` for any other answer,
-    and for an item that is not final."""
+    closes the issue only as the engine ends the item. With `write`, which only the `report` of
+    the item's group passes, the engine's answer is stored in the item's state (`decide`).
+    Raises `Refused` for any other answer, and for an item that is not final."""
     number = decision["issue"]
     doc, _ = _stage_doc("implement", number, None, int(decision.get("retry") or 0))
     output = {**round_output({}), "status": "done", "no_change": finding}
     result = {**AGENT, "changeVersion": None, "output": output}
     fields = {"action": first_state.RUN_ID, "changeVersion": None, "result": result}
     event = _event("actionFinished", number, None, _run_event_id(), **fields)
-    state, actions = _answers(doc, [event], policies(cfg))
+    state, actions = decide(
+        gh, cfg, number, event, doc, action=("runAgent", "implement"), write=write
+    )
     if state["state"] == "noChange" and any(action["kind"] == "close" for action in actions):
         return "noChange"
     kinds = sorted({action["kind"] for action in actions})
     raise Refused(f"The engine answers {kinds} to an implement round that found no change.")
 
 
-def on_base_found(cfg, decision):
+def on_base_found(gh, cfg, decision, write=False):
     """`noChange` when the engine ends the item of `decision`, a fix round that found, before
     its agent, that its base branch already holds the pull request's change
     (`report._already_on_base`): the host sends the observation that the change is empty, as
     the merge does (`change_seen`), but while the fix round's agent is pending, and closes the
-    pull request and its issue only as the engine ends the item. Raises `Refused` for any other
-    answer."""
+    pull request and its issue only as the engine ends the item. With `write`, which only the
+    `report` of the item's group passes, the engine's answer is stored in the item's state
+    (`decide`). Raises `Refused` for any other answer."""
     number, pr, head = decision["issue"], decision["pr"], decision.get("head")
     change = {"id": pr, "version": head or pr}
     doc, version = _stage_doc("fix", number, change, int(decision.get("retry") or 0))
@@ -2756,14 +2765,14 @@ def on_base_found(cfg, decision):
     seen = {"conflicts": False, "version": version, "merged": False, "empty": True}
     name = f"onbase-{pr}-{version}"
     event = _event("changeObserved", number, None, name, changeId=str(pr), **seen)
-    state, actions = _answers(doc, [event], policies(cfg))
+    state, actions = decide(gh, cfg, number, event, doc, pull=pr, write=write)
     if state["state"] == "noChange" and any(action["kind"] == "close" for action in actions):
         return "noChange"
     kinds = sorted({action["kind"] for action in actions})
     raise Refused(f"The engine answers {kinds} to a change that its base branch already holds.")
 
 
-def part_ended(cfg, parent, subs, part, state):
+def part_ended(gh, cfg, parent, subs, part, state, write=False):
     """Whether the parent issue `parent` ends once its sub-issue `part`, which closed as
     `state`, ended, as the engine decides it (`maintain.close_parent`, at every level and for
     every way a part closes): `close` when every one of the sub-issues `subs` ended and one
@@ -2772,8 +2781,10 @@ def part_ended(cfg, parent, subs, part, state):
     `stays`. Facts only GitHub knows, such as parts that were never filed, stay with
     `maintain.close_parent`. A parent with more sub-issues than a state holds sends a reduced
     list: the part, and one open, one completed and one dropped sub-issue, which keep the two
-    facts the rule reads, that every part ended and that one was completed. Raises
-    `Refused`."""
+    facts the rule reads, that every part ended and that one was completed. With `write`,
+    which only the `step` run of the parent's group passes (`maintain.record_part_end`), the
+    engine's answer is stored in the parent's state, when it has a state comment (`decide`);
+    the run of the part never does. Raises `Refused`."""
     ended = {str(sub["number"]): first_state._ended(sub) for sub in subs}
     # The part is one of them, though a list that GitHub has not caught up with may miss it.
     ended[str(part)] = None
@@ -2786,7 +2797,7 @@ def part_ended(cfg, parent, subs, part, state):
     end = "whenPartAccepted" if cfg["close_parent_issues"] else "person"
     found = {**policies(cfg), "parentEnd": end}
     event = _event("partEnded", parent, None, f"part-{parent}-{part}", part=str(part), state=state)
-    _, actions = _answers(doc, [event], found)
+    _, actions = decide(gh, cfg, parent, event, doc, found_policies=found, write=write)
     kinds = {action["kind"] for action in actions}
     if "close" in kinds:
         return "close"

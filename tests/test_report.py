@@ -471,7 +471,7 @@ class ReportTests(ReportCase):
         self.assertIn("could not close #5", outcome["summary"])
 
     def test_a_round_that_finds_no_change_closes_nothing_when_the_engine_refuses(self):
-        with mock.patch.object(host, "_answers", side_effect=host.Refused("no")):
+        with mock.patch.object(host, "decide", side_effect=host.Refused("no")):
             outcome = self.no_change(make_config(close_parent_issues=True))
         self.assertEqual(outcome["outcome"], "close_failed")
         self.assertIn("NexKit's engine refused to decide its next step: `no`", outcome["attention"])
@@ -484,7 +484,8 @@ class ReportTests(ReportCase):
     def test_a_round_that_finds_no_change_sends_the_agent_s_finding_to_the_engine(self):
         with mock.patch.object(host, "no_change_found", return_value="noChange") as found:
             self.no_change()
-        self.assertEqual(found.call_args.args[2], "Fixed by 8b9cb87.")
+        self.assertEqual(found.call_args.args[3], "Fixed by 8b9cb87.")
+        self.assertTrue(found.call_args.kwargs["write"])
         self.assertEqual(self.gh.issues[5]["state_reason"], "completed")
 
     def test_a_fix_round_whose_base_holds_its_change_closes_nothing_when_the_engine_refuses(self):
@@ -500,7 +501,7 @@ class ReportTests(ReportCase):
         }
         self.write("nexkit-agent", "result.json", found)
         d = decision("fix", pr=6, target=6, head=HEAD, auto=True)
-        with mock.patch.object(host, "_answers", side_effect=host.Refused("no")):
+        with mock.patch.object(host, "decide", side_effect=host.Refused("no")):
             outcome = self.run_report(d=d, published=False)
         self.assertEqual(outcome["outcome"], "on_base_failed")
         self.assertIn("NexKit's engine refused to decide", outcome["attention"])

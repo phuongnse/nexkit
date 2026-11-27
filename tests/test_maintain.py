@@ -1,7 +1,7 @@
 import unittest
 from unittest import mock
 
-from nexkit import host
+from nexkit import host, item_state
 from nexkit.github import GitHubError
 from nexkit.maintain import (
     BRANCH_KEPT,
@@ -16,6 +16,7 @@ from nexkit.maintain import (
     enabled,
     holding_commit,
     maintain,
+    send_part_end,
 )
 from nexkit.state import render_run
 from tests.support import BOT_LOGIN, FakeGitHub, make_config
@@ -433,7 +434,7 @@ class ParentAsksTheEngineTests(unittest.TestCase):
         self.gh.issues[5]["closed_at"] = "2026-02-01T00:00:00Z"
         with self.stays() as ended:
             autopilot.close(self.gh, self.CFG, {"number": 1, "parent": True}, "nexkit.yml", "main")
-        self.assertEqual(ended.call_args.args[3:], (5, "dropped"))
+        self.assertEqual(ended.call_args.args[4:], (5, "dropped"))
         self.asked_not_closed(ended)
 
     def test_the_merge_leaves_the_parent_open_when_the_engine_says_stays(self):
@@ -452,8 +453,8 @@ class ParentAsksTheEngineTests(unittest.TestCase):
         # Closed at the first level, kept at the second.
         with mock.patch.object(host, "part_ended", side_effect=["close", "stays"]) as ended:
             close_parents(self.gh, self.CFG, 5)
-        self.assertEqual([call.args[1] for call in ended.call_args_list], [1, 9])
-        self.assertEqual([call.args[3] for call in ended.call_args_list], [5, 1])
+        self.assertEqual([call.args[2] for call in ended.call_args_list], [1, 9])
+        self.assertEqual([call.args[4] for call in ended.call_args_list], [5, 1])
         self.assertEqual(self.gh.issues[1]["state"], "closed")
         self.assertEqual(self.gh.issues[9]["state"], "open")
         # A parent that stays ends the climb.
@@ -491,6 +492,129 @@ class ParentAsksTheEngineTests(unittest.TestCase):
             close_parents(self.gh, self.CFG, 5),
             ["Closed #1 as completed: all its sub-issues are closed."],
         )
+
+
+class PartEndTests(unittest.TestCase):
+    """A part's end reaches its parent's stored state only through a `step` run in the
+    parent's group: the part's run never writes the parent's state comment, and that `step` run
+    writes nothing on GitHub but the state comment (`maintain.record_part_end`)."""
+
+    CFG = make_config(close_parent_issues=True, merge={"auto": True})
+
+    def setUp(self):
+        self.gh = FakeGitHub()
+        self.gh.add_issue(1, title="Epic")
+        self.gh.add_issue(2, title="Part", state="closed", reason="completed")
+        self.gh.add_issue(5, title="Part")
+        self.gh.parents.update({2: 1, 5: 1})
+        self.assertTrue(host.store_import(self.gh, self.CFG, 1))
+        self.stored = [c for c in self.gh.comments(1) if "nexkit:item-state" in c["body"]]
+
+    def spies(self):
+        calls = []
+
+        def spied(real):
+            def spy(client, number, *args, **kwargs):
+                calls.append(number)
+                return real(client, number, *args, **kwargs)
+
+            return spy
+
+        patch = mock.patch.multiple(
+            item_state, apply=spied(item_state.apply), write=spied(item_state.write)
+        )
+        return calls, patch
+
+    def state_comments(self, number=1):
+        return [c for c in self.gh.comments(number) if "nexkit:item-state" in c["body"]]
+
+    def test_the_run_of_a_part_that_closes_never_writes_the_parent_s_state(self):
+        self.gh.issues[5].update(state="closed", state_reason="completed")
+        calls, patch = self.spies()
+        with patch:
+            lines = maintain(
+                self.gh,
+                {"action": "maintain", "task": "parents", "issue": 5},
+                self.CFG,
+                workflow="nexkit.yml",
+                ref="main",
+            )
+        self.assertNotIn(1, calls)
+        self.assertEqual(self.state_comments(), self.stored)
+        self.assertIn("Sent the end of #5 to #1's queue.", lines)
+        self.assertEqual(self.gh.issues[1]["state"], "closed")
+
+    def test_the_merge_that_closes_a_part_never_writes_the_parent_s_state(self):
+        from nexkit import report
+
+        self.gh.issues[5].update(state="closed", state_reason="completed")
+        target = {"issue": 5, "pr": 6, "head": HEAD, "state": {}}
+        calls, patch = self.spies()
+        with patch:
+            report._parent_ends(self.gh, self.CFG, target)
+            close_parents(self.gh, self.CFG, 5)
+        self.assertNotIn(1, calls)
+        self.assertEqual(self.state_comments(), self.stored)
+
+    def test_the_part_sends_its_end_to_its_parent_s_queue_and_nothing_else(self):
+        self.gh.issues[5].update(state="closed", state_reason="completed")
+        before = list(self.gh.dispatches)
+        lines = send_part_end(self.gh, 5, "nexkit.yml", "main")
+        self.assertEqual(lines, ["Sent the end of #5 to #1's queue."])
+        [sent] = self.gh.dispatches[len(before) :]
+        self.assertEqual(sent["inputs"]["command"], "step")
+        self.assertEqual((sent["inputs"]["number"], sent["inputs"]["note"]), ("1", "part 5"))
+        # An issue with no parent sends nothing, and a failed dispatch is a line.
+        self.assertEqual(send_part_end(self.gh, 1, "nexkit.yml", "main"), [])
+        self.gh.dispatch_errors["nexkit.yml"] = GitHubError(500, "no")
+        [line] = send_part_end(self.gh, 5, "nexkit.yml", "main")
+        self.assertIn("Could not send the end of #5", line)
+
+    def test_the_parent_s_step_run_stores_the_end_and_writes_nothing_else(self):
+        self.gh.issues[5].update(state="closed", state_reason="completed")
+        comments = {n: list(self.gh.comments(n)) for n in (2, 5)}
+        issues = {n: dict(issue) for n, issue in self.gh.issues.items()}
+        dispatches = list(self.gh.dispatches)
+        decision = {"action": "maintain", "task": "part_ended", "issue": 1, "part": 5}
+        lines = maintain(self.gh, decision, self.CFG, workflow="nexkit.yml", ref="main")
+        self.assertEqual(lines, ["Recorded the end of #5 in #1's state: close."])
+        _, doc = item_state.read(self.gh, 1)
+        self.assertEqual((doc["revision"], doc["state"]), (2, "accepted"))
+        self.assertIn("part-1-5", doc["recentEvents"])
+        self.assertEqual(len(self.state_comments()), 1)
+        # Nothing else on GitHub changed: no close, no other comment, no dispatch.
+        self.assertEqual(
+            [c["body"] for c in self.gh.comments(1) if "nexkit:item-state" not in c["body"]], []
+        )
+        self.assertEqual({n: list(self.gh.comments(n)) for n in (2, 5)}, comments)
+        self.assertEqual(self.gh.issues, issues)
+        self.assertEqual(self.gh.dispatches, dispatches)
+
+    def test_a_part_that_is_not_a_closed_sub_issue_of_the_parent_records_nothing(self):
+        decision = {"action": "maintain", "task": "part_ended", "issue": 1, "part": 5}
+        # Still open.
+        [line] = maintain(self.gh, decision, self.CFG, workflow="nexkit.yml", ref="main")
+        self.assertIn("#5 is not a closed sub-issue of #1", line)
+        # Closed, but another parent's.
+        self.gh.add_issue(9, title="Other")
+        self.gh.issues[5].update(state="closed", state_reason="completed")
+        self.gh.parents[5] = 9
+        [line] = maintain(self.gh, decision, self.CFG, workflow="nexkit.yml", ref="main")
+        self.assertIn("nothing is recorded", line)
+        self.assertEqual(self.state_comments(), self.stored)
+
+    def test_a_parent_with_no_state_comment_stores_nothing(self):
+        self.gh.issue_comments[1] = [
+            c for c in self.gh.comments(1) if "nexkit:item-state" not in c["body"]
+        ]
+        self.gh.issues[1].update(state="closed", state_reason="completed")
+        self.gh.issues[5].update(state="closed", state_reason="completed")
+        decision = {"action": "maintain", "task": "part_ended", "issue": 1, "part": 5}
+        maintain(self.gh, decision, self.CFG, workflow="nexkit.yml", ref="main")
+        self.assertEqual(self.state_comments(), [])
+
+    def test_the_part_ended_task_runs_without_any_setting(self):
+        self.assertTrue(enabled("part_ended", make_config()))
 
 
 class OnBaseTests(unittest.TestCase):

@@ -208,6 +208,17 @@ commands already in the queue. A head that moved since the approval is not merge
 keeps one waiting run per group, so a command that waits and the approval's `step` can
 replace each other: approve again if the merge did not come.
 
+When a sub-issue closes, its `issues: closed` run, in the part's own group, sends one `step`
+dispatch into its parent's group, `nexkit-<parent>`, with `part N` as its note. That run
+reads the part back from GitHub, checks that it is a closed sub-issue of the parent, decides
+the part's end on the parent's stored state and stores the answer there. It writes nothing
+else on GitHub. The part's run still closes the parent, or leaves its note for a person, by
+the same rules as before: it only previews the parent's answer and never writes the parent's
+state. A parent with no state comment stores nothing. The `step` is sent only when the check
+of parents runs, which needs `close_parent_issues` or autopilot. GitHub keeps one waiting
+run per group, so this `step` can replace a command that waits in the parent's group: the
+part's end then reaches the parent's stored state at the parent's next decision.
+
 A sweep in `nexkit-autopilot` carries out no issue's step (start, split, close, merge,
 settle or mention) itself. For each issue whose next step writes, it sends a `step` dispatch, which joins the issue's own group, `nexkit-<item>`, and
 carries the step out there, on the issue as it is then. The sweep waits a limited time

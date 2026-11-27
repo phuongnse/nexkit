@@ -536,6 +536,11 @@ def run_kinds(run):
     return {kind.strip() for kind in labels.group(1).split(",")} if labels else set()
 
 
+# The outcome of a round NexKit stopped in its checks because the base branch moved
+# (`maintain.stop_superseded`).
+SUPERSEDED = "superseded"
+
+
 def counted_fix(run):
     """Whether `run` is an automatic fix round that counts toward `fix.max_auto_rounds`: a
     conflict round, and a retried or resumed one, counts toward no automatic fix round."""

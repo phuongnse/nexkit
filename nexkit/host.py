@@ -82,7 +82,9 @@ the updates used, which `conflicts.max_rounds` limits apart from conflict rounds
 answers an update while one is left under `conflicts.auto_resolve`, and a person otherwise. The
 host carries out the update with `maintain.update_branch(left=...)`, which starts the review that
 carries the approval over, and sends an update that GitHub refused back (`update_failed`), which
-the engine hands to a person. A sweep's merge that waits for required checks past six hours
+the engine hands to a person. The review that the update starts stores the update's result for the
+pending update (`command`, `_branch_updated`), so that the update is counted and the checks of the
+new head follow. A sweep's merge that waits for required checks past six hours
 sends the observation that its branch is behind (`checks_waited`), and the engine keeps trying
 the merge while `conflicts.auto_resolve` is on.
 
@@ -97,7 +99,13 @@ that fails to start after a stop (`stop_failed`) stay the host's. The push run, 
 another item's merge only preview that answer, in groups of their own. The conflict round that
 they dispatch is counted by its own run in the item's group (`command`): it sends the same
 observation with the answer stored, so that the stored conflict rounds used are current before
-the round starts, and the round starts only when the engine answers one.
+the round starts, and the round starts only when the engine answers one. The review after the
+push run's update stores the observation that the stopped head was behind and then the update's
+result, so that the stored updates used are current too. When the latest round of the pull request
+ended `superseded` and was an automatic fix round that counts, the run that the push run started,
+the conflict round or that review, decides the observation on the round's `checking` document
+(`base_moved` with `automatic`), and the engine gives the round's count back as it stores the
+answer.
 
 It decides when a plan, implement or fix stage runs again after its agent stopped at a usage
 limit or on a transient error (`stage_limited`, `stage_transient`, called by `report`), and when
@@ -195,7 +203,10 @@ way (`first_state.RUN_ID`) is never carried out so. The first dispatch of a conf
 nothing pending asks the engine about the conflict instead (`base_moved` with `write`) and
 stores the answer, one more conflict round used, before it starts the round, unless an earlier
 round on the same base commit ended (`route._conflicts_tried`); a resumed or retried round was
-counted when it started. Any other command, a person's own dispatch and
+counted when it started. The first dispatch of a review that follows a branch update (its `auto`
+input names `carry`, and neither `resumed` nor `retry`) stores the update before it looks for a
+pending action, and starts the checks only as the engine answers them (`_branch_updated`). Any
+other command, a person's own dispatch and
 a dispatch with nothing pending too, is a new request, named `dispatch-<run id>`, decided on the
 stored state, which a run of the item's group stores (`decide`, `resync`). A command whose own
 run a newer run replaced starts in the run that ran, when that run's own event starts nothing
@@ -270,10 +281,10 @@ hourly schedule and another item's merge, which decide `base_moved` and `stopped
 of their own, `plan_waits_for`, which asks what a plan waits for under no automatic approval, and
 `diagnosis` of a round whose action is not stored yet, which sends a tick that is no event of the
 item's own, and the `resume` run, which only sends the `step`. None of them is an answer of the
-item, so the conflict round that the push run, the schedule or a merge dispatches is counted by
-its own run in the item's group (`command`), while a branch update and the give-back of a stopped
-automatic fix round, which only a preview decides, are not stored yet: the stored `counted` stays
-one too high after such a stop. With no configuration, `resumes` and `lost_again` decide on the
+item, so the conflict round that the push run, the schedule or a merge dispatches, the review
+after a branch update and the give-back of a stopped automatic fix round are stored by the run that
+they start in the item's group (`command`), so that the stored `counted`, `conflicts` and `updates`
+are current after such a stop. With no configuration, `resumes` and `lost_again` decide on the
 markers' document and read and store nothing. An item with no state
 comment stores nothing here, since only `store_import` posts the first one, and one whose state
 comment someone other than the App changed is refused (`autopilot.changed_comment`). `pending_id`
@@ -306,10 +317,12 @@ from .report import TOO_LARGE
 from .schema import filled
 from .state import (
     MAX_PARTS,
+    SUPERSEDED,
     asked_last,
     by_bot,
     closing_answer,
     closing_option,
+    counted_fix,
     latest_plan,
     plan_data,
     plan_profile,
@@ -2085,6 +2098,7 @@ def command(
     dispatched=False,
     carried=None,
     observe_conflict=False,
+    updated=False,
 ):
     """What the engine answers to a person's command `what` (`plan`, `go`, `fix` or `review`)
     on work item `item` (`route._decide`): `plan`, `implement`, `fix` or `review` for the stage
@@ -2109,7 +2123,10 @@ def command(
     `dispatch-<run id>`, with the configuration's policies and `conflicts.auto_resolve` on, as
     the push run previewed it, and stores the answer, one more conflict round used and the fix
     round pending. The round starts only when the engine answers one (`fix`), and `refused`
-    otherwise. With nothing pending and for a person's own
+    otherwise. The review that follows a branch update (`updated`, which `route` sets for a
+    `review` dispatch whose `auto` input names `carry` and neither `resumed` nor `retry`) stores
+    that update first (`_branch_updated`), before it looks for a pending action, and starts when
+    the engine answers its checks. With nothing pending and for a person's own
     dispatch, the command is a new request, named `dispatch-<run id>` (`_dispatch_id`), decided
     on the stored state (`decide`, which stores the answer in the item's group, `resync`). With
     no `gh` or no `cfg` it is answered on the small document that NexKit 6's `route` read the
@@ -2189,7 +2206,13 @@ def command(
     if observed and _on_base(gh, cfg, item, observed, doc, pull):
         return "noChange"
     if not sourced:
-        _, found = stored(gh, cfg, item, pull)
+        comment, found = stored(gh, cfg, item, pull)
+        if updated and what == "review" and change and comment is not None:
+            # Before `_carried`: the checks of the round that the update stopped may still be
+            # pending, and carrying them out would leave the update uncounted.
+            answer = _branch_updated(gh, cfg, item, change, found)
+            if answer is not None:
+                return answer
         action = _carried(found, what) if dispatched else None
         if action:
             if carried is not None:
@@ -2202,16 +2225,38 @@ def command(
     return starts(actions) or "refused"
 
 
+def _latest_round(gh, pull):
+    """The record of the latest round comment of the pull request `pull`, or `{}`."""
+    rounds = [run for _, run in run_comments(gh.comments(pull)) if "round" in run]
+    return rounds[-1] if rounds else {}
+
+
+def _asked(cfg):
+    """The configuration as the push run asked the engine about a base move: a conflict round
+    or an update of the branch is automatic, whatever the configuration says."""
+    return {**cfg, "conflicts": {**cfg["conflicts"], "auto_resolve": True}}
+
+
+def _stopped_round(row, version):
+    """(whether the latest round `row` ended `superseded` on `version`, and whether it was an
+    automatic fix round that counts): the push run stopped its checks (`maintain.stop_superseded`),
+    so the run it started gives that round's count back."""
+    stopped = row.get("outcome") == SUPERSEDED and row.get("head") == version
+    return stopped, stopped and counted_fix(row)
+
+
 def _conflict_round(gh, cfg, item, change, found):
     """`fix` when the engine answers a conflict round on the observation that `change`, the
     pull request's `{"id", "version"}`, conflicts with its base branch, which it stores as one
-    more conflict round used, else `refused` (`command`). `found` is the stored state."""
+    more conflict round used, else `refused` (`command`). `found` is the stored state. When the
+    pull request's latest round ended `superseded` on this head, the push run stopped its checks:
+    the observation is decided on a pull request in `checking`, and the engine gives back the
+    count of an automatic fix round that counted."""
     # Inside the function: `maintain` imports `route`, which imports this module.
     from .maintain import conflict_rounds_of
 
-    # What the push run asked: the round is automatic, whatever the configuration says.
-    asked = {**cfg, "conflicts": {**cfg["conflicts"], "auto_resolve": True}}
     pull = int(change["id"])
+    stopped, automatic = _stopped_round(_latest_round(gh, pull), change["version"])
     answer = base_moved(
         gh,
         cfg,
@@ -2220,14 +2265,88 @@ def _conflict_round(gh, cfg, item, change, found):
         change["version"],
         True,
         False,
-        False,
+        stopped,
         conflict_rounds_of(gh, pull),
         0,
         write=True,
         name=_dispatch_id(found),
-        found_policies=policies(asked),
+        found_policies=policies(_asked(cfg)),
+        automatic=automatic,
     )
     return "fix" if answer == "round" else "refused"
+
+
+def _branch_updated(gh, cfg, item, change, found):
+    """`review` when the engine answers the checks of the new head `change` (`{"id", "version"}`)
+    after a branch update, which it stores as one more update used (`command`), `refused` when it
+    answers none, and None when this run is not the one to store it. `found` is the stored state.
+
+    A merge's update (`report._update_branch`) is stored as a pending `updateChange` already
+    (`accept_answer`): only its result is sent. After the push run's update
+    (`maintain.stop_superseded`) nothing is pending, so the run first tells the engine that the
+    head the stopped round checked (the latest round comment's, which records the update) is behind
+    its base, as the push run previewed it, and the engine answers the update. The stopped
+    round's count is given back with that observation (`base_moved`). Where the engine answers no
+    update, the new head is sent as an observation and the checks run only as the engine asks for
+    them. None, so that the dispatch carries out what is pending, for a run that sent these events
+    already, and when the latest round does not record an update from another head."""
+    name = _dispatch_id(found)
+    if {name, f"{name}-updated"} & set(found["recentEvents"]):
+        return None
+    pull, version = int(change["id"]), change["version"]
+    pending = next((a for a in found["pending"] if a["kind"] == "updateChange"), None)
+    if pending:
+        old = pending["changeVersion"]
+    else:
+        # Inside the function: `maintain` imports `route`, which imports this module.
+        from .maintain import conflict_rounds_of
+
+        row = _latest_round(gh, pull)
+        if not row.get("updated_branch") or not row.get("head") or row["head"] == version:
+            return None
+        old = row["head"]
+        answer = base_moved(
+            gh,
+            cfg,
+            item,
+            pull,
+            old,
+            False,
+            True,
+            True,
+            conflict_rounds_of(gh, pull),
+            0,
+            write=True,
+            name=name,
+            found_policies=policies(_asked(cfg)),
+            automatic=_stopped_round(row, old)[1],
+        )
+        if answer != "update":
+            seen = {**head_observed(item, pull, version), "id": f"{name}-head"}
+            _, actions = decide(gh, cfg, item, seen, None, pull=pull, write=True)
+            return starts(actions) or "refused"
+    observed = {
+        "changeId": change["id"],
+        "version": version,
+        "conflicts": False,
+        "merged": False,
+        "empty": False,
+    }
+    result = {"change": {"id": change["id"], "version": version}, "refused": None}
+    result["observed"] = observed
+    # `action` names the pending update in place of `first_state.RUN_ID`.
+    event = _event(
+        "actionFinished",
+        item,
+        None,
+        f"{name}-updated",
+        action=first_state.RUN_ID,
+        changeVersion=old,
+        result=result,
+    )
+    options = {"pull": pull, "action": ("updateChange",), "write": True}
+    _, actions = decide(gh, cfg, item, event, None, **options)
+    return starts(actions) or "refused"
 
 
 def _on_base(gh, cfg, item, observed, doc, pull):
@@ -2651,6 +2770,7 @@ def base_moved(
     write=False,
     name=None,
     found_policies=None,
+    automatic=False,
 ):
     """What follows the move of the base branch under the NexKit pull request `pr` of `issue`,
     whose head is `head`, as the engine decides it (`maintain.resolve_conflicts`,
@@ -2665,10 +2785,14 @@ def base_moved(
     update of the branch; or `waits`, when a person decides or the checks that run go on to
     their end. A hold is read before, as NexKit 6 does. The sweep, the push run and a merge's
     run each decide in a group of their own, so they never pass `write`: it would store a
-    state that only the item's group may write. The run of the conflict round that they start,
-    in the item's group, passes `write` (`command`), with `name`, the event's id, which is
-    `base-<pr>-<head>` by default, and `found_policies`, which default to the configuration's.
-    Raises `Refused`."""
+    state that only the item's group may write. The run of the conflict round or of the review
+    after a branch update that they start, in the item's group, passes `write` (`command`),
+    with `name`, the event's id, which is `base-<pr>-<head>` by default, and `found_policies`,
+    which default to the configuration's. With `checking`, `automatic` says that the round
+    whose checks stopped was an automatic fix round that counts (`state.counted_fix`) and
+    that `rounds.counted` holds its count: the engine's cancel of the pending checks then
+    gives the count back (`machine.give_back`), as `stopped_counts` decides it for the push
+    run's preview. Raises `Refused`."""
 
     def built(state):
         doc = _pull_doc(cfg, issue, pr, head, "checking" if checking else "ready", 0)
@@ -2680,6 +2804,8 @@ def base_moved(
         if checking:
             run = {"id": first_state.RUN_ID, "next": None, "kind": "runChecks"}
             doc["pending"] = [{**run, "changeVersion": version}]
+            if automatic and doc["rounds"]["counted"]:
+                doc["rounds"]["automatic"] = True
         return doc
 
     version = str(head or pr)
@@ -3211,7 +3337,8 @@ def stopped_counts(
     stops, and what follows them, stay NexKit 6's, so the host reports one as `stopped`; no policy
     decides a stop. With `write`, which only a run of the item's group passes, the answer is
     stored (`decide`); `maintain._give_back` runs in the push run's or the sweep's group and
-    never does. Raises `Refused`."""
+    never does: it only previews, and the run that the push run starts in the item's group stores
+    the give-back (`command`, `base_moved` with `automatic`). Raises `Refused`."""
 
     def built(state):
         counted = _stored_count(state, auto_fixes, "counted")

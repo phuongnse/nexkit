@@ -9,7 +9,7 @@ and `conflicts.auto_resolve`. Records the preview, two sweeps with GitHub after 
 import itertools
 from unittest import mock
 
-from common import after, attempt, quiet, snapshot, sweep
+from common import after, attempt, quiet, seed, snapshot, sweep
 
 from nexkit import autopilot
 from nexkit.state import PLAN_MARKER, empty_state, render_run, render_state
@@ -103,6 +103,7 @@ def run(sc):
         conflicts={"auto_resolve": sc["resolve"]},
         notify=["olivia"],
     )
+    seed(gh, cfg)
     res = {}
     over = mock.patch.object(autopilot, "ci_wait_over", lambda gh_, wait: OVER[sc["over"]])
     with over, quiet():

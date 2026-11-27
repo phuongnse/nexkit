@@ -14,6 +14,7 @@ import os
 import re
 import sys
 import tempfile
+from collections import defaultdict
 from pathlib import Path
 
 WORKFLOW = "acme/app/.github/workflows/nexkit.yml@refs/heads/main"
@@ -29,6 +30,18 @@ HUMAN = re.compile(r"\d\d:\d\d UTC on \d{4}-\d\d-\d\d|\d{4}-\d\d-\d\d \d\d:\d\d 
 # What a fake GitHub keeps that is no state of GitHub: the reads it saw, and the issue events
 # that a test lists for it, which only the engine's host reads and NexKit 6's fake lacks.
 SKIP = {"calls", "_next", "events"}
+# The App's state comment (`nexkit:item-state`), which only the engine's host posts: the marker
+# ends the comment (`item_state.PATTERN`). NexKit 6 never posts it, so it is not compared.
+STATE = re.compile(r"<!-- nexkit:item-state [A-Za-z0-9+/=]+ -->\s*\Z")
+# What `seed` and the tree record for a scenario, which `play.py` writes beside its record and
+# `harness.py` reads: each write of a state comment as (item, revision), each decision that
+# `host.resync` took from the markers' document as [function, why], and the items that were
+# seeded.
+STATES = []
+TRACKED = []  # the fake GitHub that `seed` watches
+FALLBACKS = []
+SEEDED = 0
+OWN_BRANCH = re.compile(r"nexkit/issue-\d+")
 
 
 def enter(root):
@@ -78,10 +91,137 @@ def walk(value):
     return norm(str(value))
 
 
+def is_state(comment):
+    """Whether `comment` is the App's state comment."""
+    return (comment.get("user") or {}).get("type") == "Bot" and bool(
+        STATE.search(comment.get("body") or "")
+    )
+
+
 def snapshot(gh):
     """Everything on the fake GitHub `gh`: comments, statuses, reviews, dispatches, merges,
-    issues, pull requests, labels and the rest it keeps."""
-    return walk({k: v for k, v in vars(gh).items() if k not in SKIP and not callable(v)})
+    issues, pull requests, labels and the rest it keeps. Not the App's state comment, which
+    NexKit 6 never posts (`seed` records it apart), and no issue with no comment left: reading
+    an issue's comments makes an empty list of them in the fake, which is not GitHub's."""
+    found = {}
+    for key, value in vars(gh).items():
+        if key in SKIP or callable(value):
+            continue
+        if key == "issue_comments":
+            value = {
+                n: kept
+                for n, held in value.items()
+                if (kept := [c for c in held if not is_state(c)])
+            }
+        found[key] = value
+    return walk(found)
+
+
+def reset():
+    """Forget what the last scenario recorded."""
+    global SEEDED
+    STATES.clear()
+    TRACKED.clear()
+    FALLBACKS.clear()
+    SEEDED = 0
+
+
+def items(gh):
+    """The numbers of the work items that a run in an item's group starts from, in order, from
+    what the fake holds alone, so that both trees agree: the open issues, and the open pull
+    requests that are not a `nexkit/issue-<n>` branch of the repository, which belong to their
+    issue (`route.queue_item`)."""
+    found = {
+        n
+        for n, one in gh.issues.items()
+        if one.get("state") == "open" and "pull_request" not in one
+    }
+    for number, pull in gh.pulls.items():
+        if pull.get("state") != "open":
+            continue
+        head = pull.get("head") or {}
+        own = (head.get("repo") or {}).get("full_name") == gh.repository
+        if not (own and OWN_BRANCH.fullmatch(head.get("ref") or "")):
+            found.add(number)
+    return sorted(found)
+
+
+def _recording(gh, item_state):
+    """Make each state comment that is written to `gh` noted as (item, revision) in `STATES`.
+    It wraps `comment` and `update_comment` of its class and notes only the writes to `gh`
+    itself, not to a copy of it, which a family may make."""
+    cls = type(gh)
+    TRACKED[:] = [gh]
+    if getattr(cls, "_nexkit_recording", False):
+        return
+    real_post, real_edit = cls.comment, cls.update_comment
+
+    def note(self, number, comment):
+        if not TRACKED or TRACKED[0] is not self:
+            return
+        if item_state.PREFIX not in (comment.get("body") or ""):
+            return
+        try:
+            state = item_state.find([comment])[1]
+        except Exception:  # noqa: BLE001
+            return
+        if state is not None:
+            STATES.append((number, state["revision"]))
+
+    def post(self, number, body):
+        comment = real_post(self, number, body)
+        note(self, number, comment)
+        return comment
+
+    def edit(self, comment_id, body):
+        comment = real_edit(self, comment_id, body)
+        found = [n for n, each in self.issue_comments.items() if comment in each]
+        note(self, found[0] if found else None, comment)
+        return comment
+
+    cls.comment, cls.update_comment, cls._nexkit_recording = post, edit, True
+
+
+def seed(gh, cfg):
+    """Store the import of each open item (`items`) on the tree as the App's state comment at
+    revision 1, as a run in the item's group does before its first event (`host.store_import`),
+    and record the comment's writes in `STATES`. Call it once, after the fixtures and before
+    the first event. NexKit 6 has no stored state, so nothing is stored there. Each item uses up
+    one comment id on both trees, so that the comments after it have the same ids, and the issue
+    keeps its `updated_at`: the seed must leave nothing that NexKit 6's tree lacks."""
+    global SEEDED
+    try:
+        from nexkit import host, item_state
+
+        store = getattr(host, "store_import", None)
+    except ImportError:
+        store = item_state = None
+    if store is not None:
+        _recording(gh, item_state)
+    missing = object()
+    for number in items(gh):
+        before = gh._next
+        stamp = (gh.issues.get(number) or {}).get("updated_at", missing)
+        kept = {k: set(v) for k, v in vars(gh).items() if isinstance(v, defaultdict)}
+        if store is not None:
+            try:
+                if store(gh, cfg, number):
+                    SEEDED += 1
+            except Exception:  # noqa: BLE001
+                pass
+            # What the import read makes empty entries in the fake's defaultdicts, which are no
+            # state of GitHub, and which NexKit 6's tree, that reads nothing here, lacks.
+            for name, keys in kept.items():
+                held = getattr(gh, name)
+                for key in set(held) - keys:
+                    if not held[key]:
+                        del held[key]
+            if number in gh.issues:
+                if stamp is missing:
+                    gh.issues[number].pop("updated_at", None)
+                else:
+                    gh.issues[number]["updated_at"] = stamp
+        gh._next = before + 1
 
 
 def attempt(fn, *args, **kwargs):

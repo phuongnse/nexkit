@@ -10,7 +10,7 @@ each, and `nexkit status`."""
 from datetime import UTC, datetime, timedelta
 from unittest import mock
 
-from common import after, quiet
+from common import after, quiet, seed
 
 from nexkit import autopilot
 from nexkit.state import PLAN_MARKER, render_run
@@ -168,6 +168,7 @@ def build(sc):
 def run(sc):
     gh = build(sc)
     cfg = make_config(autopilot={"enabled": True}, notify=["olivia"])
+    seed(gh, cfg)
     res = {}
     with quiet(), mock.patch.object(autopilot, "datetime", Clock):
         for n, later in enumerate(SWEEPS, 1):

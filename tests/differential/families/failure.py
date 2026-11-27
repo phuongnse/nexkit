@@ -10,7 +10,7 @@ played."""
 
 import itertools
 
-from common import after, attempt, quiet, snapshot
+from common import after, attempt, quiet, seed, snapshot
 
 from nexkit.state import PLAN_MARKER, answers_marker, render_run
 from tests.support import FakeGitHub, make_config
@@ -92,6 +92,7 @@ def build(sc):
 def run(sc):
     gh = build(sc)
     cfg = make_config(autopilot={"enabled": sc["auto"], "answer": sc["answer"]}, notify=["olivia"])
+    seed(gh, cfg)
     res = {}
     with quiet():
         if sc["auto"]:

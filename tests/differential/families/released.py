@@ -10,7 +10,7 @@ rules would not; the engine waits for a person with the first read's reason (`kn
 
 import itertools
 
-from common import attempt, quiet
+from common import attempt, quiet, seed
 
 from nexkit import autopilot
 from tests.support import FakeGitHub, make_config
@@ -61,6 +61,8 @@ def run(sc):
     run_ = {"round": count + 1, "head": H, "held_back": "conflicts", "outcome": "held"}
     run_["status"] = "success"
     gh.round_comment(6, count + 1, H, "not run", held_back="conflicts", outcome="held")
+    # Before `gh.pull` below, whose first read answers what the scenario says.
+    seed(gh, cfg)
     pull_comments = gh.comments(6)
     reads = {"n": 0}
     real = gh.pull

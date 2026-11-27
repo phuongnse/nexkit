@@ -9,7 +9,7 @@ import contextlib
 import itertools
 from unittest import mock
 
-from common import HEAD, attempt, planned_issue, quiet, snapshot, sweep
+from common import HEAD, attempt, planned_issue, quiet, seed, snapshot, sweep
 
 from nexkit import autopilot
 from nexkit import report as report_module
@@ -59,6 +59,7 @@ def run(sc):
     if sc["clean"]:
         row["refused_clean"] = HEAD
     gh.comment(6, render_run(row))
+    seed(gh, cfg)
     res = {}
     with contextlib.ExitStack() as stack:
         stack.enter_context(mock.patch.object(report_module.time, "sleep", lambda s: None))

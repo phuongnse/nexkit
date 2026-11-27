@@ -11,7 +11,18 @@ import json
 from datetime import UTC, datetime, timedelta
 from unittest import mock
 
-from common import HEAD, TOK, WORKFLOW, Artifacts, attempt, planned_issue, quiet, snapshot, sweep
+from common import (
+    HEAD,
+    TOK,
+    WORKFLOW,
+    Artifacts,
+    attempt,
+    planned_issue,
+    quiet,
+    seed,
+    snapshot,
+    sweep,
+)
 
 from nexkit import autopilot, progress
 from nexkit import report as report_module
@@ -104,6 +115,8 @@ def run(sc):
             pub = {"published": True, "pr": 6, "head": HEAD}
             needs = {"publish": {"outputs": {"result": json.dumps(pub)}}}
 
+            seed(gh, cfg)
+
             def first_round():
                 progress.start(gh, d)
                 return report(
@@ -125,6 +138,7 @@ def run(sc):
             if sc["path"] == "sweep":
                 row["waiting_since"] = autopilot.iso(datetime.now(UTC) - timedelta(hours=1))
             gh.comment(6, render_run(row))
+            seed(gh, cfg)
             if sc["path"] == "approved":
                 decision = {"action": "maintain", "task": "approved", "pr": 6, "issue": 5}
                 decision.update(actor="olivia", commit=HEAD)

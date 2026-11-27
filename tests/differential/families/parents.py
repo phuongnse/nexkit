@@ -11,7 +11,7 @@ import itertools
 from datetime import UTC, datetime, timedelta
 from unittest import mock
 
-from common import HEAD, attempt, planned_issue, quiet, snapshot, sweep
+from common import HEAD, attempt, planned_issue, quiet, seed, snapshot, sweep
 
 import tests.support as support
 from nexkit import autopilot
@@ -116,6 +116,9 @@ def run(sc):
         close_parent_issues=sc["close"],
         notify=["olivia"],
     )
+    # Before the ticking clock, which moves with each read: the seed must leave it where NexKit 6's
+    # tree has it. The part's close then follows its import, as it does on GitHub.
+    seed(gh, cfg)
     res = {}
     closed = {"state": "closed", "state_reason": sc["reason"]}
     with (

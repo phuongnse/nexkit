@@ -3,7 +3,11 @@
 usage: python3 play.py ROOT FAMILY OUT [--shard I --of N] [--sample K] [--only I,J]
 
 `harness.py` runs this for both trees; run it by hand to look at one scenario
-(`--only`). OUT is gzipped JSON lines: {"i": index, "sc": scenario, "rec": record}.
+(`--only`). OUT is gzipped JSON lines: {"i": index, "sc": scenario, "rec": record, "states": the
+revision of each write of the App's state comment, "fallbacks": the decisions that `host.resync`
+took from the markers' document, "seeded": the items whose import the scenario stored}. The last
+three are what `common.seed` and `host.on_fallback` collected, which compare with nothing of
+NexKit 6's: it writes empty lists and 0.
 Run it with PYTHONHASHSEED=0, as `harness.py` does: the order of a set NexKit iterates shows
 on GitHub, such as the order of statuses.
 """
@@ -43,15 +47,34 @@ def main(argv=None):
         indices = [int(i) for i in args.only.split(",")]
     else:
         indices = chosen(len(scenarios), args.sample, args.family)
+    try:
+        from nexkit import host
+    except ImportError:  # NexKit 6 has no host.
+        host = None
     with gzip.open(args.out, "wt", compresslevel=3) as out:
         for i in indices[args.shard :: args.of]:
             sc = scenarios[i]
+            common.reset()
+            hook = getattr(host, "on_fallback", None)
+            if host is not None and hasattr(host, "on_fallback"):
+                host.on_fallback = lambda origin, why: common.FALLBACKS.append([origin, why])
             try:
                 rec = module.run(json.loads(json.dumps(sc)))
             except Exception as exc:  # noqa: BLE001
                 # The harness itself broke on this tree: a difference all the same.
                 rec = {"harness": f"EXC {type(exc).__name__}: {exc}"}
-            out.write(json.dumps({"i": i, "sc": sc, "rec": rec}, sort_keys=True, default=str))
+            finally:
+                if host is not None and hasattr(host, "on_fallback"):
+                    host.on_fallback = hook
+            line = {
+                "i": i,
+                "sc": sc,
+                "rec": rec,
+                "states": common.STATES,
+                "fallbacks": common.FALLBACKS,
+                "seeded": common.SEEDED,
+            }
+            out.write(json.dumps(line, sort_keys=True, default=str))
             out.write("\n")
     return 0
 

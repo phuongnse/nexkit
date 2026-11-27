@@ -7,7 +7,7 @@ record. Records the preview, a sweep and GitHub after it, and `nexkit status`.""
 
 import itertools
 
-from common import HEAD, after, quiet
+from common import HEAD, after, quiet, seed
 
 from families.stop import QSETS
 from nexkit import autopilot
@@ -113,6 +113,7 @@ def build(sc):
 def run(sc):
     gh = build(sc)
     cfg = make_config(autopilot={"enabled": True, "answer": sc["answer"]}, notify=["olivia"])
+    seed(gh, cfg)
     res = {}
     with quiet():
         after(gh, cfg, res)

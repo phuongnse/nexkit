@@ -29,6 +29,7 @@ from common import (
     attempt,
     chk,
     quiet,
+    seed,
     snapshot,
     walk,
 )
@@ -170,6 +171,7 @@ def run(sc):
         except Exception as exc:  # noqa: BLE001
             return f"EXC {type(exc).__name__}: {exc}"
 
+    seed(gh, cfg)
     res = {"rounds": []}
     with (
         mock.patch.object(autopilot, "ci_wait", ci_wait),

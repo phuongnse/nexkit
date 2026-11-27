@@ -8,7 +8,7 @@ start shows only to the walker."""
 
 import itertools
 
-from common import after, quiet
+from common import after, quiet, seed
 
 from nexkit.state import render_run
 from tests.support import FakeGitHub, make_config
@@ -73,6 +73,7 @@ def run(sc):
         },
         notify=["olivia"],
     )
+    seed(gh, cfg)
     res = {}
     with quiet():
         after(gh, cfg, res)

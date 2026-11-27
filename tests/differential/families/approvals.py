@@ -10,7 +10,7 @@ preview, a sweep and `nexkit status`. NexKit 6 has no run of the approval that o
 import itertools
 from unittest import mock
 
-from common import HEAD, after, attempt, planned_issue, quiet
+from common import HEAD, after, attempt, planned_issue, quiet, seed
 
 from nexkit import report as report_module
 from nexkit.maintain import maintain
@@ -69,6 +69,7 @@ def run(sc):
         **OUTCOMES[sc["outcome"]],
     }
     gh.comment(6, render_run(row, "Done."))
+    seed(gh, cfg)
     decision = {"action": "maintain", "task": "approved", "pr": 6, "issue": 5, "actor": "olivia"}
     decision["commit"] = {"head": HEAD, "none": None, "other": OTHER}[sc["commit"]]
     res = {}

@@ -259,6 +259,7 @@ import copy
 import json
 import os
 import re
+import sys
 import time
 
 from . import autopilot, engine, first_state, item_state, protocol, usage
@@ -874,6 +875,28 @@ def wait_id(doc, kind):
     return "w1.1"
 
 
+# Transitional, with `resync`: when set, `decide_all` calls `on_fallback(origin, why)` once for
+# each decision that `resync` took from the markers' document, with `origin` the host function
+# that asked, as `module.qualified name`, and `why` `no state` (nothing is stored), `differs`
+# (the stored state says something else than `built`) or `seen` (the stored state holds the event
+# already). Only a test or the differential harness sets it. Part 9 of #649 removes it with
+# `resync`. It is read as a global at call time.
+on_fallback = None
+
+
+def _why(state, base, event):
+    """Why `resync` took `base` from the markers instead of the stored `state`, or None when it
+    took `state` (`base is state`)."""
+    if base is state:
+        return None
+    if state is None:
+        return "no state"
+    events = event if isinstance(event, list) else [event]
+    if {one["id"] for one in events} & set(state["recentEvents"]):
+        return "seen"
+    return "differs"
+
+
 def resync(state, built, event):
     """The document that `event` is decided on while decisions still build theirs from NexKit
     6's markers: the stored `state` when it says what `built` says, apart from its revision, its
@@ -881,6 +904,7 @@ def resync(state, built, event):
     stored revision and with the events seen of `state`, but `event`, since the engine would
     take a second send of it for a duplicate. `event` may be a list of events that are sent in a
     row: `state` holds none of them, or `built` is the document. With no `state`, `built` itself.
+    `decide_all` reports each such fallback to `on_fallback`, when it is set.
     This is transitional: the last part of the move to the stored document removes it."""
     if state is None:
         return built
@@ -928,9 +952,16 @@ def decide_all(
     `Refused`."""
     found_policies = (policies(cfg) if cfg else {}) if found_policies is None else found_policies
     last = []
+    # The function that asked, which a later part converts: `decide` asks for its own caller.
+    frame = sys._getframe(1)
+    if frame.f_code is decide.__code__:
+        frame = frame.f_back
+    origin = f"{frame.f_globals.get('__name__')}.{frame.f_code.co_qualname}"
+    fell = []
 
     def answer(state):
         base = resync(state, built(state) if callable(built) else built, events)
+        fell[:] = [_why(state, base, events)]
         revision, state, answers, changed = base["revision"], base, [], False
         for event in events:
             sent = event
@@ -949,6 +980,9 @@ def decide_all(
         return state, answers, changed
 
     def given():
+        # Once per call, whatever the tries that `item_state.apply` made.
+        if on_fallback is not None and fell and fell[0] is not None:
+            on_fallback(origin, fell[0])
         return last[0] if with_changed else last[0][:2]
 
     if cfg is None:

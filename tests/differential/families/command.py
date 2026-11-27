@@ -13,7 +13,7 @@ unknown command and a running implement round stay `route`'s."""
 
 import inspect
 
-from common import attempt, quiet, snapshot
+from common import attempt, quiet, seed, snapshot
 
 from nexkit.state import PLAN_MARKER, plan_data_record, render_run
 from tests.support import FakeGitHub, make_config
@@ -133,6 +133,7 @@ def run(sc):
     from nexkit import route
 
     gh = build(sc)
+    seed(gh, make_config())
     res = {}
     with quiet():
         res["decision"] = attempt(decide, route.route, gh, sc)

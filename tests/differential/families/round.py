@@ -21,6 +21,7 @@ from common import (
     after,
     attempt,
     quiet,
+    seed,
     snapshot,
 )
 
@@ -132,6 +133,7 @@ def run(sc):
             raise GitHubError(502, "Bad gateway")
         return dict(WAIT) if sc["base"] == "yes" else None
 
+    seed(gh, cfg)
     res = {}
     with (
         mock.patch.object(autopilot, "ci_wait", ci_wait),

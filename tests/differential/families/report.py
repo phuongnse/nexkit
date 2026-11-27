@@ -22,6 +22,7 @@ from common import (
     done,
     quiet,
     review_output,
+    seed,
     snapshot,
 )
 
@@ -167,6 +168,7 @@ def run(sc):
             raise GitHubError(502, "Bad gateway")
         return real_held(gh_, cfg_, number)
 
+    seed(gh, cfg)
     res = {}
     with (
         mock.patch.object(autopilot, "ci_wait", ci_wait),

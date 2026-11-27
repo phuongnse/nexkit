@@ -194,36 +194,41 @@ keep losing fails and leaves its event for the next run. A state comment that so
 the App changed stores and takes nothing: the item waits for a person.
 
 The decisions after a plan (`after_plan`, `plan_carried_on`, `plan_waits_for`), for a new issue's
-first plan (`first_plan`), after a writer's vouch (`vouched`), after a blocked or failed `/nexkit
-go` (`after_go`, `round_carried_on`), after a stopped or timed-out round (`stopped`,
-`stop_carried_on`), at a usage limit or a transient error (`stage_limited`, `stage_transient`), when
-a resume comes due (`resumes`), for a lost command (`lost_again`), on a person's command
-(`command`), on a closing command (`closing_command`, which only previews, since `take` stored its
-event and the `maintain` job closes) and on an approval (`approved`: the `step` run of the item's
-group stores it, and the approval's own run in `approved-N` previews) read the item's stored state
-document (`stored`: the document in its state comment, or the import in memory when it has none) and
-send their event through `decide`, or their events in a row through `decide_all`. While other
-decisions still build their document from NexKit 6's markers, `resync` uses the stored document only
-when it says what the markers' document says, apart from its revision, its events seen and the ids
-of its outbox, and does not hold the event yet, or any event of a row. Otherwise the decision is the
-markers' document at the stored revision, so that NexKit 6's answers stay exactly as they are: a
-finished plan's import is `awaitingApproval`, which cannot take the plan's result, and a second send
-of one event, such as the plan's result that `report` and the step run both send, would be a
-duplicate. The last move to the stored document removes `resync`. A row of events, such as a hold
-and then the stop, or a round's result and then a comment, is one write: the state after the last
-event, at the revision read plus one, since `item_state.write` takes only the next revision, and a
-tick of a resume names the wait of the document it is decided on (`wait_id`). A run in the item's
-group stores the answer (`write`: the `report` after a stage, the `step` run, and the `step` that
+first plan (`first_plan`), after a writer's vouch (`vouched`), at a merge (`required_failed`,
+`accept_answer`, `checks_waited`, `refusal_cleared`, `update_failed`, `change_seen`), after a
+blocked or failed `/nexkit go` (`after_go`, `round_carried_on`), after a stopped or timed-out round
+(`stopped`, `stop_carried_on`), at a usage limit or a transient error (`stage_limited`,
+`stage_transient`), when a resume comes due (`resumes`), for a lost command (`lost_again`), on a
+person's command (`command`), on a closing command (`closing_command`, which only previews, since
+`take` stored its event and the `maintain` job closes) and on an approval (`approved`: the `step`
+run of the item's group stores it, and the approval's own run in `approved-N` previews) read the
+item's stored state document (`stored`: the document in its state comment, or the import in memory
+when it has none) and send their event through `decide`, or their events in a row through
+`decide_all`. While other decisions still build their document from NexKit 6's markers, `resync`
+uses the stored document only when it says what the markers' document says, apart from its
+revision, its events seen and the ids of its outbox, and does not hold the event yet, or any event
+of a row. Otherwise the decision is the markers' document at the stored revision, so that NexKit
+6's answers stay exactly as they are: a finished plan's import is `awaitingApproval`, which cannot
+take the plan's result, and a second send of one event, such as the plan's result that `report` and
+the step run both send, would be a duplicate. The last move to the stored document removes
+`resync`. A row of events, such as a hold and then the stop, or a round's result and then a
+comment, is one write: the state after the last event, at the revision read plus one, since
+`item_state.write` takes only the next revision, and a tick of a resume names the wait of the
+document it is decided on (`wait_id`). A run in the item's group stores the answer (`write`: the
+`report` after a stage or at a merge, the `step` run, the approval's merge, and the `step` that
 starts a due resume, `maintain.resume_one`), only on top of an existing state comment, at the next
-revision, with `item_state.apply`: a write that lost reads the state again, waits and decides again,
-and when every try lost, the run warns and carries out the answer anyway, which the next decision
-stores again. A run outside that group only previews: the sweep, `nexkit status` and
+revision, with `item_state.apply`: a write that lost reads the state again, waits and decides
+again, and when every try lost, the run warns and carries out the answer anyway, which the next
+decision stores again. A run outside that group only previews: the sweep, `nexkit status` and
 `plan_waits_for`, which asks what a plan waits for under no automatic approval, which is no answer
 of the item's own, and the `resume` run, which only sends the `step`. With no configuration,
 `resumes` and `lost_again` decide on the markers' document and read and store nothing. An item with
 no state comment stores nothing here, since only `store_import` posts the first one, and one whose
 state comment someone other than the App changed is refused (`autopilot.changed_comment`).
-`pending_id` names the action of the outbox that a result answers.
+`pending_id` names the action of the outbox that a result answers. A merge that waits for required
+checks keeps the time of its first wait in the stored document across the sweeps' previews.
+`accept_answer` decides each event that the host read before the merge's result, such as a head
+that moved, on the answer before it, and stores each as its own revision.
 
 No module outside `nexkit/engine/` writes on GitHub without an answer of the engine before it:
 `tests/test_answers.py` reads their code and fails on a dispatch, a merge, a branch update, a close,
@@ -242,6 +247,7 @@ from . import autopilot, engine, first_state, item_state, protocol, usage
 from . import config as configuration
 from .checks import failing_signatures
 from .engine.machine import RUNS
+from .github import GitHubError
 from .protocol.size import LONGEST, MOST
 from .report import TOO_LARGE
 from .schema import filled
@@ -800,21 +806,21 @@ def pending_id(doc, kind, stage=None):
 def stored(gh, cfg, number, pull=None):
     """(comment, document) of work item `number`: its state comment and the document stored
     in it, or (None, document) with the document that the import builds in memory when it has
-    none (`first_state.import_item`), and (None, None) when the import breaks the protocol or
-    the comment holds a document that cannot be read, which holds nothing up and which nothing
-    is stored over. Nothing is stored. Raises `Refused` when someone other than the App changed
-    the comment."""
+    none (`first_state.import_item`), and (None, None) when the import breaks the protocol, the
+    comment holds a document that cannot be read, or GitHub cannot be read, which holds nothing
+    up (NexKit 6's decisions read nothing here) and which nothing is stored over. Nothing is
+    stored. Raises `Refused` when someone other than the App changed the comment."""
     try:
         comment, doc = item_state.read(gh, number)
     except item_state.Edited as edited:
         raise _edited(edited) from None
-    except item_state.StateError:
+    except (item_state.StateError, GitHubError):
         return None, None
     if doc is not None:
         return comment, doc
     try:
         return None, first_state.import_item(gh, cfg, number, pull)
-    except (item_state.StateError, ValueError):
+    except (item_state.StateError, ValueError, GitHubError):
         return None, None
 
 
@@ -944,14 +950,16 @@ def decide(
     pull=None,
     found_policies=None,
     action=None,
+    wait=None,
     write=False,
     with_changed=False,
 ):
     """The engine's answer to `event` on work item `number`, as (state, actions): decided on
     the stored document where it agrees with `built`, the document that NexKit 6's markers
     leave for the decision (`resync`), and with `action`, (kind, stage), the id of the pending
-    action that the event's result answers (`pending_id`). `found_policies` default to the
-    configuration's.
+    action that the event's result answers (`pending_id`), or with `wait`, the kind of a wait,
+    the id of the wait of that kind that the tick answers (`wait_id`). `found_policies` default
+    to the configuration's.
 
     A run of the item's concurrency group passes `write`: when the item has a state comment,
     the answer is stored with `item_state.apply`, only on the revision that was read, and
@@ -972,6 +980,7 @@ def decide(
         pull=pull,
         found_policies=found_policies,
         action=action,
+        wait=wait,
         write=write,
         with_changed=True,
     )
@@ -2479,12 +2488,13 @@ def base_passes(cfg, issue, pull, run, auto_fixes):
     return _wait_end(*_answers(doc, [event], policies(cfg)))
 
 
-def required_failed(cfg, issue, pr, head, auto_fixes, wait):
+def required_failed(gh, cfg, issue, pr, head, auto_fixes, wait, write=False):
     """What follows required checks that failed on `head` of the NexKit pull request `pr` at
     its merge, as the engine decides it (`report._required_failed`): `auto_fix`, counted,
     `ci_waiting` while they fail as the base branch does, which `wait` names
     (`autopilot.ci_wait`), or `needs_human` when no automatic fix round is left. NexKit 6
-    tries a merge only when no label holds the issue. Raises `Refused`."""
+    tries a merge only when no label holds the issue. `write` stores the answer (`decide`).
+    Raises `Refused`."""
     doc = _pull_doc(cfg, issue, pr, head, "accepting", auto_fixes)
     version = doc["change"]["version"]
     action = {"id": first_state.RUN_ID, "next": None, "kind": "accept"}
@@ -2497,8 +2507,8 @@ def required_failed(cfg, issue, pr, head, auto_fixes, wait):
     }
     fields = {"action": first_state.RUN_ID, "changeVersion": version, "result": result}
     event = _event("actionFinished", issue, None, f"required-{pr}-{version}", **fields)
-    answer = step(doc, event, policies(cfg))
-    state, kinds = answer["state"], {action["kind"]: action for action in answer["actions"]}
+    state, actions = decide(gh, cfg, issue, event, doc, pull=pr, action=("accept",), write=write)
+    kinds = {action["kind"]: action for action in actions}
     if (kinds.get("runAgent") or {}).get("stage") == "fix":
         return "auto_fix"
     if any(wait["for"] == "baseFailure" for wait in state["waits"]):
@@ -2517,6 +2527,7 @@ def head_observed(issue, pr, head):
 
 
 def accept_answer(
+    gh,
     cfg,
     issue,
     pr,
@@ -2528,6 +2539,7 @@ def accept_answer(
     at=None,
     conflicts=0,
     updates=0,
+    write=False,
 ):
     """What follows the answer of GitHub's merge of the NexKit pull request `pr`, as the engine
     decides it (`report._refused`): the accept's `result`, as `accepted` or with its refusal
@@ -2540,7 +2552,10 @@ def accept_answer(
     and review of a newer head that `before` observed, `fix` or `redo` for the round that
     follows, `update` for the update of a branch that is behind its base, `base_failure` while a
     failure the base branch has is awaited, or `person`, whose reason `state["attention"]` names.
-    Raises `Refused`."""
+    With `write`, each event of `before` and then the result are decided on the answer before,
+    and each answer is stored at its own revision (`decide`), since a write takes the revision
+    that follows the stored one, and the actions of all of them are the answer's. Raises
+    `Refused`."""
     doc = _pull_doc(cfg, issue, pr, head, "accepting", auto_fixes)
     doc["rounds"]["conflicts"] = max(int(conflicts or 0), 0)
     if int(updates or 0) > 0:
@@ -2553,7 +2568,14 @@ def accept_answer(
     events = [{**event, "at": at or event["at"]} for event in before]
     fields = {"action": first_state.RUN_ID, "changeVersion": version, "result": result}
     events.append(_event("actionFinished", issue, at, f"accept-{pr}-{version}", **fields))
-    state, actions = _answers(doc, events, policies(cfg))
+    state, actions = doc, []
+    for event in events[:-1]:
+        state, found = decide(gh, cfg, issue, event, state, pull=pr, write=write)
+        actions += found
+    state, found = decide(
+        gh, cfg, issue, events[-1], state, pull=pr, action=("accept",), write=write
+    )
+    actions += found
     kinds = {action["kind"]: action for action in actions}
     waits = {wait["for"] for wait in state["waits"]}
     stage = (kinds.get("runAgent") or {}).get("stage")
@@ -2619,12 +2641,13 @@ def approved(gh, cfg, issue, pr, run, commit, actor, write=False):
     raise Refused(f"The engine answers {sorted(kinds)} to an approval, which the host cannot do.")
 
 
-def checks_waited(cfg, issue, pr, head, since, now, behind=False):
+def checks_waited(gh, cfg, issue, pr, head, since, now, behind=False, write=False):
     """What follows a sweep's tick of the merge of the NexKit pull request `pr` that waits for
     required checks since `since` on `head`, which is None when no start was recorded, as the
     engine decides it (`autopilot._merge_step`): `merge`, to try it again, or `waits` for a
     person once the checks have not passed for more than six hours. A `behind` branch keeps
-    being tried under `conflicts.auto_resolve`, as the engine decides. Raises `Refused`."""
+    being tried under `conflicts.auto_resolve`, as the engine decides. `write` stores the
+    answer (`decide`), which keeps `since` in the stored document. Raises `Refused`."""
     doc = _pull_doc(cfg, issue, pr, head, "accepting", 0)
     version = doc["change"]["version"]
     if behind:
@@ -2633,8 +2656,8 @@ def checks_waited(cfg, issue, pr, head, since, now, behind=False):
         doc["checksSince"] = {"version": version, "at": usage.iso(since)}
     doc["waits"] = [{"id": "w1.1", "for": "requiredChecks", "until": usage.iso(now), "on": None}]
     event = _event("tick", issue, usage.iso(now), f"merge-{pr}-{version}", wait="w1.1")
-    answer = step(doc, event, policies(cfg))
-    kinds = {action["kind"]: action for action in answer["actions"]}
+    _, actions = decide(gh, cfg, issue, event, doc, pull=pr, wait="requiredChecks", write=write)
+    kinds = {action["kind"]: action for action in actions}
     if "accept" in kinds:
         return "merge"
     if (kinds.get("needPerson") or {}).get("reason") == "acceptRefused":
@@ -2642,14 +2665,14 @@ def checks_waited(cfg, issue, pr, head, since, now, behind=False):
     raise Refused(f"The engine answers {sorted(kinds)} after a merge's wait, which it cannot do.")
 
 
-def refusal_cleared(cfg, issue, pr, run, acceptable):
+def refusal_cleared(gh, cfg, issue, pr, run, acceptable, write=False):
     """What follows a sweep's look at the NexKit pull request `pr` whose merge GitHub refused,
     the marker `run` (`autopilot._refused_step`), as the engine decides it: `merge` when the
     engine accepts it again, once `acceptable` says GitHub would accept the head `run` names
     now (`mergeable_state` `clean`, `unstable` or `has_hooks`), or `waits` when it asks for
     nothing, such as when GitHub would not, or when that head was refused while it was
     acceptable (`refused_clean`), so that each head is tried once. The accept policy decides
-    nothing here, as in NexKit 6. Raises `Refused`."""
+    nothing here, as in NexKit 6. `write` stores the answer (`decide`). Raises `Refused`."""
     head = str(run["head"])
     doc = _pull_doc(cfg, issue, pr, head, "ready", 0)
     text = first_state.SAYS["acceptRefused"]
@@ -2661,8 +2684,8 @@ def refusal_cleared(cfg, issue, pr, run, acceptable):
     if acceptable:
         fields["acceptable"] = True
     event = _event("changeObserved", issue, None, f"cleared-{pr}-{head}", **fields)
-    answer = step(doc, event, policies(cfg))
-    kinds = {action["kind"] for action in answer["actions"]}
+    _, actions = decide(gh, cfg, issue, event, doc, pull=pr, write=write)
+    kinds = {action["kind"] for action in actions}
     if "accept" in kinds:
         return "merge"
     if not kinds:
@@ -2670,11 +2693,11 @@ def refusal_cleared(cfg, issue, pr, run, acceptable):
     raise Refused(f"The engine answers {sorted(kinds)} after a refused merge, which it cannot do.")
 
 
-def update_failed(cfg, issue, pr, head, auto_fixes, why, updates=0):
+def update_failed(gh, cfg, issue, pr, head, auto_fixes, why, updates=0, write=False):
     """What follows an update of the NexKit pull request `pr`'s branch, which the engine asked
     for and GitHub refused, as it decides it (`report._update_branch`): `why` is GitHub's
     answer, `updates` the updates used before it. The engine hands the merge to a person: this
-    returns `person`. Raises `Refused`."""
+    returns `person`. `write` stores the answer (`decide`). Raises `Refused`."""
     doc = _pull_doc(cfg, issue, pr, head, "accepting", auto_fixes)
     if int(updates or 0) > 0:
         doc["rounds"]["updates"] = int(updates)
@@ -2684,21 +2707,22 @@ def update_failed(cfg, issue, pr, head, auto_fixes, why, updates=0):
     result = {"change": None, "refused": str(why), "observed": None}
     fields = {"action": first_state.RUN_ID, "changeVersion": version, "result": result}
     event = _event("actionFinished", issue, None, f"update-{pr}-{version}", **fields)
-    _, actions = _answers(doc, [event], policies(cfg))
+    _, actions = decide(gh, cfg, issue, event, doc, pull=pr, action=("updateChange",), write=write)
     reasons = {action["kind"]: action for action in actions}
     if (reasons.get("needPerson") or {}).get("reason") == "acceptRefused":
         return "person"
     raise Refused(f"The engine answers {sorted(reasons)} after a failed update.")
 
 
-def change_seen(cfg, issue, pr, head, auto_fixes, seen, waiting=False):
+def change_seen(gh, cfg, issue, pr, head, auto_fixes, seen, waiting=False, write=False):
     """What follows what the host found about the NexKit pull request `pr` at its merge, as the
     engine decides it (`report.merge_pull`, `autopilot._merge_step`): `seen` is the observation
     without its change and its conflict, the pull request's `version`, and whether it was
     `merged` by a person or became `empty` because its base branch already holds the change.
     NexKit never tried the merge then, so the merge has no result to send. `waiting` says that
     the merge waits for required checks. Returns `accepted` or `noChange` when the item ended,
-    and `review` when the engine checks the version that a person pushed. Raises `Refused`."""
+    and `review` when the engine checks the version that a person pushed. `write` stores the
+    answer (`decide`). Raises `Refused`."""
     doc = _pull_doc(cfg, issue, pr, head, "accepting", auto_fixes)
     version = doc["change"]["version"]
     if waiting:
@@ -2708,7 +2732,7 @@ def change_seen(cfg, issue, pr, head, auto_fixes, seen, waiting=False):
         doc["pending"] = [{**action, "changeVersion": version, "by": "engine"}]
     name = f"seen-{pr}-{seen['version']}"
     event = _event("changeObserved", issue, None, name, changeId=str(pr), conflicts=False, **seen)
-    state, actions = _answers(doc, [event], policies(cfg))
+    state, actions = decide(gh, cfg, issue, event, doc, pull=pr, write=write)
     kinds = {action["kind"] for action in actions}
     if state["state"] in ("accepted", "noChange"):
         return state["state"]

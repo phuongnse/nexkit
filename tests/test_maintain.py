@@ -477,18 +477,20 @@ class ParentAsksTheEngineTests(unittest.TestCase):
         self.assertEqual(lines, ["Left #1 as it is: NexKit's engine refused to decide: `no rule`"])
         self.assertEqual(self.gh.issues[1]["state"], "open")
 
-    def test_a_parent_with_more_sub_issues_than_a_state_holds_closes_as_the_engine_says(self):
+    def test_a_parent_with_more_sub_issues_than_a_state_holds_goes_by_the_parts_it_holds(self):
         self.gh.issues[2].update(state_reason="not_planned")
         for number in range(20, 31):
             self.gh.add_issue(number)
             self.gh.parents[number] = 1
             self.gh.issues[number].update(state="closed", state_reason="not_planned")
         self.gh.issues[5].update(state="closed", state_reason="not_planned")
-        self.assertEqual(
-            close_parents(self.gh, self.CFG, 5),
-            ["Left #1 open: none of its sub-issues was completed."],
-        )
+        none_completed = ["Left #1 open: none of its sub-issues was completed."]
+        self.assertEqual(close_parents(self.gh, self.CFG, 5), none_completed)
+        # A completed one beyond the ten that a state holds is not sent to the engine, so a
+        # person decides (`tests/differential/known.py`).
         self.gh.issues[30].update(state_reason="completed")
+        self.assertEqual(close_parents(self.gh, self.CFG, 5), none_completed)
+        self.gh.issues[20].update(state_reason="completed")
         self.assertEqual(
             close_parents(self.gh, self.CFG, 5),
             ["Closed #1 as completed: all its sub-issues are closed."],

@@ -171,13 +171,20 @@ finds no change is needed (`no_change_found`, called by `report._no_change`) and
 finds its change on the base branch (`on_base_found`, called by `report._already_on_base`) reach it
 too, and close only when it ends the item as `noChange`; the `report` of the item's group stores the
 answer of both in the item's state. Every parent's end goes through it: `part_ended` sends the end
-of a part to its parent's document, at every level and on every close of the part (a merge, a
+of a part to its parent's stored state, at every level and on every close of the part (a merge, a
 person's close, a change already on the base branch, no change needed, autopilot's sweep), and
-the parent ends only when every part ended and one was completed, under `parentEnd`, whatever
-the number of its sub-issues (the merge's own `accepted` result is stored before, whatever its
-parent). The run of the part only previews that answer, and sends the end
+the parent ends only when every part ended and one was completed, under `parentEnd`. It builds no
+document from GitHub's sub-issues. Before the part's own end, one row sends the end of every other
+sub-issue that GitHub shows closed and the stored parts still hold as open, so that an end that
+never reached the parent's group still counts, and, while the stored state waits for its parts to
+be filed (`createParts`), the result that names the sub-issues autopilot filed. Two guards only
+keep a parent open: a sub-issue that GitHub shows open and the stored parts do not list, such as
+an eleventh or one added after the split, keeps it open, and a parent whose stored state is not
+`split`, because it was stored before it had sub-issues, is refused, so that a person decides its
+end (the merge's own `accepted` result is stored before, whatever its parent). The run of the part
+only previews that answer, and sends the end
 to the parent's group as a `step` event with the note `part N` (`maintain.send_part_end`); the
-run that takes it there stores the answer in the parent's state (`maintain.record_part_end`),
+run that takes it there stores the row in the parent's state (`maintain.record_part_end`),
 and so does the `step` run of a parent whose parts are all closed. Only the facts GitHub knows,
 such as parts never filed as sub-issues, stay with `maintain.close_parent`.
 
@@ -3536,46 +3543,87 @@ def on_base_found(gh, cfg, decision, write=False):
 
 def part_ended(gh, cfg, parent, subs, part, state, write=False):
     """Whether the parent issue `parent` ends once its sub-issue `part`, which closed as
-    `state`, ended, as the engine decides it (`maintain.close_parent`, at every level and for
-    every way a part closes): `close` when every one of the sub-issues `subs` ended and one
-    was completed, under `parentEnd`, which GitHub gives as `person` without
-    `close_parent_issues`; `person` when every part ended and a person decides; otherwise
-    `stays`. Facts only GitHub knows, such as parts that were never filed, stay with
-    `maintain.close_parent`. A parent with more sub-issues than a state holds sends a reduced
-    list: the part, and one open, one completed and one dropped sub-issue, which keep the two
-    facts the rule reads, that every part ended and that one was completed. With `write`,
-    which only the `step` run of the parent's group passes (`maintain.record_part_end`), the
-    engine's answer is stored in the parent's state, when it has a state comment (`decide`);
-    the run of the part never does. Raises `Refused`."""
-    ended = {str(sub["number"]): first_state._ended(sub) for sub in subs}
-    # The part is one of them, though a list that GitHub has not caught up with may miss it.
-    ended[str(part)] = None
-    if len(ended) > MOST["split"]:
-        ended = _reduced(ended, str(part))
-    doc = first_state.empty(str(parent))
-    doc["state"] = "split"
-    doc["waits"] = [{"id": "w1.1", "for": "parts", "until": None, "on": None}]
-    doc["parts"] = [{"item": item, "state": how} for item, how in ended.items()]
+    `state`, ended, as the engine decides it on the parent's stored state alone
+    (`maintain.close_parent`, at every level and for every way a part closes): `close` when
+    every part ended and one was completed, under `parentEnd`, which GitHub gives as `person`
+    without `close_parent_issues`; `person` when every part ended and a person decides;
+    otherwise `stays`. The answer comes from the state after the row as well as from its
+    actions, so that a parent whose end was already stored answers the end of a part that closed
+    at the same time with `close` too, whether its `close` is pending or done.
+
+    The row that the engine gets holds what GitHub shows and the stored state lacks. Before the
+    end of `part`, it holds the end of every other sub-issue that GitHub shows closed and the
+    stored `parts` still hold as open, so that the end of an earlier part that never reached the
+    parent's group still counts. When the stored state still waits for its parts to be filed
+    (`createParts`, which autopilot carries out and reports nowhere else), the row starts with
+    that action's result: the sub-issues that autopilot filed for this parent
+    (`autopilot._part_of`), by number, matched to the action's part keys in order.
+
+    The host guards two facts that no event carries, only in the direction of keeping the parent
+    open (D10). A sub-issue other than `part` that GitHub shows open and the stored `parts` do
+    not list, such as an eleventh one or one added after the split, answers `stays` before
+    anything is sent or stored. A parent whose stored state is not `split`, such as one stored
+    before it had sub-issues, raises `Refused`: a person decides its end. A completed sub-issue
+    beyond the ten that a state holds is not sent either, so the engine may leave the parent to
+    a person where NexKit 6 closed it (`tests/differential/known.py`). A parent that the engine
+    already accepted answers `close` with nothing sent.
+
+    With `write`, which only the `step` run of the parent's group passes
+    (`maintain.record_part_end`), the row is stored in the parent's state, when it has a state
+    comment (`decide_all`); the run of the part never does. Raises `Refused`."""
+    _, doc = stored(gh, cfg, parent)
+    if doc is None:
+        raise Refused("The parent has no state to decide on.")
+    listed = {held["item"] for held in doc["parts"]}
+    unlisted = [
+        sub
+        for sub in subs
+        if sub.get("state") == "open"
+        and sub["number"] != int(part)
+        and str(sub["number"]) not in listed
+    ]
+    if unlisted:
+        return "stays"
+    if doc["state"] == "accepted":
+        return "close"
+    if doc["state"] != "split":
+        raise Refused("The parent's stored state holds no split, so a person decides its end.")
+    own = str(part)
+
+    def row(stored_state):
+        events = []
+        ended = {held["item"]: held["state"] for held in stored_state["parts"]}
+        filing = [a for a in stored_state.get("pending") or [] if a["kind"] == "createParts"]
+        if filing:
+            keys = [made["key"] for made in filing[0]["parts"]]
+            filed = sorted(sub["number"] for sub in subs if autopilot._part_of(sub, parent))
+            pairs = zip(keys, filed, strict=False)
+            named = [{"key": key, "item": str(item)} for key, item in pairs]
+            result = {"parts": named}
+            fields = {"action": filing[0]["id"], "changeVersion": None, "result": result}
+            events.append(_event("actionFinished", parent, None, f"parts-{parent}", **fields))
+            ended = {made["item"]: ended.get(made["item"]) for made in named[: MOST["split"]]}
+        for sub in subs:
+            number, how = str(sub["number"]), first_state._ended(sub)
+            if number != own and how and number in ended and ended[number] is None:
+                name = f"part-{parent}-{number}"
+                events.append(_event("partEnded", parent, None, name, part=number, state=how))
+        name = f"part-{parent}-{part}"
+        events.append(_event("partEnded", parent, None, name, part=own, state=state))
+        return events
+
     end = "whenPartAccepted" if cfg["close_parent_issues"] else "person"
     found = {**policies(cfg), "parentEnd": end}
-    event = _event("partEnded", parent, None, f"part-{parent}-{part}", part=str(part), state=state)
-    _, actions = decide(gh, cfg, parent, event, doc, found_policies=found, write=write)
-    kinds = {action["kind"] for action in actions}
-    if "close" in kinds:
+    after, answers = decide_all(gh, cfg, parent, row, None, found_policies=found, write=write)
+    kinds = {action["kind"] for _, actions in answers for action in actions}
+    if "close" in kinds or after["state"] == "accepted":
         return "close"
-    return "person" if "needPerson" in kinds else "stays"
-
-
-def _reduced(ended, part):
-    """The parts `ended` (item to state) cut to `MOST["split"]`, with `part` first, then the
-    first open one, the first completed and the first dropped, then the others in order. The
-    engine's rule reads only whether every part ended and whether one was completed, and the
-    list keeps both."""
-    keep = [part]
-    for wanted in (None, "accepted", "dropped"):
-        keep += [item for item, how in ended.items() if how == wanted and item not in keep][:1]
-    keep += [item for item in ended if item not in keep]
-    return {item: ended[item] for item in keep[: MOST["split"]]}
+    reason = (after.get("attention") or {}).get("reason")
+    parts = after["parts"]
+    waits = after["state"] == "split" and reason == "splitIncomplete"
+    if "needPerson" in kinds or (waits and all(held["state"] for held in parts)):
+        return "person"
+    return "stays"
 
 
 def stopped_counts(

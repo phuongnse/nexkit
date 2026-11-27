@@ -92,6 +92,7 @@ PERMISSION_NAMES = {
 }
 KEYS_HEADER = "| Key | Default | Meaning |"
 STAGE_KEYS_HEADER = "| Key | Meaning |"
+RENAMED_HEADER = "| Before | Now |"
 TRIGGERS_HEADER = "| Trigger | Starts NexKit for |"
 WORKFLOW_TEMPLATE = ROOT / "nexkit/templates/workflow.yml"
 # Step 5 of the App upgrade: the workflow permissions as names, then their one level.
@@ -887,6 +888,15 @@ def stage_key_rows():
     return []
 
 
+def dotted(cell):
+    """The dotted key of a table cell: `"fix": {"max_auto_rounds": 2}` gives fix.max_auto_rounds."""
+    value, path = json.loads("{" + cell.strip("`") + "}"), []
+    while isinstance(value, dict) and len(value) == 1:
+        key, value = next(iter(value.items()))
+        path.append(key)
+    return ".".join(path)
+
+
 def is_key(key):
     """Whether config.DEFAULTS defines `key`, top-level or `group.sub` of a group."""
     head, _, sub = key.partition(".")
@@ -1037,6 +1047,25 @@ class ConfigurationTests(unittest.TestCase):
         for key in sorted(listed - config.CACHE_KEYS):
             with self.subTest(key=key):
                 self.fail(f"docs/configuration.md lists {key}, which CACHE_KEYS does not define")
+
+    def test_the_renamed_table_lists_each_key_the_code_renames_and_no_other(self):
+        rows = table(CONFIG_PAGE, RENAMED_HEADER)
+        self.assertTrue(rows, "docs/configuration.md has no table of the keys renamed in 2.0")
+        listed = {dotted(row[0]): dotted(row[1]) for row in rows}
+        for key in sorted(set(config.RENAMED) - set(listed)):
+            with self.subTest(key=key):
+                self.fail(f"docs/configuration.md does not list the renamed key {key}")
+        for key in sorted(set(listed) - set(config.RENAMED)):
+            with self.subTest(key=key):
+                self.fail(f"docs/configuration.md lists {key}, which RENAMED does not define")
+        for key in sorted(set(listed) & set(config.RENAMED)):
+            with self.subTest(key=key):
+                self.assertEqual(
+                    listed[key],
+                    config.RENAMED[key],
+                    f"docs/configuration.md moves {key} to {listed[key]}, "
+                    f"but RENAMED moves it to {config.RENAMED[key]}",
+                )
 
     def test_the_pages_list_each_secret_an_older_workflow_can_pass_and_no_other(self):
         code = {*runtimes.DECLARED_SECRETS, *config.APP_SECRETS.values()}

@@ -23,5 +23,6 @@ python3 "$root/tests/differential/harness.py" --v6 "$dir" --sample "${NEXKIT_DIF
   --forbid nexkit.host.stage_transient --forbid nexkit.host.resumes \
   --forbid nexkit.host.required_failed --forbid nexkit.host.accept_answer \
   --forbid nexkit.host.update_failed --forbid nexkit.host.checks_waited \
-  --forbid nexkit.host.refusal_cleared --forbid nexkit.host.change_seen
+  --forbid nexkit.host.refusal_cleared --forbid nexkit.host.change_seen \
+  --forbid nexkit.host.part_ended
 python3 "$root/tests/walk.py" --walks "${NEXKIT_DIFF_WALKS:-1000}"

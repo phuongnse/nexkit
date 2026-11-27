@@ -132,7 +132,11 @@ state comment but decide from the markers' document wherever it differs from the
 decisions after a blocked or failed `/nexkit go`, a usage limit, a transient error and a resume
 decide on the stored state alone, and so do a person's command, NexKit's own dispatch of one and
 a closing command (`command`, `_on_base`, `closing_command`); `check.sh` fails if the usage limit,
-the transient error, the resume, a command or a closing command falls back. Every family stores the import of its items before its first event, so
+the transient error, the resume, a command or a closing command falls back. So do the sweep's
+looks at a merge that waits for required checks or that GitHub refused, and what the merge finds
+(`checks_waited`, `refusal_cleared`, `change_seen`): they read the start of the wait and the head
+refused while mergeable from the stored state, and `check.sh` fails if any of them falls back.
+Every family stores the import of its items before its first event, so
 those decisions meet a stored state, and `--fallbacks` lists where they still decide from the
 markers' document. The counts of conflict rounds and automatic fix rounds are the stored ones,
 so a round that the stored state counts and NexKit 6's markers do not yet can differ, which

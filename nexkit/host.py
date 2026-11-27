@@ -194,11 +194,14 @@ round that the import already placed in its checks, and a report that runs again
 new, and decide on the markers' document as before.
 
 It decides the start of the first plan of a new issue too (`first_plan`, called by
-`autopilot._first_plan`): the host builds the document that the import builds for an issue with
-no plan, `new` and waiting to start, decides it on the stored document (`decide`), sends a
-`requested` start with no person, and dispatches
-`/nexkit plan` only when the engine answers with a plan run. NexKit 6's checks of a hold, trust,
-blockers and waves come first, so the engine is never asked for a held or blocked issue.
+`autopilot._first_plan`): it decides on the item's stored document (`decide`), or on the import in
+memory when none is stored, and refuses with no configuration. It sends a `requested` start with
+no person, named `start-<n>-<revision>` after the stored revision so that a later start is never
+taken for a duplicate, and dispatches `/nexkit plan` only when the engine answers with a plan run.
+When the stored state still holds the plan run, because its report never reached the engine as
+after a plan that failed, the plan starts again, as NexKit 6 plans again, and the engine is not
+asked. NexKit 6's checks of a hold, trust, blockers and waves come first, so the engine is never
+asked for a held or blocked issue.
 
 It decides what follows a writer's vouch after an untrusted edit stopped a round or a merge
 (`vouched`, called by `autopilot._vouched`): the host builds the document that the import
@@ -211,12 +214,16 @@ waits for a person, where NexKit 6 started a counted round anyway
 engine (`tests/test_autopilot.py` and `tests/test_answers.py`).
 
 It decides what a writer's approval of a NexKit pull request does too (`approved`, called by
-`maintain.send_approval` and `maintain.merge_approved`): the host builds the document of the
-latest round's outcome, `ready` with attention `acceptRefused`, `reopened`, `personChecklistItem`
-or `accept`, sends the approval as a `changeApproved`, and merges, accepts the checklist items a
-person decides or starts nothing as the engine answers. A hold, an implement round that still
-runs, a pull request with no round and a round whose outcome takes no approval stay the host's.
-An engine that refuses to answer leaves GitHub as it was.
+`maintain.send_approval` and `maintain.merge_approved`): it sends the approval as a
+`changeApproved` named `review-<id>` after its review, the name that `take` gives it, on the
+item's stored document (`decide`), or on the import in memory when none is stored, and refuses
+with no configuration. It merges, accepts the checklist items a person decides or starts nothing
+as the engine answers. When the stored state already holds that name, because `take` stored the
+review in the item's group, the stored answer is carried out and the engine is not asked again: a
+pending `accept` merges (so does a hold on the accepting item, which `merge_approved` then says),
+and attention `accept` accepts the items. A hold, an implement round that still runs, a pull
+request with no round and a round whose outcome takes no approval stay the host's. An engine that
+refuses to answer leaves GitHub as it was.
 
 It decides which of the issues that may start do, and in what order, too (`sweep`, called by
 `autopilot.preview`): the start steps without a pull request go to the engine's `sweep` call, with
@@ -311,11 +318,12 @@ both send, would be a duplicate. `after_go` and `round_carried_on` no longer go 
 pass no document of the markers. Nor do `stage_limited`, `stage_transient` and `resumes`, which
 decide on the stored state alone, and so do `checks_waited`, `refusal_cleared` and `change_seen`:
 the sweep's looks at a merge that waits for required checks or that GitHub refused, and what the
-merge finds. So do `released`, `base_passes` and `conflicts_released`: the end of a wait is the
-release of a stored hold (`_release_row`), autopilot's start for an import made after the label
-was gone, or, when `take` released the hold already, the stored pending action. `stopped_counts`
-too: whether a stopped round gives its count back is the stored `rounds.automatic` and the pending
-fix run, never a flag of its caller. The last move to the stored document removes `resync`.
+merge finds. `first_plan` and `approved` pass none either; `vouched` still goes through it. So do
+`released`, `base_passes` and `conflicts_released`: the end of a wait is the release of a stored
+hold (`_release_row`), autopilot's start for an import made after the label was gone, or, when
+`take` released the hold already, the stored pending action. `stopped_counts` too: whether a
+stopped round gives its count back is the stored `rounds.automatic` and the pending fix run, never
+a flag of its caller. The last move to the stored document removes `resync`.
 
 A row of events, such as a hold and then the stop, or a round's result and then a comment, is one
 write: the state after the last event, at the revision read plus one, since `item_state.write`
@@ -1469,26 +1477,30 @@ def plan_waits_for(output, gh=None, cfg=None, number=None):
 _NO_CHANGE = {"changeVersion": None}
 
 
-def new_document(issue, record):
-    """The document of `issue` as the import builds it for an issue with no plan: `new`, waiting
-    to start (`first_state.Item.place`)."""
-    doc = _document(issue, record)
-    doc["waits"] = [{"id": "w1.1", "for": "start", "until": None, "on": None}]
-    return doc
-
-
 def first_plan(gh, cfg, issue, record, start, write=False):
     """The step that starts the first plan of `issue`, which has none yet, as the engine decides
-    it: autopilot's `requested` start of the plan, with no person behind it, on the new item's
-    document. The plan runs only when the engine answers with a plan run; `start` is the step's
-    fields. With `write`, the engine's answer is stored (`decide`). Raises `Refused`."""
+    it on the item's stored state alone (`stored`, `decide`): autopilot's `requested` start of
+    the plan, with no person behind it, named `start-<n>-<revision>` after the stored revision,
+    so that a later start is never taken for a duplicate. When the stored state still holds the
+    plan run (its report never reached the engine, as after a plan that failed), the plan starts
+    again, as NexKit 6 plans again, and the engine is not asked. Otherwise the plan runs only
+    when the engine answers with a plan run; `start` is the step's fields. `record` is
+    autopilot's record, which this decision no longer reads. With `write`, the engine's answer
+    is stored (`decide`). Raises `Refused`, with no configuration or no state to decide on."""
     number = issue["number"]
-    doc = new_document(issue, record)
+    doc = stored(gh, cfg, number)[1] if cfg is not None else None
+    if doc is None:
+        raise Refused("The item has no state to decide on.")
+    view = _PlanView(issue, {}, {}, {}, start, None, None, [])
+    if any(a["kind"] == "runAgent" and a.get("stage") == "plan" for a in doc["pending"]):
+        # The plan run is the engine's own answer, which the stored state still holds.
+        return view.step("start", "no plan yet", command="plan", **start)
+    name = f"start-{number}-{doc['revision']}"
     fields = {"what": "start", "by": None, "note": "", "plan": None, "title": doc["title"]}
-    event = _event("requested", number, None, f"start-{number}", **fields)
-    _, actions = decide(gh, cfg, number, event, doc, write=write)
+    event = _event("requested", number, None, name, **fields)
+    _, actions = decide(gh, cfg, number, event, None, write=write)
     if any(a["kind"] == "runAgent" and a["stage"] == "plan" for a in actions):
-        return autopilot._step(issue, "start", "no plan yet", command="plan", **start)
+        return view.step("start", "no plan yet", command="plan", **start)
     raise Refused("The engine starts no plan for a new issue.")
 
 
@@ -3310,43 +3322,49 @@ def accept_answer(
     raise Refused(f"The engine answers {sorted(kinds)} after a merge, which the host cannot do.")
 
 
-def approved(gh, cfg, issue, pr, run, commit, actor, write=False):
+def approved(gh, cfg, issue, pr, run, commit, actor, write=False, review=None):
     """What a writer's approval of the NexKit pull request `pr` of `issue` does, as the engine
     decides it (`maintain.send_approval`, `maintain.merge_approved`): `run` is the marker of
-    the pull request's latest round, which passed, and `commit` the commit that the approval
-    names, or None. The document is the one the import builds for that round: `ready` with
-    attention `acceptRefused` after a merge GitHub refused, `reopened` after a pull request
-    reopened, `personChecklistItem` while items that a person decides are not met, and `accept`
-    for a round that passed and left its accept to a person. Returns `merge`, when the engine
-    accepts the change; `accept`, when it takes the approval as a person's decision of the
-    checklist items and leaves the accept to them; or `none`, when it changes nothing, as for
-    an approval of another version of a change that waits for its accept, or with `merge.auto`
-    off. The engine answers on the item's stored state (`decide`). Only the `step` run in the
-    item's group passes `write`, which stores the answer; the approval's own run in its group
-    `approved-N` only previews. Raises `Refused`."""
+    the pull request's latest round, which passed, `commit` the commit that the approval names,
+    or None, and `review` the id of the approving review. The approval is a `changeApproved`
+    named `review-<id>` after its review, which is the name `take` gives it (`event_id`), or
+    `approval-<pr>-<version>` with no review id. Returns `merge`, when the engine accepts the
+    change; `accept`, when it takes the approval as a person's decision of the checklist items
+    (`run` has `decide`) and leaves the accept to them; or `none`, when it changes nothing, as
+    for an approval of another version of a change that waits for its accept, or with
+    `merge.auto` off. A held item that takes the approval gives `merge` too, with no accept, so
+    that `maintain.merge_approved` says the hold. The engine answers on the item's stored state
+    alone (`stored`, `decide`).
+    When the stored state already holds the approval's event, because `take` stored it in the
+    item's group, the stored answer is carried out and the engine is not asked again: a pending
+    `accept` merges, and attention `accept` accepts the items a person decides. Only the `step`
+    run in the item's group passes `write`, which stores the answer; the approval's own run in
+    its group `approved-N` only previews. Raises `Refused`, with no configuration or no state
+    to decide on."""
     decide_items = bool(run.get("decide"))
-    doc = _pull_doc(cfg, issue, pr, run.get("head"), "ready", 0)
-    if decide_items:
-        reason = "personChecklistItem"
-        doc["rounds"]["checklist"] = ["not_met"]
-    elif run.get("outcome") == "merge_refused":
-        reason = "acceptRefused"
-    elif run.get("outcome") == autopilot.PULL_CLOSED:
-        reason = "reopened"
-    else:
-        reason = "accept"
-    doc["attention"] = {"reason": reason, "text": first_state.SAYS[reason], "ref": None}
+    doc = stored(gh, cfg, issue, pr)[1] if cfg is not None else None
+    if doc is None:
+        raise Refused("The item has no state to decide on.")
     version = str(commit or doc["change"]["version"])
+    name = event_id("review", review) if review is not None else f"approval-{pr}-{version}"
+    if name in doc["recentEvents"]:
+        held = doc["hold"] and doc["state"] == "accepting"
+        if held or any(action["kind"] == "accept" for action in doc["pending"]):
+            return "merge"
+        if decide_items and (doc["attention"] or {}).get("reason") == "accept":
+            return "accept"
+        return "none"
     fields = {"by": _person(actor or "someone", "writer"), "changeId": str(pr)}
     fields["changeVersion"] = version
-    event = _event("changeApproved", issue, None, f"approval-{pr}-{version}", **fields)
+    event = _event("changeApproved", issue, None, name, **fields)
     state, actions, changed = decide(
-        gh, cfg, issue, event, doc, pull=pr, write=write, with_changed=True
+        gh, cfg, issue, event, None, pull=pr, write=write, with_changed=True
     )
     kinds = {action["kind"] for action in actions}
     if not changed:
         return "none"
-    if "accept" in kinds:
+    if "accept" in kinds or (not kinds and state["hold"] and state["state"] == "accepting"):
+        # A hold keeps the engine's accept back, and the host says so (`maintain.merge_approved`).
         return "merge"
     if decide_items and (state["attention"] or {}).get("reason") == "accept":
         return "accept"

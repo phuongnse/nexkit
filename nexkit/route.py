@@ -621,6 +621,7 @@ def _approval_step(gh, issue, pr, review_id):
         "issue": issue,
         "actor": login,
         "commit": commit,
+        "review": review_id,
     }
 
 

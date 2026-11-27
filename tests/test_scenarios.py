@@ -3553,6 +3553,29 @@ class ScenarioTests(unittest.TestCase):
         self.same_item(imported, plain, "open")
         self.assertTrue(imported.gh.comments_matching(5, "a person is needed"))
 
+    def test_an_imported_plan_that_a_comment_follows_plays_on_and_stores_the_answer(self):
+        def script(pipe, inputs):
+            return plan(questions=[{"question": "Which?", "options": ["a", "b"]}])
+
+        def built():
+            pipe = Pipeline(self, config(autopilot={"answer": "never"}), script)
+            pipe.issue(5)
+            autopilot.request(pipe.gh, "nexkit.yml", "main")
+            pipe.drain()
+            self.assertEqual([c for c, *_ in pipe.played], ["plan"])
+            return pipe
+
+        imported, plain = built(), built()
+        self.stored_import(imported)
+        for pipe in (imported, plain):
+            pipe.gh.human_comment(5, "Please keep it small.")
+        self.same_item(imported, plain, "open")
+        # The runs of the item's group stored their answers past the import's revision, while
+        # the item that stored no import still has no state comment.
+        [comment] = imported.state_comments(5)
+        self.assertGreater(item_state.find([comment])[1]["revision"], 1)
+        self.assertEqual(plain.state_comments(5), [])
+
     def test_a_pull_request_in_its_checks_is_imported_and_carries_on_as_before(self):
         def built(import_there):
             seen = []

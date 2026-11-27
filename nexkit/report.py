@@ -797,7 +797,16 @@ def _question_lines(items):
 
 
 def needs_person(
-    outcome, cfg, plan=None, resume=None, confirm=(), decide=(), evidence=None, found=None
+    outcome,
+    cfg,
+    plan=None,
+    resume=None,
+    confirm=(),
+    decide=(),
+    evidence=None,
+    found=None,
+    gh=None,
+    number=None,
 ):
     """The reason a person is needed after a run, or None: what to do, then why NexKit does
     not, with what the run found that shows where to look (see `autopilot.person`). It
@@ -808,10 +817,11 @@ def needs_person(
     may name `questions` (a blocked round's), `pull` (the run is a pull request's round),
     `error`, `failing` (the names of checks that still fail), `findings` (the review's
     blocking findings), `refused` (`refusal.explain` for a refused merge) and
-    `timed_out`."""
+    `timed_out`. For a plan, `gh` and the item's `number` let the engine decide on the item's
+    stored document, which it only reads."""
     found = found or {}
     if outcome == "planned":
-        return _planned(plan or {})
+        return _planned(plan or {}, gh, cfg, number)
     if outcome == "merge_waiting":
         # Only a round whose issue autopilot's sweeps look at waits like this.
         return None
@@ -913,14 +923,14 @@ def needs_person(
     return autopilot.person(do, why)
 
 
-def _planned(plan):
+def _planned(plan, gh=None, cfg=None, number=None):
     """Why a person is needed after the plan `plan`, without automatic approval: what the
     engine waits for, in NexKit 6's words (`host.plan_waits_for`). A clean plan waits for
     the `/nexkit go` of whoever asked for it, and mentions nobody."""
     from .host import Refused, plan_waits_for, refused_reason
 
     try:
-        reason = plan_waits_for(plan)
+        reason = plan_waits_for(plan, gh, cfg, number)
     except Refused as error:
         return refused_reason(error)
     if reason == "approval" and plan.get("too_large"):
@@ -2514,7 +2524,8 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             return _no_change(gh, cfg, decision, agent)
         if action == "plan":
             plan = publish.get("comment")
-            reason = needs_person("planned", cfg, plan=agent.get("output"))
+            output = agent.get("output")
+            reason = needs_person("planned", cfg, plan=output, gh=gh, number=decision["issue"])
             summary = f"[Plan]({plan}) posted." if plan else ""
             if reason and autopilot.carries_on(gh, cfg, decision, "planned", agent, ran=agent_ran):
                 reason = None

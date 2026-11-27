@@ -1,9 +1,11 @@
 """The GitHub host's calls of the engine's `step` (docs/engine.md#getting-there).
 
-Every decision that moves an item is the engine's. The host keeps no state document for them: for
-each one, it builds the item's document from NexKit 6's markers, as the import reads them
+Every decision that moves an item is the engine's. Most still keep no state document: for each
+one, the host builds the item's document from NexKit 6's markers, as the import reads them
 (`first_state`), sends the event that GitHub shows, and carries out the answer with NexKit 6's
-code, in NexKit 6's words. After a plan, a stopped round and a review,
+code, in NexKit 6's words. The decisions after a plan, for a new issue's first plan and after a
+writer's vouch read the item's stored state document too, and store the engine's answer
+(`stored`, `decide`, `resync`, below). After a plan, a stopped round and a review,
 `report` also sends what the runner's `run.json` says the agent spent (`spent`).
 
 The engine decides what follows a plan: its approval by autopilot, the answers to its
@@ -128,13 +130,15 @@ finds the label gone (`conflicting`, `conflicts_released`).
 
 It decides the start of the first plan of a new issue too (`first_plan`, called by
 `autopilot._first_plan`): the host builds the document that the import builds for an issue with
-no plan, `new` and waiting to start, sends a `requested` start with no person, and dispatches
+no plan, `new` and waiting to start, decides it on the stored document (`decide`), sends a
+`requested` start with no person, and dispatches
 `/nexkit plan` only when the engine answers with a plan run. NexKit 6's checks of a hold, trust,
 blockers and waves come first, so the engine is never asked for a held or blocked issue.
 
 It decides what follows a writer's vouch after an untrusted edit stopped a round or a merge
 (`vouched`, called by `autopilot._vouched`): the host builds the document that the import
-builds, `failed` with attention `untrusted` or, for a merge, `ready`, sends the writer's newer
+builds, `failed` with attention `untrusted` or, for a merge, `ready`, decides it on the stored
+document (`decide`), sends the writer's newer
 `/nexkit trust` as a `requested` `trust`, and starts a plan, an automatic fix round that counts,
 or the checks and review, as the engine answers. A pull request with no automatic fix round left
 waits for a person, where NexKit 6 started a counted round anyway
@@ -179,6 +183,26 @@ first, so that a command whose run a newer one replaced is still answered, and a
 keep losing fails and leaves its event for the next run. A state comment that someone other than
 the App changed stores and takes nothing: the item waits for a person.
 
+The decisions after a plan (`after_plan`, `plan_carried_on`, `plan_waits_for`), for a new issue's
+first plan (`first_plan`) and after a writer's vouch (`vouched`) read the item's stored state
+document (`stored`: the document in its state comment, or the import in memory when it has none)
+and send their event through `decide`. While other decisions still build their document from
+NexKit 6's markers, `resync` uses the stored document only when it says what the markers' document
+says, apart from its revision, its events seen and the ids of its outbox, and does not hold the
+event yet. Otherwise the decision is the markers' document at the stored revision, so that NexKit
+6's answers stay exactly as they are: a finished plan's import is `awaitingApproval`, which cannot
+take the plan's result, and a second send of one event, such as the plan's result that `report`
+and the step run both send, would be a duplicate. The last move to the stored document removes
+`resync`. A run in the item's group stores the answer (`write`: the `report` after a plan, and
+the `step` run), only on top of an existing state comment, at the next revision, with
+`item_state.apply`: a write that lost reads the state again, waits and decides again, and when
+every try lost, the run warns and carries out the answer anyway, which the next decision stores
+again. A run outside that group only previews: the sweep, `nexkit status` and `plan_waits_for`,
+which asks what a plan waits for under no automatic approval, which is no answer of the item's
+own. An item with no state comment stores nothing here, since only `store_import` posts the first
+one, and one whose state comment someone other than the App changed is refused
+(`autopilot.changed_comment`). `pending_id` names the action of the outbox that a result answers.
+
 No module outside `nexkit/engine/` writes on GitHub without an answer of the engine before it:
 `tests/test_answers.py` reads their code and fails on a dispatch, a merge, a branch update, a close,
 a cancel or a rerun that none comes before.
@@ -186,6 +210,7 @@ a cancel or a rerun that none comes before.
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
@@ -737,15 +762,124 @@ def _take(gh, cfg, number, tries, sleep):
     return taken
 
 
+# -- the stored document and the decisions that store their answer -------------------------
+
+
+def pending_id(doc, kind, stage=None):
+    """The id of the first action of `doc`'s outbox that is a `kind` (and runs `stage`, when
+    given), which the result of that action names, or the id that NexKit 6's runs on their way
+    stand for (`first_state.RUN_ID`) when `doc` has none."""
+    for action in doc.get("pending") or []:
+        if action["kind"] == kind and (stage is None or action.get("stage") == stage):
+            return action["id"]
+    return first_state.RUN_ID
+
+
+def stored(gh, cfg, number, pull=None):
+    """(comment, document) of work item `number`: its state comment and the document stored
+    in it, or (None, document) with the document that the import builds in memory when it has
+    none (`first_state.import_item`), and (None, None) when the import breaks the protocol or
+    the comment holds a document that cannot be read, which holds nothing up and which nothing
+    is stored over. Nothing is stored. Raises `Refused` when someone other than the App changed
+    the comment."""
+    try:
+        comment, doc = item_state.read(gh, number)
+    except item_state.Edited as edited:
+        raise _edited(edited) from None
+    except item_state.StateError:
+        return None, None
+    if doc is not None:
+        return comment, doc
+    try:
+        return None, first_state.import_item(gh, cfg, number, pull)
+    except (item_state.StateError, ValueError):
+        return None, None
+
+
+def _core(doc):
+    """`doc` without what a decision does not read: the revision, the events seen, and the
+    ids that each action of the outbox and each wait was given."""
+    doc = copy.deepcopy(doc)
+    doc.pop("revision", None)
+    doc.pop("recentEvents", None)
+    for key in ("pending", "waits"):
+        for entry in doc.get(key) or []:
+            entry.pop("id", None)
+            entry.pop("next", None)
+    return doc
+
+
+def resync(state, built, event):
+    """The document that `event` is decided on while decisions still build theirs from NexKit
+    6's markers: the stored `state` when it says what `built` says, apart from its revision, its
+    ids and its events seen, and does not hold `event` yet. Otherwise `built`, at the
+    stored revision and with the events seen of `state`, but `event`, since the engine would
+    take a second send of it for a duplicate. With no `state`, `built` itself. This is
+    transitional: the last part of the move to the stored document removes it."""
+    if state is None:
+        return built
+    seen = state["recentEvents"]
+    if event["id"] not in seen and _core(state) == _core(built):
+        return state
+    base = copy.deepcopy(built)
+    base["revision"] = state["revision"]
+    base["recentEvents"] = [name for name in seen if name != event["id"]]
+    return base
+
+
+def decide(
+    gh, cfg, number, event, built, *, pull=None, found_policies=None, action=None, write=False
+):
+    """The engine's answer to `event` on work item `number`, as (state, actions): decided on
+    the stored document where it agrees with `built`, the document that NexKit 6's markers
+    leave for the decision (`resync`), and with `action`, (kind, stage), the id of the pending
+    action that the event's result answers (`pending_id`). `found_policies` default to the
+    configuration's.
+
+    A run of the item's concurrency group passes `write`: when the item has a state comment,
+    the answer is stored with `item_state.apply`, only on the revision that was read, and
+    read and decided again after a wait when another write came first. When every try lost it
+    warns and gives the answer anyway, which was not stored: the next decision stores its own,
+    and failing the run would lose its report or its step. Without `write`, or with no state
+    comment, which only `store_import` posts, the answer is a preview and nothing is stored.
+    Raises `Refused` when the engine refuses or someone other than the App changed the
+    state comment."""
+    found_policies = policies(cfg) if found_policies is None else found_policies
+    last = []
+
+    def answer(state):
+        sent = event
+        base = resync(state, built, event)
+        if action is not None:
+            sent = {**event, "action": pending_id(base, *action)}
+        found = step(base, sent, found_policies)
+        last[:] = [(found["state"], found["actions"])]
+        return found["state"], found["actions"], found.get("changed", False)
+
+    comment, doc = stored(gh, cfg, number, pull)
+    if not write or comment is None:
+        answer(doc)
+        return last[0]
+    try:
+        item_state.apply(gh, number, answer, sleep=lambda wait: time.sleep(wait))
+    except item_state.Edited as edited:
+        raise _edited(edited) from None
+    except item_state.Moved:
+        why = "other writes came first, so its answer is not stored"
+        print(f"::warning::The state of #{number} moved: {why}.")
+    return last[0]
+
+
 # -- what follows a plan -------------------------------------------------------------------
 
 
-def after_plan(gh, cfg, issue, plan, run, record, start, comments, pull=None):
+def after_plan(gh, cfg, issue, plan, run, record, start, comments, pull=None, write=False):
     """The step after the latest plan of `issue`, the comment `plan` that the run `run`
     posted, as the engine decides it: with `pull`, the plan autopilot asked for after a round
     of that pull request ran out of time. A collaborator's comment after an issue's plan comes
     first (`autopilot._assess`). `record` is autopilot's record and `start` what a command
-    that the step starts begins from. Raises `Refused`."""
+    that the step starts begins from. With `write`, which only the run of the item's group
+    passes, the engine's answer is stored (`decide`). Raises `Refused`."""
     number = issue["number"]
     data = plan_data(plan)
     said = [] if pull else autopilot._commented_after(comments, plan)
@@ -763,9 +897,10 @@ def after_plan(gh, cfg, issue, plan, run, record, start, comments, pull=None):
             doc["asked"].append("supersede")
         doc = _planning(doc, _depth(gh, issue, data), autopilot.asked_again(comments))
         event = _result(number, plan, data, run, change)
-    found = step(doc, event, policies(cfg))
+    action = None if said else ("runAgent", "plan")
+    state, actions = decide(gh, cfg, number, event, doc, pull=pull, action=action, write=write)
     view = _PlanView(issue, plan, data, run, start, pull, picked, said)
-    return view.carry(found["actions"], doc["asked"], found["state"]["asked"])
+    return view.carry(actions, doc["asked"], state["asked"])
 
 
 class _PlanView:
@@ -894,12 +1029,13 @@ class _PlanView:
         return self.step("waits", text)
 
 
-def plan_carried_on(gh, cfg, issue, decision, output, ran=None):
+def plan_carried_on(gh, cfg, issue, decision, output, ran=None, write=False):
     """Whether autopilot carries on after the plan `output` that a run of `decision` posted,
     as the engine decides what follows it, so that `report` mentions nobody. A plan that finds
     no change carries on whatever else it says. A recommended answer that only closes the
     issue needs a person, whom `report` mentions: the sweep finds that mention since the run
-    (`autopilot.mentioned`), so it mentions nobody again. Raises `Refused`."""
+    (`autopilot.mentioned`), so it mentions nobody again. With `write`, which only `report`
+    passes, the engine's answer is stored (`decide`). Raises `Refused`."""
     if filled(output.get("no_change")):
         return True
     number = issue["number"]
@@ -920,27 +1056,36 @@ def plan_carried_on(gh, cfg, issue, decision, output, ran=None):
         changeVersion=None,
         result=result,
     )
-    actions = step(doc, event, policies(cfg))["actions"]
+    _, actions = decide(gh, cfg, number, event, doc, action=("runAgent", "plan"), write=write)
     kinds = {action["kind"]: action for action in actions}
     if "runAgent" in kinds:
         return kinds["runAgent"]["stage"] == "plan"
     return "needPerson" not in kinds
 
 
-def plan_waits_for(output):
+def plan_waits_for(output, gh=None, cfg=None, number=None):
     """Why the plan `output` that a run posted waits for a person without automatic approval,
     as the engine's attention names it: `approval`, of a plan that is too large, finds no
     change or is clean, `handMadeChange` or `question`. A plan whose questions name no
-    question still asks, as NexKit 6 reads it. Raises `Refused`."""
+    question still asks, as NexKit 6 reads it. With `gh`, `cfg` and the item's `number` it is
+    decided on the item's stored document (`decide`), and it never stores: it asks what the
+    plan waits for under no automatic approval, which is not the item's own answer. Raises
+    `Refused`."""
     data = plan_record(output)
     found = plan_output({}, data, {})
     if output.get("questions") and not found["questions"]:
         found["questions"] = [{"question": "", "options": [], "recommended": 0, "closes": 0}]
-    doc = _planning(_document({"number": 0}, {}), 0, False)
+    item = 0 if number is None else number
+    doc = _planning(_document({"number": item}, {}), 0, False)
     result = {**AGENT, "output": found}
-    event = _event("actionFinished", 0, None, "plan", action=first_state.RUN_ID, **_NO_CHANGE)
-    answer = step(doc, {**event, "result": result}, {})
-    return (answer["state"]["attention"] or {}).get("reason")
+    event = _event("actionFinished", item, None, "plan", action=first_state.RUN_ID, **_NO_CHANGE)
+    event = {**event, "result": result}
+    if gh is None or cfg is None or number is None:
+        answer = step(doc, event, {})["state"]
+    else:
+        action = ("runAgent", "plan")
+        answer, _ = decide(gh, cfg, number, event, doc, found_policies={}, action=action)
+    return (answer["attention"] or {}).get("reason")
 
 
 _NO_CHANGE = {"changeVersion": None}
@@ -954,16 +1099,16 @@ def new_document(issue, record):
     return doc
 
 
-def first_plan(cfg, issue, record, start):
+def first_plan(gh, cfg, issue, record, start, write=False):
     """The step that starts the first plan of `issue`, which has none yet, as the engine decides
     it: autopilot's `requested` start of the plan, with no person behind it, on the new item's
     document. The plan runs only when the engine answers with a plan run; `start` is the step's
-    fields. Raises `Refused`."""
+    fields. With `write`, the engine's answer is stored (`decide`). Raises `Refused`."""
     number = issue["number"]
     doc = new_document(issue, record)
     fields = {"what": "start", "by": None, "note": "", "plan": None, "title": doc["title"]}
     event = _event("requested", number, None, f"start-{number}", **fields)
-    actions = step(doc, event, policies(cfg))["actions"]
+    _, actions = decide(gh, cfg, number, event, doc, write=write)
     if any(a["kind"] == "runAgent" and a["stage"] == "plan" for a in actions):
         return autopilot._step(issue, "start", "no plan yet", command="plan", **start)
     raise Refused("The engine starts no plan for a new issue.")
@@ -972,7 +1117,7 @@ def first_plan(cfg, issue, record, start):
 VOUCHED = "a writer vouched for it again"
 
 
-def vouched(gh, cfg, issue, comment, run, record, start, pull=None):
+def vouched(gh, cfg, issue, comment, run, record, start, pull=None, write=False):
     """The step after a writer vouched for `issue` again once an untrusted edit stopped the
     round whose run comment `comment` holds the marker `run` (`autopilot._vouched_again`), as
     the engine decides it: the item is `failed` with attention `untrusted` for a round that
@@ -980,7 +1125,8 @@ def vouched(gh, cfg, issue, comment, run, record, start, pull=None):
     as the change, and the writer's newer vouch (`autopilot.vouch`) is a `requested` `trust`
     with role `writer`. A plan, an automatic fix round that counts, or the checks and review
     start only when the engine answers with them; a pull request with no automatic round left
-    waits for a person. Raises `Refused`."""
+    waits for a person. With `write`, the engine's answer is stored (`decide`). Raises
+    `Refused`."""
     number = issue["number"]
     found = autopilot.vouch(gh, issue)
     if found is None or found["id"] <= comment["id"]:
@@ -1007,7 +1153,7 @@ def vouched(gh, cfg, issue, comment, run, record, start, pull=None):
     fields = {"what": "trust", "by": _person(login, "writer"), "note": "", "plan": None}
     at, name = found.get("created_at"), event_id("comment", found)
     event = _event("requested", number, at, name, **fields)
-    actions = step(doc, event, policies(cfg))["actions"]
+    _, actions = decide(gh, cfg, number, event, doc, pull=pull, write=write)
     kinds = {action["kind"]: action for action in actions}
     agent = kinds.get("runAgent")
     if agent and agent["stage"] == "plan" and pull is None:

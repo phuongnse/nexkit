@@ -93,6 +93,9 @@ until 7.0. It lists `start-resumes-a-blocked-item-on-a-conflict` as well, which 
 today.
 
 The engine's state lives only for one call of the host while the GitHub host builds each
-item's document from NexKit 6's markers. A rule that only matters across calls, such as
+item's document from NexKit 6's markers, apart from the decisions after a plan, for a first
+plan and after a writer's vouch, which store their answer in the item's state comment but
+decide from the markers' document wherever it differs from the stored one. A rule that only
+matters across calls, such as
 keeping `rounds.automatic` after a round's checks or review judged it, shows to the walker but
 not on GitHub, so only the walker can see it broken.

@@ -1,9 +1,12 @@
 """The GitHub host's calls of the engine: what follows a plan is the engine's answer, which
-autopilot and `route` carry out in NexKit 6's words, storing no state
+autopilot and `route` carry out in NexKit 6's words. Most decisions store no state; those after
+a plan, for a first plan and after a vouch store the answer in the item's group
 (docs/engine.md#getting-there)."""
 
 import base64
+import contextlib
 import copy
+import io
 import json
 import os
 from datetime import UTC, datetime, timedelta
@@ -22,6 +25,7 @@ from nexkit.state import (
     PLAN_MARKER,
     answers_marker,
     empty_state,
+    latest_plan,
     plan_data_record,
     profile_record,
     questions,
@@ -692,6 +696,191 @@ class RefusedTest(HostCase):
             self.assertEqual((refusal["action"], refusal["reply_to"]), ("none", 5))
             self.assertIn("passes the limit", refusal["reason"])
         self.assertEqual(route(self.gh, "issue_comment", event)["task"], "close_answer")
+
+
+class DecideTest(HostCase):
+    """A decision after a plan that runs in the item's group stores the engine's answer at the
+    next revision, on the stored state document, and one that does not only previews it
+    (`host.decide`)."""
+
+    PLAN_RUN = {"url": "https://github.com/acme/app/actions/runs/1", "command": "plan"}
+    START = {"basis": "b", "target": 5, "note": "", "remember": {}}
+
+    def setUp(self):
+        super().setUp()
+        self.cfg = pilot(answer="recommended")
+        self.issue(5)
+        self.plan(5, {"questions": [ASKED]})
+        self.assertTrue(host.store_import(self.gh, self.cfg, 5))
+
+    def read(self, number=5):
+        return item_state.read(self.gh, number)
+
+    def after_plan(self, number=5, **options):
+        comments = self.gh.comments(number)
+        plan = latest_plan(comments)
+        issue = self.gh.issues[number]
+        return host.after_plan(
+            self.gh, self.cfg, issue, plan, self.PLAN_RUN, {}, self.START, comments, **options
+        )
+
+    def spied(self):
+        """A stand-in for `host.step` that calls it and keeps its requests and answers."""
+        seen, real = [], host.step
+
+        def spy(state, event, found_policies):
+            found = real(state, event, found_policies)
+            seen.append((state, event, found))
+            return found
+
+        return seen, spy
+
+    def decision(self):
+        return {"issue": 5, "pr": None, "action": "plan"}
+
+    def carried_on(self, **options):
+        return host.plan_carried_on(
+            self.gh, self.cfg, self.gh.issues[5], self.decision(), {"questions": [ASKED]}, **options
+        )
+
+    def test_after_plan_stores_the_engine_s_answer_at_the_next_revision(self):
+        seen, spy = self.spied()
+        with mock.patch.object(host, "step", spy):
+            step = self.after_plan(write=True)
+        self.assertEqual(step["state"], "start")
+        [(sent, event, found)] = seen
+        self.assertEqual((sent["revision"], found["state"]["revision"]), (1, 2))
+        self.assertEqual(self.read()[1], found["state"])
+        # The plan's result is the answer of the plan run that the outbox holds.
+        self.assertEqual(event["kind"], "actionFinished")
+        self.assertEqual(event["action"], first_state.RUN_ID)
+
+    def test_plan_carried_on_stores_the_engine_s_answer_at_the_next_revision(self):
+        seen, spy = self.spied()
+        with mock.patch.object(host, "step", spy):
+            self.assertTrue(self.carried_on(write=True))
+        [(sent, _, found)] = seen
+        self.assertEqual((sent["revision"], found["state"]["revision"]), (1, 2))
+        self.assertEqual(self.read()[1], found["state"])
+
+    def test_without_write_nothing_is_stored(self):
+        before = copy.deepcopy(self.gh.comments(5))
+        self.after_plan()
+        self.carried_on()
+        self.assertEqual(self.gh.comments(5), before)
+        self.assertEqual(self.read()[1]["revision"], 1)
+
+    def test_the_second_send_of_the_same_run_is_not_a_duplicate(self):
+        # `report` stores the answer to the plan's run, and the step run sends the result of the
+        # same run again: the engine would start nothing, so that one is decided on the markers.
+        self.assertTrue(self.carried_on(write=True))
+        stored = self.read()[1]
+        self.assertIn(host._run_event_id(), stored["recentEvents"])
+        self.assertEqual(self.after_plan(write=True)["state"], "start")
+        self.assertEqual(self.read()[1]["revision"], 3)
+
+    def test_a_write_that_lost_is_decided_again_after_a_wait_and_stored_next(self):
+        seen, spy = self.spied()
+
+        def racing(state, event, found_policies):
+            found = spy(state, event, found_policies)
+            if len(seen) == 1:
+                comment, doc = self.read()
+                other = {**doc, "revision": doc["revision"] + 1}
+                self.assertTrue(item_state.write(self.gh, 5, other, (comment, doc)))
+            return found
+
+        with (
+            mock.patch.object(host, "step", racing),
+            mock.patch.object(host.time, "sleep") as sleep,
+        ):
+            self.assertEqual(self.after_plan(write=True)["state"], "start")
+        self.assertEqual([sent["revision"] for sent, _, _ in seen], [1, 2])
+        self.assertEqual(sleep.call_count, 1)
+        self.assertEqual(self.read()[1]["revision"], 3)
+
+    def test_writes_that_all_lose_warn_and_still_give_the_answer(self):
+        real = host.step
+
+        def racing(state, event, found_policies):
+            found = real(state, event, found_policies)
+            comment, doc = self.read()
+            other = {**doc, "revision": doc["revision"] + 1}
+            item_state.write(self.gh, 5, other, (comment, doc))
+            return found
+
+        out = io.StringIO()
+        with mock.patch.object(host, "step", racing), mock.patch.object(host.time, "sleep"):
+            with contextlib.redirect_stdout(out):
+                step = self.after_plan(write=True)
+        self.assertEqual(step["state"], "start")
+        self.assertIn("::warning::", out.getvalue())
+        # Each lost try was another write: the answer itself was never stored.
+        self.assertEqual(self.read()[1]["revision"], 1 + item_state.TRIES)
+
+    def test_with_no_state_comment_a_decision_posts_none(self):
+        self.issue(6)
+        self.plan(6)
+        before = copy.deepcopy(self.gh.comments(6))
+        step = self.after_plan(6, write=True)
+        self.assertEqual(step["state"], "start")
+        self.assertEqual(self.gh.comments(6), before)
+        self.assertEqual(self.read(6), (None, None))
+
+    def test_an_edited_state_comment_refuses_every_decision(self):
+        comment, _ = self.read()
+        comment["editors"] = [BOT_LOGIN, "mallory"]
+        for options in ({}, {"write": True}):
+            with self.assertRaises(host.Refused):
+                self.after_plan(**options)
+        with self.assertRaises(host.Refused):
+            self.carried_on(write=True)
+        with self.assertRaises(host.Refused):
+            host.plan_waits_for({}, self.gh, self.cfg, 5)
+
+    def test_what_a_plan_waits_for_is_read_on_the_stored_state_and_never_stored(self):
+        output = {"questions": [ASKED]}
+        before = copy.deepcopy(self.gh.comments(5))
+        waits = host.plan_waits_for(output, self.gh, self.cfg, 5)
+        self.assertEqual(waits, host.plan_waits_for(output))
+        self.assertEqual(waits, "question")
+        self.assertEqual(self.gh.comments(5), before)
+
+    def test_a_state_comment_that_cannot_be_read_holds_up_nothing_and_is_not_written_over(self):
+        comment, _ = self.read()
+        comment["body"] = f"### NexKit state\n\n{item_state.PREFIX}{'QQ=='} -->"
+        before = copy.deepcopy(self.gh.comments(5))
+        self.assertEqual(self.after_plan(write=True)["state"], "start")
+        self.assertEqual(self.gh.comments(5), before)
+
+    def test_pending_id_names_the_action_that_a_result_answers(self):
+        doc = host._planning(host._document({"number": 5}, {}), 0, False)
+        self.assertEqual(host.pending_id(doc, "runAgent", "plan"), first_state.RUN_ID)
+        doc["pending"][0]["id"] = "a3.1"
+        self.assertEqual(host.pending_id(doc, "runAgent"), "a3.1")
+        self.assertEqual(host.pending_id(doc, "runAgent", "plan"), "a3.1")
+        self.assertEqual(host.pending_id(doc, "runAgent", "fix"), first_state.RUN_ID)
+        self.assertEqual(host.pending_id(doc, "runChecks"), first_state.RUN_ID)
+
+    def test_the_stored_state_decides_only_where_it_agrees_with_the_markers(self):
+        built = host._planning(host._document({"number": 5}, {}), 0, False)
+        event = {"id": "run-1"}
+        state = copy.deepcopy(built)
+        state.update(revision=4, recentEvents=["comment-9"])
+        state["pending"][0].update(id="a4.1", next="x")
+        # It agrees, apart from its revision, its events seen and the ids of its outbox.
+        self.assertIs(host.resync(state, built, event), state)
+        # An event it holds is decided on the markers, at its revision, with no duplicate.
+        state["recentEvents"] = ["comment-9", "run-1"]
+        base = host.resync(state, built, event)
+        self.assertEqual((base["revision"], base["recentEvents"]), (4, ["comment-9"]))
+        self.assertEqual(host._core(base), host._core(built))
+        # So is a state that says something else, or none.
+        state["recentEvents"] = []
+        state["state"] = "awaitingApproval"
+        self.assertEqual(host.resync(state, built, event)["state"], "planning")
+        self.assertEqual(host.resync(state, built, event)["revision"], 4)
+        self.assertIs(host.resync(None, built, event), built)
 
 
 class SweepTest(HostCase):

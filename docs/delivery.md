@@ -56,8 +56,8 @@ only the work that its feature needs.
      so it keeps the parent's milestone.
 - Every issue and pull request carries at least one label of its kind (`enhancement`, `bug`,
   `refactor`, `process` or `documentation`) and every other label whose description on GitHub fits
-  it, such as `security`.
-- A release pull request carries `release`, and one that updates a pin `dependencies`.
+  it, such as `security`. A release pull request carries `release` in place of a label of its
+  kind, and one that updates a pin `dependencies`.
 - A pull request that closes an issue carries that issue's labels, but for the holds `on-hold` and
   `hand-made`, and its milestone when it has one: NexKit sets them on the pull requests it opens,
   and a session sets them on its own. A pull request that closes no issue takes the same test.

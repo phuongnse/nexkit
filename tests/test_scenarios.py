@@ -26,7 +26,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
-from nexkit import autopilot, cli, host, item_state, progress, state
+from nexkit import autopilot, cli, first_state, host, item_state, progress, state
 from nexkit.checks import check_matrix
 from nexkit.github import GitHubError
 from nexkit.maintain import maintain, paused_runs, within_reach
@@ -48,6 +48,8 @@ from tests.test_item_state import CREATED, HELD, RELEASED
 from tests.test_item_state import step as engine_step
 
 WORKFLOW = "acme/app/.github/workflows/nexkit.yml@refs/heads/main"
+# The time at which the first import of an item is read, so that two imports are equal.
+IMPORTED_AT = datetime(2026, 1, 3, tzinfo=UTC)
 # The jobs of a run in each stage, as GitHub lists them while it runs there.
 STAGES = ["route", "agent", "publish", "verify", "review", "report"]
 
@@ -199,6 +201,24 @@ class Pipeline:
         return self.gh.add_issue(number, title=f"Issue {number}", milestone=1, **kw)
 
     # -- playing ------------------------------------------------------------------
+
+    def take_run(self, number):
+        """The start of a run in item `number`'s group, as `nexkit route` makes it
+        (`cli._take`): it stores the item's first state when there is none, then takes its
+        events. The import is read at `IMPORTED_AT`. Returns what it printed."""
+        real = host.store_import
+
+        def fixed(gh, cfg, item, now=None):
+            return real(gh, cfg, item, now=IMPORTED_AT)
+
+        out = io.StringIO()
+        with mock.patch.object(host, "store_import", fixed), contextlib.redirect_stdout(out):
+            cli._take(self.gh, self.cfg, "workflow_dispatch", {"inputs": {"number": str(number)}})
+        return out.getvalue()
+
+    def state_comments(self, number):
+        """The state comments of item `number`, which the App posted."""
+        return [c for c in self.gh.comments(number) if c["body"].startswith("### NexKit state")]
 
     def play(self):
         """Run every dispatch, and the ones they start, then the hourly sweeps that time
@@ -576,17 +596,19 @@ class ItemGroup:
     """One work item's concurrency group, as GitHub keeps it: one run runs and one waits, and a
     run queued while another waits replaces it, so its event is never answered by its own run.
     Each run takes the item's events from their sources as `nexkit route` does at its start
-    (`cli._take`, docs/engine-hosts.md#hosts), on a state comment that is already stored."""
+    (`cli._take`, docs/engine-hosts.md#hosts), on a state comment that is already stored, or,
+    with `stored` off, with none, so that the first run stores the item's import."""
 
     NUMBER = 5
 
-    def __init__(self, test):
+    def __init__(self, test, stored=True):
         self.test = test
         self.gh = FakeGitHub()
         self.cfg = make_config(autopilot={"enabled": True})
         self.gh.add_issue(self.NUMBER)
-        first, _, _ = engine_step(None, {**CREATED, "item": str(self.NUMBER)})
-        test.assertTrue(item_state.write(self.gh, self.NUMBER, first, (None, None)))
+        if stored:
+            first, _, _ = engine_step(None, {**CREATED, "item": str(self.NUMBER)})
+            test.assertTrue(item_state.write(self.gh, self.NUMBER, first, (None, None)))
         self.running = None
         self.waiting = None
         self.replaced = []  # the runs that a newer one replaced, which never ran
@@ -3476,6 +3498,202 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(state["state"], "planning")
         self.assertEqual(state["recentEvents"][-1], ids[0])
         self.assertEqual(group.cursor()[1], ids[1])
+
+    # -- the first state of an item ------------------------------------------------------
+
+    def stored_import(self, pipe, number=5, pull=None):
+        """Run `take_run` on `pipe` and check that it stored one state comment, at revision 1,
+        which holds what `first_state.import_item` makes of the item now. Returns the document."""
+        out = pipe.take_run(number)
+        self.assertIn(f"Stored the first state of #{number}", out)
+        [comment] = pipe.state_comments(number)
+        stored = item_state.find([comment])[1]
+        expected = first_state.import_item(pipe.gh, pipe.cfg, number, pull, now=IMPORTED_AT)
+        self.assertEqual(stored, expected)
+        self.assertEqual(stored["revision"], 1)
+        # A second run finds it and stores nothing more.
+        self.assertNotIn("Stored the first state", pipe.take_run(number))
+        self.assertEqual(pipe.state_comments(number), [comment])
+        return stored
+
+    def same_item(self, imported, plain, issue_state):
+        """`imported`, which stored an import in the middle of its work, plays on as `plain`,
+        which stored none: the same runs, merges, comments of the issue and end."""
+        self.assertEqual(imported.play(), plain.play())
+        self.assertEqual(imported.played, plain.played)
+        self.assertEqual(imported.gh.merged, plain.gh.merged)
+        self.assertEqual(imported.gh.issues[5]["state"], issue_state)
+        self.assertEqual(plain.gh.issues[5]["state"], issue_state)
+
+        def texts(pipe):
+            found = [c["body"] for n in (5, 6) for c in pipe.gh.comments(n)]
+            return [t for t in found if not t.startswith("### NexKit state")]
+
+        self.assertEqual(texts(imported), texts(plain))
+        self.assertEqual(
+            collect(imported.gh, imported.cfg, workers=1)["needs_person"],
+            collect(plain.gh, plain.cfg, workers=1)["needs_person"],
+        )
+
+    def test_a_plan_waiting_for_approval_is_imported_and_waits_as_before(self):
+        def script(pipe, inputs):
+            return plan(questions=[{"question": "Which?", "options": ["a", "b"]}])
+
+        def built():
+            pipe = Pipeline(self, config(autopilot={"answer": "never"}), script)
+            pipe.issue(5)
+            autopilot.request(pipe.gh, "nexkit.yml", "main")
+            pipe.drain()
+            self.assertEqual([c for c, *_ in pipe.played], ["plan"])
+            return pipe
+
+        imported, plain = built(), built()
+        stored = self.stored_import(imported)
+        self.assertEqual(stored["itemKind"], "change")
+        self.same_item(imported, plain, "open")
+        self.assertTrue(imported.gh.comments_matching(5, "a person is needed"))
+
+    def test_a_pull_request_in_its_checks_is_imported_and_carries_on_as_before(self):
+        def built(import_there):
+            seen = []
+
+            def checking(pipe, pull):
+                if import_there and not seen:
+                    seen.append(self.stored_import(pipe, 5, pull))
+
+            def script(pipe, inputs):
+                if inputs["command"] == "plan":
+                    return plan()
+                return {**done(), "checking": checking}
+
+            pipe = Pipeline(self, config(), script)
+            pipe.issue(5)
+            pipe.play()
+            return pipe, seen
+
+        imported, seen = built(True)
+        plain, _ = built(False)
+        # The import was read while the round checked its pull request.
+        self.assertEqual(seen[0]["change"]["id"], "6")
+        self.assertEqual(imported.played, plain.played)
+        self.assertEqual(imported.gh.merged, plain.gh.merged)
+        self.assertEqual(imported.gh.issues[5]["state"], "closed")
+        self.assertEqual(plain.gh.issues[5]["state"], "closed")
+        self.assertEqual(len(imported.state_comments(5)), 1)
+
+    def test_a_paused_run_is_imported_and_resumes_as_before(self):
+        def built():
+            pauses = itertools.count()
+
+            def script(pipe, inputs):
+                if inputs["command"] == "plan":
+                    return plan()
+                if inputs["command"] == "go" and next(pauses) < 1:
+                    at = autopilot.iso(datetime.now(UTC) + timedelta(minutes=30))
+                    limit = "You've hit your session limit"
+                    return {
+                        "agent": {
+                            "status": "paused",
+                            "error": f"Claude hit the account's usage limit: {limit}",
+                            "limit": limit,
+                            "resume_at": at,
+                            "reset_known": True,
+                        }
+                    }
+                return done()
+
+            pipe = Pipeline(self, config(), script)
+            pipe.issue(5)
+            autopilot.request(pipe.gh, "nexkit.yml", "main")
+            while pipe.gh.dispatches[pipe.handled]["inputs"]["command"] != "resume":
+                pipe.drain_one()
+            self.assertEqual(pipe.gh.run_comments(5)[-1]["run"]["status"], "paused")
+            return pipe
+
+        imported, plain = built(), built()
+        self.stored_import(imported)
+        for pipe in (imported, plain):
+            pipe.later(timedelta(minutes=31))
+        self.same_item(imported, plain, "closed")
+        self.assertEqual([c for c, *_ in imported.played].count("go"), 2)
+
+    def test_a_merge_waiting_for_required_checks_is_imported_and_merges_as_before(self):
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else done()
+
+        def built():
+            pipe = Pipeline(self, config(), script)
+            pipe.issue(5)
+            pipe.gh.required = {"e2e"}
+            pipe.gh.merge_error = GitHubError(405, 'Required status check "e2e" is expected.')
+            autopilot.request(pipe.gh, "nexkit.yml", "main")
+            pipe.drain()
+            self.assertEqual([o for *_, o in pipe.played], ["planned", "merge_waiting"])
+            return pipe
+
+        imported, plain = built(), built()
+        stored = self.stored_import(imported, 5, 6)
+        self.assertEqual(stored["change"]["id"], "6")
+        for pipe in (imported, plain):
+            # The required check passes: the next sweep merges.
+            pipe.gh.merge_error = None
+            pipe.head(6)
+        self.same_item(imported, plain, "closed")
+        self.assertEqual(len(imported.gh.merged), 1)
+
+    def test_a_state_comment_that_someone_else_changed_gets_no_second_one_and_waits_for_a_person(
+        self,
+    ):
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        pipe.gh.required = {"e2e"}
+        pipe.gh.merge_error = GitHubError(405, 'Required status check "e2e" is expected.')
+        autopilot.request(pipe.gh, "nexkit.yml", "main")
+        pipe.drain()
+        self.stored_import(pipe, 5, 6)
+        [comment] = pipe.state_comments(5)
+        comment["editors"] = [BOT_LOGIN, "mallory"]
+        out = pipe.take_run(5)
+        self.assertIn("::warning::", out)
+        self.assertIn("@mallory changed a comment of NexKit's", out)
+        self.assertEqual(pipe.state_comments(5), [comment])
+        needs = collect(pipe.gh, pipe.cfg, workers=1)["needs_person"]
+        found = [item for item in needs if autopilot.CHANGED_ENTRY in item["reason"]]
+        self.assertTrue(found and all("@mallory" in item["reason"] for item in found), needs)
+        # Deleting the comment imports the item again, at revision 1, on the next run.
+        pipe.gh.issue_comments[5].remove(comment)
+        self.assertIn("Stored the first state of #5", pipe.take_run(5))
+        [again] = pipe.state_comments(5)
+        self.assertNotEqual(again["id"], comment["id"])
+        self.assertEqual(item_state.find([again])[1]["revision"], 1)
+
+    def test_the_first_run_of_an_item_imports_and_a_later_run_answers_a_replaced_command(self):
+        group = ItemGroup(self, stored=False)
+        self.assertEqual(group.gh.comments(group.NUMBER), [])
+        group.queue("first")
+        # The first run stored the import at revision 1, before any comment of a person.
+        [comment] = group.gh.comments(group.NUMBER)
+        self.assertEqual(group.state()["revision"], 1)
+        self.assertIsNone(item_state.since(comment))
+        self.assertEqual(group.answered, [])
+        # While it runs, a command is posted and its run waits, and a remark's run replaces it.
+        asked = group.post("/nexkit plan Keep it short")
+        group.queue("asked")
+        group.post("Thanks, that helps", login="bob")
+        group.queue("remark")
+        self.assertEqual(group.replaced, ["asked"])
+        group.finish()
+        self.assertIn(f"comment-{asked['id']}", group.answered)
+        self.assertEqual(group.state()["state"], "planning")
+        self.assertEqual(len(group.gh.comments(group.NUMBER)), 3)
+        # The cursor moved past the command's comment.
+        at = asked["created_at"]
+        self.assertGreaterEqual(
+            item_state.order(group.cursor()), item_state.order((at, f"comment-{asked['id']}"))
+        )
 
 
 if __name__ == "__main__":

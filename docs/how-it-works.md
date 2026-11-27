@@ -411,6 +411,14 @@ output. With autopilot, each issue
 it worked on has one record comment, edited in place, that names the command it started
 last. Apart from those artifacts, nothing else is stored, so there is nothing to migrate or repair.
 
+On each open issue, and on each person's pull request that gets a non-approving review or a
+`/nexkit` command, the App also keeps one `### NexKit state` comment, which the first run of the
+item posts. It holds the engine's state document, imported from the markers above, and its
+revision. The runs of the item take its comments, reviews and hold labels from after that
+comment. Nothing is decided from the document yet: decisions still read the markers above, so the
+document goes stale until the host decides from it. A comment of it that someone other than the App
+changed counts for nothing, and the item waits for a person ([troubleshooting](troubleshooting.md#a-comment-of-nexkit-was-changed-by-someone-else)).
+
 A writer edits the state comment, and autopilot's record comment, only while the comment still
 holds what the writer read: it reads the comment again just before the edit
 ([D1](decisions/d1-state-lives-only-on-github.md)). When another write came first, the writer

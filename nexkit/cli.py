@@ -293,10 +293,13 @@ def cmd_app(args):
 def _take(gh, cfg, event_name, event):
     """Take the events of the work item whose group this run joins from their sources
     (`host.take`), before the run's own work, so that a command whose run GitHub replaced is
-    answered by the run that ran (docs/engine-hosts.md#hosts). A run in a group of its own
-    takes nothing. The engine refusing an event, or GitHub failing while the sources are read,
-    only warns: the run goes on. Raises `item_state.Moved` when every write lost."""
-    from . import host
+    answered by the run that ran (docs/engine-hosts.md#hosts). An open item with no state
+    comment first stores its first state, imported from NexKit 6's markers
+    (`host.store_import`). A run in a group of its own takes nothing. The engine refusing an
+    event, a state comment that someone else changed, a state that cannot be stored, or GitHub
+    failing while the sources are read, only warns: the run goes on. Raises `item_state.Moved`
+    when every write lost."""
+    from . import host, item_state
     from .github import GitHubError
     from .route import queue_item
 
@@ -304,8 +307,10 @@ def _take(gh, cfg, event_name, event):
     if number is None:
         return
     try:
+        if host.store_import(gh, cfg, number):
+            print(f"Stored the first state of #{number}, imported from NexKit 6's records.")
         taken = host.take(gh, cfg, number)
-    except (host.Refused, GitHubError) as exc:
+    except (host.Refused, item_state.StateError, GitHubError) as exc:
         print(f"::warning::Could not take the events of #{number} from their sources: {exc}")
         return
     print(f"Took {len(taken)} event(s) of #{number} from their sources.")

@@ -1087,9 +1087,10 @@ def decide_all(
     `Refused`."""
     found_policies = (policies(cfg) if cfg else {}) if found_policies is None else found_policies
     last = []
-    # The function that asked, which a later part converts: `decide` asks for its own caller.
+    # The function that asked, which a later part converts: `decide` and `_decided` ask for their
+    # own caller.
     frame = sys._getframe(1)
-    if frame.f_code is decide.__code__:
+    while frame.f_code in (decide.__code__, _decided.__code__):
         frame = frame.f_back
     origin = f"{frame.f_globals.get('__name__')}.{frame.f_code.co_qualname}"
     fell = []

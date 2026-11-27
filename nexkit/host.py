@@ -93,7 +93,11 @@ when NexKit 6 would update it, with the conflict rounds and updates used, and st
 round, updates the branch, stops the round's checks as `superseded` or waits for a person as the
 engine answers. A round that runs only its checks is in `checking`, any other pull request in
 `ready`. A hold, NexKit 6's other reasons not to start a round and a conflict round or update
-that fails to start after a stop (`stop_failed`) stay the host's.
+that fails to start after a stop (`stop_failed`) stay the host's. The push run, the schedule and
+another item's merge only preview that answer, in groups of their own. The conflict round that
+they dispatch is counted by its own run in the item's group (`command`): it sends the same
+observation with the answer stored, so that the stored conflict rounds used are current before
+the round starts, and the round starts only when the engine answers one.
 
 It decides when a plan, implement or fix stage runs again after its agent stopped at a usage
 limit or on a transient error (`stage_limited`, `stage_transient`, called by `report`), and when
@@ -187,7 +191,11 @@ kind) carries out the action that the stored state has pending for it (`_carried
 `implement` or `fix` `runAgent`, or the `runChecks` of a review), which the engine already
 decided and stored, and asks the engine nothing and stores nothing, so the same round dispatched
 again is never taken for a duplicate. The action that the import gave to a NexKit 6 run on its
-way (`first_state.RUN_ID`) is never carried out so. Any other command, a person's own dispatch and
+way (`first_state.RUN_ID`) is never carried out so. The first dispatch of a conflict round with
+nothing pending asks the engine about the conflict instead (`base_moved` with `write`) and
+stores the answer, one more conflict round used, before it starts the round, unless an earlier
+round on the same base commit ended (`route._conflicts_tried`); a resumed or retried round was
+counted when it started. Any other command, a person's own dispatch and
 a dispatch with nothing pending too, is a new request, named `dispatch-<run id>`, decided on the
 stored state, which a run of the item's group stores (`decide`, `resync`). A command whose own
 run a newer run replaced starts in the run that ran, when that run's own event starts nothing
@@ -234,14 +242,17 @@ for a hold or the base branch (`released`, `base_passes`), the checks that a fix
 (`diagnosis`) and which rounds count (`stopped_counts`). The checks and the review of a round are
 two events that GitHub shows apart, so `round_ended` stores two revisions, and so does a wait's end
 that has a head to observe first. The automatic fix rounds and the conflict rounds used are the
-stored `rounds`, or NexKit 6's count when that is higher (`_counted`), until the last move to the
-stored document removes that floor: a run that cannot store its count yet never lets a budget go
-past `fix.max_auto_rounds` or `conflicts.max_rounds`.
+stored `rounds` (`_stored_count`), and NexKit 6's count only when no state can be read, for
+example with no configuration. A conflict round that the push run, the schedule, another item's
+merge or a round's report starts is counted by the run it starts (`command`), so the stored count
+is current when the next decision reads it.
 
 While other decisions still build their document from NexKit 6's markers, `resync` uses the stored
 document only when it says what the markers' document says, apart from its revision, its events
 seen and the ids of its outbox, and does not hold the event yet, or any event of a row. Otherwise
-the decision is the markers' document at the stored revision, so that NexKit 6's answers stay
+the decision is the markers' document at the stored revision, with the stored `counted`,
+`conflicts` and `updates` wherever the markers' are lower, so that a document made from
+`first_state.empty` never gives a budget back, and so that NexKit 6's answers stay
 exactly as they are: a finished plan's import is `awaitingApproval`, which cannot take the plan's
 result, and a second send of one event, such as the plan's result that `report` and the step run
 both send, would be a duplicate. The last move to the stored document removes `resync`.
@@ -258,9 +269,12 @@ again. A run outside that group only previews: the sweep, `nexkit status`, the p
 hourly schedule and another item's merge, which decide `base_moved` and `stopped_counts` in groups
 of their own, `plan_waits_for`, which asks what a plan waits for under no automatic approval, and
 `diagnosis` of a round whose action is not stored yet, which sends a tick that is no event of the
-item's own, and the `resume` run, which
-only sends the `step`. None of them is an answer of the item. With no configuration, `resumes` and
-`lost_again` decide on the markers' document and read and store nothing. An item with no state
+item's own, and the `resume` run, which only sends the `step`. None of them is an answer of the
+item, so the conflict round that the push run, the schedule or a merge dispatches is counted by
+its own run in the item's group (`command`), while a branch update and the give-back of a stopped
+automatic fix round, which only a preview decides, are not stored yet: the stored `counted` stays
+one too high after such a stop. With no configuration, `resumes` and `lost_again` decide on the
+markers' document and read and store nothing. An item with no state
 comment stores nothing here, since only `store_import` posts the first one, and one whose state
 comment someone other than the App changed is refused (`autopilot.changed_comment`). `pending_id`
 names the action of the outbox that a result answers. A merge that waits for required checks keeps
@@ -886,14 +900,12 @@ def stored(gh, cfg, number, pull=None):
         return None, None
 
 
-def _counted(state, kept, key):
-    """The stored `rounds[key]` of `state`, or NexKit 6's count `kept` when that is higher.
-    Some runs that change a count cannot store it yet (the push and schedule runs start conflict
-    rounds, and a merge whose required checks fail starts a counted round), so the stored count
-    alone could let a budget be exceeded. This is transitional: the last part of the move to the
-    stored document removes the floor."""
-    found = ((state or {}).get("rounds") or {}).get(key) or 0
-    return max(int(found), max(int(kept or 0), 0))
+def _stored_count(state, kept, key):
+    """The stored `rounds[key]` of `state`, or NexKit 6's count `kept` when no state can be
+    read (no configuration, or a read that failed), which is the only count left then."""
+    if state is not None:
+        return int((state.get("rounds") or {}).get(key) or 0)
+    return max(int(kept or 0), 0)
 
 
 def _core(doc):
@@ -946,8 +958,11 @@ def resync(state, built, event):
     ids and its events seen, and does not hold `event` yet. Otherwise `built`, at the
     stored revision and with the events seen of `state`, but `event`, since the engine would
     take a second send of it for a duplicate. `event` may be a list of events that are sent in a
-    row: `state` holds none of them, or `built` is the document. With no `state`, `built` itself.
-    With no `built`, the stored `state` alone. `decide_all` reports each such fallback to
+    row: `state` holds none of them, or `built` is the document. The fallback keeps the stored
+    counts of automatic fix rounds (`counted`), conflict rounds (`conflicts`) and branch updates
+    (`updates`) wherever `built`'s are lower, so that a document made from `first_state.empty`
+    never gives a budget back: only the engine's answer lowers a count. With no `state`, `built`
+    itself. With no `built`, the stored `state` alone. `decide_all` reports each such fallback to
     `on_fallback`, when it is set. This is transitional: the last part of the move to the stored
     document removes it."""
     if state is None or built is None:
@@ -960,6 +975,14 @@ def resync(state, built, event):
     base = copy.deepcopy(built)
     base["revision"] = state["revision"]
     base["recentEvents"] = [name for name in seen if name not in names]
+    for key in ("counted", "conflicts", "updates"):
+        most = max(
+            int((state.get("rounds") or {}).get(key) or 0),
+            int((base.get("rounds") or {}).get(key) or 0),
+        )
+        # `updates` is optional: a zero is not written where the document has none.
+        if key != "updates" or most > 0:
+            base["rounds"][key] = most
     return base
 
 
@@ -984,7 +1007,7 @@ def decide_all(
     `actionFinished` or `actionLost` event answers (`pending_id`), and with the id of the wait of
     kind `wait` in the document that a `tick` names (`wait_id`). `built` may be a function of
     the stored document, which it reads on each try, so that a count comes from the state that
-    is decided on (`_counted`), or None, which decides on the stored document alone: the caller
+    is decided on (`_stored_count`), or None, which decides on the stored document alone: the caller
     makes sure a state is stored, since with none `built` has nothing to fall back on and the
     call raises `Refused`. The events after the first
     are sent on the state that the one before it gave, and the row stops after the event whose
@@ -1073,7 +1096,7 @@ def decide(
     pending action that the event's result answers (`pending_id`), or with `wait`, the kind of a
     wait, the id of the wait of that kind that the tick answers (`wait_id`). `built` may be a
     function of the stored document, which it reads on each try, so that a count comes from the
-    state that is decided on (`_counted`). `found_policies` default to the configuration's.
+    state that is decided on (`_stored_count`). `found_policies` default to the configuration's.
 
     A run of the item's concurrency group passes `write`: when the item has a state comment,
     the answer is stored with `item_state.apply`, only on the revision that was read, and
@@ -2061,6 +2084,7 @@ def command(
     source_id=None,
     dispatched=False,
     carried=None,
+    observe_conflict=False,
 ):
     """What the engine answers to a person's command `what` (`plan`, `go`, `fix` or `review`)
     on work item `item` (`route._decide`): `plan`, `implement`, `fix` or `review` for the stage
@@ -2078,7 +2102,14 @@ def command(
     After those, NexKit's own `dispatched` command (its `auto` input names a kind) carries out
     the action that the stored state already has pending for it (`_carried`): the engine is not
     asked again and nothing is stored. The action is added to `carried`, a list the caller
-    passes, so that `diagnosis` reads its checks. With nothing pending, and for a person's own
+    passes, so that `diagnosis` reads its checks. With nothing pending, a conflict round
+    (`observe_conflict`, which `route` sets for the first dispatch of one that no earlier round
+    on that base commit stops) is counted here, by its own run in the item's group: the run sends
+    the observation that the head conflicts through `base_moved` with `write`, named
+    `dispatch-<run id>`, with the configuration's policies and `conflicts.auto_resolve` on, as
+    the push run previewed it, and stores the answer, one more conflict round used and the fix
+    round pending. The round starts only when the engine answers one (`fix`), and `refused`
+    otherwise. With nothing pending and for a person's own
     dispatch, the command is a new request, named `dispatch-<run id>` (`_dispatch_id`), decided
     on the stored state (`decide`, which stores the answer in the item's group, `resync`). With
     no `gh` or no `cfg` it is answered on the small document that NexKit 6's `route` read the
@@ -2164,9 +2195,39 @@ def command(
             if carried is not None:
                 carried.append(action)
             return starts([action])
+        if observe_conflict and what == "fix" and change:
+            return _conflict_round(gh, cfg, item, change, found)
         request = {**request, "id": _dispatch_id(found)}
     _, actions = decide(gh, cfg, item, request, doc, pull=pull, write=True)
     return starts(actions) or "refused"
+
+
+def _conflict_round(gh, cfg, item, change, found):
+    """`fix` when the engine answers a conflict round on the observation that `change`, the
+    pull request's `{"id", "version"}`, conflicts with its base branch, which it stores as one
+    more conflict round used, else `refused` (`command`). `found` is the stored state."""
+    # Inside the function: `maintain` imports `route`, which imports this module.
+    from .maintain import conflict_rounds_of
+
+    # What the push run asked: the round is automatic, whatever the configuration says.
+    asked = {**cfg, "conflicts": {**cfg["conflicts"], "auto_resolve": True}}
+    pull = int(change["id"])
+    answer = base_moved(
+        gh,
+        cfg,
+        item,
+        pull,
+        change["version"],
+        True,
+        False,
+        False,
+        conflict_rounds_of(gh, pull),
+        0,
+        write=True,
+        name=_dispatch_id(found),
+        found_policies=policies(asked),
+    )
+    return "fix" if answer == "round" else "refused"
 
 
 def _on_base(gh, cfg, item, observed, doc, pull):
@@ -2281,8 +2342,8 @@ def round_ended(
 
     The checks' result and the review's are two events: each is decided on the stored
     document and, with `write`, which only `report` passes, stored as its own revision
-    (`decide`). The automatic fix rounds used are the stored `rounds.counted`, or
-    `auto_fixes` when that is higher (`_counted`). Raises `Refused`."""
+    (`decide`). The automatic fix rounds used are the stored `rounds.counted`, or `auto_fixes`
+    when no state can be read (`_stored_count`). Raises `Refused`."""
     number = decision["issue"]
     found = policies(cfg)
     person = bool(decision.get("person"))
@@ -2296,7 +2357,7 @@ def round_ended(
         doc["change"] = {"id": str(pr), "version": head}
         doc["hold"] = bool(label)
         doc["policies"] = found
-        doc["rounds"]["counted"] = _counted(state, auto_fixes, "counted")
+        doc["rounds"]["counted"] = _stored_count(state, auto_fixes, "counted")
         if recheck:
             doc["rounds"]["recheck"] = head
         failing = first_state.failing(before)
@@ -2483,8 +2544,8 @@ def conflicting(gh, cfg, decision, pr, head, held, used, write=False):
     `conflicts.auto_resolve` is off. `publish` finds a conflict only with it on, so that
     answer comes only when the configuration changed between the two jobs, where NexKit 6
     started the round all the same. The conflict rounds used are the stored
-    `rounds.conflicts`, or `used` when that is higher (`_counted`), and none while a label
-    `held` the issue, as NexKit 6 reads them, so that a hold never turns into `used_up`. With
+    `rounds.conflicts`, or `used` when no state can be read (`_stored_count`), and none while a
+    label `held` the issue, as NexKit 6 reads them, so that a hold never turns into `used_up`. With
     `write`, which only `report` passes, the answer is stored (`decide`). Raises
     `Refused`."""
     number = decision["issue"]
@@ -2494,8 +2555,8 @@ def conflicting(gh, cfg, decision, pr, head, held, used, write=False):
     def built(state):
         doc = _pull_doc(cfg, number, pr, None, RUNS_OF[stage], 0)
         doc.update(change=before, observed=None, hold=bool(held))
-        doc["rounds"]["counted"] = _counted(state, 0, "counted")
-        doc["rounds"]["conflicts"] = 0 if held else _counted(state, used, "conflicts")
+        doc["rounds"]["counted"] = _stored_count(state, 0, "counted")
+        doc["rounds"]["conflicts"] = 0 if held else _stored_count(state, used, "conflicts")
         doc["pending"] = [
             {"id": first_state.RUN_ID, "next": None, "kind": "publish", "stage": stage}
         ]
@@ -2528,19 +2589,19 @@ def conflicts_released(gh, cfg, issue, pull, run, head, conflicts, used, write=F
     held back the round that resolves its conflict, as the engine decides it
     (`autopilot._conflicts_released`): `review` of a head that moved, which the next round
     checks for a conflict, or of one that no longer `conflicts`; `round`, while its `used`
-    conflict rounds leave one, or the stored `rounds.conflicts` when that is higher
-    (`_counted`); or `waits` for a person, with `conflicts.auto_resolve` off or no conflict
-    round left. The head's observation and the release are two events, each decided on the
-    stored document and, with `write`, which only the item's own `step` run passes, stored as
-    its own revision (`decide`). Raises `Refused`."""
+    conflict rounds leave one, counted from the stored `rounds.conflicts`, or `used` when no
+    state can be read (`_stored_count`); or `waits` for a person, with `conflicts.auto_resolve`
+    off or no conflict round left. The head's observation and the release are two events, each
+    decided on the stored document and, with `write`, which only the item's own `step` run
+    passes, stored as its own revision (`decide`). Raises `Refused`."""
     version = str(run.get("head") or pull)
 
     def built(state):
         doc = _pull_doc(None, issue, pull, version, "checking", 0)
-        doc["rounds"]["counted"] = _counted(state, 0, "counted")
+        doc["rounds"]["counted"] = _stored_count(state, 0, "counted")
         doc["hold"] = True
         doc["observed"]["conflicts"] = True
-        doc["rounds"]["conflicts"] = _counted(state, used, "conflicts")
+        doc["rounds"]["conflicts"] = _stored_count(state, used, "conflicts")
         return doc
 
     moved = head != run.get("head")
@@ -2576,7 +2637,21 @@ def _decided(gh, cfg, issue, pull, events, built, write, found_policies=None):
 # -- a move of the base branch -----------------------------------------------------------
 
 
-def base_moved(gh, cfg, issue, pr, head, conflicts, behind, checking, used, updates, write=False):
+def base_moved(
+    gh,
+    cfg,
+    issue,
+    pr,
+    head,
+    conflicts,
+    behind,
+    checking,
+    used,
+    updates,
+    write=False,
+    name=None,
+    found_policies=None,
+):
     """What follows the move of the base branch under the NexKit pull request `pr` of `issue`,
     whose head is `head`, as the engine decides it (`maintain.resolve_conflicts`,
     `maintain.stop_superseded`, `report._conflicts_after`): `conflicts` says that the head
@@ -2584,19 +2659,22 @@ def base_moved(gh, cfg, issue, pr, head, conflicts, behind, checking, used, upda
     branch's rules want pull requests up to date, which only NexKit 6's reading of them says.
     `checking` says that a round runs only its checks, so the pull request is in `checking`
     with those checks pending; otherwise it is in `ready`. `used` is the conflict rounds used,
-    or the stored `rounds.conflicts` when that is higher (`_counted`), and `updates` the
+    or the stored `rounds.conflicts` (`_stored_count`), and `updates` the
     updates of the branch used, as NexKit 6 counts them, which `conflicts.max_rounds` limits
     apart from each other. Returns `round`, the round that resolves the conflict; `update`, an
     update of the branch; or `waits`, when a person decides or the checks that run go on to
     their end. A hold is read before, as NexKit 6 does. The sweep, the push run and a merge's
     run each decide in a group of their own, so they never pass `write`: it would store a
-    state that only the item's group may write. Raises `Refused`."""
+    state that only the item's group may write. The run of the conflict round that they start,
+    in the item's group, passes `write` (`command`), with `name`, the event's id, which is
+    `base-<pr>-<head>` by default, and `found_policies`, which default to the configuration's.
+    Raises `Refused`."""
 
     def built(state):
         doc = _pull_doc(cfg, issue, pr, head, "checking" if checking else "ready", 0)
         version = doc["change"]["version"]
-        doc["rounds"]["counted"] = _counted(state, 0, "counted")
-        doc["rounds"]["conflicts"] = _counted(state, used, "conflicts")
+        doc["rounds"]["counted"] = _stored_count(state, 0, "counted")
+        doc["rounds"]["conflicts"] = _stored_count(state, used, "conflicts")
         if int(updates or 0) > 0:
             doc["rounds"]["updates"] = int(updates)
         if checking:
@@ -2609,8 +2687,9 @@ def base_moved(gh, cfg, issue, pr, head, conflicts, behind, checking, used, upda
     seen.update(merged=False, empty=False)
     if behind:
         seen["behind"] = True
-    event = _event("changeObserved", issue, None, f"base-{pr}-{version}", **seen)
-    _, actions = decide(gh, cfg, issue, event, built, pull=pr, write=write)
+    event = _event("changeObserved", issue, None, name or f"base-{pr}-{version}", **seen)
+    options = {"pull": pr, "found_policies": found_policies, "write": write}
+    _, actions = decide(gh, cfg, issue, event, built, **options)
     kinds = {action["kind"]: action for action in actions}
     if (kinds.get("runAgent") or {}).get("stage") == "fix":
         return "round"
@@ -2721,8 +2800,8 @@ def released(gh, cfg, issue, pull, run, head, auto_fixes, write=False):
     held back its merge or its automatic fix round, as the engine decides it
     (`autopilot._released`): one of `_wait_end`'s. `head` is the pull request's head now. A
     fix round held back is counted only now, while `fix.max_auto_rounds` has one left as it
-    reads now: the rounds used are the stored `rounds.counted`, or `auto_fixes` when that is
-    higher (`_counted`). `_released` reads only the head, so a conflict is the next round's to
+    reads now: the rounds used are the stored `rounds.counted`, or `auto_fixes` when no state can
+    be read (`_stored_count`). `_released` reads only the head, so a conflict is the next round's to
     find. For a held merge, `autopilot._released` uses the answer only to guard against a
     refusal, while `_merge_step` reads the head and merges. A head pushed meanwhile and the
     release are two events, each decided on the stored document and, with `write`, which only
@@ -2732,7 +2811,7 @@ def released(gh, cfg, issue, pull, run, head, auto_fixes, write=False):
 
     def built(state):
         doc = _pull_doc(cfg, issue, pull, run.get("head"), back, 0)
-        doc["rounds"]["counted"] = _counted(state, auto_fixes, "counted")
+        doc["rounds"]["counted"] = _stored_count(state, auto_fixes, "counted")
         doc["hold"] = True
         if back == "fixing":
             doc["rounds"]["due"] = True
@@ -2754,15 +2833,15 @@ def base_passes(gh, cfg, issue, pull, run, auto_fixes, write=False):
     marker `run`, waits while the base branch has the same failure (`ci_waiting`), once its
     bug issue closed or the base passes again, which the host sends as the end of that bug
     issue (`autopilot._ci_step`): `fix`, counted now, or `used_up`. The rounds used are the
-    stored `rounds.counted`, or `auto_fixes` when that is higher (`_counted`). With `write`,
-    which only the item's own `step` run passes, the answer is stored (`decide`). Raises
+    stored `rounds.counted`, or `auto_fixes` when no state can be read (`_stored_count`). With
+    `write`, which only the item's own `step` run passes, the answer is stored (`decide`). Raises
     `Refused`."""
     wait = run.get("ci_wait") or {}
     bug = str(wait.get("bug") or "none")
 
     def built(state):
         doc = _pull_doc(cfg, issue, pull, run.get("head"), "fixing", 0)
-        doc["rounds"]["counted"] = _counted(state, auto_fixes, "counted")
+        doc["rounds"]["counted"] = _stored_count(state, auto_fixes, "counted")
         doc["rounds"]["due"] = True
         doc["waits"] = [{"id": "w1.1", "for": "baseFailure", "until": None, "on": bug}]
         return doc
@@ -3128,14 +3207,14 @@ def stopped_counts(
     already on the base branch, or checks that the base branch's move stopped (`checking`),
     gives its count back; a round whose agent stopped by itself keeps it
     (`report._stop_round`, `maintain._give_back`). The count is read from the stored
-    `rounds.counted`, or `auto_fixes` when that is higher (`_counted`). The host's own stops,
-    and what follows them, stay NexKit 6's, so the host reports one as `stopped`; no policy
+    `rounds.counted`, or `auto_fixes` when no state can be read (`_stored_count`). The host's own
+    stops, and what follows them, stay NexKit 6's, so the host reports one as `stopped`; no policy
     decides a stop. With `write`, which only a run of the item's group passes, the answer is
     stored (`decide`); `maintain._give_back` runs in the push run's or the sweep's group and
     never does. Raises `Refused`."""
 
     def built(state):
-        counted = _counted(state, auto_fixes, "counted")
+        counted = _stored_count(state, auto_fixes, "counted")
         doc = _pull_doc(None, issue, pr, head, "checking" if checking else "fixing", counted)
         version = doc["change"]["version"]
         if checking:

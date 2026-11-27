@@ -2087,6 +2087,9 @@ class CountTest(ReportCase):
     def test_a_round_nexkit_stopped_gives_its_count_back_only_when_automatic(self):
         head, cfg = "c" * 40, make_config()
         counts = host.stopped_counts
+        # Two automatic fix rounds are used, as the pull request's state comment says.
+        state = {"version": 2, "issue": 5, "auto_fixes": 2, "feedback": None}
+        self.gh.comment(6, render_state(state))
         self.assertEqual(counts(self.gh, cfg, 5, 6, head, 2, True, True), 1)
         self.assertEqual(counts(self.gh, cfg, 5, 6, head, 2, True, True, checking=True), 1)
         # A person's round counts nothing, and an agent that stopped by itself keeps its count.
@@ -2780,11 +2783,20 @@ class ConflictingTest(ReportCase):
     def test_the_engine_starts_the_conflict_round_or_leaves_it_to_a_person(self):
         cfg = make_config(conflicts={"auto_resolve": True, "max_rounds": 2})
         conflicting, gh = host.conflicting, self.gh
+        # The conflict rounds used are the item's own: the round comments that its import counts.
+        self.conflict_round(1)
         self.assertEqual(conflicting(gh, cfg, decision("fix", head="b"), 6, HEAD, None, 1), "round")
+        self.conflict_round(2)
         self.assertEqual(
             conflicting(gh, cfg, decision("fix", head="b"), 6, HEAD, None, 2), "used_up"
         )
         self.assertEqual(conflicting(gh, cfg, decision(), 6, HEAD, "on-hold", 2), "held")
+
+    def conflict_round(self, number):
+        self.gh.round_comment(6, number, "b" * 40, "failed", conflicts=True, base_sha="d" * 40)
+
+    def test_a_report_after_the_conflict_rounds_are_used_up_starts_none(self):
+        cfg = make_config(conflicts={"auto_resolve": True, "max_rounds": 2})
         found, calls = self.conflicting(cfg, used=2)
         self.assertEqual(found["outcome"], "conflicting")
         self.assertEqual(calls[-1]["state"]["rounds"]["conflicts"], 2)
@@ -2801,7 +2813,9 @@ class ConflictingTest(ReportCase):
         cfg = make_config(conflicts={"auto_resolve": True, "max_rounds": 2})
         run = {"head": HEAD, "held_back": "conflicts"}
         released, gh = host.conflicts_released, self.gh
+        self.conflict_round(1)
         self.assertEqual(released(gh, cfg, 5, 6, run, HEAD, True, 1), "round")
+        self.conflict_round(2)
         self.assertEqual(released(gh, cfg, 5, 6, run, HEAD, True, 2), "waits")
         self.assertEqual(released(gh, cfg, 5, 6, run, HEAD, False, 2), "review")
         # A head that moved is checked, and the round after it finds any conflict.
@@ -2984,7 +2998,8 @@ class DispatchedTest(HostCase):
 class RoundDecideTest(ReportCase):
     """The decisions about a pull request's rounds read the item's stored state document, and
     those that run in the item's group store the engine's answer at the next revision
-    (`host.decide`). A stored count above NexKit 6's wins (`host._counted`)."""
+    (`host.decide`). The counts are the stored ones, and a decision that falls back to the
+    markers' document keeps them (`host.resync`)."""
 
     GOOD = {"verdict": "approve", "criteria": [], "findings": []}
     RED = [{"name": "test", "passed": False, "output": "AssertionError"}]
@@ -3064,7 +3079,7 @@ class RoundDecideTest(ReportCase):
         self.assertEqual(seen[0][1]["action"], "a7.1")
         self.assertEqual(seen[0][0]["revision"], 2)
 
-    def test_a_stored_count_above_nexkit_6_s_stops_the_automatic_fix_rounds(self):
+    def test_the_stored_count_alone_stops_the_automatic_fix_rounds(self):
         review = self.GOOD
         d = decision("fix", pr=6, target=6, head="b" * 40)
 
@@ -3075,12 +3090,40 @@ class RoundDecideTest(ReportCase):
         self.assertEqual(after(), "auto_fix")
         self.store(counted=3)
         self.assertEqual(after(), "needs_human")
-        # NexKit 6's count is a floor, while the stored one is below it.
+        # NexKit 6's count is no floor: the stored one is current.
         self.store(counted=0)
         args = (self.gh, self.cfg, d, 6, HEAD, 3, self.RED, review, False, None, None)
-        self.assertEqual(host.after_round(*args), "needs_human")
-        self.assertEqual(host._counted(self.read()[1], 3, "counted"), 3)
-        self.assertEqual(host._counted(None, -1, "counted"), 0)
+        self.assertEqual(host.after_round(*args), "auto_fix")
+
+    def test_nexkit_6_s_count_is_used_only_when_no_state_can_be_read(self):
+        self.assertEqual(host._stored_count(None, 3, "counted"), 3)
+        self.assertEqual(host._stored_count(None, -1, "counted"), 0)
+        self.assertEqual(host._stored_count(self.read()[1], 3, "counted"), 0)
+
+    def test_a_decision_that_falls_back_to_the_markers_keeps_the_stored_counts(self):
+        self.store(conflicts=1, counted=2)
+        # The markers' document of a round's end holds no conflict round: it differs from the
+        # stored state, so the decision falls back to it.
+        self.assertEqual(self.ended(write=True)[0], "ready")
+        rounds = self.read()[1]["rounds"]
+        self.assertEqual((rounds["conflicts"], rounds["counted"]), (1, 2))
+
+    def test_the_fallback_raises_the_counts_that_the_markers_document_lacks(self):
+        state = self.store(conflicts=1, counted=2, updates=3)
+        event = {"id": "x", "kind": "stopped"}
+        for built, want in (
+            ({"counted": 0, "conflicts": 0}, (2, 1, 3)),
+            ({"counted": 5, "conflicts": 0, "updates": 1}, (5, 1, 3)),
+        ):
+            found = host.resync(state, {"revision": 1, "recentEvents": [], "rounds": built}, event)
+            rounds = found["rounds"]
+            self.assertEqual((rounds["counted"], rounds["conflicts"], rounds["updates"]), want)
+        # An optional count that neither document holds stays unwritten.
+        bare = {"revision": 1, "recentEvents": [], "rounds": {"counted": 0, "conflicts": 0}}
+        plain = copy.deepcopy(state)
+        del plain["rounds"]["updates"]
+        found = host.resync(plain, bare, event)
+        self.assertNotIn("updates", found["rounds"])
 
     def conflicting(self, held=None, used=0, **options):
         args = (self.gh, self.cfg, decision("fix", head="b"), 6, HEAD, held, used)
@@ -3116,17 +3159,18 @@ class RoundDecideTest(ReportCase):
 
     def test_a_release_stores_one_revision_for_each_event(self):
         run = {"head": HEAD, "held_back": "fix"}
+        self.store(counted=1)
         self.assertEqual(host.released(self.gh, self.cfg, 5, 6, run, HEAD, 1, write=True), "fix")
         _, doc = self.read()
-        self.assertEqual((doc["revision"], doc["rounds"]["counted"]), (2, 2))
+        self.assertEqual((doc["revision"], doc["rounds"]["counted"]), (3, 2))
         self.assertEqual(doc["recentEvents"][-1], f"released-6-{HEAD}")
         # A head pushed meanwhile is a second event.
         moved = host.released(self.gh, self.cfg, 5, 6, run, "d" * 40, 1, write=True)
         self.assertEqual(moved, "review")
-        self.assertEqual(self.read()[1]["revision"], 4)
+        self.assertEqual(self.read()[1]["revision"], 5)
         # Previewed, it stores nothing.
         self.assertEqual(host.released(self.gh, self.cfg, 5, 6, run, HEAD, 1), "fix")
-        self.assertEqual(self.read()[1]["revision"], 4)
+        self.assertEqual(self.read()[1]["revision"], 5)
 
     def test_a_held_fix_round_released_counts_from_the_stored_count(self):
         run = {"head": HEAD, "held_back": "fix"}
@@ -3136,15 +3180,17 @@ class RoundDecideTest(ReportCase):
     def test_the_end_of_a_wait_for_the_base_branch_stores_the_answer(self):
         run = {"head": HEAD, "ci_wait": {"bug": 77, "workflow": "ci.yml", "branch": "main"}}
         args = (self.gh, self.cfg, 5, 6, run, 1)
+        self.store(counted=1)
         self.assertEqual(host.base_passes(*args, write=True), "fix")
         _, doc = self.read()
-        self.assertEqual((doc["revision"], doc["rounds"]["counted"]), (2, 2))
+        self.assertEqual((doc["revision"], doc["rounds"]["counted"]), (3, 2))
         self.store(counted=3)
         self.assertEqual(host.base_passes(*args), "used_up")
 
     def test_a_held_conflict_round_released_stores_both_events(self):
         run = {"head": HEAD, "held_back": "conflicts"}
         args = (self.gh, self.cfg, 5, 6, run, HEAD, True, 1)
+        self.store(conflicts=1)
         self.assertEqual(host.conflicts_released(*args, write=True), "round")
         _, doc = self.read()
         self.assertGreater(doc["revision"], 1)
@@ -3158,15 +3204,16 @@ class RoundDecideTest(ReportCase):
     def test_a_stopped_round_stores_its_count_given_back(self):
         counts = host.stopped_counts
         args = (self.gh, self.cfg, 5, 6, HEAD, 2, True, True)
+        self.store(counted=2)
         self.assertEqual(counts(*args, write=True), 1)
         _, doc = self.read()
-        self.assertEqual((doc["revision"], doc["rounds"]["counted"]), (2, 1))
-        # A stored count above NexKit 6's is the one that is given back.
+        self.assertEqual((doc["revision"], doc["rounds"]["counted"]), (3, 1))
+        # The stored count is the one that is given back.
         self.store(counted=3)
         self.assertEqual(counts(*args), 2)
         # An agent that stopped by itself finishes its round and keeps its count.
         self.assertEqual(counts(*args[:-1], False, write=True), 3)
-        self.assertEqual(self.read()[1]["revision"], 4)
+        self.assertEqual(self.read()[1]["revision"], 5)
 
     def test_a_base_branch_move_and_a_diagnosis_leave_the_state_as_it_is(self):
         before = copy.deepcopy(self.gh.comments(5)), copy.deepcopy(self.gh.comments(6))

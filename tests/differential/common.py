@@ -226,6 +226,24 @@ def seed(gh, cfg):
         gh._next = before + 1
 
 
+def count_dispatched_round(gh, number):
+    """Store the conflict round that is about to report as the run of its dispatch stores it,
+    one more conflict round used in the item's state (`host.command`): the round's comment is a
+    fixture that the import before it did not count, and the report of a round that NexKit's
+    own dispatch started finds the round counted. NexKit 6 has no stored state, so nothing is
+    stored there."""
+    try:
+        from nexkit import item_state
+    except ImportError:
+        return
+    comment, stored = item_state.read(gh, number)
+    if stored is None:
+        return
+    found = {**stored, "revision": stored["revision"] + 1}
+    found["rounds"] = {**stored["rounds"], "conflicts": stored["rounds"]["conflicts"] + 1}
+    item_state.write(gh, number, found, (comment, stored))
+
+
 def attempt(fn, *args, **kwargs):
     """`fn`'s result, normalized, or the exception it raised, as text: a crash on one tree
     and not the other is a difference like any other."""

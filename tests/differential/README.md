@@ -56,7 +56,7 @@ or `play.py` sets.
 | `round` | #344 | a round after such a wait |
 | `required` | #344 | required checks that fail at the merge |
 | `give` | #344 | rounds that stop, and which of them count |
-| `diag` | #347 | chains of rounds, each started through `route`: diagnosis rounds |
+| `diag` | #347 | chains of rounds, each started through `route` with the configuration: diagnosis rounds |
 | `many` | #347 | the same with 40 checks |
 | `conflict` | #347 | a round whose commit conflicts, held or not, then released |
 | `review` | #347 | a review that failed, paused or is missing, then runs again |

@@ -12,6 +12,7 @@ failing the same way (no, yes, an error reading it) × autopilot × `merge.auto`
 `many.py` plays the same chains with sets of 40 checks: more than 30 failing results, and
 more than ten that repeat."""
 
+import inspect
 import json
 import random
 from unittest import mock
@@ -166,8 +167,11 @@ def run(sc):
         command, auto = KINDS[kind]
         inputs = {"command": command, "number": "6", "note": "", "auto": auto}
         event = {"inputs": inputs, "sender": {"login": "nexkit[bot]"}}
+        # With the configuration where `route` takes one (NexKit 6's takes none), so that the
+        # dispatch is carried out or decided on the stored state.
+        extra = {"cfg": cfg} if "cfg" in inspect.signature(route).parameters else {}
         try:
-            return route(gh, "workflow_dispatch", event, inputs)
+            return route(gh, "workflow_dispatch", event, inputs, **extra)
         except Exception as exc:  # noqa: BLE001
             return f"EXC {type(exc).__name__}: {exc}"
 

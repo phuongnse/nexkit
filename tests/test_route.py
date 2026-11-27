@@ -708,6 +708,7 @@ class RouteTests(unittest.TestCase):
                 "issue": 5,
                 "actor": "olivia",
                 "commit": "a" * 40,
+                "review": 77,
             },
         )
         # A step with no approval note is a sweep's step.

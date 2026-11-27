@@ -37,6 +37,7 @@ from .state import (
     PAUSED,
     RUNNING,
     SUCCESS,
+    SUPERSEDED,
     bot_record,
     conflict_rounds_used,
     counted_fix,
@@ -120,9 +121,8 @@ CHECK_JOBS = {"shards", "verify", "combine"}
 # How long, and how often, an update of a branch waits for GitHub to move its head.
 UPDATE_WAIT = 5
 UPDATE_TRIES = 6
-# The outcome of a round NexKit stopped in its checks because the base branch moved, and
-# of one whose next round then did not start.
-SUPERSEDED = "superseded"
+# The outcome of a round whose next round did not start after NexKit stopped its checks
+# (`state.SUPERSEDED` is the outcome of one that did).
 STOP_FAILED = "stop_failed"
 STOP_FAILED_REASON = autopilot.person(
     "comment `/nexkit fix` on the pull request when it conflicts with its base branch, "
@@ -1145,7 +1145,9 @@ def _give_back(gh, cfg, issue, number, comments, run):
     """An automatic fix round of the pull request `number` of `issue` whose checks NexKit
     stopped gives its `fix.max_auto_rounds` back, as the engine decides (`host.stopped_counts`),
     which only previews here: this runs in the push run's or the sweep's group, and only the
-    item's own group stores its state. A conflict round, and a retried or resumed one, counts
+    item's own group stores its state. The run that the push run starts in that group, the
+    conflict round or the review after the update, stores the give-back (`host.command`,
+    `host.base_moved` with `automatic`). A conflict round, and a retried or resumed one, counts
     toward no automatic fix round here."""
     from .host import Refused, stopped_counts
 

@@ -40,6 +40,7 @@ from nexkit.state import (
     UNCOUNTED,
     check_fingerprint,
     read_state,
+    render_run,
     run_comments,
     with_run,
 )
@@ -4398,6 +4399,158 @@ class ConflictRoundsStoredTest(unittest.TestCase):
         self.gh.round_comment(6, 2, self.HEAD, "failed", conflicts=True, base_sha="1" * 40)
         self.assertEqual(self.run_round(dispatched, 2001)["action"], "none")
         self.assertEqual(self.read()["rounds"]["conflicts"], 0)
+
+
+class UpdatesStoredTest(unittest.TestCase):
+    """The push run stops the checks of a counted automatic fix round on a branch that is behind
+    its base, updates the branch and gives the count back, and stores nothing. The review it
+    dispatches stores the update and the give-back in the item's state."""
+
+    HEAD = "c" * 40
+    TIP = "f" * 40
+    NEW = "e" * 40  # the head that `FakeGitHub.update_branch` leaves
+    RED = [{"name": "test", "passed": False, "output": "AssertionError"}]
+    REVIEW = ("done", {"verdict": "approve", "criteria": [], "findings": []})
+    EVENT = {"ref": "refs/heads/main", "repository": {"default_branch": "main"}}
+
+    def setUp(self):
+        self.gh = FakeGitHub()
+        self.gh.add_issue(5)
+        self.gh.add_pull(6, 5, head_sha=self.HEAD)
+        self.cfg = make_config(
+            fix={"max_auto_rounds": 3}, conflicts={"auto_resolve": True, "max_rounds": 2}
+        )
+        self.assertTrue(host.store_import(self.gh, self.cfg, 5, now=IMPORTED_AT))
+        # The round's checks fail: an automatic fix round is stored and counts, as `report` does.
+        found = {"action": "fix", "issue": 5, "pr": 6, "target": 6, "head": self.HEAD}
+        args = (self.gh, self.cfg, found, 6, self.HEAD, 0, self.RED, None, self.REVIEW)
+        self.assertEqual(host.round_ended(*args, write=True)[0], "auto_fix")
+        # Its checks run: the round whose checks the push run stops.
+        comment, doc = item_state.read(self.gh, 5)
+        result = {**host.AGENT, "changeVersion": self.HEAD}
+        result["output"] = {"status": "done", "summary": "Fixed.", "checks_run": []}
+        event = host._event(
+            "actionFinished",
+            5,
+            None,
+            f"run-{doc['revision']}",
+            action=host.pending_id(doc, "runAgent", "fix"),
+            changeVersion=self.HEAD,
+            result=result,
+        )
+        found = host.step(doc, event, host.policies(self.cfg))
+        stored = {**found["state"], "revision": doc["revision"] + 1}
+        self.assertTrue(item_state.write(self.gh, 5, stored, (comment, doc)))
+        # The fix is published on the same head, and its checks follow.
+        comment, doc = item_state.read(self.gh, 5)
+        done = {"change": {"id": "6", "version": self.HEAD}, "refused": None}
+        done["observed"] = {
+            "changeId": "6",
+            "version": self.HEAD,
+            "conflicts": False,
+            "merged": False,
+            "empty": False,
+        }
+        event = host._event(
+            "actionFinished",
+            5,
+            None,
+            f"publish-{doc['revision']}",
+            action=host.pending_id(doc, "publish"),
+            changeVersion=None,
+            result=done,
+        )
+        found = host.step(doc, event, host.policies(self.cfg))
+        stored = {**found["state"], "revision": doc["revision"] + 1}
+        self.assertTrue(item_state.write(self.gh, 5, stored, (comment, doc)))
+        self.assertEqual([a["kind"] for a in stored["pending"]], ["runChecks"])
+        self.assertEqual(stored["rounds"]["counted"], 1)
+        self.assertTrue(stored["rounds"]["automatic"])
+        self.gh.round_comment(6, 1, self.HEAD, "failed", outcome="auto_fix")
+        row = {
+            "round": 2,
+            "trigger": "fix (auto)",
+            "action": "fix",
+            "kinds": ["auto"],
+            "status": "running",
+            "url": "https://github.com/acme/app/actions/runs/50",
+            "head": self.HEAD,
+        }
+        self.gh.comment(6, render_run(row))
+        order = ["route", "agent", "publish", "shards", "verify", "combine"]
+        jobs = [{"name": f"nexkit / {job}", "status": "completed"} for job in order[:4]]
+        jobs.append({"name": "nexkit / verify (e2e)", "status": "in_progress"})
+        self.gh.jobs[50] = jobs
+        self.gh.runs[50] = {"status": "in_progress", "run_attempt": 1}
+        self.gh.branches["main"] = self.TIP
+
+    def read(self):
+        return item_state.read(self.gh, 5)
+
+    def push(self, conflicting=False):
+        """The push run: the dispatches it made, with the state comment it left."""
+        if conflicting:
+            self.gh.pulls[6]["mergeable"] = False
+        else:
+            self.gh.strict = True
+            self.gh.compares[(self.TIP, self.HEAD)] = {"behind_by": 1}
+        comment, doc = self.read()
+        before = (comment["body"], doc["revision"])
+        with mock.patch("nexkit.maintain.time.sleep"):
+            maintain(
+                self.gh,
+                route(self.gh, "push", self.EVENT),
+                self.cfg,
+                workflow="nexkit.yml",
+                ref="main",
+            )
+        comment, doc = self.read()
+        self.assertEqual((comment["body"], doc["revision"]), before)
+        return [d["inputs"] for d in self.gh.dispatches]
+
+    def dispatch(self, inputs, run=2001):
+        event = {"inputs": inputs, "sender": {"login": BOT_LOGIN}}
+        with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": str(run)}):
+            return route(self.gh, "workflow_dispatch", event, inputs, cfg=self.cfg)
+
+    def test_the_review_after_the_push_run_s_update_stores_it_and_gives_the_count_back(self):
+        [inputs] = self.push()
+        self.assertEqual(inputs["auto"], "true,carry")
+        self.assertEqual(self.gh.updated, [(6, self.HEAD)])
+        before = self.read()[1]
+        self.assertEqual(before["rounds"]["counted"], 1)
+        self.assertEqual(before["rounds"].get("updates", 0), 0)
+        self.assertEqual(self.dispatch(inputs)["action"], "review")
+        after = self.read()[1]
+        self.assertEqual(after["rounds"]["updates"], 1)
+        self.assertEqual(after["rounds"]["counted"], 0)
+        self.assertEqual(after["change"]["version"], self.NEW)
+        # The old checks are cancelled, and the new head's checks are pending.
+        pending = {a["kind"]: a for a in after["pending"]}
+        self.assertEqual(sorted(pending), ["cancel", "runChecks"])
+        self.assertEqual(pending["runChecks"]["changeVersion"], self.NEW)
+
+    def test_the_conflict_round_after_the_push_run_s_stop_gives_the_count_back(self):
+        [inputs] = self.push(conflicting=True)
+        self.assertEqual(inputs["auto"], "conflicts")
+        self.assertEqual(self.read()[1]["rounds"]["counted"], 1)
+        self.assertEqual(self.dispatch(inputs)["action"], "fix")
+        rounds = self.read()[1]["rounds"]
+        self.assertEqual((rounds["conflicts"], rounds["counted"]), (1, 0))
+
+    def test_a_resumed_review_after_an_update_is_not_counted(self):
+        [inputs] = self.push()
+        found = self.dispatch({**inputs, "auto": "true,carry,resumed"})
+        self.assertEqual(found["action"], "review")
+        self.assertEqual(self.read()[1]["rounds"].get("updates", 0), 0)
+
+    def test_the_same_dispatch_run_again_stores_the_update_once(self):
+        [inputs] = self.push()
+        self.assertEqual(self.dispatch(inputs)["action"], "review")
+        revision = self.read()[1]["revision"]
+        self.assertEqual(self.dispatch(inputs)["action"], "review")
+        after = self.read()[1]
+        self.assertEqual((after["revision"], after["rounds"]["updates"]), (revision, 1))
 
 
 if __name__ == "__main__":

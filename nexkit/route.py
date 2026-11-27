@@ -512,6 +512,13 @@ def _route(gh, event_name, event, inputs, cfg, taken, problem=None):
             # Only the first dispatch of a conflict round is counted: a resumed or retried one
             # was counted when it started.
             observe_conflict=conflicts and "resumed" not in kinds and not retry_number(kinds),
+            # Only the first dispatch of the review after a branch update stores the update.
+            updated=(
+                command == "review"
+                and CARRY in kinds
+                and "resumed" not in kinds
+                and not retry_number(kinds)
+            ),
         )
         decision["actor"] = sender
         if decision["action"] not in ("none", "maintain"):
@@ -728,6 +735,7 @@ def _decide(
     dispatched=False,
     problem=None,
     observe_conflict=False,
+    updated=False,
 ):
     """The decision for a person's command, or NexKit's own dispatch of one. A command starts
     its stage only as the engine answers it (`host.command`); what stays here are the facts
@@ -742,7 +750,9 @@ def _decide(
     `auto` input names a kind), which carries out the action the stored state has pending.
     `observe_conflict` says that this is the first dispatch of a conflict round, which its own
     run counts in the item's state (`host.command`), unless the same conflict was tried
-    already."""
+    already. `updated` says that this is the first dispatch of the review after NexKit updated a
+    pull request's branch (`maintain.update_branch`), which its own run stores in the item's
+    state (`host.command`), except for a person's pull request."""
     from . import host
 
     carried = []
@@ -783,6 +793,7 @@ def _decide(
         merged = on_base(gh, pull["base"]["ref"], pull["head"]["sha"])
         change = {"id": str(number), "version": pull["head"]["sha"]}
         observe_conflict = observe_conflict and not person
+        updated = updated and not person
         if observe_conflict:
             # Before the round is counted: a second starter on the same base commit has
             # nothing to add and must not use up a round (`_conflicts_tried` below).
@@ -797,6 +808,7 @@ def _decide(
                 empty=bool(merged),
                 review_id=review_id,
                 observe_conflict=observe_conflict,
+                updated=updated,
                 **given,
             )
         except host.Refused as exc:

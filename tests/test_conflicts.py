@@ -566,6 +566,37 @@ class PushRunStoresNothingTest(unittest.TestCase):
         self.assertEqual(found["rounds"]["conflicts"], 0)
 
 
+class ReviewAfterMergeUpdateTest(unittest.TestCase):
+    """A merge that GitHub refused as behind stores the update that it asks for (`accept_answer`),
+    and the review that follows the update stores the update's result for that pending action."""
+
+    NEW = "e" * 40
+
+    def test_the_review_stores_the_result_of_the_pending_update_and_starts(self):
+        gh = FakeGitHub()
+        gh.add_issue(5)
+        gh.add_pull(6, 5)
+        cfg = make_config(conflicts={"auto_resolve": True, "max_rounds": 2})
+        self.assertTrue(host.store_import(gh, cfg, 5))
+        refusal = {"accepted": False, "refusal": "behind", "text": "x"}
+        answer = host.accept_answer(gh, cfg, 5, 6, HEAD, 0, refusal, write=True)
+        self.assertEqual(answer[0], "update")
+        found = item_state.read(gh, 5)[1]
+        self.assertEqual([a["kind"] for a in found["pending"]], ["updateChange"])
+        # The update moved the head, and its review is dispatched.
+        gh.pulls[6]["head"]["sha"] = self.NEW
+        inputs = {"command": "review", "number": "6", "note": "", "auto": "true,carry"}
+        event = {"inputs": inputs, "sender": {"login": BOT_LOGIN}}
+        with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": "2001"}):
+            decision = route(gh, "workflow_dispatch", event, inputs, cfg=cfg)
+        self.assertEqual(decision["action"], "review")
+        after = item_state.read(gh, 5)[1]
+        self.assertEqual(after["rounds"]["updates"], 1)
+        self.assertEqual([a["kind"] for a in after["pending"]], ["runChecks"])
+        self.assertEqual(after["pending"][0]["changeVersion"], self.NEW)
+        self.assertEqual(after["change"]["version"], self.NEW)
+
+
 class RouteTests(unittest.TestCase):
     def setUp(self):
         self.gh = FakeGitHub()

@@ -330,6 +330,9 @@ when a list of what the code defines misses an entry. These rules close each of 
    - `test_the_cache_field_list_names_each_cache_key_the_code_defines_and_no_other`: the list of a
      cache entry's fields in [the configuration reference](configuration.md#caches) names each field
      `nexkit/config.py` accepts and no other.
+   - `test_the_renamed_table_lists_each_key_the_code_renames_and_no_other`: the table of [the keys
+     renamed in 2.0](configuration.md#keys-renamed-in-20) lists each key `nexkit/config.py` renames,
+     with where it moved, and no other.
    - `test_the_pages_list_each_secret_an_older_workflow_can_pass_and_no_other`: the configuration
      reference and [troubleshooting](troubleshooting.md) list each secret an older workflow can
      pass, and no other.

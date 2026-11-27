@@ -495,6 +495,9 @@ def _route(gh, event_name, event, inputs, cfg, taken):
             by=sender,
             taken=taken,
             dispatched=bool(kinds - {"false"}),
+            # Only the first dispatch of a conflict round is counted: a resumed or retried one
+            # was counted when it started.
+            observe_conflict=conflicts and "resumed" not in kinds and not retry_number(kinds),
         )
         decision["actor"] = sender
         if decision["action"] not in ("none", "maintain"):
@@ -709,6 +712,7 @@ def _decide(
     review_id=None,
     taken=None,
     dispatched=False,
+    observe_conflict=False,
 ):
     """The decision for a person's command, or NexKit's own dispatch of one. A command starts
     its stage only as the engine answers it (`host.command`); what stays here are the facts
@@ -719,7 +723,10 @@ def _decide(
     NexKit 6's document. `taken` is what `host.take` stored in this run: the answer to the
     run's own command is carried out from it, and a command that an earlier run took starts
     nothing and gets no reply. `dispatched` says that NexKit's own run sent the command (its
-    `auto` input names a kind), which carries out the action the stored state has pending."""
+    `auto` input names a kind), which carries out the action the stored state has pending.
+    `observe_conflict` says that this is the first dispatch of a conflict round, which its own
+    run counts in the item's state (`host.command`), unless the same conflict was tried
+    already."""
     from . import host
 
     carried = []
@@ -757,6 +764,12 @@ def _decide(
             return _none("The pull request is closed", number)
         merged = on_base(gh, pull["base"]["ref"], pull["head"]["sha"])
         change = {"id": str(number), "version": pull["head"]["sha"]}
+        observe_conflict = observe_conflict and not person
+        if observe_conflict:
+            # Before the round is counted: a second starter on the same base commit has
+            # nothing to add and must not use up a round (`_conflicts_tried` below).
+            tried = {"pr": number, "base_sha": gh.branch_sha(pull["base"]["ref"])}
+            observe_conflict = not _conflicts_tried(gh, tried)
         try:
             answer = host.command(
                 item=item,
@@ -765,6 +778,7 @@ def _decide(
                 review_only=person,
                 empty=bool(merged),
                 review_id=review_id,
+                observe_conflict=observe_conflict,
                 **given,
             )
         except host.Refused as exc:

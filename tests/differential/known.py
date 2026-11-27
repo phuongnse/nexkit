@@ -417,18 +417,18 @@ KNOWN += [
     {
         "name": "a stored count of conflict rounds above the markers'",
         "family": "chains",
-        "by": "#671",
+        "by": "#698",
         "why": (
-            "A decision takes the higher of the stored count of conflict rounds and the one that "
-            "NexKit 6's markers give (`host._counted`). After a give-back that is not stored yet, "
-            "the stored count stays above the markers'. NexKit 6 then started another automatic "
-            "conflict round, and the engine finds the budget used up (`conflicts.max_rounds`) and "
-            "leaves the pull request to a person, with that reason. Only a step whose round "
-            "differs this way is excused: the round's outcome, its comment and the dispatch "
-            "that NexKit 6 sent. Every other step and everything else in it must be equal. "
-            "#673 stores such rounds and removes `_counted`, and this entry with it."
+            "The chain never runs the conflict round that a step's report dispatches. The engine "
+            "counts that round in the stored state as it decides it, while NexKit 6 counts it "
+            "only once the round's comment exists. So a later step finds the stored count above "
+            "the markers'. NexKit 6 then started another automatic conflict round, and the "
+            "engine finds the budget used up (`conflicts.max_rounds`) and leaves the pull "
+            "request to a person, with that reason. Only a step whose round differs this way is "
+            "excused: the round's outcome, its comment and the dispatch that NexKit 6 sent. "
+            "Every other step and everything else in it must be equal."
         ),
-        "match": lambda sc, old, new: _counted_ahead(sc, old, new),
+        "match": lambda sc, old, new: _stored_ahead(sc, old, new),
     }
 ]
 
@@ -483,7 +483,7 @@ def _without_part_ends(record):
     return found
 
 
-def _counted_ahead(sc, old, new):
+def _stored_ahead(sc, old, new):
     """Whether `old` and `new`, the records of a chain, differ only in one step, in which NexKit 6
     started an automatic conflict round and the engine found the `conflicts.max_rounds` of
     the configuration used up, and in that step only in the round's outcome, its comment and the

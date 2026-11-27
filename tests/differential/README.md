@@ -119,9 +119,9 @@ whose change is on the base branch, the end of a part in its parent's state and 
 request's rounds, which store their answer in the item's state comment but decide from the
 markers' document wherever it differs from the stored one. Every family stores the import of its
 items before its first event, so those decisions meet a stored state, and `--fallbacks` lists
-where they still decide from the markers' document. The stored count of conflict rounds can then
-be above the one that NexKit 6's markers give, which `known.py` lists for the `chains` family until
-the floor that takes the higher count is gone.
+where they still decide from the markers' document. The counts of conflict rounds and automatic
+fix rounds are the stored ones, so a round that the stored state counts and NexKit 6's markers do
+not yet can differ, which `known.py` lists with its reason.
 
 A rule that only matters across calls, such as keeping `rounds.automatic` after a round's checks
 or review judged it, shows to the walker but not on GitHub, so only the walker can see it broken.

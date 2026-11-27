@@ -65,12 +65,17 @@ It decides the wait for required checks that have not passed yet at a merge, and
 (`report._refused`, `autopilot._merge_step`): `accept_answer` sends the merge's answer to
 `step` as an `accept` result, so that the item stays in `accepting` with its first start kept,
 and `checks_waited` sends the sweep's tick, which tries the merge again or, once the checks
-have not passed for `machine.CHECKS_END`, leaves it to a person. A merge whose issue no
-sweep looks at is the host's own refusal, since no tick would come for it.
+have not passed for `machine.CHECKS_END` since the stored `checksSince`, leaves it to a person.
+A later sweep, after that hand-off, finds the item `ready` with `acceptRefused` and a tick that
+changes nothing, which is `waits` again. A merge whose issue no sweep looks at is the host's own
+refusal, since no tick would come for it.
 
 It decides, in the sweep, whether a merge that GitHub refused is tried again: `refusal_cleared`
 sends the head as an observation, `acceptable` when GitHub's `mergeable_state` says it would
-accept it, and the host merges only when the engine asks for the accept.
+accept it, and the host merges only when the engine asks for the accept. A head that GitHub
+refused while it called the pull request `clean` is tried once: `report._refused` sends it as an
+`acceptable` observation before the refusal (`acceptable_observed`), so that the engine keeps
+`refusedAcceptable`, which `refusal_cleared` reads from the stored state.
 
 It decides what follows the other refusals of a merge (`report._refused`, `report._head_moved`,
 `report._guarded`): a head that moved, which the host sends as an observation of the new head
@@ -95,7 +100,8 @@ carries the approval over, and sends an update that GitHub refused back (`update
 the engine hands to a person. The review that the update starts stores the update's result for the
 pending update (`command`, `_branch_updated`), so that the update is counted and the checks of the
 new head follow. A sweep's merge that waits for required checks past six hours
-sends the observation that its branch is behind (`checks_waited`), and the engine keeps trying
+sends the observation that its branch is behind first, in one row with the tick
+(`checks_waited`), since the stored observation may say otherwise, and the engine keeps trying
 the merge while `conflicts.auto_resolve` is on.
 
 It decides what follows a move of the base branch under an open NexKit pull request
@@ -136,8 +142,10 @@ again, the wait or the person. What counts as lost, and the six-hour window of t
 It decides what the merge finds too (`report.merge_pull`, `autopilot._merge_step`):
 `change_seen` sends a pull request that a person merged first, a change that its base branch
 already holds, and a commit that a person pushed while the merge waited, as observations, and the
-item ends or its new head is checked as the engine answers. A merge that goes through is stored
-as the `accept` action's `accepted` result whether or not the issue has a parent
+item ends or its new head is checked as the engine answers. `checks_waited`, `refusal_cleared`
+and `change_seen` decide on the stored state alone, and the ids of their events carry the revision
+that they were decided on, so that each sweep's event is new to the engine. A merge that goes
+through is stored as the `accept` action's `accepted` result whether or not the issue has a parent
 (`report._merge_stored`): when the engine refuses it, nothing is stored and the run only warns,
 since the merge happened either way. Once GitHub shows an item closed, the `close` that its stored
 outbox holds is stored as finished (`close_done`), by the run in the item's own group that sees
@@ -291,7 +299,9 @@ exactly as they are: a finished plan's import is `awaitingApproval`, which canno
 result, and a second send of one event, such as the plan's result that `report` and the step run
 both send, would be a duplicate. `after_go` and `round_carried_on` no longer go through it: they
 pass no document of the markers. Nor do `stage_limited`, `stage_transient` and `resumes`, which
-decide on the stored state alone. The last move to the stored document removes `resync`.
+decide on the stored state alone, and so do `checks_waited`, `refusal_cleared` and `change_seen`:
+the sweep's looks at a merge that waits for required checks or that GitHub refused, and what the
+merge finds. The last move to the stored document removes `resync`.
 
 A row of events, such as a hold and then the stop, or a round's result and then a comment, is one
 write: the state after the last event, at the revision read plus one, since `item_state.write`
@@ -3191,6 +3201,15 @@ def head_observed(issue, pr, head):
     return _event("changeObserved", issue, None, f"head-{pr}-{head}", **fields)
 
 
+def acceptable_observed(issue, pr, head, at):
+    """The event that tells the engine GitHub would accept the head `head` of the NexKit pull
+    request `pr` now, for `accept_answer`'s `before`: sent before a refusal of that head, so that
+    the engine keeps `refusedAcceptable` and does not try the head again (`report._refused`)."""
+    fields = {"changeId": str(pr), "version": str(head), "conflicts": False}
+    fields.update(merged=False, empty=False, acceptable=True)
+    return _event("changeObserved", issue, at, f"acceptable-{pr}-{head}-{at}", **fields)
+
+
 def accept_answer(
     gh,
     cfg,
@@ -3306,51 +3325,85 @@ def approved(gh, cfg, issue, pr, run, commit, actor, write=False):
     raise Refused(f"The engine answers {sorted(kinds)} to an approval, which the host cannot do.")
 
 
-def checks_waited(gh, cfg, issue, pr, head, since, now, behind=False, write=False):
+def _revision(state):
+    """The stored revision of `state`, which a sweep's events name in their ids: it changes on
+    every stored write, so that each sweep's event is new to the engine and a repeated id is
+    never mistaken for a duplicate. 0 when there is no state."""
+    return int((state or {}).get("revision") or 0)
+
+
+def _answered(answers):
+    """The kinds of the actions of all `answers` (`decide_all`'s rows), each with its action."""
+    return {action["kind"]: action for _, actions in answers for action in actions}
+
+
+def checks_waited(gh, cfg, issue, pr, head, now, behind=False, write=False):
     """What follows a sweep's tick of the merge of the NexKit pull request `pr` that waits for
-    required checks since `since` on `head`, which is None when no start was recorded, as the
-    engine decides it (`autopilot._merge_step`): `merge`, to try it again, or `waits` for a
-    person once the checks have not passed for more than six hours. A `behind` branch keeps
-    being tried under `conflicts.auto_resolve`, as the engine decides. `write` stores the
-    answer (`decide`), which keeps `since` in the stored document. Raises `Refused`."""
-    doc = _pull_doc(cfg, issue, pr, head, "accepting", 0)
-    version = doc["change"]["version"]
-    if behind:
-        doc["observed"]["behind"] = True
-    if since is not None:
-        doc["checksSince"] = {"version": version, "at": usage.iso(since)}
-    doc["waits"] = [{"id": "w1.1", "for": "requiredChecks", "until": usage.iso(now), "on": None}]
-    event = _event("tick", issue, usage.iso(now), f"merge-{pr}-{version}", wait="w1.1")
-    _, actions = decide(gh, cfg, issue, event, doc, pull=pr, wait="requiredChecks", write=write)
-    kinds = {action["kind"]: action for action in actions}
+    required checks on `head`, as the engine decides it (`autopilot._merge_step`): `merge`, to
+    try it again, or `waits` for a person once the checks have not passed for more than six
+    hours. The start of the wait is the stored `checksSince`. `behind` says that GitHub calls the
+    branch behind its base: it is sent first, as an observation in one row with the tick, since
+    the stored observation may say otherwise, and a `behind` branch keeps being tried under
+    `conflicts.auto_resolve`, as the engine decides. After the six hours the engine left the merge
+    to a person (`ready` with `acceptRefused`) and a later tick changes nothing, which is
+    `waits` too. A merge that a label held back has no wait for required checks: it is `merge`,
+    since its accept is the one that the release gives (`released`). The ids of the events carry
+    the stored revision (`_revision`). It decides on the stored state alone. `write` stores the
+    answer (`decide_all`). Raises `Refused`."""
+    head, at = str(head), usage.iso(now)
+
+    def events(state):
+        row, rev = [], _revision(state)
+        if behind:
+            fields = {"changeId": str(pr), "version": head, "conflicts": False}
+            fields.update(merged=False, empty=False, behind=True)
+            row.append(_event("changeObserved", issue, at, f"behind-{pr}-{head}-r{rev}", **fields))
+        row.append(_event("tick", issue, at, f"merge-{pr}-{head}-r{rev}", wait="w1.1"))
+        return row
+
+    state, answers = decide_all(
+        gh, cfg, issue, events, None, pull=pr, wait="requiredChecks", write=write
+    )
+    kinds = _answered(answers)
     if "accept" in kinds:
         return "merge"
     if (kinds.get("needPerson") or {}).get("reason") == "acceptRefused":
         return "waits"
+    left = (state["attention"] or {}).get("reason") == "acceptRefused"
+    if not kinds and state["state"] == "ready" and left:
+        return "waits"
+    waiting = any(wait["for"] == "requiredChecks" for wait in state["waits"])
+    if not kinds and state["state"] == "accepting" and not waiting:
+        # A merge that a label held back waits for no required checks: its accept is the one
+        # that the release gives (`released`), pending in the stored state or still to be
+        # stored, and the host tries the merge (`autopilot._released`).
+        return "merge"
     raise Refused(f"The engine answers {sorted(kinds)} after a merge's wait, which it cannot do.")
 
 
-def refusal_cleared(gh, cfg, issue, pr, run, acceptable, write=False):
-    """What follows a sweep's look at the NexKit pull request `pr` whose merge GitHub refused,
-    the marker `run` (`autopilot._refused_step`), as the engine decides it: `merge` when the
-    engine accepts it again, once `acceptable` says GitHub would accept the head `run` names
-    now (`mergeable_state` `clean`, `unstable` or `has_hooks`), or `waits` when it asks for
-    nothing, such as when GitHub would not, or when that head was refused while it was
-    acceptable (`refused_clean`), so that each head is tried once. The accept policy decides
-    nothing here, as in NexKit 6. `write` stores the answer (`decide`). Raises `Refused`."""
-    head = str(run["head"])
-    doc = _pull_doc(cfg, issue, pr, head, "ready", 0)
-    text = first_state.SAYS["acceptRefused"]
-    doc["attention"] = {"reason": "acceptRefused", "text": text, "ref": None}
-    if run.get("refused_clean") == run["head"]:
-        doc["refusedAcceptable"] = doc["change"]["version"]
-    fields = {"changeId": str(pr), "version": head, "conflicts": False}
-    fields.update(merged=False, empty=False)
-    if acceptable:
-        fields["acceptable"] = True
-    event = _event("changeObserved", issue, None, f"cleared-{pr}-{head}", **fields)
-    _, actions = decide(gh, cfg, issue, event, doc, pull=pr, write=write)
-    kinds = {action["kind"] for action in actions}
+def refusal_cleared(gh, cfg, issue, pr, head, acceptable, write=False):
+    """What follows a sweep's look at the NexKit pull request `pr` whose merge GitHub refused, on
+    its head `head` (`autopilot._refused_step`), as the engine decides it: `merge` when the
+    engine accepts it again, once `acceptable` says GitHub would accept `head` now
+    (`mergeable_state` `clean`, `unstable` or `has_hooks`), or `waits` when it asks for nothing,
+    such as when GitHub would not, or when that head was refused while it was acceptable, so that
+    each head is tried once: the stored `refusedAcceptable` says so, which `report._refused` sends
+    as an `acceptable` observation before a refusal of a `clean` pull request. The accept policy
+    decides nothing here, as in NexKit 6. The id of the event carries the stored revision
+    (`_revision`). It decides on the stored state alone. `write` stores the answer
+    (`decide_all`). Raises `Refused`."""
+    head = str(head)
+
+    def events(state):
+        fields = {"changeId": str(pr), "version": head, "conflicts": False}
+        fields.update(merged=False, empty=False)
+        if acceptable:
+            fields["acceptable"] = True
+        name = f"cleared-{pr}-{head}-r{_revision(state)}"
+        return [_event("changeObserved", issue, None, name, **fields)]
+
+    _, answers = decide_all(gh, cfg, issue, events, None, pull=pr, write=write)
+    kinds = set(_answered(answers))
     if "accept" in kinds:
         return "merge"
     if not kinds:
@@ -3379,29 +3432,37 @@ def update_failed(gh, cfg, issue, pr, head, auto_fixes, why, updates=0, write=Fa
     raise Refused(f"The engine answers {sorted(reasons)} after a failed update.")
 
 
-def change_seen(gh, cfg, issue, pr, head, auto_fixes, seen, waiting=False, write=False):
+def change_seen(gh, cfg, issue, pr, seen, write=False):
     """What follows what the host found about the NexKit pull request `pr` at its merge, as the
     engine decides it (`report.merge_pull`, `autopilot._merge_step`): `seen` is the observation
     without its change and its conflict, the pull request's `version`, and whether it was
     `merged` by a person or became `empty` because its base branch already holds the change.
-    NexKit never tried the merge then, so the merge has no result to send. `waiting` says that
-    the merge waits for required checks. Returns `accepted` or `noChange` when the item ended,
-    and `review` when the engine checks the version that a person pushed. `write` stores the
-    answer (`decide`). Raises `Refused`."""
-    doc = _pull_doc(cfg, issue, pr, head, "accepting", auto_fixes)
-    version = doc["change"]["version"]
-    if waiting:
-        doc["waits"] = [{"id": "w1.1", "for": "requiredChecks", "until": None, "on": None}]
-    else:
-        action = {"id": first_state.RUN_ID, "next": None, "kind": "accept"}
-        doc["pending"] = [{**action, "changeVersion": version, "by": "engine"}]
-    name = f"seen-{pr}-{seen['version']}"
-    event = _event("changeObserved", issue, None, name, changeId=str(pr), conflicts=False, **seen)
-    state, actions = decide(gh, cfg, issue, event, doc, pull=pr, write=write)
-    kinds = {action["kind"] for action in actions}
+    NexKit never tried the merge then, so the merge has no result to send. The stored state
+    holds whether the merge waits for required checks or has its accept pending. Returns
+    `accepted` or `noChange` when the item ended, and `review` when the engine checks the
+    version that a person pushed, also when the stored state checks that version already and
+    waits for its checks to start (a held merge whose pull request got a commit), as NexKit 6
+    starts the review. The id of the event carries the stored revision (`_revision`). It decides
+    on the stored state alone. `write` stores the answer (`decide_all`). Raises `Refused`."""
+
+    def events(state):
+        name = f"seen-{pr}-{seen['version']}-r{_revision(state)}"
+        return [
+            _event("changeObserved", issue, None, name, changeId=str(pr), conflicts=False, **seen)
+        ]
+
+    state, answers = decide_all(gh, cfg, issue, events, None, pull=pr, write=write)
+    kinds = set(_answered(answers))
     if state["state"] in ("accepted", "noChange"):
         return state["state"]
     if "runChecks" in kinds:
+        return "review"
+    starting = any(wait["for"] == "start" for wait in state["waits"])
+    same = state["change"]["version"] == seen["version"]
+    if not kinds and state["state"] == "checking" and same and starting:
+        # The stored state checks that version already and waits for its checks to start, as
+        # for a held merge whose pull request got a commit (`first_state.Item.held_back`): the
+        # host starts them, as NexKit 6 does.
         return "review"
     raise Refused(f"The engine answers {sorted(kinds)} to what the merge found.")
 

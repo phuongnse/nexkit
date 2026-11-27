@@ -70,6 +70,20 @@ def run(sc):
         conflicts={"auto_resolve": refusal != "head_unreadable"},
         notify=["olivia"],
     )
+    if sc["path"] != "first":
+        # The round that approved the merge is on the pull request before the import: the item
+        # is stored as that round left it, `accepting` while checks wait or `ready` for a person.
+        row = {
+            "round": 1,
+            "trigger": "implement (autopilot)",
+            "status": "success",
+            "outcome": "merge_waiting" if sc["path"] == "sweep" else "merge_refused",
+            "head": HEAD,
+            "checks": "passed",
+            "verdict": "approve",
+            "url": "https://github.com/acme/app/actions/runs/3",
+        }
+        gh.comment(6, render_run(row))
     # Before the patches that make GitHub fail: the import is of the work as it stood.
     seed(gh, cfg)
     res = {}
@@ -114,17 +128,6 @@ def run(sc):
 
             res["report"] = attempt(first_round)
         else:
-            row = {
-                "round": 1,
-                "trigger": "implement (autopilot)",
-                "status": "success",
-                "outcome": "merge_waiting" if sc["path"] == "sweep" else "merge_refused",
-                "head": HEAD,
-                "checks": "passed",
-                "verdict": "approve",
-                "url": "https://github.com/acme/app/actions/runs/3",
-            }
-            gh.comment(6, render_run(row))
             if sc["path"] == "approved":
                 decision = {"action": "maintain", "task": "approved", "pr": 6, "issue": 5}
                 decision.update(actor="olivia", commit=HEAD)

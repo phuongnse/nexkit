@@ -501,7 +501,11 @@ class Item:
             # The merge is tried again at once, for six hours from the first try
             # (`autopilot._merge_step`); then a person finds out why the checks never ended.
             since = parse_iso(latest.get("waiting_since"))
-            if since is not None and self.now - since > autopilot.LOST:
+            # A branch behind its base keeps being tried under `conflicts.auto_resolve`, however
+            # long it waited, as the engine decides (`machine.behind_exempt`).
+            behind = (self.pull or {}).get("mergeable_state") == "behind"
+            keeps_trying = behind and self.cfg["conflicts"]["auto_resolve"]
+            if since is not None and self.now - since > autopilot.LOST and not keeps_trying:
                 text = "The required checks have not passed for six hours."
                 return self.be("needs a person", "ready", "acceptRefused", None, text)
             if since is not None:

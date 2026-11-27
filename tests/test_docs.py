@@ -1722,6 +1722,10 @@ VALUES = (
     ("autopilot.md", f"up to {NUMBERS[autopilot.CI_TITLE_FAILURES]} of one kind"),
     ("autopilot.md", f"A sweep opens at most {NUMBERS[autopilot.DEPENDABOT_NEW_ISSUES]}"),
     ("autopilot.md", f"oldest {github.DEPENDABOT_ALERTS} alerts"),
+    ("stages.md", f"at most {NUMBERS[textutil.MAX_PARTS]} parts"),
+    ("stages.md", f"cut to {publish.PLAN_FLOOR} characters"),
+    ("stages.md", f"more than {checks.FAILED_TESTS_LIMIT} failing tests"),
+    ("stages.md", f"deletes up to {NUMBERS[maintain.STALE_BRANCHES]}"),
 )
 # The redaction list of how it works: its heading, and the regex that finds the words of its first
 # bullet. Its other bullets name the token shapes and the passwords, each in a code span.

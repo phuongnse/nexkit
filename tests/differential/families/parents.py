@@ -116,6 +116,19 @@ def run(sc):
         close_parent_issues=sc["close"],
         notify=["olivia"],
     )
+    row = {
+        "round": 1,
+        "trigger": "implement (autopilot)",
+        "status": "success",
+        "outcome": "merge_refused",
+        "head": HEAD,
+        "checks": "passed",
+        "verdict": "approve",
+        "url": "https://github.com/acme/app/actions/runs/3",
+    }
+    if sc["path"] == "merge":
+        # The round that the approval follows ended before the item's state was stored.
+        gh.comment(6, render_run(row))
     # Before the ticking clock, which moves with each read: the seed must leave it where NexKit 6's
     # tree has it. The part's close then follows its import, as it does on GitHub.
     seed(gh, cfg)
@@ -139,17 +152,6 @@ def run(sc):
             target = {"pr": 6, "issue": PART, "base": "main", "merge_base": "c" * 40}
             res["out"] = attempt(close_on_base, gh, cfg, target, commit="d" * 40)
         else:
-            row = {
-                "round": 1,
-                "trigger": "implement (autopilot)",
-                "status": "success",
-                "outcome": "merge_refused",
-                "head": HEAD,
-                "checks": "passed",
-                "verdict": "approve",
-                "url": "https://github.com/acme/app/actions/runs/3",
-            }
-            gh.comment(6, render_run(row))
             decision = {"action": "maintain", "task": "approved", "pr": 6, "issue": PART}
             decision.update(actor="olivia", commit=HEAD)
             res["out"] = attempt(maintain, gh, decision, cfg, workflow="nexkit.yml", ref="main")

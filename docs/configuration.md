@@ -230,7 +230,10 @@ remembering them. `review.checklist` makes each one a question that needs an ans
   is posted as it is, since the review decides.
 
 Write each item as something an agent can check in the code and change, in at most 300
-characters; a list holds at most 20. An item about what agents cannot change, such as an
+characters; a list holds at most 20. A list stays short and covers more when each item names the
+doc, or the section of it, that holds a kind of rules, such as "The change keeps every rule of
+docs/testing.md: read it and check the diff against each of its rules": a new rule then goes into
+that doc, not into the list. An item about what agents cannot change, such as an
 approval or the pull request's text, can never be met. An empty list, the default, leaves
 plans and reviews as they are.
 

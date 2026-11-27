@@ -30,6 +30,28 @@ rounds on this repository run the commands that `checks` in `.nexkit/config.json
 | Code scanning | `codeql.yml` | CodeQL on the Python code and the workflows |
 | Smoke test | `scripts/smoke.py` | Real Claude Code at its pin, as [the smoke test](#the-smoke-test) says |
 
+## Rules for tests
+
+These rules say what a change adds to the checks above, so that each check keeps owning its kind of
+mistake. A plan and a review check a change against each of them.
+
+- **A test for each behaviour.** Every behaviour that a change adds or changes has a test that fails
+  without it, in the check that [the table](#which-check-covers-what) names for that kind of
+  mistake.
+- **The test of its kind.** A new automatic rule comes with a scenario in `tests/test_scenarios.py`,
+  played over many rounds. A new or changed rule of the engine comes with a case in
+  `tests/conformance/`, invariants in `tests/walk.py` and mutants in `tests/mutants.py`. A new
+  workflow job extends `tests/test_cli.py`, which checks which token and secret each job holds. A
+  prompt change edits its golden in `tests/prompts/` by hand and says why.
+- **A move into the engine proves more.** A change that moves a decision of NexKit 6 into the engine
+  also keeps GitHub's behaviour, as [Moving decisions into the
+  engine](#moving-decisions-into-the-engine) says.
+- **No exception and no loosened check without the owner.** A change adds no exception to a check
+  and loosens none: no new entry in `tests/differential/known.py` or in the walker's `KNOWN`, nothing
+  that the differential check stops comparing, and no rule of a check or of its test removed,
+  narrowed or skipped. A change that needs one says why in its pull request, and the review's
+  checklist leaves it to the owner, whose approval of the reviewed commit accepts it.
+
 ## The smoke test
 
 The smoke test runs every agent stage against real Claude Code, at the version that

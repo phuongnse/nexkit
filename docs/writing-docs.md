@@ -429,6 +429,10 @@ when a list of what the code defines misses an entry. These rules close each of 
      which a writer's approval merges, which [work without a
      command](work-without-a-command.md#work-without-a-command) lists, are those of `APPROVABLE` in
      `nexkit/maintain.py`.
+   - `test_the_page_lists_each_mergeable_state_the_code_accepts_and_no_other`: the states in which
+     GitHub reports a pull request as mergeable, which [Automatic
+     merge](merges-and-waits.md#automatic-merge) lists, are those of `MERGEABLE_STATES` in
+     `nexkit/autopilot.py`.
    - `test_the_title_table_lists_each_title_the_code_writes_and_no_other`: the table of CI issue
      titles on [the autopilot page](autopilot.md) shows the titles that `ci_title` and `red_title`
      write, for each kind and form, and no other.

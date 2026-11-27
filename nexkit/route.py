@@ -242,9 +242,20 @@ def _none(reason, reply_to=None):
     return {"action": "none", "reason": reason, "reply_to": reply_to}
 
 
-def route(gh, event_name, event, inputs=None, cfg=None, taken=None, again=False):
+# What the reply says when the configuration did not load and no message is at hand.
+CONFIG_NOT_LOADED = ".nexkit/config.json did not load"
+
+
+def config_error(problem):
+    """The reply when `.nexkit/config.json` did not load. `problem` is the loader's message."""
+    return f"NexKit configuration error: {problem or CONFIG_NOT_LOADED}"
+
+
+def route(gh, event_name, event, inputs=None, cfg=None, taken=None, again=False, problem=None):
     """Decide the action. The result is a JSON-serialisable dict. `cfg` is the configuration,
-    when it loaded; a person's command goes to the engine with it (`_decide`). `taken` is what
+    when it loaded; a person's command goes to the engine with it (`_decide`). When it did
+    not load, `problem` says why, and a command, a *Request changes* review or a dispatch
+    gets the configuration error before the engine is asked. `taken` is what
     `host.take` stored in this run, [(event, actions)]: the run's own command is carried out
     from its answer. When the run's own event starts nothing, the first other taken command
     that started a stage starts it here, since the run that was to start it was replaced by
@@ -253,7 +264,7 @@ def route(gh, event_name, event, inputs=None, cfg=None, taken=None, again=False)
     Every action needs a trusted actor: a user with write access, or a dispatch, which
     GitHub already restricts to writers and to this repository's own workflows.
     """
-    decision = _route(gh, event_name, event, inputs or {}, cfg, taken)
+    decision = _route(gh, event_name, event, inputs or {}, cfg, taken, problem)
     if again or not taken or decision["action"] != "none":
         return decision
     return _taken_start(gh, cfg, taken, decision, event_name, event)
@@ -330,7 +341,7 @@ def _again(gh, cfg, taken, name, taken_event):
     return None
 
 
-def _route(gh, event_name, event, inputs, cfg, taken):
+def _route(gh, event_name, event, inputs, cfg, taken, problem=None):
     """`route`'s decision for this event alone."""
     if event_name == "issue_comment":
         if event.get("action") != "created" or by_bot(event["comment"]):
@@ -359,6 +370,7 @@ def _route(gh, event_name, event, inputs, cfg, taken):
                 by=actor,
                 source_id=event["comment"]["id"],
                 taken=taken,
+                problem=problem,
             )
             decision = _one_round(gh, decision)
             decision = _closing(gh, decision, event["comment"], cfg)
@@ -388,6 +400,7 @@ def _route(gh, event_name, event, inputs, cfg, taken):
             by=actor,
             review_id=review.get("id"),
             taken=taken,
+            problem=problem,
         )
         decision = _one_round(gh, decision)
         decision["actor"] = actor
@@ -495,6 +508,7 @@ def _route(gh, event_name, event, inputs, cfg, taken):
             by=sender,
             taken=taken,
             dispatched=bool(kinds - {"false"}),
+            problem=problem,
             # Only the first dispatch of a conflict round is counted: a resumed or retried one
             # was counted when it started.
             observe_conflict=conflicts and "resumed" not in kinds and not retry_number(kinds),
@@ -603,7 +617,7 @@ def _approval_step(gh, issue, pr, review_id):
     }
 
 
-def _closing(gh, decision, command, cfg=None):
+def _closing(gh, decision, command, cfg):
     """A person's `/nexkit plan` or `/nexkit go` whose note picks the option, of the
     questions NexKit asked last on the issue, that only closes it: the `maintain` job
     closes the issue as not planned, and no agent runs, since another round could only
@@ -712,6 +726,7 @@ def _decide(
     review_id=None,
     taken=None,
     dispatched=False,
+    problem=None,
     observe_conflict=False,
 ):
     """The decision for a person's command, or NexKit's own dispatch of one. A command starts
@@ -719,9 +734,10 @@ def _decide(
     that only GitHub shows: an unknown command, a fork, a person's pull request, which takes
     no `/nexkit fix`, and a closed issue or pull request, which gets NexKit 6's reply before the
     engine is asked, so that the item's stored state never hears a command on it.
-    `cfg` is the configuration, or None when it did not load, and then the answer is on
-    NexKit 6's document. `taken` is what `host.take` stored in this run: the answer to the
-    run's own command is carried out from it, and a command that an earlier run took starts
+    `cfg` is the configuration, or None when it did not load: then `problem` says why, and
+    the reply is the configuration error, in place of the engine's answer, which needs the
+    configuration for its policies. `taken` is what `host.take` stored in this run: the answer
+    to the run's own command is carried out from it, and a command that an earlier run took starts
     nothing and gets no reply. `dispatched` says that NexKit's own run sent the command (its
     `auto` input names a kind), which carries out the action the stored state has pending.
     `observe_conflict` says that this is the first dispatch of a conflict round, which its own
@@ -762,6 +778,8 @@ def _decide(
         item = number if person else issue
         if pull["state"] != "open":
             return _none("The pull request is closed", number)
+        if cfg is None:
+            return _none(config_error(problem), number)
         merged = on_base(gh, pull["base"]["ref"], pull["head"]["sha"])
         change = {"id": str(number), "version": pull["head"]["sha"]}
         observe_conflict = observe_conflict and not person
@@ -859,6 +877,8 @@ def _decide(
     issue = gh.issue(number)
     if issue["state"] != "open":
         return _none("The issue is closed", number)
+    if cfg is None:
+        return _none(config_error(problem), number)
     branch = branch_for(number)
     action = ISSUE_COMMANDS[command]
     change = plan = None

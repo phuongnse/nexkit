@@ -958,7 +958,9 @@ class TriggerTests(AutopilotCase):
         self.issue(5)
         self.maintain({"action": "maintain", "task": "sweep"})
         [inputs] = [d["inputs"] for d in self.gh.dispatches]
-        decision = route(self.gh, "workflow_dispatch", {"sender": {"login": "bot"}}, inputs)
+        decision = route(
+            self.gh, "workflow_dispatch", {"sender": {"login": "bot"}}, inputs, cfg=self.cfg
+        )
         self.assertEqual((decision["action"], decision["autopilot"]), ("plan", True))
         self.assertFalse(decision["auto"])
 
@@ -3505,7 +3507,9 @@ class CIWaitTests(AutopilotCase):
             self.assertNotIn("ci_wait", state)
             # The round is an automatic round after failing checks, so it merges `main`.
             inputs = {"command": "fix", "number": str(pull), "note": "", "auto": "true"}
-            decision = route(self.gh, "workflow_dispatch", {"sender": {"login": BOT_LOGIN}}, inputs)
+            decision = route(
+                self.gh, "workflow_dispatch", {"sender": {"login": BOT_LOGIN}}, inputs, cfg=self.cfg
+            )
             self.assertEqual((decision["action"], decision["auto"]), ("fix", True))
             self.assertTrue(_after_failed_checks(decision, self.gh.comments(pull)))
         [record] = self.gh.comments_matching(5, "NexKit autopilot started `/nexkit fix` on #10")
@@ -3623,7 +3627,9 @@ class CIWaitTests(AutopilotCase):
         self.sweep(self.cfg)
         again = self.fixes()[1]
         self.assertEqual(again["auto"], fix["auto"])
-        decision = route(self.gh, "workflow_dispatch", {"sender": {"login": BOT_LOGIN}}, again)
+        decision = route(
+            self.gh, "workflow_dispatch", {"sender": {"login": BOT_LOGIN}}, again, cfg=self.cfg
+        )
         self.assertTrue(_after_failed_checks(decision, self.gh.comments(pull)))
 
     def test_closing_the_bug_issue_ends_the_wait(self):
@@ -3754,7 +3760,9 @@ class CIWaitTests(AutopilotCase):
         )
         self.assertEqual(self.state(10)["auto_fixes"], 1)
         inputs = self.fixes()[1]
-        decision = route(self.gh, "workflow_dispatch", {"sender": {"login": BOT_LOGIN}}, inputs)
+        decision = route(
+            self.gh, "workflow_dispatch", {"sender": {"login": BOT_LOGIN}}, inputs, cfg=self.cfg
+        )
         self.assertTrue(_after_failed_checks(decision, self.gh.comments(10)))
         self.assertFalse(self.gh.comments_matching(5, "@olivia"))
         self.assertFalse(self.gh.comments_matching(10, "@olivia"))

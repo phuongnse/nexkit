@@ -11,6 +11,7 @@ NexKit cannot read), the base branch failing the same way, conflict rounds used.
 kinds of dispatch (automatic, a person's, a conflict round, resumed, autopilot's)."""
 
 import datetime as _dt
+import inspect
 import json
 import random
 import sys
@@ -382,7 +383,11 @@ def run(sc):
             event = {"inputs": inputs, "sender": {"login": "alice"}}
 
             def decide(inputs=inputs, event=event):
-                found = route_mod.route(gh, "workflow_dispatch", event, inputs)
+                # With the configuration where `route` takes one, as the GitHub job passes it.
+                extra = (
+                    {"cfg": cfg} if "cfg" in inspect.signature(route_mod.route).parameters else {}
+                )
+                found = route_mod.route(gh, "workflow_dispatch", event, inputs, **extra)
                 return {k: found.get(k) for k in ("action", "diagnose", "conflicts", "reason")}
 
             with quiet():

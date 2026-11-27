@@ -17,5 +17,7 @@ if [ -z "$dir" ]; then
     git -C "$dir" checkout --quiet --detach "$v6"
   fi
 fi
-python3 "$root/tests/differential/harness.py" --v6 "$dir" --sample "${NEXKIT_DIFF_SAMPLE:-400}" --fallbacks
+# Each part that moves a host function to the stored state alone adds its own --forbid.
+python3 "$root/tests/differential/harness.py" --v6 "$dir" --sample "${NEXKIT_DIFF_SAMPLE:-400}" \
+  --fallbacks --forbid nexkit.host.close_done
 python3 "$root/tests/walk.py" --walks "${NEXKIT_DIFF_WALKS:-1000}"

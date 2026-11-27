@@ -9,6 +9,7 @@ for a person, an error, a transient error, no result, a pause with a known or un
 `nexkit status`, then the review that runs again with its own `report`, and `route` once
 more."""
 
+import inspect
 import itertools
 import json
 
@@ -154,7 +155,7 @@ def run(sc):
     res = {}
     with quiet():
         res["report"] = one_round(gh, cfg, d, sc["checks"], REVIEWS[sc["review"]], pr)
-        res["route"] = walk(dispatch(gh, pr, "fix", "true"))
+        res["route"] = walk(dispatch(gh, cfg, pr, "fix", "true"))
         res["after_report"] = snapshot(gh)
         after(gh, cfg, res)
         # The review that runs again, as the dispatch or the resume would start it.
@@ -165,21 +166,24 @@ def run(sc):
                 if again
                 else {"command": "review", "number": str(pr), "note": "", "auto": "true,resume"}
             )
-            d2 = dispatch(gh, pr, inputs["command"], inputs.get("auto"))
+            d2 = dispatch(gh, cfg, pr, inputs["command"], inputs.get("auto"))
             res["route2"] = walk(d2)
             if isinstance(d2, dict) and d2.get("action") == "review":
                 d2 = dict(d2, run_id=4343)
                 res["report2"] = one_round(gh, cfg, d2, sc["checks"], REQUEST_CHANGES, pr)
-                res["route3"] = walk(dispatch(gh, pr, "fix", "true"))
+                res["route3"] = walk(dispatch(gh, cfg, pr, "fix", "true"))
         res["end"] = snapshot(gh)
     return res
 
 
-def dispatch(gh, pr, command, auto):
+def dispatch(gh, cfg, pr, command, auto):
     inputs = {"command": command, "number": str(pr), "note": "", "auto": auto or ""}
     event = {"inputs": inputs, "sender": {"login": "nexkit[bot]"}}
+    # With the configuration where `route` takes one (NexKit 6's takes none), as the GitHub job
+    # passes it.
+    extra = {"cfg": cfg} if "cfg" in inspect.signature(route).parameters else {}
     try:
-        return route(gh, "workflow_dispatch", event, inputs)
+        return route(gh, "workflow_dispatch", event, inputs, **extra)
     except Exception as exc:  # noqa: BLE001
         return f"EXC {type(exc).__name__}: {exc}"
 

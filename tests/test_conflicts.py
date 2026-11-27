@@ -300,7 +300,9 @@ class SupersededTests(unittest.TestCase):
         """The decision of the automatic review that the stop started, as `nexkit route`
         gives it once it read the configuration."""
         inputs = {"command": "review", "number": "6", "auto": "true"}
-        decision = route(self.gh, "workflow_dispatch", {"sender": {"login": "x"}}, inputs)
+        decision = route(
+            self.gh, "workflow_dispatch", {"sender": {"login": "x"}}, inputs, cfg=self.cfg
+        )
         return skip_unaffected(self.gh, decision, self.cfg)
 
     def test_a_round_checking_a_head_now_behind_stops_and_the_branch_is_updated(self):
@@ -569,6 +571,7 @@ class RouteTests(unittest.TestCase):
         self.gh = FakeGitHub()
         self.gh.add_issue(5)
         self.gh.add_pull(6, 5)
+        self.cfg = make_config()
 
     def test_pushes_to_the_default_branch(self):
         event = {"ref": "refs/heads/main", "repository": {"default_branch": "main"}}
@@ -594,7 +597,7 @@ class RouteTests(unittest.TestCase):
                 },
             ),
         ):
-            decision = route(self.gh, event_name, event)
+            decision = route(self.gh, event_name, event, cfg=self.cfg)
             self.assertEqual((decision["action"], decision["reply_to"]), ("none", 6))
             self.assertIn(
                 "[implement round](https://github.com/acme/app/actions/runs/40)", decision["reason"]
@@ -602,17 +605,23 @@ class RouteTests(unittest.TestCase):
             self.assertIn("one NexKit round at a time", decision["reason"])
         # The rounds that the implement round starts itself as it ends go on.
         inputs = {"command": "review", "number": "6", "note": "", "auto": "retry"}
-        dispatch = route(self.gh, "workflow_dispatch", {"sender": {"login": BOT_LOGIN}}, inputs)
+        dispatch = route(
+            self.gh, "workflow_dispatch", {"sender": {"login": BOT_LOGIN}}, inputs, cfg=self.cfg
+        )
         self.assertEqual(dispatch["action"], "review")
         # Once it ended, the command runs.
         self.gh.comment(5, render_run({**go, "status": "success"}))
-        fix = route(self.gh, "issue_comment", comment_event(6, "/nexkit fix", on_pull=True))
+        fix = route(
+            self.gh, "issue_comment", comment_event(6, "/nexkit fix", on_pull=True), cfg=self.cfg
+        )
         self.assertEqual(fix["action"], "fix")
 
     def test_a_conflict_round_records_the_base_commit(self):
         self.gh.branches["main"] = "e" * 40
         inputs = {"command": "fix", "number": "6", "note": "Merge", "auto": "conflicts"}
-        decision = route(self.gh, "workflow_dispatch", {"sender": {"login": BOT_LOGIN}}, inputs)
+        decision = route(
+            self.gh, "workflow_dispatch", {"sender": {"login": BOT_LOGIN}}, inputs, cfg=self.cfg
+        )
         self.assertEqual(decision["base_sha"], "e" * 40)
         self.assertTrue(decision["conflicts"])
 
@@ -626,6 +635,7 @@ class ConcurrentStartTests(unittest.TestCase):
         self.gh.add_issue(5)
         self.gh.add_pull(6, 5)
         self.gh.pulls[6]["mergeable"] = False
+        self.cfg = make_config()
         row = {"round": 1, "trigger": "fix", "url": "https://x/6/1", "status": "success"}
         self.gh.comment(6, render_run(row))
 
@@ -643,26 +653,32 @@ class ConcurrentStartTests(unittest.TestCase):
         self.assertEqual(len(started), 2)
         # The first runs and ends on this base commit.
         sender = {"sender": {"login": BOT_LOGIN}}
-        first = route(self.gh, "workflow_dispatch", sender, started[0])
+        first = route(self.gh, "workflow_dispatch", sender, started[0], cfg=self.cfg)
         self.assertEqual(first["action"], "fix")
         row = {"round": 2, "url": "https://x/6/2", "status": "failure", "outcome": "agent_blocked"}
         row.update(trigger="fix (auto, conflicts)", conflicts=True, base_sha=first["base_sha"])
         self.gh.comment(6, render_run(row))
         # The second, which waited behind it in the pull request's group, runs nothing.
-        second = route(self.gh, "workflow_dispatch", sender, started[1])
+        second = route(self.gh, "workflow_dispatch", sender, started[1], cfg=self.cfg)
         self.assertEqual((second["action"], second["reply_to"]), ("none", None))
         self.assertIn("A conflict round already ran on `main`", second["reason"])
         # A round that resumes or retries it, or starts once more after it ended without a
         # report, goes on.
         for auto in ("conflicts,resume", "conflicts,retry"):
-            again = route(self.gh, "workflow_dispatch", sender, {**started[1], "auto": auto})
+            again = route(
+                self.gh, "workflow_dispatch", sender, {**started[1], "auto": auto}, cfg=self.cfg
+            )
             self.assertEqual(again["action"], "fix", auto)
         self.gh.issue_comments[6][-1]["body"] = render_run({**row, "outcome": "lost"})
-        self.assertEqual(route(self.gh, "workflow_dispatch", sender, started[1])["action"], "fix")
+        self.assertEqual(
+            route(self.gh, "workflow_dispatch", sender, started[1], cfg=self.cfg)["action"], "fix"
+        )
         # After the base branch moves, a new round goes on too.
         self.gh.issue_comments[6][-1]["body"] = render_run(row)
         self.gh.branches["main"] = "e" * 40
-        self.assertEqual(route(self.gh, "workflow_dispatch", sender, started[1])["action"], "fix")
+        self.assertEqual(
+            route(self.gh, "workflow_dispatch", sender, started[1], cfg=self.cfg)["action"], "fix"
+        )
 
 
 MUL_TOP = "def mul(a, b):\n    return a * b\n\n\n"

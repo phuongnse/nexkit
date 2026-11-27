@@ -323,7 +323,7 @@ def cmd_route(args):
     from .checks import all_skipped, check_jobs, check_matrix, sharded
     from .github import GitHubError
     from .maintain import TASKS, enabled, longest_reach
-    from .route import route, skip_unaffected, with_profile
+    from .route import config_error, route, skip_unaffected, with_profile
 
     gh = _gh()
     event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
@@ -358,13 +358,14 @@ def cmd_route(args):
         event.get("inputs") or {},
         cfg=loaded,
         taken=taken,
+        problem=problem,
     )
     cfg = None
     if decision["action"] != "none":
         if problem:
             decision = {
                 "action": "none",
-                "reason": f"NexKit configuration error: {problem}",
+                "reason": config_error(problem),
                 "reply_to": decision.get("target"),
             }
         else:

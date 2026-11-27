@@ -56,8 +56,8 @@ only the work that its feature needs.
      so it keeps the parent's milestone.
 - Every issue and pull request carries at least one label of its kind (`enhancement`, `bug`,
   `refactor`, `process` or `documentation`) and every other label whose description on GitHub fits
-  it, such as `security`.
-- A release pull request carries `release`, and one that updates a pin `dependencies`.
+  it, such as `security`. A release pull request carries `release` in place of a label of its
+  kind, and one that updates a pin `dependencies`.
 - A pull request that closes an issue carries that issue's labels, but for the holds `on-hold` and
   `hand-made`, and its milestone when it has one: NexKit sets them on the pull requests it opens,
   and a session sets them on its own. A pull request that closes no issue takes the same test.
@@ -98,5 +98,6 @@ over the version or the changelog.
   `ghcr.io/phuongnse/nexkit-engine:X.Y.Z`. It refuses a tag that is not `v` and the version in
   `nexkit/__init__.py`, and a commit that is not on `main`. Every pull request builds and checks
   the image the same way, without publishing it. Its `publish` job pushes the image with
-  `github.token` and `packages: write`, since a GitHub App gets no access to packages. It is the
-  only job that writes with `github.token`, and it runs no repository code.
+  `github.token` and `packages: write`, since a GitHub App gets no access to packages. Like
+  NexKit's other maintenance jobs, it runs no repository code, as
+  [D13](decisions/d13-the-pipeline-writes-as-the-app-and-maintenance-jobs-with-the-actions-token.md) says.

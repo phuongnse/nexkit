@@ -91,7 +91,8 @@ jobs:
           retention-days: 1
 
   publish:
-    # The one job that writes with github.token: GHCR takes no GitHub App token (AGENTS.md).
+    # Writes with github.token like NexKit's other maintenance jobs: GHCR takes no GitHub App
+    # token (D13).
     if: github.event_name == 'release'
     needs: build
     runs-on: ubuntu-24.04

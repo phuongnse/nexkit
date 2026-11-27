@@ -252,70 +252,176 @@ when a list of what the code defines misses an entry. These rules close each of 
    whose close on GitHub and roadmap row disagree. It also points each broken link of an open issue
    at its new home. The [docs audit skill](../.claude/skills/nexkit-docs-audit/SKILL.md) says how a
    page is read and what each issue holds.
-9. **Checks catch what a machine can.** `tests/test_docs.py` checks that [the map](README.md) lists
-   every doc, with the decisions listed through [the index](decisions.md), and that its list of the
-   plugin's skills matches the skills under `skills/`; that the links of every
-   page under `docs/`, of the README, of [AGENTS.md](../AGENTS.md), of the plugin's skills under
-   `skills/` and of the maintenance skills under `.claude/skills/` resolve; that each link to how it
-   works and the pages split from it resolves; that each task of the `nexkit-maintain` skill links a
-   section of [Delivery](delivery.md); that the label table of
-   [Delivery](delivery.md#labels-and-milestones) lists each label the code creates and, besides the
-   labels of a kind, no other; that AGENTS.md keeps within its word limits; that the job and
-   module tables of the architecture page match the workflows and `nexkit/`, and that its job
-   diagram shows each job of `pipeline.yml` and the order each job's `needs:` set; that the job
-   table of [how it works](how-it-works.md#one-run-ten-jobs) matches the jobs of `pipeline.yml`, the
-   permissions its rows name, and the number in its heading; that the plan and review layouts of
-   [stages](stages.md) list the sections the code writes, and that each value the pages repeat
-   matches its constant, and that the words [agents and profiles](agents-and-profiles.md) and
-   [failure handling](failure-handling.md#failure-handling) list as marking a failing line are those
-   of `FAILURE_LINE`; that the retry delays [failure handling](failure-handling.md#failure-handling)
-   give for `publish` and for every other GitHub API call are those of `publish.WAITS` and
-   `github.GitHub.waits`, with their counts of tries; that the tools
-   [agents and profiles](agents-and-profiles.md#agents) give the
-   plan and review stages are those of `READ_ONLY_TOOLS`; that the outcomes after which a writer's
-   approval merges, which [work without a command](work-without-a-command.md#work-without-a-command)
-   lists, are those of `APPROVABLE`; that the issue states
-   [the status skill](../skills/status/SKILL.md) lists are those that `issue_item` in
-   `nexkit/status.py` sets, and that its pull request states are those that `pull_state` and
-   `pull_item` give; that the autopilot states [the status skill](../skills/status/SKILL.md)
-   lists are those that autopilot's steps take in `nexkit/autopilot.py` and `nexkit/host.py`; that
-   no doc, the README, AGENTS.md or a skill repeats a pinned version:
-   each pin that [D9](decisions/d9-pins-live-in-one-place.md) governs, or a lint tool's version from
-   `scripts/lint.sh`; that each test the security page
-   names exists; that the refusals of `unaffected_by` that
-   [the checks page](checks.md#checks-that-a-change-cannot-affect) lists are
-   the code's, and that the code refuses each one; that the outcome table of
-   [how it works](how-it-works.md) lists each outcome the code defines and no other; that the mention
-   table of [troubleshooting](troubleshooting.md#what-a-mention-says) lists each outcome that needs a
-   person and no other, with the code's text for what to do and why; that the command
-   table of [the README](../README.md#use-it) lists each comment command `nexkit/route.py` accepts,
-   where it accepts it, and no other; that the key tables and the complete configuration of the
-   [configuration reference](configuration.md) list each key the code defines and no other, with its
-   default and range; that the table of a stage's keys in
-   [the configuration reference](configuration.md#stages) lists each key `nexkit/config.py` accepts
-   and no other; that the runtime table of the configuration reference lists each runtime the
-   code defines, with its providers and effort levels, and which runtimes report
-   usage limits; that the provider table of the configuration reference lists each provider the code
-   defines and no other, with its settings and secret fields; that the table of the App's
-   permissions in [configuration](configuration.md#the-github-app) matches the permissions and
-   levels `nexkit/app.py` asks for; that the trigger table of [the workflow
-   file](configuration.md#workflow-file) lists each trigger of the workflow template and no
-   other; that the list of a check's fields in [checks](checks.md#checks) names each field
-   `nexkit/config.py` accepts and no other; that the list of a cache entry's fields in
-   [the configuration reference](configuration.md#caches) names each field `nexkit/config.py`
-   accepts and no other; that the README's
-   [table of supported versions](../README.md#supported-versions) is
-   compared with the pins in `nexkit/__init__.py`, and each `ubuntu-NN.NN` in the README with the
-   pinned runner; that the local commands table of [the README](../README.md#local-commands)
-   lists each command the CLI defines for people and no other, and that each option a row names
-   exists; that the files [Releases](delivery.md#releases) lists as holding the version are those
-   that hold it, and no other; that the README's configuration example is what `nexkit init`
-   writes for the README's own setup command; that the jobs in which
-   [autopilot](work-without-a-command.md#autopilot) stops a round are those of `CHECK_JOBS`, and
-   that those in which it never does are other jobs of `pipeline.yml`; that the table of
-   [CI issue titles](autopilot.md) shows the titles `ci_title` and `red_title` in
-   `nexkit/autopilot.py` write, for each kind and form, and no other; that the list of what
-   redaction replaces in [how it works](how-it-works.md#what-is-redacted) matches the words, names,
-   minimum length and patterns of `nexkit/redact.py`; and that the index matches
-   the decision files, each of which follows the template and is linked from a rule or a page. A
-   docs check is added only once the whole tree passes it: there are no lists of exceptions.
+9. **Checks catch what a machine can.** `tests/test_docs.py` makes these checks, one test each, and
+   a test compares this list with the file. A docs check is added only once the whole tree passes
+   it: there are no lists of exceptions.
+   - `test_rule_9_lists_each_check_of_this_file_and_no_other`: this list names each test method of
+     `tests/test_docs.py` once, and no other.
+   - `test_the_map_lists_every_doc`: [the map](README.md) lists every doc, with the decisions listed
+     through [the index](decisions.md).
+   - `test_the_map_names_each_skill_of_the_plugin`: the map's list of the plugin's skills matches
+     the skills under `skills/`.
+   - `test_the_architecture_page_names_each_skill_of_the_plugin`: the list of the plugin's skills on
+     [the architecture page](architecture.md) matches the skills under `skills/`.
+   - `test_the_links_of_the_docs_the_readme_agents_md_and_the_skills_resolve`: the links of every
+     page under `docs/`, of the README, of [AGENTS.md](../AGENTS.md) and of the plugin's skills
+     under `skills/` resolve.
+   - `test_each_link_to_how_it_works_and_its_pages_resolves`: each link to [how it
+     works](how-it-works.md) and to the pages split from it resolves, from any of those pages.
+   - `test_each_test_the_page_names_exists_in_the_file_it_names`: each test that [the security
+     page](security.md) names exists in the file it names.
+   - `test_each_untrusted_input_names_a_rule_and_a_test`: each untrusted input in the table of [the
+     security page](security.md) links a rule of that page and names a test.
+   - `test_agents_md_holds_at_most_800_words`: [AGENTS.md](../AGENTS.md) stays within 800 words.
+   - `test_each_rule_holds_at_most_60_words`: each rule of [AGENTS.md](../AGENTS.md) stays within 60
+     words.
+   - `test_each_rule_links_a_doc_section`: each rule of [AGENTS.md](../AGENTS.md) links a section of
+     a page under `docs/`.
+   - `test_the_supported_versions_table_gives_the_pins_of_the_code`: the supported versions table of
+     [the README](../README.md#supported-versions) matches the pins in `nexkit/__init__.py`.
+   - `test_every_runner_the_readme_names_is_the_pinned_runner`: each `ubuntu-NN.NN` in [the
+     README](../README.md) is the pinned runner.
+   - `test_the_release_list_names_each_file_that_holds_the_version`: the files that
+     [Releases](delivery.md#releases) lists as holding the version are those that hold it, and no
+     other.
+   - `test_the_readme_installs_the_tag_of_the_version`: the `pipx install` line of [the
+     README](../README.md) installs the tag of the version.
+   - `test_no_doc_repeats_a_pinned_version`: no doc, the README, AGENTS.md or a skill repeats a
+     pinned version: each pin that [D9](decisions/d9-pins-live-in-one-place.md) governs, or a lint
+     tool's version from `scripts/lint.sh`.
+   - `test_the_configuration_example_is_what_nexkit_init_writes`: the configuration example of [the
+     README](../README.md#configuration) is what `nexkit init` writes for the README's own setup
+     command.
+   - `test_the_local_commands_table_lists_each_command_for_people_and_no_other`: the local commands
+     table of [the README](../README.md#local-commands) lists each command `nexkit/cli.py` defines
+     for people, and no other.
+   - `test_each_nexkit_option_the_readme_names_exists`: each option that the README names with a
+     `nexkit` command exists for that command.
+   - `test_the_outcome_table_lists_each_outcome_the_code_defines_and_no_other`: the outcome table of
+     [how it works](how-it-works.md) lists each outcome the code defines and no other.
+   - `test_the_label_table_lists_each_label_the_code_creates_and_no_other`: the label table of [the
+     delivery page](delivery.md#labels-and-milestones) lists each label the code creates and,
+     besides the labels of a kind, no other.
+   - `test_the_mention_table_lists_each_outcome_that_needs_a_person_and_no_other`: the mention table
+     of [troubleshooting](troubleshooting.md#what-a-mention-says) lists each outcome that needs a
+     person and no other.
+   - `test_each_row_says_what_the_code_writes_in_the_mention`: each row of that mention table gives
+     the code's text for what to do and why.
+   - `test_the_readme_lists_each_command_the_code_accepts_and_no_other`: the command table of [the
+     README](../README.md#use-it) lists each comment command that `nexkit/route.py` accepts, where
+     it accepts it, and no other.
+   - `test_the_permissions_table_lists_each_permission_the_app_asks_for_at_its_level`: the table of
+     the App's permissions in [configuration](configuration.md#the-github-app) lists each permission
+     `nexkit/app.py` asks for, at its level.
+   - `test_the_runtime_table_lists_each_runtime_the_code_defines_and_no_other`: the runtime table of
+     [the configuration reference](configuration.md) lists each runtime the code defines and no
+     other, with its providers and effort levels.
+   - `test_the_provider_table_lists_each_provider_the_code_defines_and_no_other`: the provider table
+     of [the configuration reference](configuration.md) lists each provider the code defines and no
+     other, with its settings and secret fields.
+   - `test_the_page_names_each_runtime_that_reports_usage_limits`: [the configuration
+     reference](configuration.md) names each runtime that reports usage limits.
+   - `test_the_key_tables_list_each_key_the_code_defines_and_no_other`: the key tables of [the
+     configuration reference](configuration.md) list each key the code defines and no other.
+   - `test_the_stage_table_lists_each_stage_key_the_code_defines_and_no_other`: the table of a
+     stage's keys in [the configuration reference](configuration.md#stages) lists each key
+     `nexkit/config.py` accepts and no other.
+   - `test_the_cache_field_list_names_each_cache_key_the_code_defines_and_no_other`: the list of a
+     cache entry's fields in [the configuration reference](configuration.md#caches) names each field
+     `nexkit/config.py` accepts and no other.
+   - `test_the_pages_list_each_secret_an_older_workflow_can_pass_and_no_other`: the configuration
+     reference and [troubleshooting](troubleshooting.md) list each secret an older workflow can
+     pass, and no other.
+   - `test_each_key_row_gives_the_code_default_and_range`: each key row of [the configuration
+     reference](configuration.md) gives the default and range the code has.
+   - `test_the_complete_configuration_lists_each_key_the_code_defines_and_no_other`: the complete
+     configuration in [the configuration reference](configuration.md) lists each key the code
+     defines and no other.
+   - `test_the_complete_configuration_holds_each_default_it_says_it_does`: the complete
+     configuration in [the configuration reference](configuration.md) holds each key's default from
+     the code, except `setup` and `checks`.
+   - `test_the_workflow_file_table_lists_each_trigger_of_the_template`: the trigger table of [the
+     workflow file](configuration.md#workflow-file) lists each trigger of
+     `nexkit/templates/workflow.yml` and no other.
+   - `test_the_app_upgrade_lists_each_workflow_permission_of_the_template`: step 5 of the App
+     upgrade in [the configuration reference](configuration.md) lists each workflow permission of
+     the template, with its level.
+   - `test_the_page_lists_each_refusal_of_the_code_and_no_other`: the refusals of `unaffected_by`
+     that [the checks page](checks.md#checks-that-a-change-cannot-affect) lists are each refusal of
+     the code and no other.
+   - `test_the_code_refuses_each_listed_pattern`: the code refuses each refusal that the checks page
+     lists.
+   - `test_the_field_list_names_each_check_key_the_code_defines_and_no_other`: the list of a check's
+     fields on [the checks page](checks.md#checks) lists each key the code defines and no other.
+   - `test_the_settings_block_lists_each_autopilot_key_the_code_defines_and_no_other`: the autopilot
+     settings block on [the autopilot page](autopilot.md) lists each key the code defines and no
+     other.
+   - `test_the_settings_block_holds_each_default_but_enabled`: the same block holds each default the
+     code has, except `enabled`, which the block turns on.
+   - `test_the_page_has_a_section_for_each_part`: [the architecture page](architecture.md) has a
+     section for each part: the package, the workflows and their jobs, tokens and secrets, state,
+     the engine and its hosts, and the plugin.
+   - `test_each_job_has_a_row_with_its_tokens_and_secrets`: the job table of [the architecture
+     page](architecture.md) has a row for each job of the three pipeline workflows, with its tokens
+     and secrets.
+   - `test_each_module_has_a_row`: the module table of [the architecture page](architecture.md) has
+     a row for each module of `nexkit/`.
+   - `test_the_job_diagram_shows_each_job_of_the_pipeline_and_the_order_it_waits_in`: the job
+     diagram of [the architecture page](architecture.md) shows each job of `pipeline.yml`, and each
+     arrow is a `needs:` of the job after it.
+   - `test_the_run_table_has_a_row_for_each_job_of_the_pipeline`: the job table of [how it
+     works](how-it-works.md#one-run-ten-jobs) has a row for each job of `pipeline.yml`, with the
+     permissions its rows name and the number in its heading.
+   - `test_each_decision_file_follows_the_template`: each file under `decisions/` follows the
+     template.
+   - `test_the_index_has_one_row_for_each_decision_file`: the [index](decisions.md) has one row for
+     each decision file, and each row matches its file.
+   - `test_each_decision_is_linked_from_a_rule_or_a_page`: a rule or a page links each decision.
+   - `test_the_links_of_the_maintenance_skills_resolve`: the links of the maintenance skills under
+     `.claude/skills/` resolve.
+   - `test_each_task_of_nexkit_maintain_links_a_delivery_section`: each task of the
+     `nexkit-maintain` skill links a section of [Delivery](delivery.md).
+   - `test_the_plan_layout_lists_the_sections_the_code_writes`: the plan layout of
+     [stages](stages.md) lists the sections that `publish.render_plan` writes.
+   - `test_the_review_layout_lists_the_parts_the_code_writes`: the review layout of
+     [stages](stages.md) lists the parts that `report.review_body` writes.
+   - `test_each_value_a_page_repeats_is_its_constant`: each value that [agents and
+     profiles](agents-and-profiles.md), [how it works](how-it-works.md), [work without a
+     command](work-without-a-command.md) and [failure handling](failure-handling.md) repeat equals
+     its constant in the code.
+   - `test_the_page_lists_the_secret_words_and_names_the_code_has`: the words and names of the
+     redaction list in [how it works](how-it-works.md#what-is-redacted) are those of
+     `SECRET_WORDS` and `SECRET_NAMES` in `nexkit/redact.py`, and no other.
+   - `test_the_page_lists_each_token_shape_the_code_redacts_and_no_other`: the token shapes that
+     the same list names each have a sample that the test redacts, and no other shape is named.
+   - `test_the_code_redacts_each_listed_shape_and_each_pattern_has_one`: `nexkit/redact.py`
+     redacts a sample of each shape the list names, and each of its patterns redacts one of them.
+   - `test_each_page_lists_the_words_of_failure_line_and_no_other`: the words that [agents and
+     profiles](agents-and-profiles.md) and [failure handling](failure-handling.md#failure-handling)
+     list as marking a failing line are those of `FAILURE_LINE`.
+   - `test_the_page_lists_the_check_jobs_and_no_other`: the jobs in which
+     [autopilot](work-without-a-command.md#autopilot) stops a round are those of `CHECK_JOBS`, and
+     no other.
+   - `test_the_failure_table_lists_the_retry_delays_the_code_has`: the retry delays that [failure
+     handling](failure-handling.md#failure-handling) give for `publish` and for every other GitHub
+     API call are those of `publish.WAITS` and `github.GitHub.waits`.
+   - `test_the_failure_table_counts_the_tries_the_code_makes`: the counts of tries that the same
+     table gives for those calls are the code's.
+   - `test_the_access_table_lists_the_read_only_tools_and_no_other`: the tools that [agents and
+     profiles](agents-and-profiles.md#agents) give the plan and review stages are those of
+     `READ_ONLY_TOOLS`.
+   - `test_the_skill_lists_each_issue_state_the_code_sets_and_no_other`: the issue states that [the
+     status skill](../skills/status/SKILL.md) lists are those that `issue_item` in
+     `nexkit/status.py` sets.
+   - `test_the_skill_lists_each_autopilot_state_the_code_gives_and_no_other`: the autopilot states
+     that the status skill lists are those that autopilot's steps take in `nexkit/autopilot.py` and
+     `nexkit/host.py`.
+   - `test_the_skill_lists_each_pull_request_state_the_code_gives_and_no_other`: the pull request
+     states that the status skill lists are those that `pull_state` and `pull_item` give.
+   - `test_the_page_lists_each_outcome_an_approval_merges_after_and_no_other`: the outcomes after
+     which a writer's approval merges, which [work without a
+     command](work-without-a-command.md#work-without-a-command) lists, are those of `APPROVABLE` in
+     `nexkit/maintain.py`.
+   - `test_the_title_table_lists_each_title_the_code_writes_and_no_other`: the table of CI issue
+     titles on [the autopilot page](autopilot.md) shows the titles that `ci_title` and `red_title`
+     write, for each kind and form, and no other.

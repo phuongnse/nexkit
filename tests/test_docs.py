@@ -1,55 +1,6 @@
-"""The docs' map lists every doc, with the decisions listed through their index, and its list of the
-plugin's skills matches skills/. The links of every page under docs/, of the README, of AGENTS.md,
-of the plugin's skills and of the maintenance skills resolve, every link to how it works and the
-pages split from it resolves, each task of the nexkit-maintain skill links a section of the delivery
-page, AGENTS.md keeps within its word limits, the architecture page's job and module tables match
-the workflows and nexkit/, its job diagram shows each job of pipeline.yml and the order each job's
-needs: set, the how-it-works page's job table matches the jobs of pipeline.yml, the permissions its
-rows name and the number in its heading, each test the security page names exists,
-and the outcome table of how it works lists each outcome the code defines and no other. The label
-table of the delivery page lists each label the code creates and, besides the labels of a kind, no
-other. The table of a stage's keys under `## Stages` in the configuration reference lists each
-stage key the code accepts and no other. The mention
-table of the troubleshooting page lists each outcome that needs a person and no other, with the
-code's text for what to do and why. The command table of the README lists each comment command the
-code accepts, where it accepts it, and no other. The key tables and the complete configuration of
-the configuration reference list each key the code defines and no other, with the defaults and
-ranges the code has. The list of a check's fields on the checks page lists each key the code
-defines and no other. The runtime table of that page lists each runtime the code defines and no
-other, with its providers, effort levels and budget support, and which runtimes report usage limits.
-The provider table of that page lists each provider the code defines and no other, with its
-settings and secret fields.
-The trigger table of its workflow file section lists each trigger of the workflow template and no
-other. The list of workflow permissions in step 5 of the App upgrade matches the top-level
-permissions of the workflow template, with their levels. The table of the App's permissions matches
-the permissions and levels of the App manifest.
-The refusals of `unaffected_by` that the checks page lists name each refusal of the code and no
-other, and the code refuses each one. The plan and review layouts of stages match the sections
-the code writes, and the values the pages repeat match their constants. The words that the agents
-and profiles and the failure handling pages list as marking a failing line match FAILURE_LINE.
-The retry delays that the failure handling page gives for `publish` and for every other GitHub API
-call match `publish.WAITS` and `github.GitHub.waits`, with their counts of tries.
-The tools that the access table of agents and profiles gives the plan and review stages match
-READ_ONLY_TOOLS. The issue states that the status skill lists match those `status.issue_item` sets.
-The pull request states that the status skill lists match those `status.pull_state` and
-`status.pull_item` give. The outcomes after which a writer's approval merges, which the
-work-without-a-command page lists, match APPROVABLE. The jobs that the autopilot page lists as those
-in which a round can be stopped are CHECK_JOBS, and those in which it never is are jobs of
-pipeline.yml outside it. The README's table of supported versions is compared with the pins in
-nexkit/__init__.py, and each ubuntu-NN.NN in the README with the pinned runner. The local commands
-table of the README lists each command the CLI defines for people and no other, and each option a
-row names exists. Each option that a `nexkit NAME` code span or command line of the README names
-exists for that command. The configuration example of the README is what `nexkit init` writes for
-the README's own setup command. No doc, the README, AGENTS.md or a skill repeats a pinned version:
-each pin that D9 governs, or a lint tool's version from scripts/lint.sh. The decisions index matches
-the decision files, and each decision is linked, as docs/writing-docs.md#how-the-docs-stay-correct
-says.
-The list of files where a release sets the version, on the delivery page, names each file of the
-package, the plugin, pyproject.toml and the README that holds the version, and no other.
-The table of CI issue titles on the autopilot page shows the titles `ci_title` and `red_title`
-write, for each kind and form of title the code has, and no other. The list of what redaction
-replaces in how it works matches the words, names, minimum length and patterns of
-nexkit/redact.py."""
+"""The checks of the docs, one test each, are those that rule 9 of
+docs/writing-docs.md#how-the-docs-stay-correct lists. ChecksListTests compares that list with
+the test methods of this file."""
 
 import argparse
 import ast
@@ -204,6 +155,9 @@ DECISION_LINK = re.compile(r"\[D(\d+)\]\(decisions/([^)]+)\)")
 SKILL_NAME = re.compile(r"^name:\s*(\S+)\s*$", re.M)
 AUTOPILOT_PAGE = DOCS / "autopilot.md"
 CI_TITLES_HEADER = "| Failure | Title |"
+WRITING_DOCS = DOCS / "writing-docs.md"
+# Rule 9 of how the docs stay correct, with its indented lines, up to the next unindented line.
+RULE_9 = re.compile(r"^9\. \*\*Checks catch what a machine can\.\*\*(.*?)(?=^\S|\Z)", re.M | re.S)
 
 
 def anchors(path):
@@ -242,6 +196,39 @@ def rules(path):
         elif line.startswith("  ") and bullets:
             bullets[-1] += "\n" + line
     return bullets
+
+
+def docs_tests():
+    """The test methods that the classes of tests/test_docs.py define."""
+    tree = ast.parse(Path(__file__).read_text())
+    return {
+        f.name
+        for c in tree.body
+        if isinstance(c, ast.ClassDef)
+        for f in c.body
+        if isinstance(f, ast.FunctionDef) and f.name.startswith("test_")
+    }
+
+
+class ChecksListTests(unittest.TestCase):
+    def test_rule_9_lists_each_check_of_this_file_and_no_other(self):
+        match = RULE_9.search(WRITING_DOCS.read_text())
+        self.assertIsNotNone(match, "docs/writing-docs.md has no rule 9 that lists the checks")
+        listed = TEST_NAME.findall(match.group(1))
+        self.assertTrue(listed, "docs/writing-docs.md rule 9 lists no check")
+        for name in sorted({n for n in listed if listed.count(n) > 1}):
+            with self.subTest(test=name):
+                self.fail(f"docs/writing-docs.md rule 9 lists {name} more than once")
+        defined = docs_tests()
+        for name in sorted(defined - set(listed)):
+            with self.subTest(test=name):
+                self.fail(f"docs/writing-docs.md rule 9 does not list {name}")
+        for name in sorted(set(listed) - defined):
+            with self.subTest(test=name):
+                self.fail(
+                    f"docs/writing-docs.md rule 9 lists {name}, "
+                    "which tests/test_docs.py does not define"
+                )
 
 
 class DocsMapTests(unittest.TestCase):

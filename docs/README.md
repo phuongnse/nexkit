@@ -47,6 +47,6 @@ Read by people, and agents, who change NexKit itself.
 | [Runners, policies and hosts](engine-hosts.md) | The runners and their contract, the policies a host decides, and how the GitHub host and an application carry out the engine's work | You change a runner, a policy or what a host does |
 | [Roadmap](roadmap.md) | NexKit's features, one milestone each, done and under way, and what labels are for | You need a feature's milestone or the work under way |
 | [Delivery](delivery.md) | Which issue a session takes, pull requests, labels and milestones, NexKit on this repository, and releases | You take an issue, open a pull request or prepare a release |
-| [Testing](testing.md) | Which check covers what, the smoke test, and what a change that moves a decision into the engine proves | You add a test, or change what a check covers |
+| [Testing](testing.md) | Which check covers what, the rules for tests, exceptions to a check, the smoke test, and what a change that moves a decision into the engine proves | You add a test, or change what a check covers |
 | [Decisions](decisions.md) | The choices behind NexKit's rules, each with its reasons, one file per decision, listed in the index | You change a rule, or make a choice that is costly to undo |
 | [Writing the docs](writing-docs.md) | What goes in which doc, decisions, style, structure, and how the docs stay correct | You write or change any doc |

@@ -144,7 +144,7 @@
       "The change keeps every Agreed decision in docs/decisions/ whose subject it touches, such as D10 (only the engine decides) and D13 (how the pipeline writes): read docs/decisions.md, open each such decision and check the diff against it",
       "The change keeps docs/delivery.md#releases: a change other than a release sets no version and adds no CHANGELOG.md entry",
       {
-        "text": "The change adds no exception to a check and loosens none, as docs/testing.md#rules-for-tests states",
+        "text": "The change adds no exception to a check and loosens none, as docs/testing.md#exceptions-to-a-check states",
         "person": true
       }
     ]

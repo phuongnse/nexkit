@@ -1,7 +1,8 @@
 # Testing
 
-This page says how NexKit itself is tested: which check covers what, when each one runs, and what a
-change that moves a decision of NexKit 6 into the engine must prove. It is for whoever works on
+This page says how NexKit itself is tested: which check covers what, when each one runs, the rules
+for the tests a change adds, when a check may take an exception, and what a change that moves a
+decision of NexKit 6 into the engine must prove. It is for whoever works on
 NexKit. The commands are in [AGENTS.md](../AGENTS.md#verify), and how a repository that uses NexKit
 runs its own checks is in [the checks page](checks.md).
 
@@ -42,15 +43,22 @@ mistake. A plan and a review check a change against each of them.
   played over many rounds. A new or changed rule of the engine comes with a case in
   `tests/conformance/`, invariants in `tests/walk.py` and mutants in `tests/mutants.py`. A new
   workflow job extends `tests/test_cli.py`, which checks which token and secret each job holds. A
-  prompt change edits its golden in `tests/prompts/` by hand and says why.
+  prompt change edits its golden as the *Prompt goldens* row of [the
+  table](#which-check-covers-what) says.
 - **A move into the engine proves more.** A change that moves a decision of NexKit 6 into the engine
   also keeps GitHub's behaviour, as [Moving decisions into the
   engine](#moving-decisions-into-the-engine) says.
-- **No exception and no loosened check without the owner.** A change adds no exception to a check
-  and loosens none: no new entry in `tests/differential/known.py` or in the walker's `KNOWN`, nothing
-  that the differential check stops comparing, and no rule of a check or of its test removed,
-  narrowed or skipped. A change that needs one says why in its pull request, and the review's
-  checklist leaves it to the owner, whose approval of the reviewed commit accepts it.
+
+A change that needs an exception to a check follows [Exceptions to a check](#exceptions-to-a-check)
+instead.
+
+## Exceptions to a check
+
+A change adds no exception to a check and loosens none: no new entry in
+`tests/differential/known.py` or in the walker's `KNOWN`, nothing that the differential check stops
+comparing, and no rule of a check or of its test removed, narrowed or skipped. A change that needs
+one says why in its pull request. Only the owner accepts it: the review's checklist leaves it to the
+owner, starts no fix round for it, and the owner's approval of the reviewed commit accepts it.
 
 ## The smoke test
 

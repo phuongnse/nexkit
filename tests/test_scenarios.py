@@ -3770,6 +3770,97 @@ class ScenarioTests(unittest.TestCase):
         self.same_item(imported, plain, "closed")
         self.assertEqual(len(imported.gh.merged), 1)
 
+    def test_a_merge_waiting_for_required_checks_keeps_its_first_wait_and_ends_for_a_person(self):
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else done()
+
+        def built():
+            pipe = Pipeline(self, config(), script)
+            pipe.issue(5)
+            pipe.gh.required = {"e2e"}
+            pipe.gh.merge_error = GitHubError(405, 'Required status check "e2e" is expected.')
+            autopilot.request(pipe.gh, "nexkit.yml", "main")
+            pipe.drain()
+            self.assertEqual([o for *_, o in pipe.played], ["planned", "merge_waiting"])
+            return pipe
+
+        def sweep(pipe, hours):
+            """A sweep `hours` after the wait began, and the runs it starts."""
+
+            class Later(datetime):
+                @classmethod
+                def now(cls, tz=None):
+                    return datetime.now(tz) + timedelta(hours=hours)
+
+            with mock.patch.object(autopilot, "datetime", Later):
+                pipe.sweep()
+                pipe.drain()
+
+        stored, plain = built(), built()
+        self.stored_import(stored, 5, 6)
+        first = item_state.read(stored.gh, 5)[1]
+        self.assertEqual([wait["for"] for wait in first["waits"]], ["requiredChecks"])
+        since = first["checksSince"]["at"]
+        revision = first["revision"]
+        for hours in (2, 4):
+            for pipe in (stored, plain):
+                sweep(pipe, hours)
+            # A sweep that merges again stores the answer of the engine: the revision grows and
+            # the first wait's time stays.
+            document = item_state.read(stored.gh, 5)[1]
+            self.assertGreater(document["revision"], revision)
+            revision = document["revision"]
+            self.assertEqual(document["checksSince"]["at"], since)
+            self.assertEqual(document["state"], "accepting")
+            self.assertEqual(stored.gh.merged, [])
+        # More than six hours after the first wait the engine hands the merge to a person.
+        for pipe in (stored, plain):
+            sweep(pipe, 7)
+        document = item_state.read(stored.gh, 5)[1]
+        self.assertGreater(document["revision"], revision)
+        self.assertEqual(document["state"], "ready")
+        self.assertEqual(document["attention"]["reason"], "acceptRefused")
+        self.assertEqual(stored.gh.merged, [])
+        mentions = [c for n in (5, 6) for c in stored.gh.comments_matching(n, "a person is needed")]
+        self.assertEqual(len(mentions), 1)
+
+        def texts(pipe):
+            found = [c["body"] for n in (5, 6) for c in pipe.gh.comments(n)]
+            return [t for t in found if not t.startswith("### NexKit state")]
+
+        # What people read is what a plain run leaves.
+        self.assertEqual(texts(stored), texts(plain))
+        self.assertEqual(stored.played, plain.played)
+        self.assertEqual(stored.gh.issues[5]["state"], plain.gh.issues[5]["state"])
+
+    def test_the_sweep_and_status_only_preview_a_waiting_merge_and_the_step_run_stores_it(self):
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        pipe.gh.required = {"e2e"}
+        pipe.gh.merge_error = GitHubError(405, 'Required status check "e2e" is expected.')
+        autopilot.request(pipe.gh, "nexkit.yml", "main")
+        pipe.drain()
+        self.stored_import(pipe, 5, 6)
+        before = copy.deepcopy(pipe.gh.comments(5)), copy.deepcopy(pipe.gh.comments(6))
+        issue = pipe.gh.issue(5)
+        # What the sweep and `nexkit status` read decides the tick and stores nothing.
+        step = autopilot.assess(pipe.gh, pipe.cfg, issue, autopilot.nexkit_pulls(pipe.gh))
+        self.assertEqual(step["state"], "merge")
+        autopilot.preview(pipe.gh, pipe.cfg)
+        collect(pipe.gh, pipe.cfg, workers=1)
+        self.assertEqual((pipe.gh.comments(5), pipe.gh.comments(6)), before)
+        self.assertEqual(item_state.read(pipe.gh, 5)[1]["revision"], 1)
+        # The `step` run in the issue's group stores the engine's answer to the tick.
+        head = pipe.gh.pulls[6]["head"]["sha"]
+        with contextlib.redirect_stdout(io.StringIO()):
+            autopilot.step(pipe.gh, pipe.cfg, 5, "nexkit.yml", "main")
+        document = item_state.read(pipe.gh, 5)[1]
+        self.assertGreater(document["revision"], 1)
+        self.assertIn(f"merge-6-{head}", document["recentEvents"])
+
     def test_a_state_comment_that_someone_else_changed_gets_no_second_one_and_waits_for_a_person(
         self,
     ):

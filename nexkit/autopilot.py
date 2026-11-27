@@ -1478,13 +1478,15 @@ def _pull_step(
         # A round that stopped gave its automatic round back; a merge needs a new review.
         return _vouched(gh, cfg, issue, comment, latest, record, start, pull, write)
     if latest.get("outcome") == HELD:
-        return _released(gh, cfg, issue, pull, comment, latest, pull_comments, start, now, write)
+        return _released(
+            gh, cfg, issue, pull, comment, latest, pull_comments, start, now, write=write
+        )
     if latest.get("outcome") == "merge_waiting":
-        return _merge_step(gh, cfg, issue, pull, comment, latest, start, now)
+        return _merge_step(gh, cfg, issue, pull, comment, latest, start, now, write=write)
     if latest.get("outcome") == PULL_CLOSED:
         return _step(issue, "waits", person(*REOPENED))
     if latest.get("outcome") == "merge_refused":
-        step = _refused_step(gh, cfg, issue, pull, comment, latest)
+        step = _refused_step(gh, cfg, issue, pull, comment, latest, write=write)
         if step:
             return step
     if latest.get("outcome") == CI_WAITING:
@@ -1525,7 +1527,7 @@ def _released(gh, cfg, issue, pull, comment, run, pull_comments, start, now, wri
             _held_end(gh, cfg, issue, pull, run, pull_comments, run.get("head"), write)
         except Refused as error:
             return _step(issue, "waits", refused_reason(error))
-        step = _merge_step(gh, cfg, issue, pull, comment, run, start, now)
+        step = _merge_step(gh, cfg, issue, pull, comment, run, start, now, write=write)
         if step["state"] == "merge":
             step["reason"] = f"{gone}, so autopilot merges pull request #{pull}"
         return step
@@ -1606,7 +1608,7 @@ def _held_end(gh, cfg, issue, pull, run, pull_comments, head, write=False):
     return released(gh, cfg, issue["number"], pull, run, head, found, write=write)
 
 
-def _refused_step(gh, cfg, issue, pull, comment, run):
+def _refused_step(gh, cfg, issue, pull, comment, run, write=False):
     """The merge of a pull request whose merge GitHub refused, once GitHub reports it as
     mergeable (`clean`, `unstable` or `has_hooks`) on the head that its checks and review
     passed, such as after an owner approved it while no run could, or a rule changed; or
@@ -1621,7 +1623,8 @@ def _refused_step(gh, cfg, issue, pull, comment, run):
         return None
     acceptable = details.get("mergeable_state") in MERGEABLE_STATES
     try:
-        answer = refusal_cleared(cfg, issue["number"], pull, run, acceptable)
+        number = issue["number"]
+        answer = refusal_cleared(gh, cfg, number, pull, run, acceptable, write=write)
     except Refused as error:
         return _step(issue, "waits", refused_reason(error))
     if answer != "merge":
@@ -1631,7 +1634,7 @@ def _refused_step(gh, cfg, issue, pull, comment, run):
     return _step(issue, "merge", reason, round_comment=comment["id"], base=base, clean=True)
 
 
-def _merge_step(gh, cfg, issue, pull, comment, run, start, now):
+def _merge_step(gh, cfg, issue, pull, comment, run, start, now, write=False):
     """The step for a pull request whose merge waits for required checks: try the merge
     again while its head is the one approved, for at most `LOST`. A new commit on its
     branch gets `/nexkit review`, as a merge refused because the branch moved does. A
@@ -1647,7 +1650,8 @@ def _merge_step(gh, cfg, issue, pull, comment, run, start, now):
 
         seen = {"version": head, "merged": False, "empty": False}
         try:
-            change_seen(cfg, issue["number"], pull, run["head"], 0, seen, waiting=True)
+            number = issue["number"]
+            change_seen(gh, cfg, number, pull, run["head"], 0, seen, waiting=True, write=write)
         except Refused as error:
             return _step(issue, "waits", refused_reason(error))
         reason = (
@@ -1663,7 +1667,8 @@ def _merge_step(gh, cfg, issue, pull, comment, run, start, now):
     since = parse_iso(run.get("waiting_since"))
     behind = details.get("mergeable_state") == "behind"
     try:
-        waited = checks_waited(cfg, issue, pull, head, since, now, behind=behind)
+        number = issue["number"]
+        waited = checks_waited(gh, cfg, number, pull, head, since, now, behind=behind, write=write)
     except Refused as error:
         return _step(issue, "waits", refused_reason(error))
     if waited == "waits":
@@ -1764,9 +1769,9 @@ def assess(gh, cfg, issue, open_pulls, now=None, where=None, write=False):
       is still `running`.
 
     `where` is the scope, from `locate`. `write`, which only the `step` run of the issue's
-    concurrency group passes, lets the decisions after a plan, for a first plan and after a
-    writer's vouch store the engine's answer in the issue's state comment; any other call,
-    the sweep's and `nexkit status`'s, only previews them.
+    concurrency group passes, lets the decisions after a plan, for a first plan, after a
+    writer's vouch and at a merge store the engine's answer in the issue's state comment; any
+    other call, the sweep's and `nexkit status`'s, only previews them.
     """
     step = _assess(gh, cfg, issue, open_pulls, now, where, write)
     if step.get("person"):

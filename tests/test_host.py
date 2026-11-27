@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import TestCase, mock
 
-from nexkit import agent, autopilot, engine, host, item_state
+from nexkit import agent, autopilot, cli, engine, first_state, host, item_state
 from nexkit import config as configuration
 from nexkit import report as reports
 from nexkit.checks import recorded
@@ -563,6 +563,89 @@ class TakeTest(TestCase):
             self.assertIsNone(item_state.since(changed), body)
         edited = {**state_comment, "editors": ["mallory"]}
         self.assertIsNone(item_state.since(edited))
+
+
+class StoreImportTest(TestCase):
+    """The first run of an open item stores its state, imported from NexKit 6's markers
+    (docs/engine-hosts.md#hosts)."""
+
+    CFG = make_config(autopilot={"enabled": True})
+    NOW = datetime(2026, 1, 3, tzinfo=UTC)
+
+    def setUp(self):
+        self.gh = FakeGitHub()
+        self.gh.add_issue(42)
+
+    def states(self):
+        return [c for c in self.gh.comments(42) if c["body"].startswith("### NexKit state")]
+
+    def test_an_open_item_with_no_state_comment_stores_its_import_at_revision_1(self):
+        self.assertTrue(host.store_import(self.gh, self.CFG, 42, now=self.NOW))
+        [comment] = self.states()
+        doc = item_state.read(self.gh, 42)[1]
+        self.assertEqual(doc, first_state.import_item(self.gh, self.CFG, 42, now=self.NOW))
+        self.assertEqual(doc["revision"], 1)
+        # The import keeps no cursor: `take` answers what came after the comment.
+        self.assertIsNone(item_state.since(comment))
+        # A second run finds it and stores nothing.
+        self.assertFalse(host.store_import(self.gh, self.CFG, 42, now=self.NOW))
+        self.assertEqual(len(self.states()), 1)
+
+    def test_an_open_pull_request_of_the_issue_is_the_change_of_the_import(self):
+        self.gh.add_pull(6, 42, head_sha=HEAD)
+        self.gh.add_pull(7, 42, head_sha=HEAD, branch="nexkit/issue-42", repo="fork/app")
+        self.assertTrue(host.store_import(self.gh, self.CFG, 42, now=self.NOW))
+        doc = item_state.read(self.gh, 42)[1]
+        self.assertEqual(doc["change"]["id"], "6")
+        self.assertEqual(doc, first_state.import_item(self.gh, self.CFG, 42, 6, now=self.NOW))
+
+    def test_a_person_s_pull_request_is_imported_as_its_own_item(self):
+        self.gh.add_pull(9, 9, branch="feature")
+        self.assertTrue(host.store_import(self.gh, self.CFG, 9, now=self.NOW))
+        self.assertEqual(item_state.read(self.gh, 9)[1]["item"], "9")
+
+    def test_a_closed_item_stores_nothing(self):
+        self.gh.issues[42]["state"] = "closed"
+        self.assertFalse(host.store_import(self.gh, self.CFG, 42, now=self.NOW))
+        self.assertEqual(self.gh.comments(42), [])
+
+    def test_a_state_comment_that_someone_else_changed_stores_and_takes_nothing(self):
+        self.assertTrue(host.store_import(self.gh, self.CFG, 42, now=self.NOW))
+        [comment] = self.states()
+        comment["editors"] = [BOT_LOGIN, "mallory"]
+        calls = []
+        with (
+            mock.patch.object(self.gh, "comment", side_effect=lambda *a: calls.append(a)),
+            mock.patch.object(self.gh, "update_comment", side_effect=lambda *a: calls.append(a)),
+        ):
+            for call in (host.store_import, host.take):
+                with self.subTest(call=call.__name__):
+                    with self.assertRaises(host.Refused) as raised:
+                        call(self.gh, self.CFG, 42)
+                    self.assertIn("@mallory changed a comment of NexKit's", str(raised.exception))
+        self.assertEqual(calls, [])
+        self.assertEqual(len(self.states()), 1)
+
+    def test_a_deleted_state_comment_is_imported_again_by_the_next_run(self):
+        event = {"issue": {"number": 42}, "comment": {"id": 1, "body": "/nexkit plan"}}
+        with mock.patch("sys.stdout"):
+            cli._take(self.gh, self.CFG, "issue_comment", event)
+            [comment] = self.states()
+            self.gh.issue_comments[42].remove(comment)
+            cli._take(self.gh, self.CFG, "issue_comment", event)
+        [again] = self.states()
+        self.assertNotEqual(again["id"], comment["id"])
+        self.assertEqual(item_state.read(self.gh, 42)[1]["revision"], 1)
+
+    def test_a_run_that_cannot_store_the_import_warns_and_goes_on(self):
+        event = {"issue": {"number": 42}, "comment": {"id": 1, "body": "/nexkit plan"}}
+        with (
+            mock.patch.object(first_state, "import_item", side_effect=item_state.StateError("x")),
+            mock.patch("sys.stdout") as out,
+        ):
+            cli._take(self.gh, self.CFG, "issue_comment", event)
+        self.assertIn("::warning::", "".join(c.args[0] for c in out.write.call_args_list))
+        self.assertEqual(self.states(), [])
 
 
 class RefusedTest(HostCase):

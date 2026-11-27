@@ -773,7 +773,10 @@ Read the comment and its history. Then either:
 
 - Delete the comment, which hands the item back to autopilot. When it is the pull request's
   state comment, the state starts again from nothing, including the count of automatic fix
-  rounds, so check that `fix.max_auto_rounds` still bounds what you want.
+  rounds, so check that `fix.max_auto_rounds` still bounds what you want. When it is the
+  item's `### NexKit state` comment, the next run of the item imports it again from NexKit's
+  other records and stores a new one. Until then, NexKit takes none of the item's comments,
+  reviews or labels.
 - Carry the item on yourself with `/nexkit` commands. They ignore the changed comment.
 
 `/nexkit trust` does not clear it: it vouches for an issue's text, not for NexKit's records.

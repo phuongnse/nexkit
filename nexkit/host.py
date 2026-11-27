@@ -171,10 +171,13 @@ nothing, and the person gets a reply. A fork, a person's pull request, which tak
 An item whose document or event the engine refuses waits for a person, and no other item is
 held up by it.
 
-Every run in an item's group first takes the item's events (`take`, called by `cli._take` from
-`nexkit route`): it answers every comment, review and hold-label change of the item after the
-cursor in its state comment, oldest first, so that a command whose run a newer one replaced is
-still answered, and a run whose writes keep losing fails and leaves its event for the next run.
+Every run in an item's group first stores the item's first state when it has no state comment
+(`store_import`): an open item's document imported from NexKit 6's markers, at revision 1. It then
+takes the item's events (`take`, both called by `cli._take` from `nexkit route`): it answers every
+comment, review and hold-label change of the item after the cursor in its state comment, oldest
+first, so that a command whose run a newer one replaced is still answered, and a run whose writes
+keep losing fails and leaves its event for the next run. A state comment that someone other than
+the App changed stores and takes nothing: the item waits for a person.
 
 No module outside `nexkit/engine/` writes on GitHub without an answer of the engine before it:
 `tests/test_answers.py` reads their code and fails on a dispatch, a merge, a branch update, a close,
@@ -644,6 +647,42 @@ def _taken_event(gh, number, pull, comments, holds, one):
     return _event("commented", number, at, name, by=_person(login, "reader"), text=text)
 
 
+def _edited(edited):
+    """The `Refused` that stands for the state comment `edited` (an `item_state.Edited`)."""
+    return Refused(autopilot.changed_comment([edited.comment]))
+
+
+def store_import(gh, cfg, number, now=None):
+    """Store the first state of the open work item `number` as the App's state comment at
+    revision 1, imported from NexKit 6's markers (`first_state.import_item`), when it has no
+    state comment, and answer whether it did. It keeps no cursor, so that `take` answers what
+    came after the comment. A closed item stores nothing: it has nothing to carry on, and every
+    closed issue starts a run in its group. A state comment that someone other than the App
+    changed is not absent: it raises `Refused` and nothing is stored."""
+    try:
+        _, doc = item_state.read(gh, number)
+    except item_state.Edited as edited:
+        raise _edited(edited) from None
+    issue = gh.issue(number)
+    if doc is not None or issue.get("state") != "open":
+        return False
+    pull = None
+    if "pull_request" not in issue:
+        from .route import branch_for
+
+        found = [
+            one
+            for one in gh.open_pulls(branch_for(number))
+            if ((one.get("head") or {}).get("repo") or {}).get("full_name") == gh.repository
+        ]
+        pull = found[0]["number"] if found else None
+    state = first_state.import_item(gh, cfg, number, pull, now=now)
+    try:
+        return item_state.write(gh, number, state, (None, None))
+    except item_state.Edited as edited:
+        raise _edited(edited) from None
+
+
 def take(gh, cfg, number, tries=item_state.TRIES, sleep=time.sleep):
     """Answer every event of work item `number` that is still at its source after the state
     comment's cursor, oldest first, and give [(event, actions)] of those whose answer was
@@ -654,11 +693,19 @@ def take(gh, cfg, number, tries=item_state.TRIES, sleep=time.sleep):
     and removing of a label of `autopilot.labels` that holds the item. Each is answered by
     `item_state.apply`, which moves the cursor past it, even when the answer changes nothing,
     so that an old remark is never answered on a state that moved on. A work item with no
-    state comment has nothing to take.
+    state comment has nothing to take: `store_import` stores its first state before.
 
     Raises `item_state.Moved` when every try to store an answer lost to other writes: the run
     fails, and that event, and those after it, stay at their source for the next run. Raises
-    `Refused` when the engine refuses an event or the state."""
+    `Refused` when the engine refuses an event or the state, or when someone other than the
+    App changed the state comment: nothing is taken then."""
+    try:
+        return _take(gh, cfg, number, tries, sleep)
+    except item_state.Edited as edited:
+        raise _edited(edited) from None
+
+
+def _take(gh, cfg, number, tries, sleep):
     comment, doc = item_state.read(gh, number)
     if doc is None:
         return []

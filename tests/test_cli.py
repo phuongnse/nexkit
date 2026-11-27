@@ -1472,20 +1472,35 @@ class PipelineCommandTests(unittest.TestCase):
             "issue": {"number": 7},
             "comment": {"id": 9, "body": "/nexkit trust", "user": {"login": "alice"}},
         }
-        self.assertEqual(self.run_route("issue_comment", event)["action"], "none")
+        # The import of the item's first state is not what this test is about.
+        with mock.patch.object(host, "store_import", return_value=False):
+            self.assertEqual(self.run_route("issue_comment", event)["action"], "none")
         [reply] = self.gh.comments(7)
         self.assertIn("autopilot.enabled off", reply["body"])
 
+    def test_the_run_that_follows_a_close_stores_no_state_comment_and_an_open_one_does(self):
+        # Every closed issue starts a run in its group, also one that NexKit never touched.
+        self.gh.issues[5]["state"] = "closed"
+        self.run_route("issues", {"action": "closed", "issue": {"number": 5}})
+        self.assertEqual(self.gh.issue_comments[5], [])
+        self.gh.issues[5]["state"] = "open"
+        self.run_route("issues", {"action": "closed", "issue": {"number": 5}})
+        [state] = self.gh.issue_comments[5]
+        self.assertEqual(item_state.find([state])[1]["revision"], 1)
+
     def test_route_hands_closed_issues_to_maintain_only_when_enabled(self):
         event = {"action": "closed", "issue": {"number": 5}}
-        out = self.run_route("issues", event)
+        # The import of the item's first state is not what this test is about.
+        with mock.patch.object(host, "store_import", return_value=False):
+            out = self.run_route("issues", event)
         self.assertEqual(out["action"], "none")
         self.assertFalse(self.gh.issue_comments[5])
         path = self.root / "repo/.nexkit/config.json"
         raw = json.loads(path.read_text())
         raw["close_parent_issues"] = True
         path.write_text(json.dumps(raw))
-        out = self.run_route("issues", event)
+        with mock.patch.object(host, "store_import", return_value=False):
+            out = self.run_route("issues", event)
         self.assertEqual(out["action"], "maintain")
         self.assertEqual(json.loads(out["decision"])["task"], "parents")
         self.assertEqual(out["maintain_timeout"], "15")
@@ -2796,6 +2811,10 @@ class WorkItemGroupTests(unittest.TestCase):
     def test_every_run_in_an_items_group_takes_its_events_before_it_routes(self):
         calls = []
 
+        def imported(gh, cfg, number, **kwargs):
+            calls.append(("import", number))
+            return False
+
         def take(gh, cfg, number, **kwargs):
             calls.append(("take", number))
             return []
@@ -2824,6 +2843,7 @@ class WorkItemGroupTests(unittest.TestCase):
                         mock.patch.object(cli, "_gh", return_value=self.gh),
                         mock.patch.object(cli.configuration, "load", return_value=cfg),
                         mock.patch.object(route, "route", routed),
+                        mock.patch.object(host, "store_import", imported),
                         mock.patch.object(host, "take", take),
                         mock.patch.dict(os.environ, env),
                         contextlib.redirect_stdout(io.StringIO()),
@@ -2831,8 +2851,11 @@ class WorkItemGroupTests(unittest.TestCase):
                         self.assertEqual(cli.main(["route", "--repo", tmp]), 0)
                     item = re.fullmatch(r"nexkit-(\d+)", group)
                     if item:
-                        # The run is in an item's group: it takes the item's events first.
-                        self.assertEqual(calls, [("take", int(item[1])), ("route", None)], group)
+                        # The run is in an item's group: it stores the item's first state, then
+                        # takes the item's events, then routes.
+                        number = int(item[1])
+                        expected = [("import", number), ("take", number), ("route", None)]
+                        self.assertEqual(calls, expected, group)
                     else:
                         self.assertEqual(calls, [("route", None)], group)
 
@@ -2851,6 +2874,7 @@ class WorkItemGroupTests(unittest.TestCase):
             for raised, code in (
                 (item_state.Moved(), 1),
                 (host.Refused("a state it refuses"), 0),
+                (item_state.StateError("a state that cannot be stored"), 0),
                 (nexkit.github.GitHubError(502, "Bad Gateway"), 0),
             ):
                 with self.subTest(raised=type(raised).__name__):
@@ -2860,6 +2884,7 @@ class WorkItemGroupTests(unittest.TestCase):
                         mock.patch.object(cli, "_gh", return_value=self.gh),
                         mock.patch.object(cli.configuration, "load", return_value=cfg),
                         mock.patch.object(route, "route", routed),
+                        mock.patch.object(host, "store_import", return_value=False),
                         mock.patch.object(host, "take", side_effect=raised),
                         mock.patch.dict(os.environ, env),
                         contextlib.redirect_stdout(out),

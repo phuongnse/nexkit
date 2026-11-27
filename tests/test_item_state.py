@@ -83,14 +83,41 @@ class StoreTest(unittest.TestCase):
         self.assertTrue(comment["body"].startswith("### NexKit state"))
         self.assertIn("`new`, at revision 1", comment["body"])
 
-    def test_a_state_comment_that_someone_else_changed_is_not_read(self):
+    def test_a_state_comment_that_someone_else_changed_raises_and_one_the_app_changed_reads(self):
         gh = FakeGitHub()
         state = created(gh)
         [comment] = gh.comments(42)
         comment["editors"] = [BOT_LOGIN, "mallory"]
+        with self.assertRaises(item_state.Edited) as raised:
+            item_state.read(gh, 42)
+        self.assertEqual(raised.exception.comment["id"], comment["id"])
+        # Also when its marker is gone and only the heading is left.
+        comment["body"] = "### NexKit state\n\nNothing is left."
+        with self.assertRaises(item_state.Edited):
+            item_state.read(gh, 42)
+        # Or the marker is left and the heading is gone.
+        comment["body"] = f"Mine now.\n\n{item_state.PREFIX}AAAA -->"
+        with self.assertRaises(item_state.Edited):
+            item_state.read(gh, 42)
+        # A comment of the App that is no state comment counts as absent, as before.
+        comment["body"] = "Another record of the App."
         self.assertEqual(item_state.read(gh, 42), (None, None))
+        # A comment that only the App changed reads as before.
         comment["editors"] = [BOT_LOGIN]
-        self.assertEqual(item_state.read(gh, 42)[1], state)
+        self.assertEqual(item_state.read(gh, 42), (None, None))
+        created_again = FakeGitHub()
+        created(created_again)
+        [again] = created_again.comments(42)
+        again["editors"] = [BOT_LOGIN]
+        self.assertEqual(item_state.read(created_again, 42)[1], state)
+
+    def test_a_state_comment_of_a_person_who_edited_it_is_not_one_of_the_apps(self):
+        gh = FakeGitHub()
+        created(gh)
+        [comment] = gh.comments(42)
+        comment["user"] = {"login": "mallory", "type": "User"}
+        comment["editors"] = ["mallory"]
+        self.assertEqual(item_state.read(gh, 42), (None, None))
 
     def test_a_write_on_a_revision_that_moved_is_not_made(self):
         gh = FakeGitHub()

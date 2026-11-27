@@ -71,12 +71,19 @@ def run(sc):
     gh.pulls[6]["mergeable_state"] = "clean"
     if sc["base"]:
         gh.on_base.add(HEAD)
-    if sc["pull"] == "merged":
-        # GitHub closed the issue through the pull request's `Closes` line.
-        gh.issues[5].update(state="closed", state_reason="completed")
-        gh.pulls[6].update(state="closed", merged=True, merged_by={"login": "olivia"})
-    elif sc["pull"] == "closed":
-        gh.pulls[6].update(state="closed", merged=False)
+
+    def ended():
+        if sc["pull"] == "merged":
+            # GitHub closed the issue through the pull request's `Closes` line.
+            gh.issues[5].update(state="closed", state_reason="completed")
+            gh.pulls[6].update(state="closed", merged=True, merged_by={"login": "olivia"})
+        elif sc["pull"] == "closed":
+            gh.pulls[6].update(state="closed", merged=False)
+
+    # A writer's approval finds the item's state stored while the pull request was open, as the
+    # item's group stored it before a person merged or closed the pull request.
+    if sc["path"] != "approved":
+        ended()
     if sc["parent"] != "none":
         gh.add_issue(1, title="Epic")
         gh.parents[5] = 1
@@ -139,6 +146,7 @@ def run(sc):
             gh.comment(6, render_run(row))
             seed(gh, cfg)
             if sc["path"] == "approved":
+                ended()
                 decision = {"action": "maintain", "task": "approved", "pr": 6, "issue": 5}
                 decision.update(actor="olivia", commit=HEAD)
                 res["approved"] = attempt(

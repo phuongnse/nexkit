@@ -1349,20 +1349,82 @@ class FirstPlanTest(HostCase):
         self.assertEqual(asked, ["7"])
 
     def test_a_document_with_a_hold_or_a_blocker_wait_gets_no_action(self):
-        issue = self.issue(5)
+        self.issue(5)
+        new = first_state.import_item(self.gh, self.cfg, 5, None)
         event = host._event(
-            "requested", 5, None, "start-5", what="start", by=None, note="", plan=None, title=""
+            "requested", 5, None, "start-5-1", what="start", by=None, note="", plan=None, title=""
         )
         blocker = {"id": "w1.2", "for": "blocker", "until": None, "on": "7"}
         for name, change in {
             "hold": {"hold": True},
-            "blocker": {"waits": [*host.new_document(issue, {})["waits"], blocker]},
+            "blocker": {"waits": [*new["waits"], blocker]},
         }.items():
             with self.subTest(name):
-                doc = {**host.new_document(issue, {}), **change}
+                doc = {**new, **change}
                 answer = host.step(doc, event, host.policies(self.cfg))
                 self.assertEqual(answer["actions"], [])
                 self.assertEqual(answer["state"]["state"], "new")
+
+    def first_plan(self, issue, write=False):
+        return host.first_plan(self.gh, self.cfg, issue, {}, {}, write=write)
+
+    def test_the_engine_gets_the_stored_state_and_the_start_stores_its_plan_run(self):
+        issue = self.issue(5)
+        before = seed(self.gh, self.cfg, 5)[1]
+        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+            step = self.first_plan(issue, write=True)
+        self.assertEqual((step["state"], step["command"]), ("start", "plan"))
+        [request] = asked_step(answer)
+        self.assertEqual(request["state"], before)
+        self.assertEqual(request["event"]["id"], "start-5-1")
+        self.assertEqual(request["event"]["title"], before["title"])
+        stored = item_state.read(self.gh, 5)[1]
+        self.assertEqual(stored["revision"], 2)
+        self.assertEqual(runs_of(stored), ["plan"])
+
+    def test_a_start_decides_on_the_import_when_nothing_is_stored_and_stores_nothing(self):
+        issue = self.issue(5)
+        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+            self.assertEqual(self.first_plan(issue)["state"], "start")
+        [request] = asked_step(answer)
+        self.assertEqual(request["state"], first_state.import_item(self.gh, self.cfg, 5, None))
+        self.assertIsNone(item_state.read(self.gh, 5)[1])
+
+    def test_a_plan_that_failed_before_the_engine_heard_it_starts_again_without_the_engine(self):
+        issue = self.issue(5)
+        seed(self.gh, self.cfg, 5)
+        self.first_plan(issue, write=True)
+        stored = item_state.read(self.gh, 5)[1]
+        self.run_comment(5, "plan", status="failure", outcome="agent_error")
+        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+            step = self.first_plan(issue, write=True)
+        self.assertEqual((step["state"], step["command"]), ("start", "plan"))
+        self.assertEqual(asked_step(answer), [])
+        self.assertEqual(item_state.read(self.gh, 5)[1], stored)
+
+    def test_a_start_after_a_stored_start_is_named_after_the_revision(self):
+        issue = self.issue(5)
+        seed(self.gh, self.cfg, 5)
+        self.first_plan(issue, write=True)
+        restate(self.gh, 5, pending=[], waits=[])
+        names = []
+
+        def answer(request):
+            if request["call"] == "step":
+                names.append(request["event"]["id"])
+            return ANSWER(request)
+
+        with mock.patch.object(host.engine, "answer", side_effect=answer):
+            with self.assertRaises(host.Refused):
+                self.first_plan(issue)
+        self.assertEqual(names, ["start-5-3"])
+
+    def test_a_first_plan_with_no_configuration_is_refused(self):
+        issue = self.issue(5)
+        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+            with self.assertRaises(host.Refused):
+                host.first_plan(self.gh, None, issue, {}, {})
+        self.assertEqual(asked_step(answer), [])
 
 
 class CarriesOnTest(HostCase):
@@ -2579,20 +2641,39 @@ def engine_state():
 class ApprovedTest(TestCase):
     """A writer's approval is the engine's to answer: `host.approved` gives a merge, an
     acceptance of the items a person decides, or nothing, from the round's outcome and
-    `merge.auto`."""
+    `merge.auto`, on the item's stored state."""
 
     HEAD = "c" * 40
     OTHER = "d" * 40
 
-    def answer(self, outcome, auto, commit=None, decide=False):
-        cfg = make_config(merge={"auto": auto})
+    def start(self, outcome, auto, decide=False):
+        """Item 5 with the round of pull request 6 that ended as `outcome` posted and the item's
+        state stored, as the item's group stores it before the approval: (gh, cfg, run)."""
+        cfg = make_config(
+            merge={"auto": auto}, review={"checklist": [{"text": "Rule 1", "person": True}]}
+        )
         run = {"outcome": outcome, "head": self.HEAD, "status": "success"}
+        row = {
+            "round": 1,
+            "trigger": "implement (autopilot)",
+            "checks": "passed",
+            "verdict": "approve",
+            "url": "https://github.com/acme/app/actions/runs/3",
+            **run,
+        }
         if decide:
+            row["decide"] = ["Rule 1"]
             run["decide"] = [1]
         gh = FakeGitHub()
         gh.add_issue(5)
         gh.add_pull(6, 5, head_sha=self.HEAD)
-        return host.approved(gh, cfg, 5, 6, run, commit, "olivia")
+        gh.comment(6, render_run(row, "Done."))
+        seed(gh, cfg, 5)
+        return gh, cfg, run
+
+    def answer(self, outcome, auto, commit=None, decide=False, **options):
+        gh, cfg, run = self.start(outcome, auto, decide)
+        return host.approved(gh, cfg, 5, 6, run, commit, "olivia", **options)
 
     def test_an_approval_after_a_refusal_or_a_reopen_merges_only_with_merge_auto(self):
         for outcome in ("merge_refused", autopilot.PULL_CLOSED):
@@ -2618,6 +2699,72 @@ class ApprovedTest(TestCase):
         with mock.patch.object(engine, "answer", return_value={"error": "no"}):
             with self.assertRaises(host.Refused):
                 self.answer("merge_refused", True)
+
+    def test_the_engine_gets_the_stored_state_and_the_approval_stores_its_answer(self):
+        gh, cfg, run = self.start("ready", True)
+        before = item_state.read(gh, 5)[1]
+        with mock.patch.object(engine, "answer", wraps=ANSWER) as answer:
+            found = host.approved(gh, cfg, 5, 6, run, None, "olivia", write=True, review=9000)
+        self.assertEqual(found, "merge")
+        [request] = asked_step(answer)
+        self.assertEqual(request["state"], before)
+        self.assertEqual(request["event"]["id"], "review-9000")
+        self.assertEqual(request["event"]["kind"], "changeApproved")
+        stored = item_state.read(gh, 5)[1]
+        self.assertEqual(stored["revision"], 2)
+        self.assertIn("review-9000", stored["recentEvents"])
+        self.assertEqual([action["kind"] for action in stored["pending"]], ["accept"])
+
+    def test_an_approval_with_no_review_is_named_after_the_pull_request_and_its_version(self):
+        gh, cfg, run = self.start("ready", True)
+        with mock.patch.object(engine, "answer", wraps=ANSWER) as answer:
+            host.approved(gh, cfg, 5, 6, run, self.HEAD, "olivia")
+        [request] = asked_step(answer)
+        self.assertEqual(request["event"]["id"], f"approval-6-{self.HEAD}")
+        self.assertEqual(item_state.read(gh, 5)[1]["revision"], 1)
+
+    def test_an_approval_that_stored_state_took_carries_out_its_answer_without_the_engine(self):
+        gh, cfg, run = self.start("ready", True)
+        host.approved(gh, cfg, 5, 6, run, None, "olivia", write=True, review=9000)
+        with mock.patch.object(engine, "answer", wraps=ANSWER) as answer:
+            found = host.approved(gh, cfg, 5, 6, run, None, "olivia", write=True, review=9000)
+        self.assertEqual(found, "merge")
+        self.assertEqual(asked_step(answer), [])
+        self.assertEqual(item_state.read(gh, 5)[1]["revision"], 2)
+
+    def test_the_accept_that_stored_state_took_accepts_the_items_a_person_decides(self):
+        gh, cfg, run = self.start("ready", False, decide=True)
+        self.assertEqual(
+            host.approved(gh, cfg, 5, 6, run, None, "olivia", write=True, review=9000), "accept"
+        )
+        stored = item_state.read(gh, 5)[1]
+        self.assertEqual(stored["attention"]["reason"], "accept")
+        with mock.patch.object(engine, "answer", wraps=ANSWER) as answer:
+            found = host.approved(gh, cfg, 5, 6, run, None, "olivia", write=True, review=9000)
+            # The items are not a person's to decide in a round that has none.
+            plain = {**run, "decide": None}
+            plain = host.approved(gh, cfg, 5, 6, plain, None, "olivia", review=9000)
+        self.assertEqual((found, plain), ("accept", "none"))
+        self.assertEqual(asked_step(answer), [])
+
+    def test_an_approval_that_stored_state_took_with_nothing_left_to_carry_out_is_none(self):
+        gh, cfg, run = self.start("ready", True)
+        doc = item_state.read(gh, 5)[1]
+        restate(gh, 5, recentEvents=[*doc["recentEvents"], "review-9000"])
+        with mock.patch.object(engine, "answer", wraps=ANSWER) as answer:
+            found = host.approved(gh, cfg, 5, 6, run, None, "olivia", write=True, review=9000)
+        self.assertEqual(found, "none")
+        self.assertEqual(asked_step(answer), [])
+
+    def test_an_approval_with_no_configuration_or_no_state_is_refused(self):
+        gh, cfg, run = self.start("ready", True)
+        with mock.patch.object(engine, "answer", wraps=ANSWER) as answer:
+            with self.assertRaises(host.Refused):
+                host.approved(gh, None, 5, 6, run, None, "olivia", review=9000)
+            with mock.patch.object(host, "stored", return_value=(None, None)):
+                with self.assertRaises(host.Refused):
+                    host.approved(gh, cfg, 5, 6, run, None, "olivia", review=9000)
+        self.assertEqual(asked_step(answer), [])
 
 
 class MergeDecideTest(ReportCase):

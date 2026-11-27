@@ -18,6 +18,10 @@ from .runtimes.base import TOKENS
 
 HEAD_LINES = 20
 MAX_CHARS = 4000
+# The first characters of a message or notice line in the log.
+MESSAGE_CHARS = 240
+# The detail of a tool call's line when `log.tool_output` is "none".
+CALL_CHARS = 200
 
 
 def truncate(text, lines=HEAD_LINES, chars=MAX_CHARS):
@@ -230,12 +234,12 @@ class RunLog:
 
     def _text(self, text):
         text = self.redact(text.strip())
-        self._print("· " + one_line(text)[:240])
+        self._print("· " + one_line(text)[:MESSAGE_CHARS])
         self._md(f"\n## [{clock(self.now)} #{self.turn}] {self.speaker}\n\n{text}\n")
 
     def _notice(self, text):
         text = self.redact(text.strip())
-        self._print("! " + one_line(text)[:240])
+        self._print("! " + one_line(text)[:MESSAGE_CHARS])
         self._md(f"\n> [{clock(self.now)}] {one_line(text)}\n")
 
     def _tool_use(self, event):
@@ -254,7 +258,7 @@ class RunLog:
         self.calls.append(call)
         self._pending[event.id] = call
         if self.tool_output == "none":
-            self._print(f"▸ {call['name']} {call['detail'][:200]}")
+            self._print(f"▸ {call['name']} {call['detail'][:CALL_CHARS]}")
 
     def _finish(self, call, output, is_error):
         call["is_error"] = is_error

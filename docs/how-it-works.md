@@ -91,7 +91,7 @@ Some other events start a run too; they run only `route` and `maintain` (see
 | `combine` | go, fix, review, with `parallel_checks` | Joins the results of the check jobs into the one `nexkit-checks` artifact that the review, `report` and the next fix round read, and writes each check job's time to the [run summary](#logs-summary-and-artifacts), from the Actions API. Never checks out or executes repository code. |
 | `review` | go, fix, review | A fresh agent session with read-only access reviews the diff against the plan, the discussion, the check results and the previous review round. After NexKit brought an approved pull request up to date with its base branch, it first checks with git whether the approval [carries over](stages.md#stages), and then runs no agent. |
 | `report` | every action | Sets commit statuses, posts the review, shows the outcome in the run's comment, starts the next automatic round or asks for a person. With `merge.auto`, merges an approved pull request, closes its issue, deletes its branch when the repository deletes head branches on merge, and starts the `merge.after_workflows` that are due on the base branch. Never checks out or executes repository code. |
-| `maintain` | issue and milestone events, pushes to the default branch, finished runs of other workflows, the schedule, the `resume`, `autopilot` and `step` dispatches, `/nexkit trust`, a writer's approval of a NexKit pull request, a writer's `/nexkit plan` or `/nexkit go` that picks the option that only closes the issue, a command on a pull request whose base branch already holds its change, and a command NexKit started that `route` refused. The full list is `TASKS` in `nexkit/maintain.py`. | Work that follows an event rather than a command: closing a parent issue, resuming a command paused at the usage limit or one that waits to run again after a transient error, starting a round for a pull request that conflicts with its base branch, stopping a round whose checks a move of the base branch left without a purpose, merging a pull request after a writer's approval, in the issue's queue, closing an issue as not planned when a writer's answer picks the option that only closes it, closing a pull request that its base branch already holds, with its issue, answering `/nexkit trust`, an [autopilot](work-without-a-command.md#autopilot) sweep, or one issue's autopilot step. Runs no agent, and never checks out or executes repository code. |
+| `maintain` | issue and milestone events, pushes to the default branch, finished runs of other workflows, the schedule, the `resume`, `autopilot` and `step` dispatches, `/nexkit trust`, a writer's approval of a NexKit pull request, a writer's `/nexkit plan` or `/nexkit go` that picks the option that only closes the issue, a command on a pull request whose base branch already holds its change, and a command NexKit started that `route` refused. The full list is `TASKS` in `nexkit/maintain.py`. | Work that follows an event rather than a command: closing a parent issue, resuming a command paused at the usage limit or one that waits to run again after a transient error, starting a round for a pull request that conflicts with its base branch, stopping a round whose checks a move of the base branch left without a purpose, merging a pull request after a writer's approval, in the issue's queue, closing an issue as not planned when a writer's answer picks the option that only closes it, closing a pull request that its base branch already holds, with its issue, answering `/nexkit trust`, an [autopilot](work-without-a-command.md#autopilot) sweep, which also deletes the branches of closed work when the repository deletes head branches on merge (see *Branches of closed work* under [Stages](stages.md#stages)), or one issue's autopilot step. Runs no agent, and never checks out or executes repository code. |
 | `finish` | a command whose `report` did not finish | When `report` failed, was cancelled or lost its runner, starts a sweep that waits for the run to end and then handles its run comment ([autopilot](work-without-a-command.md#autopilot)) and the conflict round held back while it ran ([Resolving conflicts](work-without-a-command.md#work-without-a-command)). Not for a round NexKit stopped in its checks after the base branch moved: that round's `report` and `finish` do not run, and the next round has started already. Runs no agent, and never checks out or executes repository code. |
 
 The agent does not commit or push. It edits the working tree, and another job turns those edits
@@ -109,8 +109,11 @@ bots, and its reviews are comments, never *Request changes*.
 
 ## What you see during a run
 
-GitHub cannot show a live run inside a comment, and only `route` and `report` update the
-run's comment, so NexKit updates the issue or pull request when a run starts and when it ends.
+GitHub cannot show a live run inside a comment, and only `route` and `report` show a run's
+progress in its comment while it runs, so NexKit updates the issue or pull request when a run
+starts and when it ends. After a run ended, `maintain` may also edit its comment: to show ⏭️
+`continued` when a later run carries a paused command on, or to mark a run that ended without a
+report as `lost`.
 
 Every run gets its own NexKit comment, posted by `route` when the run starts, so it appears
 right after the command or review that started it. `report` edits that comment with the
@@ -224,8 +227,10 @@ settle or mention) itself. For each issue whose next step writes, it sends a `st
 carries the step out there, on the issue as it is then. The sweep waits a limited time
 (`END_POLL` and `END_TRIES` in `maintain.py`) for those runs to end, so the next sweep sees what they did and sends no second
 `step` that would replace a command waiting in that group. It still writes NexKit's
-own labels, the bug issues for CI failures, done notices on closed issues, and its conflict
-rounds, branch updates and stopped rounds on pull requests, all from `nexkit-autopilot`.
+own labels, the bug issues for CI failures, done notices on closed issues, its conflict
+rounds, branch updates and stopped rounds on pull requests, and the deletion of the branches of
+closed work, when the repository deletes head branches on merge, with a comment on the issue when
+a branch cannot be deleted, all from `nexkit-autopilot`. The detail is in *Branches of closed work* under [Stages](stages.md#stages).
 
 A pull request runs one NexKit round at a time. Its rounds (fix, review, automatic and
 conflict rounds) share the item's queue with the issue's commands, and the `/nexkit go` run
@@ -417,8 +422,10 @@ leaves out any passed check's output, then shortens, in this
 order and each to the most that fits, the failing checks' outputs (keeping their end, down to 2,000
 characters each, with the lines that report a failure from what it cut joining their
 failure lines), the findings other than blocking ones (keeping their start, down to 300
-characters), the failure lines, the outputs to nothing, the blocking findings, and last the
-fix rounds. Each failing check's failure signature is recorded first, so a shortened
+characters), the failure lines to nothing, the outputs to nothing, the blocking findings (keeping
+their start, down to 300 characters), the other findings to nothing, the blocking findings to
+nothing, and last the fix rounds. Each failing check's failure signature is recorded first, so a
+shortened
 output still compares as before, and the fix prompt says that NexKit kept less of the
 output. With autopilot, each issue
 it worked on has one record comment, edited in place, that names the command it started
@@ -428,10 +435,10 @@ On each open issue, and on each person's pull request that gets a non-approving 
 `/nexkit` command, the App also keeps one `### NexKit state` comment, which the first run of the
 item posts. It holds the engine's state document, imported from the markers above, and its
 revision. The runs of the item take its comments, reviews and hold labels from after that
-comment. Only some decisions read the document yet, and store the engine's answer in it: those
-after a plan, those about commands and approvals, and those about a round of a stage or of a pull
-request ([the engine's page](engine.md#getting-there) lists them). The others still read the
-markers above, so the document goes stale until the host decides from it. A comment of it that someone other than the App
+comment. The decisions that [the engine's page](engine.md#getting-there) lists read the document
+and store the engine's answer in it: those after a plan, those about commands and approvals, and
+those about a round of a stage or of a pull request. The others read the markers above and do not
+use the document, so it can fall behind them. A comment of it that someone other than the App
 changed counts for nothing, and the item waits for a person ([troubleshooting](troubleshooting.md#a-comment-of-nexkit-was-changed-by-someone-else)).
 
 A writer edits the state comment, and autopilot's record comment, only while the comment still

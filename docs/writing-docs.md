@@ -389,6 +389,13 @@ when a list of what the code defines misses an entry. These rules close each of 
      profiles](agents-and-profiles.md), [how it works](how-it-works.md), [work without a
      command](work-without-a-command.md) and [failure handling](failure-handling.md) repeat equals
      its constant in the code.
+   - `test_the_page_lists_the_secret_words_and_names_the_code_has`: the words and names of the
+     redaction list in [how it works](how-it-works.md#what-is-redacted) are those of
+     `SECRET_WORDS` and `SECRET_NAMES` in `nexkit/redact.py`, and no other.
+   - `test_the_page_lists_each_token_shape_the_code_redacts_and_no_other`: the token shapes that
+     the same list names each have a sample that the test redacts, and no other shape is named.
+   - `test_the_code_redacts_each_listed_shape_and_each_pattern_has_one`: `nexkit/redact.py`
+     redacts a sample of each shape the list names, and each of its patterns redacts one of them.
    - `test_each_page_lists_the_words_of_failure_line_and_no_other`: the words that [agents and
      profiles](agents-and-profiles.md) and [failure handling](failure-handling.md#failure-handling)
      list as marking a failing line are those of `FAILURE_LINE`.

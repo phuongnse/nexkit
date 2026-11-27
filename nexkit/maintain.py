@@ -607,7 +607,7 @@ def _engine_resumes(gh, cfg, run, number, now, comment, lines, inputs):
             # The engine starts a paused run under a hold too, so this changes nothing.
             label = "a label it could not read"
     try:
-        return host.resumes(cfg, run, number, now, label)
+        return host.resumes(gh, cfg, run, number, now, label, write=True)
     except host.Refused as error:
         run.pop("resume", None)
         run.update(status=FAILURE, attention=host.refused_reason(error))

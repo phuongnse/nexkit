@@ -509,7 +509,10 @@ adapter's tests and the answers as what its adapter carries out.
    follow a blocked or stopped round, a usage limit or a transient error, start a resume that
    comes due, answer a lost command, and end a pull request's round, a conflict or a wait read the
    stored document, which they use only where it says what the markers say, and store the
-   engine's answer in the item's group, a row of events as one write. The automatic fix rounds
+   engine's answer in the item's group, a row of events as one write. A command that NexKit
+   dispatches carries out the action that the stored state has pending for it, and takes its
+   diagnosed checks from that action; with nothing pending it is a new request, `dispatch-<run id>`.
+   The automatic fix rounds
    and the conflict rounds that they count are the stored count, or NexKit 6's when that is
    higher, so that a run that cannot store its count never lets a budget go past its limit. The
    host sends the event that GitHub shows, and carries out the answer in NexKit 6's words,

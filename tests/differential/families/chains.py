@@ -308,6 +308,11 @@ def run(sc):
     gh.comment(6, render_state(state))
     person = {**empty_state(7), "person": True, "feedback": state.get("feedback")}
     gh.comment(7, render_state(person))
+    first = sc["rounds"][0]
+    for n in range(first["used_conflicts"] if first["conflicts"] else 0):
+        # The conflict rounds used before the first round: fixtures that the import counts.
+        pr = 7 if first["kind"] == "person_pr" else 6
+        gh.round_comment(pr, 90 + n, "b" * 40, "failed", conflicts=True, base_sha="d" * 40)
     seed(gh, cfg)
     res = {"steps": []}
     for i, rd in enumerate(sc["rounds"]):
@@ -333,8 +338,6 @@ def run(sc):
             publish["conflicts"] = ["a.py"]
         if publish is not None:
             gh.pulls[pr]["head"]["sha"] = new_head
-        for n in range(rd["used_conflicts"] if rd["conflicts"] and i == 0 else 0):
-            gh.round_comment(pr, 90 + n, "b" * 40, "failed", conflicts=True, base_sha="d" * 40)
         art = Artifacts()
         _, found = read_state(gh.comments(pr))
         before = ((found or {}).get("feedback") or {}).get("checks")

@@ -468,7 +468,8 @@ adapter's tests and the answers as what its adapter carries out.
   they start waiting for the sweep to start it. The plan that autopilot asked for after a pull
   request's round ran out of time is imported with `supersede`, so its split withdraws the pull
   request. A NexKit 6 run on its way becomes the action the
-  engine waits for, and an automatic fix round on its way, with a count, is marked
+  engine waits for, keeping the count of its runs again after a transient error when it is one
+  (`again.transient`, as a paused one does), and an automatic fix round on its way, with a count, is marked
   `rounds.automatic`, so that a stop gives its count back. A run paused at a usage limit, or until
   it runs again after a transient stop, becomes a wait with its time, the second keeping the
   count of runs again, unless NexKit 6 would no longer resume it, which fails for a person; an automatic run that ended without a report waits
@@ -512,10 +513,11 @@ adapter's tests and the answers as what its adapter carries out.
    engine's answer in the item's group, a row of events as one write. A command that NexKit
    dispatches carries out the action that the stored state has pending for it, and takes its
    diagnosed checks from that action; with nothing pending it is a new request, `dispatch-<run id>`.
-   The automatic fix rounds
-   and the conflict rounds that they count are the stored count, or NexKit 6's when that is
-   higher, so that a run that cannot store its count never lets a budget go past its limit. The
-   host sends the event that GitHub shows, and carries out the answer in NexKit 6's words,
+   The automatic fix rounds and the conflict rounds that they count are the stored count, and
+   NexKit 6's only when no state can be read. The run of a conflict round that the push run, the
+   schedule or another item's merge dispatches counts it before the round starts. A decision that
+   still falls back to the markers' document keeps the stored counts, so that no budget starts
+   again. The host sends the event that GitHub shows, and carries out the answer in NexKit 6's words,
    comments and statuses. A start, a merge, a branch update, a close,
    a cancel or a rerun follows an answer of the engine. `tests/test_answers.py` keeps it so: it
    reads every module outside `nexkit/engine/` and fails on a write that no call of the engine

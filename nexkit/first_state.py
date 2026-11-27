@@ -593,8 +593,10 @@ class Item:
 
     def active(self, comment, run, name, automatic=False):
         """A run that runs, continues in another, or paused, as `autopilot._stalled` reads it.
-        `automatic` marks a run that runs as an automatic fix round."""
+        `automatic` marks a run that runs as an automatic fix round. A run that runs again after
+        a transient error keeps the count of its runs again."""
         if run.get("status") != PAUSED:
+            self.keep_retries(run.get("retry"))
             return self.running("started", name, automatic)
         if run.get("verdict") == "paused":
             # A round paused at its review.
@@ -609,10 +611,7 @@ class Item:
             # The command that runs again, such as `review` after a review's transient error.
             name = OF_COMMAND.get(resume.get("command"), name)
             self.wait("time", until=iso(at))
-            count = resume["retry"]
-            if isinstance(count, int) and not isinstance(count, bool) and count >= 1:
-                # The engine counts the runs again on from here.
-                self.doc["again"] = {"transient": min(count, 10)}
+            self.keep_retries(resume["retry"])
             return self.be("retrying", name)
         paused_at = parse_iso(comment.get("created_at"))
         stale = paused_at is not None and self.now - paused_at > PAUSE_WINDOW
@@ -622,6 +621,12 @@ class Item:
             return self.be("pause for a person", "failed", "failed", run, SAYS["paused"])
         self.wait("usageLimit", until=iso(at))
         return self.be("paused", name)
+
+    def keep_retries(self, count):
+        """The engine counts the runs again after a transient error on from `count`, when it is
+        a positive number, as NexKit 6 does."""
+        if isinstance(count, int) and not isinstance(count, bool) and count >= 1:
+            self.doc["again"] = {"transient": min(count, 10)}
 
     def lost(self, run, command, target):
         """A run that ended without a report: one NexKit started by itself starts its

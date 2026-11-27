@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from unittest import mock
 
-from nexkit import agent, autopilot, cli, host
+from nexkit import agent, autopilot, cli, host, item_state
 from nexkit.github import GitHubError, run_url
 from nexkit.maintain import is_conflicting, maintain, resolve_conflicts
 from nexkit.report import _not_up_to_date
@@ -539,6 +539,31 @@ class SupersededTests(unittest.TestCase):
         with mock.patch("nexkit.maintain.time.sleep"):
             maintain(self.gh, route(self.gh, "push", event), cfg, workflow="nexkit.yml", ref="main")
         self.assertEqual(self.gh.cancelled, [50])
+
+
+class PushRunStoresNothingTest(unittest.TestCase):
+    """The push run previews the conflict round and dispatches it: the run of the round counts
+    it in the item's group, so the push run leaves the item's state comment as it is."""
+
+    def test_the_push_run_leaves_the_state_comment_as_it_is(self):
+        gh = FakeGitHub()
+        gh.add_issue(5)
+        gh.add_pull(6, 5)
+        gh.pulls[6]["mergeable"] = False
+        cfg = make_config(conflicts={"auto_resolve": True, "max_rounds": 2})
+        self.assertTrue(host.store_import(gh, cfg, 5))
+        comment, doc = item_state.read(gh, 5)
+        body = comment["body"]
+        event = {"ref": "refs/heads/main", "repository": {"default_branch": "main"}}
+        task = route(gh, "push", event)
+        self.assertEqual(task["task"], "conflicts")
+        with mock.patch("nexkit.maintain.time.sleep"):
+            maintain(gh, task, cfg, workflow="nexkit.yml", ref="main")
+        [dispatched] = rounds_started(gh)
+        self.assertEqual(dispatched["inputs"]["auto"], "conflicts")
+        after, found = item_state.read(gh, 5)
+        self.assertEqual((after["body"], found["revision"]), (body, doc["revision"]))
+        self.assertEqual(found["rounds"]["conflicts"], 0)
 
 
 class RouteTests(unittest.TestCase):

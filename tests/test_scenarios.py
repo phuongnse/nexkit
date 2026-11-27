@@ -4306,5 +4306,99 @@ class DispatchedFixRoundsTest(unittest.TestCase):
         self.assertEqual(self.read()[1]["rounds"]["counted"], 2)
 
 
+class ConflictRoundsStoredTest(unittest.TestCase):
+    """A conflict round that the push run starts is counted in the item's stored state by the
+    run of that round, so `conflicts.max_rounds` stops the third push."""
+
+    HEAD = "c" * 40
+    GREEN = [{"name": "test", "passed": True}]
+    REVIEW = ("done", {"verdict": "approve", "criteria": [], "findings": []})
+    EVENT = {"ref": "refs/heads/main", "repository": {"default_branch": "main"}}
+
+    def setUp(self):
+        self.gh = FakeGitHub()
+        self.gh.add_issue(5)
+        self.gh.add_pull(6, 5, head_sha=self.HEAD)
+        self.gh.round_comment(6, 1, self.HEAD, "passed")
+        self.cfg = make_config(conflicts={"auto_resolve": True, "max_rounds": 2})
+        self.assertTrue(host.store_import(self.gh, self.cfg, 5, now=IMPORTED_AT))
+        self.head = self.HEAD
+
+    def read(self):
+        return item_state.read(self.gh, 5)[1]
+
+    def push(self, sha):
+        """A push to the base branch that leaves the pull request conflicting: the dispatches
+        the push run made, and the lines it logged."""
+        self.gh.branches["main"] = sha
+        self.gh.pulls[6]["mergeable"] = False
+        before = len(self.gh.dispatches)
+        with mock.patch("nexkit.maintain.time.sleep"):
+            lines = maintain(
+                self.gh,
+                route(self.gh, "push", self.EVENT),
+                self.cfg,
+                workflow="nexkit.yml",
+                ref="main",
+            )
+        return [d for d in self.gh.dispatches[before:] if d["inputs"]["auto"] == "conflicts"], lines
+
+    def run_round(self, dispatched, run):
+        """The run of the dispatched round, in the item's group."""
+        event = {"inputs": dispatched["inputs"], "sender": {"login": BOT_LOGIN}}
+        with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": str(run)}):
+            return route(self.gh, "workflow_dispatch", event, dispatched["inputs"], cfg=self.cfg)
+
+    def end_round(self, number, sha):
+        """The round merged the base branch into a new head, and its checks and review ended
+        as `report` stores them."""
+        comment, doc = item_state.read(self.gh, 5)
+        head = f"{number:x}" * 40
+        result = {**host.AGENT, "changeVersion": self.head}
+        result["output"] = {"status": "done", "summary": "Merged.", "checks_run": []}
+        event = host._event(
+            "actionFinished",
+            5,
+            None,
+            f"run-{doc['revision']}",
+            action=host.pending_id(doc, "runAgent", "fix"),
+            changeVersion=self.head,
+            result=result,
+        )
+        found = host.step(doc, event, host.policies(self.cfg))
+        stored = {**found["state"], "revision": doc["revision"] + 1}
+        self.assertTrue(item_state.write(self.gh, 5, stored, (comment, doc)))
+        found = {"action": "fix", "issue": 5, "pr": 6, "target": 6, "head": self.head}
+        args = (self.gh, self.cfg, found, 6, head, 0, self.GREEN, None, self.REVIEW)
+        self.assertEqual(host.round_ended(*args, write=True)[0], "ready")
+        self.gh.round_comment(6, number + 1, head, "failed", conflicts=True, base_sha=sha)
+        self.gh.pulls[6]["head"]["sha"] = self.head = head
+
+    def test_two_pushes_start_two_counted_rounds_and_the_third_starts_none(self):
+        for number in (1, 2):
+            sha = f"{number}" * 40
+            [dispatched], _ = self.push(sha)
+            self.assertEqual(self.read()["rounds"]["conflicts"], number - 1)
+            self.assertEqual(self.run_round(dispatched, 2000 + number)["action"], "fix")
+            self.assertEqual(self.read()["rounds"]["conflicts"], number)
+            self.end_round(number, sha)
+        dispatched, lines = self.push("3" * 40)
+        self.assertEqual(dispatched, [])
+        self.assertTrue(any("automatic conflict rounds are used up" in line for line in lines))
+        self.assertEqual(self.read()["rounds"]["conflicts"], 2)
+
+    def test_a_resumed_conflict_round_is_not_counted_again(self):
+        [dispatched], _ = self.push("1" * 40)
+        inputs = {**dispatched["inputs"], "auto": "conflicts,resumed"}
+        self.run_round({"inputs": inputs}, 2001)
+        self.assertEqual(self.read()["rounds"]["conflicts"], 0)
+
+    def test_a_round_that_a_second_starter_finds_tried_is_not_counted(self):
+        [dispatched], _ = self.push("1" * 40)
+        self.gh.round_comment(6, 2, self.HEAD, "failed", conflicts=True, base_sha="1" * 40)
+        self.assertEqual(self.run_round(dispatched, 2001)["action"], "none")
+        self.assertEqual(self.read()["rounds"]["conflicts"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

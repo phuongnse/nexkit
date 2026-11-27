@@ -186,9 +186,11 @@ def seed(gh, cfg):
     """Store the import of each open item (`items`) on the tree as the App's state comment at
     revision 1, as a run in the item's group does before its first event (`host.store_import`),
     and record the comment's writes in `STATES`. Call it once, after the fixtures and before
-    the first event. NexKit 6 has no stored state, so nothing is stored there. Each item uses up
-    one comment id on both trees, so that the comments after it have the same ids, and the issue
-    keeps its `updated_at`: the seed must leave nothing that NexKit 6's tree lacks."""
+    the first event, or, for a stage that stops, just after the run's `progress.start`, so that
+    the stored state holds the run on its way as a run in the item's group stores it. NexKit 6
+    has no stored state, so nothing is stored there. Each item uses up one comment id on both
+    trees, so that the comments after it have the same ids, and the issue keeps its
+    `updated_at`: the seed must leave nothing that NexKit 6's tree lacks."""
     global SEEDED
     try:
         from nexkit import host, item_state
@@ -222,6 +224,24 @@ def seed(gh, cfg):
                 else:
                     gh.issues[number]["updated_at"] = stamp
         gh._next = before + 1
+
+
+def count_dispatched_round(gh, number):
+    """Store the conflict round that is about to report as the run of its dispatch stores it,
+    one more conflict round used in the item's state (`host.command`): the round's comment is a
+    fixture that the import before it did not count, and the report of a round that NexKit's
+    own dispatch started finds the round counted. NexKit 6 has no stored state, so nothing is
+    stored there."""
+    try:
+        from nexkit import item_state
+    except ImportError:
+        return
+    comment, stored = item_state.read(gh, number)
+    if stored is None:
+        return
+    found = {**stored, "revision": stored["revision"] + 1}
+    found["rounds"] = {**stored["rounds"], "conflicts": stored["rounds"]["conflicts"] + 1}
+    item_state.write(gh, number, found, (comment, stored))
 
 
 def attempt(fn, *args, **kwargs):

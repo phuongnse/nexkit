@@ -11,7 +11,17 @@ import itertools
 import json
 from unittest import mock
 
-from common import TOK, WORKFLOW, Artifacts, after, attempt, quiet, seed, snapshot
+from common import (
+    TOK,
+    WORKFLOW,
+    Artifacts,
+    after,
+    attempt,
+    count_dispatched_round,
+    quiet,
+    seed,
+    snapshot,
+)
 
 from nexkit import autopilot, maintain, progress
 from nexkit.github import GitHubError
@@ -144,6 +154,10 @@ def run(sc):
         return real_held(gh_, cfg_, number)
 
     seed(gh, cfg)
+    if "conflicts" in kinds and "resumed" not in kinds:
+        # The run of the dispatch that started this round counted it before the round ran. A
+        # resumed round was counted when it started, and its comment is the one that counts.
+        count_dispatched_round(gh, 5)
     res = {}
     with (
         mock.patch.object(autopilot, "held", held),

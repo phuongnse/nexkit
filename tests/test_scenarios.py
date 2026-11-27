@@ -52,6 +52,39 @@ WORKFLOW = "acme/app/.github/workflows/nexkit.yml@refs/heads/main"
 IMPORTED_AT = datetime(2026, 1, 3, tzinfo=UTC)
 # The jobs of a run in each stage, as GitHub lists them while it runs there.
 STAGES = ["route", "agent", "publish", "verify", "review", "report"]
+# A time as NexKit writes it, and a marker that holds base64 JSON.
+TIME = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
+MARKER = re.compile(r"(<!-- nexkit:[a-z-]+ )([A-Za-z0-9+/=]+)( -->)")
+
+
+def timeless(body):
+    """`body` with every ISO time, in its text and in NexKit's base64 JSON markers, replaced:
+    two items played in different seconds then read the same."""
+
+    def walk(value):
+        if isinstance(value, str):
+            return "<time>" if TIME.fullmatch(value) else value
+        if isinstance(value, list):
+            return [walk(item) for item in value]
+        if isinstance(value, dict):
+            return {key: walk(item) for key, item in value.items()}
+        return value
+
+    def marker(match):
+        try:
+            data = json.loads(base64.b64decode(match.group(2), validate=True))
+        except ValueError:
+            return match.group(0)
+        text = json.dumps(walk(data), sort_keys=True).encode()
+        return f"{match.group(1)}{base64.b64encode(text).decode()}{match.group(3)}"
+
+    return TIME.sub("<time>", MARKER.sub(marker, body))
+
+
+def people_read(pipe, numbers=(5, 6)):
+    """The comments on `numbers` that are not state comments, with times set aside."""
+    found = [c["body"] for n in numbers for c in pipe.gh.comments(n)]
+    return [timeless(t) for t in found if not t.startswith("### NexKit state")]
 
 
 def jobs_in(stage):
@@ -3632,24 +3665,39 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(pipe.state_comments(number), [comment])
         return stored
 
-    def same_item(self, imported, plain, issue_state):
+    def same_item(self, imported, plain, issue_state, skew=timedelta(0)):
         """`imported`, which stored an import in the middle of its work, plays on as `plain`,
-        which stored none: the same runs, merges, comments of the issue and end."""
-        self.assertEqual(imported.play(), plain.play())
+        which stored none: the same runs, merges, comments of the issue and end. `plain` plays
+        with its clock `skew` behind, as a slow runner plays it in another second."""
+
+        class Behind(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return datetime.now(tz) - skew
+
+        played = imported.play()
+        with mock.patch.object(autopilot, "datetime", Behind):
+            self.assertEqual(played, plain.play())
         self.assertEqual(imported.played, plain.played)
         self.assertEqual(imported.gh.merged, plain.gh.merged)
         self.assertEqual(imported.gh.issues[5]["state"], issue_state)
         self.assertEqual(plain.gh.issues[5]["state"], issue_state)
 
-        def texts(pipe):
-            found = [c["body"] for n in (5, 6) for c in pipe.gh.comments(n)]
-            return [t for t in found if not t.startswith("### NexKit state")]
-
-        self.assertEqual(texts(imported), texts(plain))
+        self.assertEqual(people_read(imported), people_read(plain))
         self.assertEqual(
             collect(imported.gh, imported.cfg, workers=1)["needs_person"],
             collect(plain.gh, plain.cfg, workers=1)["needs_person"],
         )
+
+    def test_what_people_read_sets_aside_the_times_of_records(self):
+        def body(at, basis):
+            record = {"basis": basis, "command": "plan", "at": at}
+            return f"Text at 2026-01-01T00:00:00Z\n{autopilot.record_marker(record)}"
+
+        first = body("2026-01-01T00:00:00Z", [1, 0])
+        self.assertNotEqual(first, body("2026-01-01T00:00:01Z", [1, 0]))
+        self.assertEqual(timeless(first), timeless(body("2026-01-01T00:00:01Z", [1, 0])))
+        self.assertNotEqual(timeless(first), timeless(body("2026-01-01T00:00:00Z", [2, 0])))
 
     def test_a_plan_waiting_for_approval_is_imported_and_waits_as_before(self):
         def script(pipe, inputs):
@@ -3685,7 +3733,8 @@ class ScenarioTests(unittest.TestCase):
         self.stored_import(imported)
         for pipe in (imported, plain):
             pipe.gh.human_comment(5, "Please keep it small.")
-        self.same_item(imported, plain, "open")
+        # Force the records of the two plays a second apart, as a slow runner does.
+        self.same_item(imported, plain, "open", skew=timedelta(seconds=1))
         # The runs of the item's group stored their answers past the import's revision, while
         # the item that stored no import still has no state comment.
         [comment] = imported.state_comments(5)
@@ -3807,6 +3856,8 @@ class ScenarioTests(unittest.TestCase):
                 pipe.drain()
 
         stored, plain = built(), built()
+        # Force the two items' record times apart, as a slow runner does between two plays.
+        plain.later(timedelta(seconds=1))
         self.stored_import(stored, 5, 6)
         first = item_state.read(stored.gh, 5)[1]
         self.assertEqual([wait["for"] for wait in first["waits"]], ["requiredChecks"])
@@ -3834,12 +3885,8 @@ class ScenarioTests(unittest.TestCase):
         mentions = [c for n in (5, 6) for c in stored.gh.comments_matching(n, "a person is needed")]
         self.assertEqual(len(mentions), 1)
 
-        def texts(pipe):
-            found = [c["body"] for n in (5, 6) for c in pipe.gh.comments(n)]
-            return [t for t in found if not t.startswith("### NexKit state")]
-
         # What people read is what a plain run leaves.
-        self.assertEqual(texts(stored), texts(plain))
+        self.assertEqual(people_read(stored), people_read(plain))
         self.assertEqual(stored.played, plain.played)
         self.assertEqual(stored.gh.issues[5]["state"], plain.gh.issues[5]["state"])
 

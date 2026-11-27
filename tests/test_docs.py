@@ -1276,6 +1276,16 @@ class ChecksPageTests(unittest.TestCase):
             with self.subTest(key=key):
                 self.fail(f"docs/checks.md lists {key}, which CHECK_KEYS does not define")
 
+    def test_the_page_names_the_limits_of_check_heads(self):
+        # The list under NEXKIT_CHECK_VERIFIED_SHA, up to the next section.
+        parts = CHECKS_PAGE.read_text().split("Each check also gets `NEXKIT_CHECK_VERIFIED_SHA`", 1)
+        self.assertEqual(
+            len(parts), 2, "docs/checks.md does not describe NEXKIT_CHECK_VERIFIED_SHA"
+        )
+        section = parts[1].split("\n### ", 1)[0]
+        self.assertIn(f"{state.MAX_PASSED} checks", section)
+        self.assertIn(f"{state.MAX_COMMANDS} commands", section)
+
 
 class AutopilotPageTests(unittest.TestCase):
     def test_the_settings_block_lists_each_autopilot_key_the_code_defines_and_no_other(self):

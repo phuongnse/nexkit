@@ -1358,8 +1358,10 @@ class ScenarioTests(unittest.TestCase):
         # The step run in the item's group stores the engine's answer, at the next revision.
         pipe.drain()
         self.assertEqual(len(pipe.gh.merged), 1)
+        # The approval, the merge's `accepted` and the result of the issue's `close`.
         stored = item_state.read(pipe.gh, 5)[1]
-        self.assertEqual(stored["revision"], item_state.find([comment])[1]["revision"] + 1)
+        self.assertEqual(stored["revision"], item_state.find([comment])[1]["revision"] + 3)
+        self.assertEqual((stored["state"], stored["pending"]), ("accepted", []))
         self.assertIn("approval-6-" + pipe.gh.pulls[6]["head"]["sha"], stored["recentEvents"])
 
     def test_an_approval_of_a_commit_that_is_no_longer_the_head_merges_nothing(self):
@@ -3168,9 +3170,12 @@ class ScenarioTests(unittest.TestCase):
         # The step run of the parent's group stores the end, and writes nothing else on GitHub.
         self.assertEqual(played[0], ["Recorded the end of #5 in #1's state: close."])
         _, doc = item_state.read(gh, 1)
-        self.assertEqual((doc["revision"], doc["state"]), (2, "accepted"))
+        # The end is revision 2 and the result of the parent's `close` revision 3: the parent is
+        # closed, so no `close` waits in its outbox.
+        self.assertEqual((doc["revision"], doc["state"]), (3, "accepted"))
         self.assertIn("part-1-5", doc["recentEvents"])
-        self.assertTrue(any(action["kind"] == "close" for action in doc["pending"]))
+        self.assertFalse(any(action["kind"] == "close" for action in doc["pending"]))
+        self.assertEqual(doc["pending"], [])
         self.assertEqual(gh.issues[1]["state"], "closed")
         self.assertEqual(len(gh.comments_matching(1, "<!-- nexkit:parent-closed -->")), 1)
 
@@ -3907,6 +3912,28 @@ class ScenarioTests(unittest.TestCase):
         self.same_item(imported, plain, "closed")
         self.assertEqual(len(imported.gh.merged), 1)
 
+    def test_a_merge_of_an_issue_with_no_parent_is_stored_as_accepted_with_nothing_pending(self):
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        pipe.gh.required = {"e2e"}
+        pipe.gh.merge_error = GitHubError(405, 'Required status check "e2e" is expected.')
+        autopilot.request(pipe.gh, "nexkit.yml", "main")
+        pipe.drain()
+        self.assertEqual([o for *_, o in pipe.played], ["planned", "merge_waiting"])
+        self.stored_import(pipe, 5, 6)
+        self.assertIsNone(pipe.gh.parent_issue(5))
+        pipe.gh.merge_error = None
+        pipe.head(6)
+        pipe.play()
+        self.assertEqual((len(pipe.gh.merged), pipe.gh.issues[5]["state"]), (1, "closed"))
+        # The merge is stored whether or not the issue has a parent, and the close that went
+        # with it is reported, so nothing waits in the outbox.
+        doc = item_state.read(pipe.gh, 5)[1]
+        self.assertEqual((doc["state"], doc["pending"]), ("accepted", []))
+
     def test_a_merge_waiting_for_required_checks_keeps_its_first_wait_and_ends_for_a_person(self):
         def script(pipe, inputs):
             return plan() if inputs["command"] == "plan" else done()
@@ -4100,6 +4127,108 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(group.state()["state"], "planning")
         self.assertEqual(group.state()["recentEvents"].count(f"comment-{asked['id']}"), 1)
         self.assertNotIn("asked", group.decisions)
+
+    # -- closed items ----------------------------------------------------------------------
+
+    def routed(self, gh, cfg, event):
+        """The run of a comment, as `nexkit route` makes it: `cli._take`, then `route` on what
+        it took. Returns the decision and the events that reached the engine."""
+        real, sent = host.step, []
+
+        def spy(state, one, found):
+            sent.append(one)
+            return real(state, one, found)
+
+        with mock.patch.object(host, "step", spy), contextlib.redirect_stdout(io.StringIO()):
+            taken = cli._take(gh, cfg, "issue_comment", event)
+            decision = route(gh, "issue_comment", event, cfg=cfg, taken=taken)
+        return decision, sent
+
+    def test_a_plan_command_on_a_closed_issue_is_refused_and_never_reaches_its_state(self):
+        group = ItemGroup(self)
+        group.gh.close_issue(5)
+        before = copy.deepcopy(group.state())
+        asked = group.post("/nexkit plan")
+        event = {"action": "created", "issue": {"number": 5}, "comment": asked}
+        decision, sent = self.routed(group.gh, group.cfg, event)
+        # NexKit 6's reply, and nothing to start or dispatch.
+        self.assertEqual(
+            (decision["action"], decision["reason"], decision["reply_to"]),
+            ("none", "The issue is closed", 5),
+        )
+        self.assertEqual(group.gh.dispatches, [])
+        self.assertEqual([one for one in sent if one["kind"] == "requested"], [])
+        # The stored state did not hear it: no plan was started, and the cursor moved past it.
+        state = group.state()
+        self.assertEqual((state["state"], state["pending"]), (before["state"], []))
+        self.assertEqual(state["revision"], before["revision"])
+        self.assertFalse(any(action["kind"] == "runAgent" for action in state["pending"]))
+        self.assertNotIn(f"comment-{asked['id']}", state["recentEvents"])
+        self.assertEqual(group.cursor()[1], f"comment-{asked['id']}")
+
+    def test_a_fix_command_on_a_closed_nexkit_pull_request_is_refused_without_the_engine(self):
+        gh = FakeGitHub()
+        cfg = make_config(autopilot={"enabled": True})
+        gh.add_issue(5)
+        gh.add_pull(6, 5)
+        self.assertTrue(host.store_import(gh, cfg, 5))
+        gh.pulls[6]["state"] = gh.issues[6]["state"] = "closed"
+        before = item_state.read(gh, 5)[1]
+        self.assertEqual(before["change"]["id"], "6")
+        asked = gh.human_comment(6, "/nexkit fix", at="2026-01-02T00:00:01Z")
+        event = {"action": "created", "issue": {"number": 6, "pull_request": {}}, "comment": asked}
+        decision, sent = self.routed(gh, cfg, event)
+        self.assertEqual(
+            (decision["action"], decision["reason"], decision["reply_to"]),
+            ("none", "The pull request is closed", 6),
+        )
+        # No `step` call for the command, so nothing of it is stored; the cursor passed it.
+        self.assertEqual([one for one in sent if one["kind"] == "requested"], [])
+        comment, state = item_state.read(gh, 5)
+        self.assertEqual((state["state"], state["pending"]), (before["state"], before["pending"]))
+        self.assertEqual(item_state.since(comment)[1], f"comment-{asked['id']}")
+
+    def stored_close(self, cfg=None):
+        """An issue 5 whose stored state is `accepted` with its `close` pending: the engine asked
+        for it, and GitHub shows the issue closed."""
+        cfg = cfg or make_config(close_parent_issues=True)
+        gh = FakeGitHub()
+        gh.add_issue(5, title="Part")
+        self.assertTrue(host.store_import(gh, cfg, 5))
+        found = item_state.read(gh, 5)
+        close = {"id": "a9.1", "kind": "close", "next": None}
+        pending = {**close, "outcome": "completed", "finding": None}
+        doc = {**found[1], "state": "accepted", "pending": [pending], "revision": 2}
+        self.assertTrue(item_state.write(gh, 5, doc, found))
+        return gh, cfg
+
+    def test_the_parents_task_of_a_closed_issue_stores_the_result_of_its_pending_close(self):
+        gh, cfg = self.stored_close()
+        decision = {"action": "maintain", "task": "parents", "issue": 5}
+        # While the issue is open, its `close` has not happened.
+        maintain(gh, decision, cfg, workflow="nexkit.yml", ref="main")
+        doc = item_state.read(gh, 5)[1]
+        self.assertEqual([action["kind"] for action in doc["pending"]], ["close"])
+        gh.close_issue(5, "completed")
+        maintain(gh, decision, cfg, workflow="nexkit.yml", ref="main")
+        doc = item_state.read(gh, 5)[1]
+        self.assertEqual((doc["state"], doc["pending"], doc["revision"]), ("accepted", [], 3))
+        self.assertIn("closed-5-a9.1", doc["recentEvents"])
+        # A second run finds nothing to report and stores nothing.
+        maintain(gh, decision, cfg, workflow="nexkit.yml", ref="main")
+        self.assertEqual(item_state.read(gh, 5)[1]["revision"], 3)
+
+    def test_close_done_stores_nothing_while_the_issue_is_open_or_when_no_close_waits(self):
+        gh, cfg = self.stored_close()
+        self.assertFalse(host.close_done(gh, cfg, 5))
+        self.assertEqual(item_state.read(gh, 5)[1]["revision"], 2)
+        gh.close_issue(5, "completed")
+        self.assertTrue(host.close_done(gh, cfg, 5))
+        self.assertFalse(host.close_done(gh, cfg, 5))
+        # An item with no state comment stores nothing.
+        gh.add_issue(7, title="Other", state="closed")
+        self.assertFalse(host.close_done(gh, cfg, 7))
+        self.assertEqual(gh.comments(7), [])
 
 
 if __name__ == "__main__":

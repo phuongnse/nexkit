@@ -260,9 +260,12 @@ class MergeGuardTests(ReportCase):
         self.assertIn("refused to decide its next step", text)
         self.assertIn("refused", self.target["found"])
 
-    def test_a_merge_that_passes_the_guards_asks_the_engine_nothing(self):
+    def test_a_merge_that_passes_the_guards_tells_the_engine_only_that_it_went_through(self):
         outcome, _, events = self.merge()
-        self.assertEqual((outcome, events), ("merged", []))
+        self.assertEqual(outcome, "merged")
+        [event] = events
+        self.assertEqual(event["kind"], "actionFinished")
+        self.assertEqual(event["result"], {"accepted": True, "refusal": None, "text": ""})
 
 
 class PersonsPullRequestTests(ReportCase):

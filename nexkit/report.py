@@ -1447,9 +1447,13 @@ def merge_pull(gh, cfg, target, row, message, workflow, default_branch):
     if attempt:
         message += f" GitHub took it at try {attempt + 1}, after the base branch moved."
     closed, lines = close_merged_issue(gh, target["issue"], pr, merge.get("sha"))
+    # The merge went through, so the item's state says so, whether or not the issue closed or has
+    # a parent. A refusal changes nothing on GitHub: it only leaves the state as it was.
+    state, refused = _merge_stored(gh, cfg, target)
+    _close_stored(gh, cfg, target["issue"])
     if closed:
         # At once, for this round's comment; the `issues: closed` run finds nothing left.
-        lines += _parent_ends(gh, cfg, target)
+        lines += _parent_ends(gh, cfg, target, state, refused)
     lines += delete_head_branch(gh, pr)
     runs = []
     started = after_merge(gh, after_workflows(cfg), target["base"], runs)
@@ -1516,27 +1520,67 @@ def _seen(gh, cfg, target, message, seen, expect):
     return None
 
 
-def _parent_ends(gh, cfg, target):
+def _merge_stored(gh, cfg, target):
+    """(state, refused) of the engine's answer to the merge of `target`'s pull request, which
+    went through: the `accept`'s `accepted` result, stored in the item's state
+    (`host.accept_answer`). `refused` is the error when the engine refuses to decide or its end is
+    not `accepted`, and `state` is None then. A run that cannot read GitHub meanwhile counts as
+    refused too. Nothing here changes what the merge did, so the run prints a warning."""
+    from .host import Refused, accept_answer
+
+    auto_fixes = (target.get("state") or {}).get("auto_fixes", 0)
+    accepted = {"accepted": True, "refusal": None, "text": ""}
+    try:
+        end, state = accept_answer(
+            gh,
+            cfg,
+            target["issue"],
+            target["pr"],
+            target["head"],
+            auto_fixes,
+            accepted,
+            write=True,
+        )
+        if end != "accepted":
+            raise Refused(f"The engine answers {end!r} to a merge that went through.")
+    except (GitHubError, Refused) as error:
+        why = autopilot.quoted(str(error), 300)
+        print(f"::warning::The state of #{target['issue']} does not hold the merge: {why}")
+        return None, error
+    return state, None
+
+
+def _close_stored(gh, cfg, issue):
+    """Store the result of the `close` that issue `issue`'s state holds, once GitHub shows it
+    closed (`host.close_done`). A run that cannot read or store it only prints a warning, since
+    the `issues: closed` run of the issue reports it again."""
+    from .host import Refused, close_done
+
+    try:
+        close_done(gh, cfg, issue)
+    except (GitHubError, Refused) as error:
+        why = autopilot.quoted(str(error), 300)
+        print(f"::warning::The close of #{issue} is not stored in its state: {why}")
+
+
+def _parent_ends(gh, cfg, target, state, refused):
     """Lines for the round's comment about the parent issue of `target`'s issue, which NexKit
-    merged and closed. With `close_parent_issues` on, `maintain.close_parents` asks the engine
-    about every parent, from the direct one up (`host.part_ended`), and closes those it ends,
-    with the facts only GitHub knows. Without it the engine still hears the end of the part, as
-    `person`, and NexKit writes nothing on the parent. The parent of an issue that merges stays
-    as it is when the engine refuses to decide."""
-    from .host import Refused, accept_answer, part_ended
+    merged and closed. `state` is the item's state after the merge's `accepted` result, or None
+    with the error `refused` when the engine refused to decide (`_merge_stored`). With
+    `close_parent_issues` on, `maintain.close_parents` asks the engine about every parent, from
+    the direct one up (`host.part_ended`), and closes those it ends, with the facts only GitHub
+    knows. Without it the engine still hears the end of the part, as `person`, and NexKit writes
+    nothing on the parent. The parent of an issue that merges stays as it is when the engine
+    refuses to decide."""
+    from .host import Refused, part_ended
 
     issue = target["issue"]
     try:
         parent = gh.parent_issue(issue)
         if not parent or parent.get("state") != "open" or not autopilot.in_repository(gh, parent):
             return []
-        auto_fixes = (target.get("state") or {}).get("auto_fixes", 0)
-        accepted = {"accepted": True, "refusal": None, "text": ""}
-        end, state = accept_answer(
-            gh, cfg, issue, target["pr"], target["head"], auto_fixes, accepted, write=True
-        )
-        if end != "accepted":
-            raise Refused(f"The engine answers {end!r} to a merge that went through.")
+        if refused is not None:
+            raise refused
         if cfg["close_parent_issues"]:
             return close_parents_safely(gh, cfg, issue)
         subs = gh.sub_issues(parent["number"])

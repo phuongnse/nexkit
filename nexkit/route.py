@@ -711,7 +711,8 @@ def _decide(
     """The decision for a person's command, or NexKit's own dispatch of one. A command starts
     its stage only as the engine answers it (`host.command`); what stays here are the facts
     that only GitHub shows: an unknown command, a fork, a person's pull request, which takes
-    no `/nexkit fix`, and the pull request's and the issue's state, which the engine is told.
+    no `/nexkit fix`, and a closed issue or pull request, which gets NexKit 6's reply before the
+    engine is asked, so that the item's stored state never hears a command on it.
     `cfg` is the configuration, or None when it did not load, and then the answer is on
     NexKit 6's document. `taken` is what `host.take` stored in this run: the answer to the
     run's own command is carried out from it, and a command that an earlier run took starts
@@ -739,15 +740,15 @@ def _decide(
                 number,
             )
         item = number if person else issue
-        closed = pull["state"] != "open"
-        merged = None if closed else on_base(gh, pull["base"]["ref"], pull["head"]["sha"])
+        if pull["state"] != "open":
+            return _none("The pull request is closed", number)
+        merged = on_base(gh, pull["base"]["ref"], pull["head"]["sha"])
         change = {"id": str(number), "version": pull["head"]["sha"]}
         try:
             answer = host.command(
                 item=item,
                 what=command,
-                closed=closed,
-                change=None if closed else change,
+                change=change,
                 review_only=person,
                 empty=bool(merged),
                 review_id=review_id,
@@ -776,8 +777,6 @@ def _decide(
                 "merge_base": merged,
             }
         if answer != PR_COMMANDS[command]:
-            if closed:
-                return _none("The pull request is closed", number)
             return _none(_refusal(host, command), number)
         decision = {
             "action": PR_COMMANDS[command],
@@ -830,27 +829,24 @@ def _decide(
     if command not in ISSUE_COMMANDS:
         return _none(f"`/nexkit {command}` is not an issue command. {USAGE}", number)
     issue = gh.issue(number)
-    closed = issue["state"] != "open"
+    if issue["state"] != "open":
+        return _none("The issue is closed", number)
     branch = branch_for(number)
     action = ISSUE_COMMANDS[command]
     change = plan = None
     existing = []
-    if not closed and action == "implement":
+    if action == "implement":
         existing = gh.open_pulls(branch)
         if existing:
             change = {"id": str(existing[0]["number"]), "version": existing[0]["head"]["sha"]}
         plan = latest_plan(gh.comments(number))
     try:
-        answer = host.command(
-            item=number, what=command, closed=closed, change=change, plan=plan, **given
-        )
+        answer = host.command(item=number, what=command, change=change, plan=plan, **given)
     except host.Refused as exc:
         return _none(host.refused_reason(exc), number)
     if answer == "answered":
         return _none(EARLIER_RUN)
     if answer != action:
-        if closed:
-            return _none("The issue is closed", number)
         if existing:
             pr = existing[0]["number"]
             return _none(

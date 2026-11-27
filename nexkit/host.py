@@ -111,15 +111,23 @@ again, the wait or the person. What counts as lost, and the six-hour window of t
 It decides what the merge finds too (`report.merge_pull`, `autopilot._merge_step`):
 `change_seen` sends a pull request that a person merged first, a change that its base branch
 already holds, and a commit that a person pushed while the merge waited, as observations, and the
-item ends or its new head is checked as the engine answers. An implement round that finds no
-change is needed (`no_change_found`, called by `report._no_change`) and a fix round that finds its
-change on the base branch (`on_base_found`, called by `report._already_on_base`) reach it too, and
-close only when it ends the item as `noChange`; the `report` of the item's group stores the
+item ends or its new head is checked as the engine answers. A merge that goes through is stored
+as the `accept` action's `accepted` result whether or not the issue has a parent
+(`report._merge_stored`): when the engine refuses it, nothing is stored and the run only warns,
+since the merge happened either way. Once GitHub shows an item closed, the `close` that its stored
+outbox holds is stored as finished (`close_done`), by the run in the item's own group that sees
+it: the merge's `report`, the `step` run of a parent that its last part closed
+(`maintain.record_part_end`, the `parents` task) and the item's own `issues: closed` run, so that a
+closed item keeps no `close` pending. A close that failed stays pending. An implement round that
+finds no change is needed (`no_change_found`, called by `report._no_change`) and a fix round that
+finds its change on the base branch (`on_base_found`, called by `report._already_on_base`) reach it
+too, and close only when it ends the item as `noChange`; the `report` of the item's group stores the
 answer of both in the item's state. Every parent's end goes through it: `part_ended` sends the end
 of a part to its parent's document, at every level and on every close of the part (a merge, a
 person's close, a change already on the base branch, no change needed, autopilot's sweep), and
 the parent ends only when every part ended and one was completed, under `parentEnd`, whatever
-the number of its sub-issues. The run of the part only previews that answer, and sends the end
+the number of its sub-issues (the merge's own `accepted` result is stored before, whatever its
+parent). The run of the part only previews that answer, and sends the end
 to the parent's group as a `step` event with the note `part N` (`maintain.send_part_end`); the
 run that takes it there stores the answer in the parent's state (`maintain.record_part_end`),
 and so does the `step` run of a parent whose parts are all closed. Only the facts GitHub knows,
@@ -179,12 +187,14 @@ replaced starts in the run that ran, when that run's own event starts nothing
 facts of, whether the issue or pull request is open, the latest plan, an open pull request for
 `/nexkit go` and a base branch that already holds the change, where `take` sent nothing or the
 engine is asked, and starts only the stage that the engine answers; a change that the engine
-ends as `noChange` goes to the `on_base` task. A closed issue or pull request, which a state
-comment outlives, and an open pull request for `/nexkit go` are the engine's to refuse on that
-document, and the host says each in NexKit 6's words. An engine that refuses, or answers
-another stage, starts nothing, and the person gets a reply. A fork, a person's pull request,
-which takes no `/nexkit fix`, an unknown command and an implement round that still runs stay
-host checks.
+ends as `noChange` goes to the `on_base` task. An open pull request for `/nexkit go` is the
+engine's to refuse on that document, and the host says it in NexKit 6's words. An engine that
+refuses, or answers another stage, starts nothing, and the person gets a reply. A closed issue or
+pull request, which a state comment outlives, a fork, a person's pull request, which takes no
+`/nexkit fix`, an unknown command and an implement round that still runs stay host checks: the
+reply to a command on a closed item is NexKit 6's ("The issue is closed", "The pull request is
+closed"), given before the engine is asked, and `take` only moves its cursor past such a command
+or *Request changes* review, so that no command changes a closed item's stored state.
 
 An item whose document or event the engine refuses waits for a person, and no other item is
 held up by it.
@@ -194,7 +204,8 @@ Every run in an item's group first stores the item's first state when it has no 
 takes the item's events (`take`, both called by `cli._take` from `nexkit route`): it answers every
 comment, review and hold-label change of the item after the cursor in its state comment, oldest
 first, so that a command whose run a newer one replaced is still answered, and a run whose writes
-keep losing fails and leaves its event for the next run. A state comment that someone other than
+keep losing fails and leaves its event for the next run. It passes over a command and a review of
+a closed issue or pull request, which no stage follows. A state comment that someone other than
 the App changed stores and takes nothing: the item waits for a person.
 
 The decisions after a plan (`after_plan`, `plan_carried_on`, `plan_waits_for`), for a new issue's
@@ -621,10 +632,11 @@ TIME = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ")
 
 class _Source:
     """A comment, a review or an issue event of GitHub, with the id of the event it gives
-    (`event_id`) and the time it happened."""
+    (`event_id`), the time it happened and the number of the issue or pull request that it is
+    on (`on`)."""
 
-    def __init__(self, kind, raw):
-        self.kind, self.raw = kind, raw
+    def __init__(self, kind, raw, on):
+        self.kind, self.raw, self.on = kind, raw, on
         self.name = event_id(kind, raw)
         at = raw.get("submitted_at" if kind == "review" else "created_at") or ""
         self.at = at if TIME.fullmatch(at) else NO_TIME
@@ -648,15 +660,15 @@ def _sources(gh, number, pull, comments):
     """The `_Source`s of work item `number`, whose change is the pull request `pull`, oldest
     first, in the order the cursor keeps: its comments (`comments`) and those of its pull
     request, the reviews of the pull request and the item's issue events."""
-    found = [("comment", raw) for raw in comments]
+    found = [("comment", raw, number) for raw in comments]
     if pull:
-        found += [("comment", raw) for raw in gh.comments(pull)] if pull != number else []
-        found += [("review", raw) for raw in gh.reviews(pull)]
-    found += [("issue-event", raw) for raw in gh.issue_events(number)]
+        found += [("comment", raw, pull) for raw in gh.comments(pull)] if pull != number else []
+        found += [("review", raw, pull) for raw in gh.reviews(pull)]
+    found += [("issue-event", raw, number) for raw in gh.issue_events(number)]
     sources = []
-    for kind, raw in found:
+    for kind, raw, on in found:
         try:
-            sources.append(_Source(kind, raw))
+            sources.append(_Source(kind, raw, on))
         except ValueError:
             # No number of GitHub's names it, so no event can.
             continue
@@ -787,12 +799,34 @@ def _take(gh, cfg, number, tries, sleep):
     sources = [one for one in _sources(gh, number, pull, comments) if _newer(one, cursor, comment)]
     holds = {name for name, does in autopilot.autopilot_labels(cfg).items() if does.get("hold")}
     found_policies = policies(cfg, item_profile(cfg, comments))
+    closed = {}
+
+    def is_closed(on):
+        """Whether the issue or pull request `on` is closed, read once for this run."""
+        if on not in closed:
+            found = gh.pull(on) if on != number and on == pull else gh.issue(on)
+            closed[on] = found.get("state") != "open"
+        return closed[on]
+
     taken = []
     for one in sources:
         event = _taken_event(gh, number, pull, comments, holds, one)
         if event is not None and protocol.check(event, "event.schema.json", "event"):
             event = None
         if event is None:
+            continue
+        if event["kind"] in ("requested", "changesRequested") and is_closed(one.on):
+            # A command on a closed issue or pull request is refused before the engine is asked
+            # (`route._decide`), so it never reaches the stored state: `take` only moves the
+            # cursor past it, since a stage that it started would be stored and never run.
+            item_state.apply(
+                gh,
+                number,
+                lambda state: (state, [], False),
+                tries=tries,
+                sleep=sleep,
+                since=one.cursor,
+            )
             continue
         stored = []
 
@@ -904,10 +938,11 @@ def resync(state, built, event):
     stored revision and with the events seen of `state`, but `event`, since the engine would
     take a second send of it for a duplicate. `event` may be a list of events that are sent in a
     row: `state` holds none of them, or `built` is the document. With no `state`, `built` itself.
-    `decide_all` reports each such fallback to `on_fallback`, when it is set.
-    This is transitional: the last part of the move to the stored document removes it."""
-    if state is None:
-        return built
+    With no `built`, the stored `state` alone. `decide_all` reports each such fallback to
+    `on_fallback`, when it is set. This is transitional: the last part of the move to the stored
+    document removes it."""
+    if state is None or built is None:
+        return built if state is None else state
     events = event if isinstance(event, list) else [event]
     names = {one["id"] for one in events}
     seen = state["recentEvents"]
@@ -940,7 +975,9 @@ def decide_all(
     `actionFinished` or `actionLost` event answers (`pending_id`), and with the id of the wait of
     kind `wait` in the document that a `tick` names (`wait_id`). `built` may be a function of
     the stored document, which it reads on each try, so that a count comes from the state that
-    is decided on (`_counted`). The events after the first
+    is decided on (`_counted`), or None, which decides on the stored document alone: the caller
+    makes sure a state is stored, since with none `built` has nothing to fall back on and the
+    call raises `Refused`. The events after the first
     are sent on the state that the one before it gave, and the row stops after the event whose
     actions satisfy `until`, when given. `found_policies` default to the configuration's, and
     with no `cfg` the decision is read from `built` alone and nothing is read or stored.
@@ -961,6 +998,8 @@ def decide_all(
 
     def answer(state):
         base = resync(state, built(state) if callable(built) else built, events)
+        if base is None:
+            raise Refused("The item has no state to decide on.")
         fell[:] = [_why(state, base, events)]
         revision, state, answers, changed = base["revision"], base, [], False
         for event in events:
@@ -1020,11 +1059,12 @@ def decide(
 ):
     """The engine's answer to `event` on work item `number`, as (state, actions): decided on
     the stored document where it agrees with `built`, the document that NexKit 6's markers
-    leave for the decision (`resync`), and with `action`, (kind, stage), the id of the pending
-    action that the event's result answers (`pending_id`), or with `wait`, the kind of a wait,
-    the id of the wait of that kind that the tick answers (`wait_id`). `built` may be a function
-    of the stored document, which it reads on each try, so that a count comes from the state that
-    is decided on (`_counted`). `found_policies` default to the configuration's.
+    leave for the decision (`resync`), or on the stored document alone when `built` is None,
+    which needs a state comment to be stored, and with `action`, (kind, stage), the id of the
+    pending action that the event's result answers (`pending_id`), or with `wait`, the kind of a
+    wait, the id of the wait of that kind that the tick answers (`wait_id`). `built` may be a
+    function of the stored document, which it reads on each try, so that a count comes from the
+    state that is decided on (`_counted`). `found_policies` default to the configuration's.
 
     A run of the item's concurrency group passes `write`: when the item has a state comment,
     the answer is stored with `item_state.apply`, only on the revision that was read, and
@@ -1052,6 +1092,32 @@ def decide(
     if with_changed:
         return state, answers[0][1], changed
     return state, answers[0][1]
+
+
+def close_done(gh, cfg, number):
+    """Store the result of the `close` that work item `number`'s stored outbox holds, once
+    GitHub shows the item closed, and answer whether the engine took it. A close that the engine
+    asked for (a merge's, a parent's after its last part, an end with no change) is carried out
+    by other code of NexKit, or by a person, and nothing else reports it, so without this the
+    stored `close` stays pending after the item is closed. It reports what GitHub shows: an item
+    that is still open, a close that failed, and an item that holds no `close` change nothing.
+    Only a run in the item's group calls it, since it stores the item's state: the merge's
+    `report`, the `step` run of a parent (`maintain.record_part_end`, the `parents` task) and the
+    item's own `issues: closed` run. It decides on the stored state alone (`decide`), so an item
+    with no state comment stores nothing. Raises `Refused` and `GitHubError`."""
+    comment, doc = stored(gh, cfg, number)
+    if comment is None or not any(action["kind"] == "close" for action in doc["pending"]):
+        return False
+    if gh.issue(number).get("state") == "open":
+        return False
+    action = pending_id(doc, "close")
+    # A `close` has no change version, which is the one a result of it echoes.
+    fields = {"action": action, "changeVersion": None, "result": {}}
+    event = _event("actionFinished", number, None, f"closed-{number}-{action}", **fields)
+    _, _, changed = decide(
+        gh, cfg, number, event, None, action=("close",), write=True, with_changed=True
+    )
+    return changed
 
 
 # -- what follows a plan -------------------------------------------------------------------
@@ -1876,7 +1942,8 @@ def closing_command(gh, decision, comments, command, cfg=None):
     of the command, which names the event. With `cfg` the engine answers on the item's stored
     state (`decide`), which a preview only reads: `take` already stored the command's event, and
     the `maintain` job carries out the close. Without it, the answer is on the document that
-    NexKit 6's markers leave."""
+    NexKit 6's markers leave. It only sees an open issue: `route._decide` refuses a command on
+    a closed one first."""
     number = decision["issue"]
     asked = asked_last(comments)
     if asked is None:
@@ -1952,7 +2019,6 @@ def command(
     taken=None,
     by=None,
     note="",
-    closed=False,
     change=None,
     plan=None,
     review_only=False,
@@ -1973,23 +2039,23 @@ def command(
     duplicate. Otherwise the stored state says whether an earlier run took it (`answered`), and
     another command taken in this run that already started a stage refuses it. In any other case it
     is decided on the stored state (`decide`, which stores the answer in the item's group,
-    `resync`). A closed item, with no `gh` or no `cfg`, is answered on the small document that
-    NexKit 6's `route` read the facts of, which writes nothing.
+    `resync`). With no `gh` or no `cfg` it is answered on the small document that NexKit 6's
+    `route` read the facts of, which writes nothing. No closed issue or pull request reaches it:
+    `route._decide` refuses a command on one before, in NexKit 6's words, so that no command
+    changes the stored state of a closed item.
 
     That document holds only the facts that NexKit 6's `route` reads, as `closing_command` and
-    `_pull_doc` build theirs: `closed` is a closed issue or pull request (`dropped`); `change`,
-    `{"id", "version"}` of the open pull request, makes the item `ready`, or `new` for a person's
-    pull request (`review_only`); `plan` is the issue's latest plan comment, which makes the item
-    wait for its approval. `empty` says that the change's base branch already holds it. `by` is
-    the person, `note` their text, and `review_id` the id of a *Request changes* review, which is
-    sent as `changesRequested` as `take` sends it. `source_id` is the id of the comment or review
-    that gave the command, which names the event as `take` does."""
+    `_pull_doc` build theirs: `change`, `{"id", "version"}` of the open pull request, makes the
+    item `ready`, or `new` for a person's pull request (`review_only`); `plan` is the issue's
+    latest plan comment, which makes the item wait for its approval. `empty` says that the
+    change's base branch already holds it. `by` is the person, `note` their text, and `review_id`
+    the id of a *Request changes* review, which is sent as `changesRequested` as `take` sends it.
+    `source_id` is the id of the comment or review that gave the command, which names the event as
+    `take` does."""
     doc = first_state.empty(str(item))
     if review_only:
         doc["itemKind"], doc["actors"]["change"] = "reviewOnly", "person"
-    if closed:
-        doc["state"] = "dropped"
-    elif change:
+    if change:
         doc["state"] = "new" if review_only else "ready"
         doc["change"] = dict(change)
         doc["observed"] = {
@@ -2002,7 +2068,7 @@ def command(
     elif plan:
         doc = _waiting(_document({"number": item}, {}, plan, plan_data(plan)))
     observed = None
-    if empty and change and not closed:
+    if empty and change:
         seen = {"version": change["version"], "merged": False, "empty": True}
         name = f"seen-{change['id']}-{change['version']}"
         fields = {"changeId": change["id"], "conflicts": False, **seen}
@@ -2026,7 +2092,7 @@ def command(
             "plan": str(plan["id"]) if plan and what == "go" else None,
         }
         request = _event("requested", item, None, name, **found)
-    if gh is None or cfg is None or closed:
+    if gh is None or cfg is None:
         events = [event for event in (observed, request) if event]
         after, actions = _answers(doc, events, policies(cfg) if cfg else {})
         if after["state"] == "noChange":

@@ -172,30 +172,56 @@ KNOWN = [
     },
 ]
 
+_READ = (
+    "reads the item's stored state, which is the import in memory when the item has no state "
+    "comment, and the import reads the issues that block it. A read by `FakeGitHub` adds the "
+    "issue to its `blockers` with no blocker, where NexKit 6's flow never read it. Only a "
+    "record that differs by such an empty entry is excused."
+)
+
 KNOWN += [
     {
         "name": "the stored state is read before the decision",
         "family": family,
-        "by": "#643",
-        "why": (
-            "A decision after a plan, for a first plan or after a writer's vouch reads the "
-            "item's stored state, which is the import in memory when the item has no state "
-            "comment, and the import reads the issues that block it. A read by `FakeGitHub` "
-            "adds the issue to its `blockers` with no blocker, where NexKit 6's flow never "
-            "read it. Only a record that differs by such an empty entry is excused."
-        ),
+        "by": by,
+        "why": f"{what} {_READ}",
         "match": lambda sc, old, new: _without_empty_blockers(old) == _without_empty_blockers(new),
     }
-    for family in ("replan", "vouch")
+    for by, what, families in (
+        (
+            "#643",
+            "A decision after a plan, for a first plan or after a writer's vouch",
+            ("replan", "vouch"),
+        ),
+        (
+            "#645",
+            "A decision after a blocked or stopped round, at a usage limit or a transient "
+            "error, at a resume or for a lost command",
+            (
+                "stop",
+                "lost",
+                "pause",
+                "report",
+                "required",
+                "give",
+                "conflict",
+                "review",
+                "waits",
+                "refusals",
+                "conflicted",
+                "behind",
+            ),
+        ),
+    )
+    for family in families
 ]
 
 
 def _without_empty_blockers(record):
     """`record` without the entries of `blockers` that hold no blocker, in what GitHub holds
-    after the command and after each sweep."""
+    after the command, after a report and after each sweep."""
     found = dict(record)
-    for key in ("gh", "gh1", "gh2"):
-        item = found.get(key)
+    for key, item in record.items():
         if isinstance(item, dict) and isinstance(item.get("blockers"), dict):
             kept = {number: held for number, held in item["blockers"].items() if held}
             found[key] = {**item, "blockers": kept}

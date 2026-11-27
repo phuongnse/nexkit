@@ -20,7 +20,7 @@ class NoWriteWithoutTheEngine(unittest.TestCase):
 
     def test_the_retry_of_a_stage_with_no_engine_call_before_it_is_found_in_the_real_code(self):
         modules = real_sources()
-        call = "answer = host.stage_transient(cfg, decision, now, error, label)"
+        call = "answer = host.stage_transient(gh, cfg, decision, now, error, label, write=True)"
         self.assertIn(call, modules["report"])
         modules["report"] = modules["report"].replace(call, "answer = ('retry',)")
         self.assertEqual(unanswered_writes(modules), ["cli.cmd_report"])

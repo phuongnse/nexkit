@@ -1445,7 +1445,9 @@ def _conflict_wait(gh, cfg, pull, rounds, details=None):
     return None
 
 
-def _pull_step(gh, cfg, issue, pull, rounds, record, start, comments, pull_comments, now):
+def _pull_step(
+    gh, cfg, issue, pull, rounds, record, start, comments, pull_comments, now, write=False
+):
     """The step for an issue whose NexKit pull request is open, from its latest round: a
     round that runs, or started the next one, carries it on; one that stopped is answered
     or split as after `/nexkit go`; anything that needs a person waits for them."""
@@ -1468,7 +1470,7 @@ def _pull_step(gh, cfg, issue, pull, rounds, record, start, comments, pull_comme
         if not _vouched_again(gh, issue, comment):
             return _step(issue, "waits", latest.get("attention") or UNTRUSTED_REASON)
         # A round that stopped gave its automatic round back; a merge needs a new review.
-        return _vouched(gh, cfg, issue, comment, latest, record, start, pull)
+        return _vouched(gh, cfg, issue, comment, latest, record, start, pull, write)
     if latest.get("outcome") == HELD:
         return _released(gh, cfg, issue, pull, comment, latest, pull_comments, start, now)
     if latest.get("outcome") == "merge_waiting":
@@ -1660,14 +1662,14 @@ def _merge_step(gh, cfg, issue, pull, comment, run, start, now):
     return _step(issue, "merge", reason, round_comment=comment["id"], base=base)
 
 
-def _replanned(gh, cfg, issue, plan, last, record, start, comments, pull):
+def _replanned(gh, cfg, issue, plan, last, record, start, comments, pull, write=False):
     """The step after the plan autopilot asked for when a round of the pull request ran out
     of time, which the engine decides (`host.after_plan`): split the issue and close the pull
     request as superseded, plan once more for what a split needs, answer its questions, or,
     when it needs nobody, start a fix round on the pull request that follows the revised plan."""
     if last.get("status") != SUCCESS:
         return _step(issue, "waits", last.get("attention") or failed_reason("plan"))
-    return _after_plan(gh, cfg, issue, plan, last, record, start, comments, pull)
+    return _after_plan(gh, cfg, issue, plan, last, record, start, comments, pull, write)
 
 
 def _after_go(gh, cfg, issue, comment, last, record, start, comments):
@@ -1683,14 +1685,14 @@ def _after_go(gh, cfg, issue, comment, last, record, start, comments):
         return _step(issue, "waits", refused_reason(error))
 
 
-def _vouched(gh, cfg, issue, comment, run, record, start, pull=None):
+def _vouched(gh, cfg, issue, comment, run, record, start, pull=None, write=False):
     """The step after a writer vouched for an issue again once an untrusted edit stopped its
     round, which the engine decides (`host.vouched`). An issue whose next step the engine
     refuses to decide waits for a person, alone."""
     from .host import Refused, refused_reason, vouched
 
     try:
-        return vouched(gh, cfg, issue, comment, run, record, start, pull)
+        return vouched(gh, cfg, issue, comment, run, record, start, pull, write)
     except Refused as error:
         return _step(issue, "waits", refused_reason(error))
 
@@ -1707,29 +1709,29 @@ def _after_stop(gh, cfg, issue, run, record, start, comments, pull=None, pull_co
         return _step(issue, "waits", refused_reason(error))
 
 
-def _first_plan(cfg, issue, record, start):
+def _first_plan(gh, cfg, issue, record, start, write=False):
     """The step that starts the plan of an issue that has none, which the engine decides
     (`host.first_plan`). An issue whose start the engine refuses waits for a person, alone."""
     from .host import Refused, first_plan, refused_reason
 
     try:
-        return first_plan(cfg, issue, record, start)
+        return first_plan(gh, cfg, issue, record, start, write)
     except Refused as error:
         return _step(issue, "waits", refused_reason(error))
 
 
-def _after_plan(gh, cfg, issue, plan, last, record, start, comments, pull=None):
+def _after_plan(gh, cfg, issue, plan, last, record, start, comments, pull=None, write=False):
     """The step after the latest plan, which the engine decides (`host.after_plan`). An
     issue whose next step the engine refuses to decide waits for a person, alone."""
     from .host import Refused, after_plan, refused_reason
 
     try:
-        return after_plan(gh, cfg, issue, plan, last, record, start, comments, pull)
+        return after_plan(gh, cfg, issue, plan, last, record, start, comments, pull, write)
     except Refused as error:
         return _step(issue, "waits", refused_reason(error))
 
 
-def assess(gh, cfg, issue, open_pulls, now=None, where=None):
+def assess(gh, cfg, issue, open_pulls, now=None, where=None, write=False):
     """What autopilot does for one open issue in scope:
 
     - `active`: a run or pull request carries it on, or a command autopilot started has
@@ -1743,9 +1745,12 @@ def assess(gh, cfg, issue, open_pulls, now=None, where=None):
       request gets no automatic round or merge, and it takes no place unless a run on it
       is still `running`.
 
-    `where` is the scope, from `locate`.
+    `where` is the scope, from `locate`. `write`, which only the `step` run of the issue's
+    concurrency group passes, lets the decisions after a plan, for a first plan and after a
+    writer's vouch store the engine's answer in the issue's state comment; any other call,
+    the sweep's and `nexkit status`'s, only previews them.
     """
-    step = _assess(gh, cfg, issue, open_pulls, now, where)
+    step = _assess(gh, cfg, issue, open_pulls, now, where, write)
     if step.get("person"):
         pull = step.get("pull")
         found = [gh.comments(issue["number"]), gh.comments(pull) if pull else []]
@@ -1862,7 +1867,7 @@ def _parent_step(cfg, issue, parts):
     return _step(issue, "waits", reason)
 
 
-def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
+def _assess(gh, cfg, issue, open_pulls, now=None, where=None, write=False):
     number = issue["number"]
     label = hold_label(cfg, issue)
     if label:
@@ -1930,11 +1935,11 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
         # plan that is too large but that a person chose to implement anyway is not one.
         asked = record.get("split_asked") and record.get("command") == "plan"
         if asked and last and last.get("command") == "plan":
-            step = _replanned(gh, cfg, issue, plan, last, record, start, comments, pull)
+            step = _replanned(gh, cfg, issue, plan, last, record, start, comments, pull, write)
         else:
             rounds = [(c, run) for c, run in run_comments(pull_comments) if "round" in run]
             step = _pull_step(
-                gh, cfg, issue, pull, rounds, record, start, comments, pull_comments, now
+                gh, cfg, issue, pull, rounds, record, start, comments, pull_comments, now, write
             )
         return {**step, "pull": pull}
     blocked = waits_for(gh, issue, where) or lower_waves(gh, cfg, issue)
@@ -1942,10 +1947,10 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
         return _step(issue, "waits", blocked[0], person=blocked[1])
     if last and last.get("outcome") == UNTRUSTED_ROUND:
         if _vouched_again(gh, issue, found[-1][0]):
-            return _vouched(gh, cfg, issue, *found[-1], record, start)
+            return _vouched(gh, cfg, issue, *found[-1], record, start, write=write)
         return _step(issue, "waits", last.get("attention") or UNTRUSTED_REASON)
     if last is None or plan is None:
-        return _first_plan(cfg, issue, record, start)
+        return _first_plan(gh, cfg, issue, record, start, write)
     if last["command"] == "go":
         if last.get("outcome") == "issue_closed":
             # Reopened after it closed while the round ran: nothing changed for the plan.
@@ -1968,7 +1973,7 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None):
         return _after_go(gh, cfg, issue, *found[-1], record, start, comments)
     if last.get("status") != SUCCESS:
         return _step(issue, "waits", last.get("attention") or failed_reason("plan"))
-    return _after_plan(gh, cfg, issue, plan, last, record, start, comments)
+    return _after_plan(gh, cfg, issue, plan, last, record, start, comments, write=write)
 
 
 def carries_on(gh, cfg, decision, outcome, agent, ran=None):
@@ -2044,7 +2049,9 @@ def _plan_carried_on(gh, cfg, decision, output, ran=None):
 
     try:
         issue = gh.issue(decision["issue"])
-        return taken(gh, cfg, issue) and plan_carried_on(gh, cfg, issue, decision, output, ran)
+        return taken(gh, cfg, issue) and plan_carried_on(
+            gh, cfg, issue, decision, output, ran, write=True
+        )
     except (GitHubError, Refused):
         return False
 
@@ -3759,7 +3766,7 @@ def step(gh, cfg, number, workflow, ref):
     where = locate(gh, cfg)
     if issue.get("state") != "open" or "pull_request" in issue or not in_scope(where, issue):
         return [f"Autopilot: #{number} is closed, a pull request or out of scope; nothing to do."]
-    one = assess(gh, cfg, issue, nexkit_pulls(gh), where=where)
+    one = assess(gh, cfg, issue, nexkit_pulls(gh), where=where, write=True)
     if one["state"] == "start" and not one.get("pull"):
         # `host` imports this module.
         from .host import sweep as engine_sweep

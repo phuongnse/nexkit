@@ -10,7 +10,18 @@ import itertools
 import json
 from unittest import mock
 
-from common import HEAD, TOK, WORKFLOW, Artifacts, attempt, planned_issue, quiet, snapshot, sweep
+from common import (
+    HEAD,
+    TOK,
+    WORKFLOW,
+    Artifacts,
+    attempt,
+    planned_issue,
+    quiet,
+    seed,
+    snapshot,
+    sweep,
+)
 
 from nexkit import autopilot, maintain, progress
 from nexkit import report as report_module
@@ -108,6 +119,8 @@ def run(sc):
             pub = {"published": True, "pr": 6, "head": HEAD}
             needs = {"publish": {"outputs": {"result": json.dumps(pub)}}}
 
+            seed(gh, cfg)
+
             def first_round():
                 progress.start(gh, d)
                 return report(
@@ -138,6 +151,7 @@ def run(sc):
                     "url": f"{RUNS}/99",
                 }
                 gh.comment(6, render_run(running, "R."))
+            seed(gh, cfg)
             if sc["path"] == "approved":
                 decision = {"action": "maintain", "task": "approved", "pr": 6, "issue": 5}
                 decision.update(actor="olivia", commit=HEAD)

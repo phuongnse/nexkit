@@ -11,7 +11,7 @@ import itertools
 import json
 from unittest import mock
 
-from common import TOK, WORKFLOW, Artifacts, after, attempt, quiet, snapshot
+from common import TOK, WORKFLOW, Artifacts, after, attempt, quiet, seed, snapshot
 
 from nexkit import autopilot, maintain, progress
 from nexkit.github import GitHubError
@@ -143,6 +143,7 @@ def run(sc):
             raise GitHubError(502, "Bad gateway")
         return real_held(gh_, cfg_, number)
 
+    seed(gh, cfg)
     res = {}
     with (
         mock.patch.object(autopilot, "held", held),

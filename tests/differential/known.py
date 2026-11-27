@@ -356,6 +356,26 @@ KNOWN += [
 ]
 
 
+KNOWN += [
+    {
+        "name": "a stored count of conflict rounds above the markers'",
+        "family": "chains",
+        "by": "#671",
+        "why": (
+            "A decision takes the higher of the stored count of conflict rounds and the one that "
+            "NexKit 6's markers give (`host._counted`). After a give-back that is not stored yet, "
+            "the stored count stays above the markers'. NexKit 6 then started another automatic "
+            "conflict round, and the engine finds the budget used up (`conflicts.max_rounds`) and "
+            "leaves the pull request to a person, with that reason. Only a step whose round "
+            "differs this way is excused: the round's outcome, its comment and the dispatch "
+            "that NexKit 6 sent. Every other step and everything else in it must be equal. "
+            "#673 stores such rounds and removes `_counted`, and this entry with it."
+        ),
+        "match": lambda sc, old, new: _counted_ahead(sc, old, new),
+    }
+]
+
+
 def _without_empty_reads(record):
     """`_without_empty_blockers` of `record`, also without the entries of `issue_comments` that
     hold no comment."""
@@ -404,6 +424,68 @@ def _without_part_ends(record):
             if not (isinstance(line, str) and line.startswith("Sent the end of #"))
         ]
     return found
+
+
+def _counted_ahead(sc, old, new):
+    """Whether `old` and `new`, the records of a chain, differ only in one step, in which NexKit 6
+    started an automatic conflict round and the engine found the `conflicts.max_rounds` of
+    the configuration used up, and in that step only in the round's outcome, its comment and the
+    dispatches."""
+    steps = old.get("steps"), new.get("steps")
+    if not all(isinstance(each, list) for each in steps) or len(steps[0]) != len(steps[1]):
+        return False
+    if {k: v for k, v in old.items() if k != "steps"} != {
+        k: v for k, v in new.items() if k != "steps"
+    }:
+        return False
+    found = [i for i, (a, b) in enumerate(zip(*steps, strict=True)) if a != b]
+    if len(found) != 1:
+        return False
+    before, after = steps[0][found[0]], steps[1][found[0]]
+    try:
+        most = sc["cfg"]["max_rounds"]
+        started = before["outcome"]["outcome"] == "conflict_fix"
+        used = (
+            after["outcome"]["outcome"] == "conflicting"
+            and f"its {most} automatic conflict rounds are used up" in after["outcome"]["summary"]
+        )
+    except (KeyError, TypeError):
+        return False
+    if not (started and used):
+        return False
+    return _round_differs(before, after)
+
+
+def _round_differs(before, after):
+    """Whether `before` and `after`, two steps of a chain, hold the same GitHub apart from the last
+    comment of one pull request, a round's, and the last dispatch, and the same record apart from
+    the round's outcome."""
+    one, two = dict(before), dict(after)
+    one.pop("outcome", None)
+    two.pop("outcome", None)
+    gh_one, gh_two = dict(one.pop("gh", None) or {}), dict(two.pop("gh", None) or {})
+    if one != two:
+        return False
+    comments_one = dict(gh_one.pop("issue_comments", None) or {})
+    comments_two = dict(gh_two.pop("issue_comments", None) or {})
+    sent_one, sent_two = gh_one.pop("dispatches", []), gh_two.pop("dispatches", [])
+    if gh_one != gh_two or set(comments_one) != set(comments_two):
+        return False
+    if len(sent_one) != len(sent_two) or sent_one[:-1] != sent_two[:-1]:
+        return False
+    # The round's comment is the last of the pull request: every other comment is the same.
+    other = [n for n in comments_one if comments_one[n] != comments_two[n]]
+    if len(other) != 1:
+        return False
+    one_list, two_list = comments_one[other[0]], comments_two[other[0]]
+    return (
+        len(one_list) == len(two_list)
+        and one_list[:-1] == two_list[:-1]
+        and all(
+            str(each.get("body")).startswith("### NexKit round")
+            for each in (one_list[-1], two_list[-1])
+        )
+    )
 
 
 def _without_empty_blockers(record):

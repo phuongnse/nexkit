@@ -8,7 +8,7 @@ sweep and `nexkit status`."""
 import copy
 import itertools
 
-from common import HEAD, WORKFLOW, Artifacts, after, attempt, quiet, snapshot
+from common import HEAD, WORKFLOW, Artifacts, after, attempt, quiet, seed, snapshot
 
 from nexkit import autopilot, progress
 from nexkit.report import report
@@ -179,6 +179,7 @@ def run(sc):
         d["autopilot"] = "true"
     art = Artifacts()
     art.agent(agent_result(sc))
+    seed(gh, cfg)
     res = {}
     with quiet():
         try:

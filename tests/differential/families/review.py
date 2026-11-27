@@ -29,6 +29,7 @@ from common import (
     done,
     quiet,
     review_output,
+    seed,
     snapshot,
     walk,
 )
@@ -149,6 +150,7 @@ def run(sc):
     }
     if own:
         d["person"] = True
+    seed(gh, cfg)
     res = {}
     with quiet():
         res["report"] = one_round(gh, cfg, d, sc["checks"], REVIEWS[sc["review"]], pr)

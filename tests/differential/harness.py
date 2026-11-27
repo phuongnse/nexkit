@@ -5,12 +5,19 @@ with their inputs, merges, issues, pull requests, labels), the preview and `nexk
 
 usage: python3 tests/differential/harness.py --v6 PATH [--tree PATH] [--family NAME ...]
                                              [--sample K] [--jobs N] [--keep DIR]
+                                             [--fallbacks]
 
 `--v6` is a checkout of 8bf5190 (`git worktree add --detach PATH 8bf5190`); `--tree` is the
 tree to check, this one by default. Without `--sample` every scenario plays, which takes a
 while; `--sample K` plays the same K of each family every time. It prints each family's
 count, the differences that `known.py` lists, and every other difference with an example, and
 exits 1 when there is one.
+
+Each scenario on the tree first stores its items' imports as the App's state comment
+(`common.seed`), which is not compared, since NexKit 6 never posts it: the check counts a problem
+when an item's revision moves backward in a scenario. `--fallbacks` lists, for each family, the
+decisions that `host.resync` took from the markers' document, by the host function that asked
+and why.
 """
 
 import argparse
@@ -87,12 +94,27 @@ def at(value, path):
     return value
 
 
+def backward(states):
+    """Whether the revision of an item in `states`, [(item, revision), ...] in the order of the
+    writes, ever falls below one it had."""
+    top = {}
+    for item, revision in states:
+        if revision < top.get(item, revision):
+            return True
+        top[item] = revision
+    return False
+
+
 def compare(family, pairs):
     """(count, listed differences by name, unlisted differences by their paths, examples,
-    scenarios that broke the harness) of the records in each pair of files, one of NexKit 6
-    and one of the tree, which hold the same scenarios in the same order."""
-    count, broken = 0, 0
+    scenarios that broke the harness, the tree's fallbacks of `host.resync` by (function, why),
+    the scenarios in which it stored an item, the scenarios in which an item's revision moved
+    backward) of the records in each pair of files, one of NexKit 6 and one of the tree, which
+    hold the same scenarios in the same order. Only `rec` is compared: the rest is what the tree
+    recorded apart."""
+    count, broken, stored, back = 0, 0, 0, 0
     seen, unlisted, examples = collections.Counter(), collections.Counter(), {}
+    fell = collections.Counter()
     for old_path, new_path in pairs:
         old_records, new_records = records(old_path), records(new_path)
         for before, item in itertools.zip_longest(old_records, new_records):
@@ -100,6 +122,9 @@ def compare(family, pairs):
                 unlisted[("the trees played other scenarios",)] += 1
                 break
             count += 1
+            fell.update((origin, why) for origin, why in item.get("fallbacks") or [])
+            stored += bool(item.get("seeded"))
+            back += backward(item.get("states") or [])
             if "harness" in item["rec"] or "harness" in before["rec"]:
                 broken += 1
             if before["rec"] == item["rec"]:
@@ -121,7 +146,7 @@ def compare(family, pairs):
                     "v6": at(before["rec"], first),
                     "tree": at(item["rec"], first),
                 }
-    return count, seen, unlisted, examples, broken
+    return count, seen, unlisted, examples, broken, fell, stored, back
 
 
 def short(value, most=600):
@@ -129,14 +154,23 @@ def short(value, most=600):
     return text if len(text) <= most else text[:most] + "…"
 
 
-def report(family, count, seen, unlisted, examples, broken):
-    """Print what a family found; the number of problems in it."""
+def report(family, count, seen, unlisted, examples, broken, fell, stored, back, fallbacks=False):
+    """Print what a family found; the number of problems in it. With `fallbacks`, the decisions
+    that `host.resync` took from the markers' document, most first."""
     line = f"{family} ({FAMILIES[family]}): {count} scenarios, {sum(unlisted.values())} differ"
     if seen:
         line += ", listed: " + ", ".join(f"{n} × {name}" for name, n in seen.items())
     if broken:
         line += f", {broken} broke the harness"
+    line += f", seeded {stored} of {count}"
     print(line, flush=True)
+    if back:
+        print(f"  {back} × an item's revision moved backward")
+    if fallbacks:
+        for (origin, why), n in sorted(fell.items(), key=lambda one: (-one[1], one[0])):
+            print(f"  resync fell back: {n} × {origin} ({why})")
+        if not fell:
+            print("  resync fell back: none")
     if not count:
         print(f"  {family} played no scenario")
     for shape, n in unlisted.most_common():
@@ -147,7 +181,7 @@ def report(family, count, seen, unlisted, examples, broken):
             print(f"    at {example['path']}")
             print(f"    NexKit 6: {short(example['v6'])}")
             print(f"    tree:     {short(example['tree'])}")
-    return sum(unlisted.values()) + broken + (0 if count else 1)
+    return sum(unlisted.values()) + broken + back + (0 if count else 1)
 
 
 def main(argv=None):
@@ -158,6 +192,11 @@ def main(argv=None):
     parser.add_argument("--sample", type=int, help="play K scenarios of each family")
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 2)
     parser.add_argument("--keep", help="keep the records in this folder")
+    parser.add_argument(
+        "--fallbacks",
+        action="store_true",
+        help="list each family's decisions that host.resync took from the markers' document",
+    )
     args = parser.parse_args(argv)
     head = subprocess.run(
         ["git", "-C", args.v6, "rev-parse", "HEAD"], capture_output=True, text=True
@@ -194,7 +233,7 @@ def main(argv=None):
             pairs = list(zip(outputs["v6"], outputs["tree"], strict=True))
             count, *found = compare(family, pairs)
             total += count
-            problems += report(family, count, *found)
+            problems += report(family, count, *found, fallbacks=args.fallbacks)
             if not args.keep:
                 for path in outputs["v6"] + outputs["tree"]:
                     path.unlink()

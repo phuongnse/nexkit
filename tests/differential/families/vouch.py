@@ -10,7 +10,7 @@ Where no automatic fix round is left, NexKit 6 started a counted round past
 
 import itertools
 
-from common import after, quiet
+from common import after, quiet, seed
 
 from nexkit.state import PLAN_MARKER, empty_state, render_run, render_state
 from tests.support import FakeGitHub, make_config
@@ -78,6 +78,7 @@ def build(sc):
 def run(sc):
     gh = build(sc)
     cfg = make_config(autopilot={"enabled": True}, fix={"max_auto_rounds": MOST}, notify=["olivia"])
+    seed(gh, cfg)
     res = {}
     with quiet():
         after(gh, cfg, res)

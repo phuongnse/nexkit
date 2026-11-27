@@ -9,7 +9,7 @@ import json
 from datetime import UTC, datetime
 from unittest import mock
 
-from common import HEAD, TOK, WAIT, WORKFLOW, Artifacts, after, attempt, quiet, snapshot
+from common import HEAD, TOK, WAIT, WORKFLOW, Artifacts, after, attempt, quiet, seed, snapshot
 
 from nexkit import autopilot, progress
 from nexkit import report as report_module
@@ -95,6 +95,7 @@ def run(sc):
                 "waiting_since": autopilot.iso(datetime.now(UTC)),
             }
             gh.comment(6, render_run(row))
+            seed(gh, cfg)
         else:
             kind = sc["path"].split("_")[1]
             auto = sc["path"].endswith("auto")
@@ -120,6 +121,8 @@ def run(sc):
                 d["autopilot"] = "true"
             pub = {"published": True, "pr": 6, "head": HEAD}
             needs = {"publish": {"outputs": {"result": json.dumps(pub)}}}
+
+            seed(gh, cfg)
 
             def first_round():
                 progress.start(gh, d)

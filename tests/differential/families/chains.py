@@ -16,7 +16,7 @@ import random
 import sys
 from unittest import mock
 
-from common import TOK, WORKFLOW, Artifacts, attempt, quiet, snapshot
+from common import TOK, WORKFLOW, Artifacts, attempt, quiet, seed, snapshot
 
 from nexkit import autopilot, maintain, progress  # noqa: F401
 from nexkit import report as report_mod
@@ -307,6 +307,7 @@ def run(sc):
     gh.comment(6, render_state(state))
     person = {**empty_state(7), "person": True, "feedback": state.get("feedback")}
     gh.comment(7, render_state(person))
+    seed(gh, cfg)
     res = {"steps": []}
     for i, rd in enumerate(sc["rounds"]):
         pr = 7 if rd["kind"] == "person_pr" else 6

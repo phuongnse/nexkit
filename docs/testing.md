@@ -76,10 +76,16 @@ Until NexKit 7.0 ships, changes move NexKit 6's decisions into the engine one by
 - Adds invariants of its rules to `tests/walk.py` and mutants of its rules to `tests/mutants.py`.
   These two checks need no NexKit 6 and stay after 7.0, so a change to an engine rule adds to
   them after 7.0 as before it. A mutant of a rule that only the differential check sees goes to
-  `tests/differential/mutants.py` instead. With a checkout of 8bf5190 for the first command:
+  `tests/differential/mutants.py` instead. Each scenario stores its items' imports as the state
+  comment before its first event, which the check does not compare with NexKit 6, and
+  `--fallbacks` lists the decisions of `host.resync` that still come from the markers'
+  document (the [README](../tests/differential/README.md) says how). With a checkout of
+  8bf5190 for the first command:
 
   ```sh
   python3 tests/differential/harness.py --v6 PATH       # every scenario; --sample K for fewer
+  python3 tests/differential/harness.py --v6 PATH --fallbacks   # and each decision that still
+                                                        # decides from NexKit 6's markers
   python3 tests/walk.py                                 # 2,000 walks of the engine
   python3 tests/mutants.py                              # each broken rule is seen
   python3 tests/differential/mutants.py --v6 PATH       # each host rule is seen

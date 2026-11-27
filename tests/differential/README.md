@@ -15,6 +15,7 @@ Standard library only.
 git worktree add --detach ../nexkit-v6 8bf5190
 python3 tests/differential/harness.py --v6 ../nexkit-v6               # every scenario
 python3 tests/differential/harness.py --v6 ../nexkit-v6 --sample 400  # what CI plays
+python3 tests/differential/harness.py --v6 ../nexkit-v6 --fallbacks   # and the decisions that fall back
 ```
 
 `harness.py` plays every family of `families/` on NexKit 6, which must be a checkout of
@@ -26,6 +27,24 @@ dispatches with their inputs, merges, issues, pull requests, labels), the previe
 other difference grouped by where it differs, with an example, and exits 1 when there is one.
 `--family` plays only some families, `--sample K` the same K scenarios of each every time, and
 `--keep DIR` keeps the records.
+
+Before its first event, each scenario stores the import of every open item on the tree as the App's
+state comment at revision 1 (`common.seed`), as a run in the item's group does
+(`host.store_import`): the open issues, and the open pull requests that are not a
+`nexkit/issue-<n>` branch of the repository. On NexKit 6 nothing is stored, but the same comment ids
+are used up, so that every later comment has the same id on both trees. The state comment is not
+compared, since NexKit 6 never posts it. The harness records each write of it apart, and counts a
+problem when an item's revision moves backward within a scenario. The line of each family says how
+many of its scenarios stored an item (`seeded k of n`).
+
+`--fallbacks` lists under each family the decisions that `host.resync` took from the document that
+NexKit 6's markers give, instead of from the stored state, counted by the host function that
+asked and by why: `no state` (nothing is stored, or the decision has no configuration), `differs`
+(the stored state says something else) or `seen` (the stored state holds the event already). It
+prints `resync fell back: none` for a family with no such decision. `check.sh` passes it, so
+CI's log shows the list. A change that moves a function to the stored state shows that the
+function no longer appears there. The hook that counts them is `host.on_fallback`, which only a test
+or `play.py` sets.
 
 `play.py ROOT FAMILY OUT --only I` plays one scenario on one tree, to look at it.
 
@@ -98,9 +117,11 @@ plan, after a writer's vouch, after a blocked or stopped round, at a usage limit
 error, at a resume, for a lost command, an implement round that finds no change, a fix round
 whose change is on the base branch, the end of a part in its parent's state and about a pull
 request's rounds, which store their answer in the item's state comment but decide from the
-markers' document wherever it differs from the stored one. The families never store a state
-comment, so they cannot reach a stored count above NexKit 6's, which only the scenario and the
-tests of `tests/test_host.py` do. A rule that only
-matters across calls, such as
-keeping `rounds.automatic` after a round's checks or review judged it, shows to the walker but
-not on GitHub, so only the walker can see it broken.
+markers' document wherever it differs from the stored one. Every family stores the import of its
+items before its first event, so those decisions meet a stored state, and `--fallbacks` lists
+where they still decide from the markers' document. The stored count of conflict rounds can then
+be above the one that NexKit 6's markers give, which `known.py` lists for the `chains` family until
+the floor that takes the higher count is gone.
+
+A rule that only matters across calls, such as keeping `rounds.automatic` after a round's checks
+or review judged it, shows to the walker but not on GitHub, so only the walker can see it broken.

@@ -11,7 +11,7 @@ import itertools
 import json
 from unittest import mock
 
-from common import HEAD, TOK, WORKFLOW, Artifacts, after, attempt, quiet, snapshot
+from common import HEAD, TOK, WORKFLOW, Artifacts, after, attempt, quiet, seed, snapshot
 
 from nexkit import maintain, progress
 from nexkit.github import GitHubError
@@ -117,11 +117,12 @@ def run_report(sc, gh, cfg, res):
         progress.start(gh, d)
         return report(gh, d, cfg, needs, art.path, workflow_ref=WORKFLOW, default_branch="main")
 
+    seed(gh, cfg)
     res["report"] = attempt(stopped)
     art.close()
 
 
-def run_superseded(sc, gh, res):
+def run_superseded(sc, gh, cfg, res):
     checked = "d" * 40
     gh.pulls[6]["head"]["sha"] = checked
     first = {"round": 1, "trigger": "implement", "status": "success", "outcome": "auto_fix"}
@@ -154,6 +155,7 @@ def run_superseded(sc, gh, res):
             raise GitHubError(422, "Update refused")
 
         gh.update_branch = fail
+    seed(gh, cfg)
     res["lines0"] = attempt(
         maintain.resolve_conflicts, gh, "main", "nexkit.yml", "main", sc["max_rounds"], delay=0
     )
@@ -169,7 +171,7 @@ def run(sc):
         if sc["part"] == "report":
             run_report(sc, gh, cfg, res)
         else:
-            run_superseded(sc, gh, res)
+            run_superseded(sc, gh, cfg, res)
         res["after"] = snapshot(gh)
         after(gh, cfg, res)
     return res

@@ -8,7 +8,7 @@ sweep and GitHub after it, and `nexkit status`."""
 import random
 from unittest import mock
 
-from common import HEAD, WAIT, attempt, quiet, snapshot, sweep
+from common import HEAD, WAIT, attempt, quiet, seed, snapshot, sweep
 
 from nexkit import autopilot
 from nexkit.state import PLAN_MARKER, render_run
@@ -94,6 +94,7 @@ def run(sc):
         },
         notify=["olivia"],
     )
+    seed(gh, cfg)
     res = {}
     over = mock.patch.object(autopilot, "ci_wait_over", lambda gh_, wait: None)
 

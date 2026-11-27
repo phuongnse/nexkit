@@ -12,7 +12,18 @@ import itertools
 import json
 from unittest import mock
 
-from common import HEAD, TOK, WORKFLOW, Artifacts, attempt, planned_issue, quiet, snapshot, sweep
+from common import (
+    HEAD,
+    TOK,
+    WORKFLOW,
+    Artifacts,
+    attempt,
+    planned_issue,
+    quiet,
+    seed,
+    snapshot,
+    sweep,
+)
 
 from nexkit import autopilot, maintain, progress
 from nexkit import report as report_module
@@ -153,6 +164,8 @@ def run(sc):
             pub = {"published": True, "pr": 6, "head": HEAD}
             needs = {"publish": {"outputs": {"result": json.dumps(pub)}}}
 
+            seed(gh, cfg)
+
             def first_round():
                 progress.start(gh, d)
                 return report(
@@ -179,11 +192,13 @@ def run(sc):
             # The base branch moved since the round published its head.
             gh.branches["main"] = BASE
             if sc["path"] == "push":
+                seed(gh, cfg)
                 decision = {"action": "maintain", "task": "conflicts", "base": "main"}
                 res["push"] = attempt(
                     maintain_run, gh, decision, cfg, workflow="nexkit.yml", ref="main"
                 )
             elif sc["path"] == "schedule":
+                seed(gh, cfg)
                 decision = {"action": "maintain", "task": "schedule"}
                 res["schedule"] = attempt(
                     maintain_run, gh, decision, cfg, workflow="nexkit.yml", ref="main"
@@ -193,6 +208,7 @@ def run(sc):
                 gh.add_pull(7, 4, head_sha=OTHER, branch="nexkit/issue-4")
                 gh.comment(7, render_run({"round": 1, "trigger": "implement", "status": "running"}))
                 target = {"pr": 7, "head": OTHER, "issue": 4, "base": "main"}
+                seed(gh, cfg)
                 res["merge"] = attempt(merge_pull, gh, cfg, target, {}, "", WORKFLOW, "main")
         res["gh"] = snapshot(gh)
         _, steps = autopilot.preview(gh, cfg)

@@ -11,7 +11,18 @@ import itertools
 import json
 from unittest import mock
 
-from common import HEAD, TOK, WORKFLOW, Artifacts, attempt, planned_issue, quiet, snapshot, sweep
+from common import (
+    HEAD,
+    TOK,
+    WORKFLOW,
+    Artifacts,
+    attempt,
+    planned_issue,
+    quiet,
+    seed,
+    snapshot,
+    sweep,
+)
 
 from nexkit import autopilot, progress
 from nexkit import report as report_module
@@ -59,6 +70,8 @@ def run(sc):
         conflicts={"auto_resolve": refusal != "head_unreadable"},
         notify=["olivia"],
     )
+    # Before the patches that make GitHub fail: the import is of the work as it stood.
+    seed(gh, cfg)
     res = {}
     art = Artifacts()
     with contextlib.ExitStack() as stack:

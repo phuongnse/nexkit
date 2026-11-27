@@ -59,6 +59,15 @@ ASKED = {
     "closes": 3,
 }
 
+
+def seed(gh, cfg, number, now=None):
+    """Store the first state of item `number` as `nexkit route` does before the item's first
+    event (`host.store_import`), so that a decision starts from the stored state, and give
+    what `item_state.read` then finds: (comment, state) at revision 1."""
+    assert host.store_import(gh, cfg, number, now=now), f"#{number} already has its state"
+    return item_state.read(gh, number)
+
+
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -713,7 +722,7 @@ class DecideTest(HostCase):
         self.cfg = pilot(answer="recommended")
         self.issue(5)
         self.plan(5, {"questions": [ASKED]})
-        self.assertTrue(host.store_import(self.gh, self.cfg, 5))
+        seed(self.gh, self.cfg, 5)
 
     def read(self, number=5):
         return item_state.read(self.gh, number)
@@ -756,6 +765,16 @@ class DecideTest(HostCase):
         # The plan's result is the answer of the plan run that the outbox holds.
         self.assertEqual(event["kind"], "actionFinished")
         self.assertEqual(event["action"], first_state.RUN_ID)
+
+    def test_a_seeded_import_is_at_revision_1_and_after_plan_moves_it_to_2(self):
+        # The state comment that setUp seeded goes, and `seed` stores the import again.
+        self.gh.issue_comments[5] = [
+            c for c in self.gh.comments(5) if item_state.PREFIX not in c["body"]
+        ]
+        self.assertEqual(self.read()[1], None)
+        self.assertEqual(seed(self.gh, self.cfg, 5)[1]["revision"], 1)
+        self.assertEqual(self.after_plan(write=True)["state"], "start")
+        self.assertEqual(self.read()[1]["revision"], 2)
 
     def test_plan_carried_on_stores_the_engine_s_answer_at_the_next_revision(self):
         seen, spy = self.spied()
@@ -955,6 +974,84 @@ class DecideTest(HostCase):
         self.assertEqual((base["revision"], base["recentEvents"]), (4, ["comment-9"]))
         state["recentEvents"] = ["resume-5", "held-5", "comment-9"]
         self.assertEqual(host.resync(state, built, events)["recentEvents"], ["comment-9"])
+
+
+class FallbackTest(HostCase):
+    """`host.on_fallback` hears each decision that `resync` took from the markers' document, once,
+    with the function that asked, and nothing else changes in what the decision gives."""
+
+    def setUp(self):
+        super().setUp()
+        self.cfg = pilot(answer="recommended")
+        self.issue(5)
+        self.plan(5, {"questions": [ASKED]})
+        self.state = seed(self.gh, self.cfg, 5)[1]
+        self.heard = []
+
+    def event(self, name):
+        return host._event(
+            "commented",
+            5,
+            None,
+            name,
+            by=host._person("bob", "reader"),
+            text={"name": "comment", "ref": name},
+        )
+
+    def decide(self, name, built, **options):
+        with mock.patch.object(host, "on_fallback", lambda *heard: self.heard.append(heard)):
+            return host.decide(self.gh, self.cfg, 5, self.event(name), built, write=True, **options)
+
+    def test_a_built_document_that_agrees_with_the_stored_state_is_not_heard(self):
+        self.decide("c-1", copy.deepcopy(self.state))
+        self.assertEqual(self.heard, [])
+
+    def test_a_stored_state_that_differs_from_the_built_document_is_heard_once(self):
+        built = copy.deepcopy(self.state)
+        built["title"] = "Another title"
+        with mock.patch.object(host, "on_fallback", lambda *heard: self.heard.append(heard)):
+            host.decide(self.gh, self.cfg, 5, self.event("c-1"), built, write=True)
+        # The function that called `decide` is the one a later part converts.
+        [(origin, why)] = self.heard
+        self.assertEqual(why, "differs")
+        self.assertEqual(origin, f"{__name__}.{type(self).__name__}.{self._testMethodName}")
+
+    def test_an_event_that_the_stored_state_holds_already_is_heard_as_seen(self):
+        self.decide("c-1", copy.deepcopy(self.state))
+        self.decide("c-1", copy.deepcopy(self.state))
+        self.assertEqual([why for _, why in self.heard], ["seen"])
+
+    def test_a_decision_with_no_configuration_is_heard_as_no_state(self):
+        with mock.patch.object(host, "on_fallback", lambda *heard: self.heard.append(heard)):
+            host.decide(self.gh, None, 5, self.event("c-1"), copy.deepcopy(self.state))
+        self.assertEqual([why for _, why in self.heard], ["no state"])
+
+    def test_no_hook_changes_nothing_in_the_answer(self):
+        built = copy.deepcopy(self.state)
+        built["title"] = "Another title"
+        with mock.patch.object(host, "on_fallback", None):
+            quiet = host.decide(self.gh, self.cfg, 5, self.event("c-1"), built, write=True)
+        self.assertEqual(self.heard, [])
+        self.assertEqual(quiet[0]["revision"], self.state["revision"] + 1)
+
+    def test_a_write_that_lost_and_is_decided_again_is_heard_once(self):
+        real, seen = host.step, []
+
+        def racing(state, event, found_policies):
+            found = real(state, event, found_policies)
+            seen.append(state["revision"])
+            if len(seen) == 1:
+                comment, doc = item_state.read(self.gh, 5)
+                other = {**doc, "revision": doc["revision"] + 1}
+                self.assertTrue(item_state.write(self.gh, 5, other, (comment, doc)))
+            return found
+
+        built = copy.deepcopy(self.state)
+        built["title"] = "Another title"
+        with mock.patch.object(host, "step", racing), mock.patch.object(host.time, "sleep"):
+            self.decide("c-1", built)
+        self.assertEqual(seen, [1, 2])
+        self.assertEqual(len(self.heard), 1)
 
 
 class SweepTest(HostCase):
@@ -2143,7 +2240,7 @@ class MergeDecideTest(ReportCase):
 
     def setUp(self):
         super().setUp()
-        self.assertTrue(host.store_import(self.gh, self.CFG, 5))
+        seed(self.gh, self.CFG, 5)
 
     def read(self):
         return item_state.read(self.gh, 5)[1]
@@ -2293,7 +2390,7 @@ class MergeDecideTest(ReportCase):
                 self.gh.issue_comments[5] = [
                     c for c in self.gh.comments(5) if not c["body"].startswith("### NexKit state")
                 ]
-                self.assertTrue(host.store_import(self.gh, cfg, 5))
+                seed(self.gh, cfg, 5)
                 answer()
                 self.assertEqual(self.read()["revision"], 2)
 
@@ -2705,7 +2802,7 @@ class RoundDecideTest(ReportCase):
             conflicts={"auto_resolve": True, "max_rounds": 2},
             autopilot={"enabled": True, "labels": {"on-hold": {"hold": True}}},
         )
-        self.assertTrue(host.store_import(self.gh, self.cfg, 5))
+        seed(self.gh, self.cfg, 5)
 
     def read(self):
         return item_state.read(self.gh, 5)
@@ -3213,8 +3310,7 @@ class NoChangeFoundTest(ReportCase):
         )
 
     def stored(self):
-        self.assertTrue(host.store_import(self.gh, make_config(), 5))
-        self.assertEqual(item_state.read(self.gh, 5)[1]["revision"], 1)
+        self.assertEqual(seed(self.gh, make_config(), 5)[1]["revision"], 1)
         return copy.deepcopy(self.gh.comments(5))
 
     def test_the_implement_round_stores_the_engine_s_answer_only_with_write(self):
@@ -3653,7 +3749,7 @@ class StoredStopsTest(HostCase):
 
     def stored(self):
         """The item has the state comment that `nexkit route` stores before its first event."""
-        self.assertTrue(host.store_import(self.gh, self.cfg, 5))
+        seed(self.gh, self.cfg, 5)
 
     def read(self):
         return item_state.read(self.gh, 5)

@@ -1875,6 +1875,10 @@ AUTOPILOT_STATES = re.compile(r"- `autopilot`(?:(?!- `).)*?a `state` \(([^)]*)\)
 # group keeps the word `as` before the first outcome, which the outcomes are found after.
 APPROVAL_PAGE = DOCS / "work-without-a-command.md"
 APPROVAL_OUTCOMES = re.compile(r"latest round ended (as .+?), merges it on the head")
+# The states in which GitHub reports a pull request as mergeable, in the brackets of the sentence
+# of Automatic merge. The text is searched with its whitespace collapsed, since the sentence wraps.
+MERGE_PAGE = DOCS / "merges-and-waits.md"
+MERGEABLE_LIST = re.compile(r"reports the pull request as mergeable \(([^)]*)\)")
 # The row of failure handling that gives the retry delays of `publish` and of every other GitHub API
 # call. Its first cell starts with PUBLISH_ROW; its second cell is the one the regexes read.
 FAILURE_PAGE = DOCS / "failure-handling.md"
@@ -2336,6 +2340,32 @@ class ApprovableTests(unittest.TestCase):
                 self.fail(
                     f"docs/work-without-a-command.md lists {outcome!r}, which "
                     "maintain.APPROVABLE does not hold"
+                )
+
+
+class MergeableStatesTests(unittest.TestCase):
+    def test_the_page_lists_each_mergeable_state_the_code_accepts_and_no_other(self):
+        # Lines are wrapped, so the page is searched with its spaces made one each.
+        text = " ".join(MERGE_PAGE.read_text().split())
+        match = MERGEABLE_LIST.search(text)
+        if match is None:
+            self.fail(
+                "docs/merges-and-waits.md has no list of the states in which GitHub reports "
+                "a pull request as mergeable"
+            )
+        listed = set(re.findall(r"`([^`]+)`", match.group(1)))
+        code = set(autopilot.MERGEABLE_STATES)
+        for mergeable in sorted(code - listed):
+            with self.subTest(mergeable=mergeable):
+                self.fail(
+                    f"docs/merges-and-waits.md does not list {mergeable!r}, which "
+                    "autopilot.MERGEABLE_STATES has"
+                )
+        for mergeable in sorted(listed - code):
+            with self.subTest(mergeable=mergeable):
+                self.fail(
+                    f"docs/merges-and-waits.md lists {mergeable!r}, which "
+                    "autopilot.MERGEABLE_STATES lacks"
                 )
 
 

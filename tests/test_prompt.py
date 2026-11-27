@@ -7,8 +7,8 @@ its prompt twice: as the GitHub host does in a round (`context.gather`, then
 inputs the GitHub host fetches. Both must equal the prompt NexKit 6 wrote for the case,
 kept in `tests/prompts/`. Those files are NexKit 6's record, written by its code at f9b83c7
 before the prompts moved: never write them again with NEXKIT_WRITE_PROMPTS from this code. Set
-it only to add a case's file, from NexKit 6's code, or for a change that means to change a
-prompt, which then says so.
+it only to add a case's file, from NexKit 6's code. A change to a prompt edits its file by hand
+and says why.
 """
 
 import contextlib

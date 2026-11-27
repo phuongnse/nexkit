@@ -526,11 +526,12 @@ adapter's tests and the answers as what its adapter carries out.
    again. The host sends the event that GitHub shows, and carries out the answer in NexKit 6's words,
    comments and statuses. A start, a merge, a branch update, a close,
    a cancel or a rerun follows an answer of the engine. `tests/test_answers.py` keeps it so: it
-   reads every module outside `nexkit/engine/` and fails on a write that no call of the engine
-   comes before. The writes that serve no item are named in it with their reasons: the sweep's own
-   dispatch, the workflows on the base branch after a merge, the default branch's CI reruns and
-   the wait dispatch. So are the writes that carry out an answer that an earlier job took from the
-   engine. The detail of each move is in the docstring of `nexkit/host.py`.
+   reads every module outside `nexkit/engine/` except `nexkit/github.py`, which defines the writes,
+   and fails on a write that no call of the engine comes before. The writes that serve no item are
+   named in it with their reasons: the sweep's own dispatch, the workflows on the base branch after
+   a merge, the default branch's CI reruns and the wait dispatch. So are the writes that carry out
+   an answer that an earlier job took from the engine. The detail of each move is in the docstring
+   of `nexkit/host.py`.
 
    What the host observes stays with it, since only GitHub shows it. The engine decides from
    these facts, and the host gives them as they are:

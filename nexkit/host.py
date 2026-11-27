@@ -137,7 +137,9 @@ Every round's checks and review reach it (`round_ended`): a review that paused a
 limit, a review that stopped on a transient error, a review that failed, and a person's own pull
 request, which is only reviewed. It finds the checks
 that failed the same way before and after a fix round, which the state comment keeps, and
-names those that the fix round `route` starts diagnoses (`diagnosis`). A round whose commit
+names those that the fix round `route` starts diagnoses (`diagnosis`): an automatic round that
+NexKit dispatches takes them from the `diagnose` list of its pending `runAgent` fix, which the
+stored state holds and the dispatch carries out, with no event and no read. A round whose commit
 conflicts with its base branch starts the round that resolves it, within
 `conflicts.max_rounds`, unless a label holds the issue, which keeps it back until the sweep
 finds the label gone (`conflicting`, `conflicts_released`).
@@ -179,10 +181,16 @@ It decides whether a person's command starts its stage, too (`command`, called b
 command that NexKit sends. It carries out the answer that `take` stored for the run's own
 command and does not send it to the engine again, which would take it for a duplicate, so each
 command is stored as one revision. A command that an earlier run took (its event is in the
-state's events seen) starts nothing and gets no reply, and one that no run took is decided on
-the stored state, which a run of the item's group stores (`decide`, `resync`); another command
-taken in this run that already started a stage refuses it. A command whose own run a newer run
-replaced starts in the run that ran, when that run's own event starts nothing
+state's events seen) starts nothing and gets no reply; another command taken in this run that
+already started a stage refuses it. A dispatch that NexKit sends (its `auto` input names a
+kind) carries out the action that the stored state has pending for it (`_carried`: a `plan` or
+`implement` or `fix` `runAgent`, or the `runChecks` of a review), which the engine already
+decided and stored, and asks the engine nothing and stores nothing, so the same round dispatched
+again is never taken for a duplicate. The action that the import gave to a NexKit 6 run on its
+way (`first_state.RUN_ID`) is never carried out so. Any other command, a person's own dispatch and
+a dispatch with nothing pending too, is a new request, named `dispatch-<run id>`, decided on the
+stored state, which a run of the item's group stores (`decide`, `resync`). A command whose own
+run a newer run replaced starts in the run that ran, when that run's own event starts nothing
 (`route._taken_start`). The host builds the small document that NexKit 6's `route` read the
 facts of, whether the issue or pull request is open, the latest plan, an open pull request for
 `/nexkit go` and a base branch that already holds the change, where `take` sent nothing or the
@@ -249,7 +257,8 @@ every try lost, the run warns and carries out the answer anyway, which the next 
 again. A run outside that group only previews: the sweep, `nexkit status`, the push run, the
 hourly schedule and another item's merge, which decide `base_moved` and `stopped_counts` in groups
 of their own, `plan_waits_for`, which asks what a plan waits for under no automatic approval, and
-`diagnosis`, which sends a tick that is no event of the item's own, and the `resume` run, which
+`diagnosis` of a round whose action is not stored yet, which sends a tick that is no event of the
+item's own, and the `resume` run, which
 only sends the `step`. None of them is an answer of the item. With no configuration, `resumes` and
 `lost_again` decide on the markers' document and read and store nothing. An item with no state
 comment stores nothing here, since only `store_import` posts the first one, and one whose state
@@ -2010,6 +2019,31 @@ def starts(actions):
     return None
 
 
+# The stage of the pending action that NexKit's own dispatch of a command carries out.
+DISPATCHED = {"plan": "plan", "go": "implement", "fix": "fix", "review": "review"}
+
+
+def _carried(doc, what):
+    """The first action of `doc`'s outbox that NexKit's own dispatch of the command `what`
+    carries out, or None: one that `starts` as the stage the command runs. Never the action
+    that the import gave to a NexKit 6 run already on its way (`first_state.RUN_ID`), which a
+    dispatch decides as a new request, as NexKit 6 did."""
+    for action in (doc or {}).get("pending") or []:
+        if action["id"] != first_state.RUN_ID and starts([action]) == DISPATCHED[what]:
+            return action
+    return None
+
+
+def _dispatch_id(doc):
+    """The id of a dispatch that no comment or review gave: `dispatch-<run id>`, so that two
+    runs never send the same request. Outside GitHub Actions there is no run id, and the id
+    is `dispatch-local-<revision + 1>` of the stored `doc`."""
+    run = os.environ.get("GITHUB_RUN_ID", "")
+    if run.isdigit() and int(run) > 0:
+        return event_id("dispatch", int(run))
+    return f"dispatch-local-{int((doc or {}).get('revision', 0)) + 1}"
+
+
 def command(
     cfg,
     item,
@@ -2025,6 +2059,8 @@ def command(
     empty=False,
     review_id=None,
     source_id=None,
+    dispatched=False,
+    carried=None,
 ):
     """What the engine answers to a person's command `what` (`plan`, `go`, `fix` or `review`)
     on work item `item` (`route._decide`): `plan`, `implement`, `fix` or `review` for the stage
@@ -2037,12 +2073,18 @@ def command(
     `take` answered it in this run (`taken`, [(event, actions)] as `take` gives them), the
     actions it stored are carried out and the engine is not asked again, which it would take for a
     duplicate. Otherwise the stored state says whether an earlier run took it (`answered`), and
-    another command taken in this run that already started a stage refuses it. In any other case it
-    is decided on the stored state (`decide`, which stores the answer in the item's group,
-    `resync`). With no `gh` or no `cfg` it is answered on the small document that NexKit 6's
-    `route` read the facts of, which writes nothing. No closed issue or pull request reaches it:
-    `route._decide` refuses a command on one before, in NexKit 6's words, so that no command
-    changes the stored state of a closed item.
+    another command taken in this run that already started a stage refuses it.
+
+    After those, NexKit's own `dispatched` command (its `auto` input names a kind) carries out
+    the action that the stored state already has pending for it (`_carried`): the engine is not
+    asked again and nothing is stored. The action is added to `carried`, a list the caller
+    passes, so that `diagnosis` reads its checks. With nothing pending, and for a person's own
+    dispatch, the command is a new request, named `dispatch-<run id>` (`_dispatch_id`), decided
+    on the stored state (`decide`, which stores the answer in the item's group, `resync`). With
+    no `gh` or no `cfg` it is answered on the small document that NexKit 6's `route` read the
+    facts of, which writes nothing. No closed issue or pull request reaches it: `route._decide`
+    refuses a command on one before, in NexKit 6's words, so that no command changes the stored
+    state of a closed item.
 
     That document holds only the facts that NexKit 6's `route` reads, as `closing_command` and
     `_pull_doc` build theirs: `change`, `{"id", "version"}` of the open pull request, makes the
@@ -2078,8 +2120,9 @@ def command(
     try:
         name = event_id(kind, review_id if review_id is not None else source_id)
     except ValueError:
-        # NexKit's own dispatch has no source, and sends the same command again and again.
-        name, sourced = f"command-{item}-{what}", False
+        # NexKit's own dispatch, or a person's from the Actions tab, has no source: each run
+        # is a request of its own, named by the run.
+        name, sourced = _dispatch_id(None), False
     person = _person(by, "writer")
     if review_id is not None:
         found = {"by": person, "note": {"name": "review", "ref": str(review_id)}}
@@ -2114,6 +2157,14 @@ def command(
         return "refused"
     if observed and _on_base(gh, cfg, item, observed, doc, pull):
         return "noChange"
+    if not sourced:
+        _, found = stored(gh, cfg, item, pull)
+        action = _carried(found, what) if dispatched else None
+        if action:
+            if carried is not None:
+                carried.append(action)
+            return starts([action])
+        request = {**request, "id": _dispatch_id(found)}
     _, actions = decide(gh, cfg, item, request, doc, pull=pull, write=True)
     return starts(actions) or "refused"
 
@@ -2573,21 +2624,36 @@ def base_moved(gh, cfg, issue, pr, head, conflicts, behind, checking, used, upda
 # -- the checks a fix round diagnoses ------------------------------------------------------
 
 
-def diagnosis(gh, cfg, issue, pr, head, automatic, repeated):
+def diagnosis(gh, cfg, issue, pr, head, automatic, repeated, pending=None):
     """The checks that the fix round `route` starts on the pull request `pr` looks into first,
-    as the engine runs that round: the `repeated` ones that failed the same way before and
-    after the fix round before it, which the state comment keeps, for an `automatic` round;
-    none for a person's round or a conflict round, which NexKit 6's markers say it is. With
-    `gh` and `cfg` it is decided on the item's stored document (`decide`), and it never
-    stores: it sends a tick that is no event of the item's own, only to learn what the engine
-    would diagnose. Without a configuration it is decided on the markers' document alone.
-    Raises `Refused`."""
+    as the engine runs that round: for an `automatic` round, the `diagnose` list of its
+    `pending` action, the `runAgent` fix that the stored state holds and that the dispatch
+    carries out (`command`), with no read and no event. A person's round and a conflict round
+    diagnose nothing, as NexKit 6's markers say they are.
+
+    Without a `pending` action, which only a round that does not store its action yet has (the
+    sweep's, a vouch's and the merge's required checks'), or with one that a person's command
+    stored (`by`) and that no round ran, such as a conflict round that `route` refused, the
+    `repeated` checks that failed the same way before and after the fix round before it, which
+    the state comment keeps, are the ones to diagnose. With `gh` and `cfg` the engine's answer to
+    a tick on a built document is decided on the item's stored document (`decide`), and it never
+    stores: the tick is no event of the item's own, only a way to learn what the engine would
+    diagnose. Without a configuration it is decided on the markers' document alone. This path
+    is transitional: it goes when those rounds store their action. Raises `Refused`."""
+    if not automatic:
+        return []
+    if (
+        pending is not None
+        and pending["kind"] == "runAgent"
+        and pending.get("stage") == "fix"
+        and pending.get("by") != "person"
+    ):
+        return list(pending.get("diagnose") or [])
     if not repeated:
         return []
     doc = _pull_doc(None, issue, pr, head, "fixing", 1)
     doc["rounds"]["repeated"] = list(repeated)[: MOST["repeated"]]
-    if automatic:
-        doc["rounds"]["automatic"] = True
+    doc["rounds"]["automatic"] = True
     # The round runs as the engine starts a round it issued again, as after a wait.
     doc["waits"] = [{"id": "w1.1", "for": "time", "until": NO_TIME, "on": None}]
     event = _event("tick", issue, None, f"route-{pr}-{head}", wait="w1.1")

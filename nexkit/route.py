@@ -494,6 +494,7 @@ def _route(gh, event_name, event, inputs, cfg, taken):
             cfg=cfg,
             by=sender,
             taken=taken,
+            dispatched=bool(kinds - {"false"}),
         )
         decision["actor"] = sender
         if decision["action"] not in ("none", "maintain"):
@@ -707,6 +708,7 @@ def _decide(
     source_id=None,
     review_id=None,
     taken=None,
+    dispatched=False,
 ):
     """The decision for a person's command, or NexKit's own dispatch of one. A command starts
     its stage only as the engine answers it (`host.command`); what stays here are the facts
@@ -716,10 +718,21 @@ def _decide(
     `cfg` is the configuration, or None when it did not load, and then the answer is on
     NexKit 6's document. `taken` is what `host.take` stored in this run: the answer to the
     run's own command is carried out from it, and a command that an earlier run took starts
-    nothing and gets no reply."""
+    nothing and gets no reply. `dispatched` says that NexKit's own run sent the command (its
+    `auto` input names a kind), which carries out the action the stored state has pending."""
     from . import host
 
-    given = {"cfg": cfg, "by": by, "note": note, "source_id": source_id, "gh": gh, "taken": taken}
+    carried = []
+    given = {
+        "cfg": cfg,
+        "by": by,
+        "note": note,
+        "source_id": source_id,
+        "gh": gh,
+        "taken": taken,
+        "dispatched": dispatched,
+        "carried": carried,
+    }
     if on_pull:
         if command not in PR_COMMANDS:
             return _none(f"`/nexkit {command}` is not a pull request command. {USAGE}", number)
@@ -819,6 +832,7 @@ def _decide(
                     pull["head"]["sha"],
                     auto and not conflicts,
                     repeated,
+                    pending=carried[0] if carried else None,
                 )
             except host.Refused:
                 found = []

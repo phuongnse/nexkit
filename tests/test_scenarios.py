@@ -4231,5 +4231,78 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(gh.comments(7), [])
 
 
+class DispatchedFixRoundsTest(unittest.TestCase):
+    """NexKit's own dispatch of the automatic fix round carries out the stored pending action
+    in each round, and is never sent to the engine again as a request."""
+
+    HEAD = "c" * 40
+    RED = [{"name": "test", "passed": False, "output": "AssertionError"}]
+    REVIEW = ("done", {"verdict": "approve", "criteria": [], "findings": []})
+
+    def read(self):
+        return item_state.read(self.gh, 5)
+
+    def fail_the_checks(self):
+        """The round's checks fail, which stores an automatic fix round, as `report` does."""
+        found = {"action": "fix", "issue": 5, "pr": 6, "target": 6, "head": self.HEAD}
+        args = (self.gh, self.cfg, found, 6, self.HEAD, 0, self.RED, None, self.REVIEW)
+        end, _ = host.round_ended(*args, write=True)
+        self.assertEqual(end, "auto_fix")
+        return host.pending_id(self.read()[1], "runAgent", "fix")
+
+    def publish_the_fix(self):
+        """The fix round ends: the engine takes its result, and the next checks follow."""
+        comment, doc = self.read()
+        result = {**host.AGENT, "changeVersion": self.HEAD}
+        result["output"] = {"status": "done", "summary": "Fixed.", "checks_run": []}
+        event = host._event(
+            "actionFinished",
+            5,
+            None,
+            f"run-{doc['revision']}",
+            action=host.pending_id(doc, "runAgent", "fix"),
+            changeVersion=self.HEAD,
+            result=result,
+        )
+        found = host.step(doc, event, host.policies(self.cfg))
+        stored = {**found["state"], "revision": doc["revision"] + 1}
+        self.assertTrue(item_state.write(self.gh, 5, stored, (comment, doc)))
+
+    def dispatch(self, run):
+        inputs = {"command": "fix", "number": "6", "note": "", "auto": "true"}
+        event = {"inputs": inputs, "sender": {"login": BOT_LOGIN}}
+        with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": str(run)}):
+            return route(self.gh, "workflow_dispatch", event, inputs, cfg=self.cfg)
+
+    def test_the_same_automatic_fix_round_starts_in_two_rounds_from_the_stored_state(self):
+        self.gh = FakeGitHub()
+        self.gh.add_issue(5)
+        self.gh.add_pull(6, 5, head_sha=self.HEAD)
+        self.cfg = make_config(fix={"max_auto_rounds": 3})
+        self.assertTrue(host.store_import(self.gh, self.cfg, 5, now=IMPORTED_AT))
+        ids = []
+        for run in (1001, 1002):
+            ids.append(self.fail_the_checks())
+            before = self.read()[1]
+            events = []
+            real = host.step
+
+            def spy(doc, event, found_policies, real=real, events=events):
+                events.append(event["kind"])
+                return real(doc, event, found_policies)
+
+            with mock.patch.object(host, "step", spy):
+                found = self.dispatch(run)
+            self.assertEqual(found["action"], "fix")
+            self.assertNotIn("requested", events)
+            self.assertEqual(self.read()[1], before)
+            self.assertEqual(before["pending"][0]["id"], ids[-1])
+            self.assertFalse(any(e.startswith("dispatch-") for e in before["recentEvents"]))
+            self.publish_the_fix()
+        # Each round has its own pending action, which its dispatch carried out.
+        self.assertEqual(len(set(ids)), 2, ids)
+        self.assertEqual(self.read()[1]["rounds"]["counted"], 2)
+
+
 if __name__ == "__main__":
     unittest.main()

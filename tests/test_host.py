@@ -2834,9 +2834,10 @@ class DiagnosisTest(HostCase):
             event = {"inputs": {"command": "fix", "number": "6", "note": "", "auto": auto}}
             with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
                 found[auto] = route(self.gh, "workflow_dispatch", event, event["inputs"])
-            # The command is the engine's to start, and then it names what the round diagnoses.
+            # The command is the engine's to start. Only an automatic round then asks what it
+            # diagnoses: a person's round and a conflict round diagnose nothing.
             kinds = [call.args[0]["event"]["kind"] for call in answer.call_args_list]
-            self.assertEqual(len(kinds), 2, kinds)
+            self.assertEqual(len(kinds), 2 if auto == "true" else 1, kinds)
             self.assertEqual(kinds[0], "requested")
         self.assertEqual(found["true"]["diagnose"], ["test"])
         self.assertNotIn("diagnose", found["conflicts"])
@@ -2846,6 +2847,138 @@ class DiagnosisTest(HostCase):
             self.assertNotIn(
                 "diagnose", route(self.gh, "workflow_dispatch", event, event["inputs"])
             )
+
+
+class DispatchedTest(HostCase):
+    """NexKit's own dispatch of a command carries out the action that the stored state has
+    pending, and is otherwise decided as a new request named by its run
+    (`host.command`, `host.diagnosis`)."""
+
+    HEAD = "c" * 40
+
+    def setUp(self):
+        super().setUp()
+        self.cfg = make_config(fix={"max_auto_rounds": 3})
+        self.issue(5)
+        self.gh.add_pull(6, 5, head_sha=self.HEAD)
+        # The pull request's NexKit 6 state comment repeats `test`, which a stored round that
+        # diagnoses `lint` must not follow.
+        state = {**empty_state(5), "feedback": {"head": self.HEAD, "repeated": ["test"]}}
+        self.gh.comment(6, render_state(state))
+        seed(self.gh, self.cfg, 5)
+
+    def pend(self, action, **fields):
+        """Store the state again with `action`, changed by `fields`, as its only pending
+        action, at the next revision."""
+        comment, doc = item_state.read(self.gh, 5)
+        found = {**doc, "revision": doc["revision"] + 1, "pending": [{**action, **fields}]}
+        self.assertTrue(item_state.write(self.gh, 5, found, (comment, doc)))
+        return found
+
+    def fix_round(self, **fields):
+        return self.pend(first_state.agent_run("fix", self.HEAD), **{"id": "a2.1", **fields})
+
+    def dispatch(self, command, auto="true", run="1001", on_pull=True, **options):
+        number = "6" if on_pull else "5"
+        inputs = {"command": command, "number": number, "note": "", "auto": auto}
+        event = {"inputs": inputs, "sender": {"login": "nexkit[bot]"}}
+        with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": run}):
+            return route(self.gh, "workflow_dispatch", event, inputs, cfg=self.cfg, **options)
+
+    def test_an_automatic_fix_round_diagnoses_the_checks_of_its_pending_action(self):
+        stored = self.fix_round(diagnose=["lint"])
+        with mock.patch.object(host, "step", side_effect=AssertionError("asked the engine")):
+            found = self.dispatch("fix")
+            again = self.dispatch("fix", run="1002")
+        for each in (found, again):
+            self.assertEqual(each["action"], "fix")
+            self.assertEqual(each["diagnose"], ["lint"])
+        # Nothing was stored: the dispatch carries the action out and the engine is not asked.
+        self.assertEqual(item_state.read(self.gh, 5)[1], stored)
+
+    def test_a_person_and_a_conflict_round_diagnose_nothing_from_the_pending_action(self):
+        self.fix_round(diagnose=["lint"])
+        for auto in ("conflicts", "false"):
+            self.assertNotIn("diagnose", self.dispatch("fix", auto=auto))
+
+    def test_diagnosis_reads_the_pending_action_alone(self):
+        action = {**first_state.agent_run("fix", self.HEAD), "diagnose": ["lint"]}
+        with mock.patch.object(host, "step", side_effect=AssertionError("asked the engine")):
+            diagnosis = host.diagnosis(self.gh, self.cfg, 5, 6, self.HEAD, True, ["test"], action)
+            self.assertEqual(diagnosis, ["lint"])
+            self.assertEqual(
+                host.diagnosis(self.gh, self.cfg, 5, 6, self.HEAD, False, [], action), []
+            )
+            empty = {**action, "diagnose": []}
+            self.assertEqual(
+                host.diagnosis(self.gh, self.cfg, 5, 6, self.HEAD, True, ["test"], empty), []
+            )
+
+    def test_a_pending_action_of_a_persons_command_is_not_the_automatic_rounds(self):
+        # A round that a person's command stored and `route` refused leaves its action
+        # pending. An automatic dispatch still starts `fix`, and diagnoses as NexKit 6 does.
+        self.fix_round(by="person", diagnose=[])
+        found = self.dispatch("fix")
+        self.assertEqual((found["action"], found["diagnose"]), ("fix", ["test"]))
+
+    def test_every_dispatched_command_carries_out_its_pending_action(self):
+        checks = {"id": "a2.1", "next": None, "kind": "runChecks", "changeVersion": self.HEAD}
+        for command, action in (
+            ("fix", first_state.agent_run("fix", self.HEAD)),
+            ("review", checks),
+            ("go", first_state.agent_run("implement", self.HEAD)),
+        ):
+            with self.subTest(command):
+                stored = self.pend(action, id="a2.1")
+                with mock.patch.object(host, "step", side_effect=AssertionError("asked")):
+                    found = self.dispatch(command, on_pull=command != "go")
+                self.assertEqual(found["action"], {"go": "implement"}.get(command, command))
+                self.assertEqual(item_state.read(self.gh, 5)[1], stored)
+
+    def test_dispatches_with_nothing_pending_are_new_requests_named_by_their_run(self):
+        self.gh.add_issue(7)
+        seed(self.gh, self.cfg, 7)
+        for run in ("1001", "1002"):
+            comment, doc = item_state.read(self.gh, 7)
+            # Nothing is pending, as after the plan of the run before.
+            reset = {**doc, "revision": doc["revision"] + 1, "state": "new", "pending": []}
+            self.assertTrue(item_state.write(self.gh, 7, reset, (comment, doc)))
+            inputs = {"command": "plan", "number": "7", "note": "", "auto": "true"}
+            event = {"inputs": inputs, "sender": {"login": "nexkit[bot]"}}
+            with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": run}):
+                found = route(self.gh, "workflow_dispatch", event, inputs, cfg=self.cfg)
+            self.assertEqual(found["action"], "plan", run)
+            self.assertIn(f"dispatch-{run}", item_state.read(self.gh, 7)[1]["recentEvents"])
+        events = set(item_state.read(self.gh, 7)[1]["recentEvents"])
+        self.assertTrue({"dispatch-1001", "dispatch-1002"} <= events)
+
+    def test_a_dispatch_outside_actions_is_named_by_the_next_revision(self):
+        with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": "77"}):
+            self.assertEqual(host._dispatch_id({"revision": 4}), "dispatch-77")
+        for run in ("", "x1", "0", "-3"):
+            with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": run}):
+                self.assertEqual(host._dispatch_id(None), "dispatch-local-1", run)
+                self.assertEqual(host._dispatch_id({"revision": 4}), "dispatch-local-5", run)
+
+    def test_a_persons_dispatch_is_decided_as_a_new_request(self):
+        stored = self.fix_round(diagnose=["lint"])
+        with mock.patch.object(host, "step", wraps=host.step) as asked:
+            found = self.dispatch("fix", auto="false")
+        self.assertEqual(found["action"], "fix")
+        self.assertEqual(asked.call_args_list[0].args[1]["kind"], "requested")
+        self.assertEqual(asked.call_args_list[0].args[1]["id"], "dispatch-1001")
+        self.assertNotIn("diagnose", found)
+        self.assertGreaterEqual(item_state.read(self.gh, 5)[1]["revision"], stored["revision"])
+
+    def test_the_imports_run_on_its_way_is_decided_as_a_new_request(self):
+        self.fix_round(id=first_state.RUN_ID, diagnose=["lint"])
+        self.assertIsNone(host._carried(item_state.read(self.gh, 5)[1], "fix"))
+        with mock.patch.object(host, "step", wraps=host.step) as asked:
+            self.dispatch("fix")
+        self.assertEqual(asked.call_args_list[0].args[1]["kind"], "requested")
+
+    def test_no_event_id_is_built_from_the_command(self):
+        self.assertNotRegex(Path(host.__file__).read_text(), r'f"command-\{')
 
 
 class RoundDecideTest(ReportCase):

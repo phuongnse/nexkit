@@ -202,7 +202,10 @@ pull request, which a state comment outlives, a fork, a person's pull request, w
 `/nexkit fix`, an unknown command and an implement round that still runs stay host checks: the
 reply to a command on a closed item is NexKit 6's ("The issue is closed", "The pull request is
 closed"), given before the engine is asked, and `take` only moves its cursor past such a command
-or *Request changes* review, so that no command changes a closed item's stored state.
+or *Request changes* review, so that no command changes a closed item's stored state. When the
+configuration did not load, `route._decide` answers a command, a *Request changes* review or a
+dispatch with the configuration error before the engine is asked, and `command` and
+`closing_command` raise `Refused`, since the engine needs the policies of the configuration.
 
 An item whose document or event the engine refuses waits for a person, and no other item is
 held up by it.
@@ -1941,18 +1944,25 @@ def stop_carried_on(gh, cfg, issue, decision, agent, ran=None, write=False):
 
 # -- a person's command ----------------------------------------------------------------
 
+# What a path that needs the engine raises when the configuration did not load: `route._decide`
+# answers with the configuration error before it gets here, so no decision is made without the
+# policies of the configuration.
+NO_CONFIG = "NexKit's configuration did not load, so the engine is not asked."
 
-def closing_command(gh, decision, comments, command, cfg=None):
+
+def closing_command(gh, decision, comments, command, cfg):
     """A writer's `/nexkit plan` or `/nexkit go` on an issue whose questions NexKit asked
     last, those of its latest plan or of a `/nexkit go` that stopped as blocked
     (`state.asked_last`): when its note picks the option that only closes the issue and the
     engine drops the issue for it, the `maintain` job closes the issue as not planned, with
     no agent run. Otherwise the command goes to its round as it is. `command` is the comment
-    of the command, which names the event. With `cfg` the engine answers on the item's stored
-    state (`decide`), which a preview only reads: `take` already stored the command's event, and
-    the `maintain` job carries out the close. Without it, the answer is on the document that
-    NexKit 6's markers leave. It only sees an open issue: `route._decide` refuses a command on
-    a closed one first."""
+    of the command, which names the event. The engine answers on the item's stored state
+    (`decide`), which a preview only reads: `take` already stored the command's event, and the
+    `maintain` job carries out the close. With no `cfg`, it raises `Refused` and asks the engine
+    nothing. It only sees an open issue: `route._decide` refuses a command on a closed one
+    first."""
+    if cfg is None:
+        raise Refused(NO_CONFIG)
     number = decision["issue"]
     asked = asked_last(comments)
     if asked is None:
@@ -1977,19 +1987,16 @@ def closing_command(gh, decision, comments, command, cfg=None):
     by = _person(decision.get("actor"), "writer")
     event = _event("answered", number, None, event_id("comment", command), by=by, **fields)
     try:
-        if cfg is None:
-            actions = step(doc, event, {})["actions"]
-        else:
-            _, actions = decide(
-                gh,
-                cfg,
-                number,
-                event,
-                doc,
-                pull=int(change["id"]) if change else None,
-                found_policies={},
-                write=False,
-            )
+        _, actions = decide(
+            gh,
+            cfg,
+            number,
+            event,
+            doc,
+            pull=int(change["id"]) if change else None,
+            found_policies={},
+            write=False,
+        )
     except Refused:
         return decision
     if not any(action["kind"] == "close" for action in actions):
@@ -2067,24 +2074,24 @@ def command(
     it runs (`runChecks` is a `review`), `noChange` when the item ends because its base branch
     already holds the change, `refused` when it runs nothing, or `answered` when an earlier run
     already took the command, so that this one starts nothing and replies nothing. It raises
-    `Refused` when the engine refuses the document or the event.
+    `Refused` when the engine refuses the document or the event, and when there is no `gh` or no
+    `cfg`, since the engine needs the configuration's policies and `route._decide` gives the
+    configuration error before it asks.
 
-    With `gh` and `cfg`, the command is carried out from the item's stored state. When
-    `take` answered it in this run (`taken`, [(event, actions)] as `take` gives them), the
-    actions it stored are carried out and the engine is not asked again, which it would take for a
-    duplicate. Otherwise the stored state says whether an earlier run took it (`answered`), and
-    another command taken in this run that already started a stage refuses it.
+    The command is carried out from the item's stored state. When `take` answered it in this
+    run (`taken`, [(event, actions)] as `take` gives them), the actions it stored are carried out
+    and the engine is not asked again, which it would take for a duplicate. Otherwise the stored
+    state says whether an earlier run took it (`answered`), and another command taken in this
+    run that already started a stage refuses it.
 
     After those, NexKit's own `dispatched` command (its `auto` input names a kind) carries out
     the action that the stored state already has pending for it (`_carried`): the engine is not
     asked again and nothing is stored. The action is added to `carried`, a list the caller
     passes, so that `diagnosis` reads its checks. With nothing pending, and for a person's own
     dispatch, the command is a new request, named `dispatch-<run id>` (`_dispatch_id`), decided
-    on the stored state (`decide`, which stores the answer in the item's group, `resync`). With
-    no `gh` or no `cfg` it is answered on the small document that NexKit 6's `route` read the
-    facts of, which writes nothing. No closed issue or pull request reaches it: `route._decide`
-    refuses a command on one before, in NexKit 6's words, so that no command changes the stored
-    state of a closed item.
+    on the stored state (`decide`, which stores the answer in the item's group, `resync`). No
+    closed issue or pull request reaches it: `route._decide` refuses a command on one before, in
+    NexKit 6's words, so that no command changes the stored state of a closed item.
 
     That document holds only the facts that NexKit 6's `route` reads, as `closing_command` and
     `_pull_doc` build theirs: `change`, `{"id", "version"}` of the open pull request, makes the
@@ -2094,6 +2101,8 @@ def command(
     the id of a *Request changes* review, which is sent as `changesRequested` as `take` sends it.
     `source_id` is the id of the comment or review that gave the command, which names the event as
     `take` does."""
+    if gh is None or cfg is None:
+        raise Refused(NO_CONFIG)
     doc = first_state.empty(str(item))
     if review_only:
         doc["itemKind"], doc["actors"]["change"] = "reviewOnly", "person"
@@ -2135,12 +2144,6 @@ def command(
             "plan": str(plan["id"]) if plan and what == "go" else None,
         }
         request = _event("requested", item, None, name, **found)
-    if gh is None or cfg is None:
-        events = [event for event in (observed, request) if event]
-        after, actions = _answers(doc, events, policies(cfg) if cfg else {})
-        if after["state"] == "noChange":
-            return "noChange"
-        return starts(actions) or "refused"
     pull = int(change["id"]) if change else None
     mine = [actions for event, actions in taken or [] if event["id"] == name]
     if mine:

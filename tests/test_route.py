@@ -61,11 +61,12 @@ class ParseCommandTests(unittest.TestCase):
 class PersonsPullRequestTests(unittest.TestCase):
     def setUp(self):
         self.gh = FakeGitHub()
+        self.cfg = make_config()
         self.gh.add_pull(10, 5, branch="upgrade/nexkit")
 
     def review(self, number=10, login="alice"):
         event = comment_event(number, "/nexkit review", login=login, on_pull=True)
-        return route(self.gh, "issue_comment", event)
+        return route(self.gh, "issue_comment", event, cfg=self.cfg)
 
     def test_a_writer_gets_a_review_of_the_current_commit(self):
         found = self.review()
@@ -100,7 +101,7 @@ class PersonsPullRequestTests(unittest.TestCase):
 
     def test_no_fix_round_starts_on_it(self):
         event = comment_event(10, "/nexkit fix Do it", on_pull=True)
-        found = route(self.gh, "issue_comment", event)
+        found = route(self.gh, "issue_comment", event, cfg=self.cfg)
         self.assertEqual(found["action"], "none")
         review = {
             "action": "submitted",
@@ -111,7 +112,9 @@ class PersonsPullRequestTests(unittest.TestCase):
             },
             "pull_request": {"number": 10},
         }
-        self.assertEqual(route(self.gh, "pull_request_review", review)["action"], "none")
+        self.assertEqual(
+            route(self.gh, "pull_request_review", review, cfg=self.cfg)["action"], "none"
+        )
 
     def test_a_pull_request_that_changes_nothing_is_never_closed(self):
         self.gh.on_base.add("a" * 40)
@@ -174,7 +177,9 @@ class PersonsPullRequestTests(unittest.TestCase):
 
     def test_a_resumed_review_stays_a_persons(self):
         inputs = {"command": "review", "number": "10", "note": "", "auto": "resume"}
-        found = route(self.gh, "workflow_dispatch", {"sender": {"login": BOT_LOGIN}}, inputs)
+        found = route(
+            self.gh, "workflow_dispatch", {"sender": {"login": BOT_LOGIN}}, inputs, cfg=self.cfg
+        )
         self.assertTrue(found["person"])
         self.assertTrue(found["resumed"])
         self.assertEqual(auto_input(found, resume=True), "resume")
@@ -201,13 +206,14 @@ class ClosingAnswerTests(unittest.TestCase):
 
     def setUp(self):
         self.gh = FakeGitHub()
+        self.cfg = make_config()
         self.gh.add_issue(5)
         url = "https://github.com/acme/app/actions/runs/9"
         run = {"url": url, "command": "go", "status": "failure", "outcome": "agent_blocked"}
         self.gh.comment(5, render_run({**run, "questions": [ASKED]}, "Blocked."))
 
     def decide(self, body):
-        return route(self.gh, "issue_comment", comment_event(5, body))
+        return route(self.gh, "issue_comment", comment_event(5, body), cfg=self.cfg)
 
     def test_an_answer_that_picks_the_closing_option_closes_without_an_agent(self):
         for body in (
@@ -326,21 +332,26 @@ class TrustCommandTests(unittest.TestCase):
 class RouteTests(unittest.TestCase):
     def setUp(self):
         self.gh = FakeGitHub()
+        self.cfg = make_config()
         self.gh.add_issue(5)
 
     def test_plan_and_go_on_issue(self):
-        plan = route(self.gh, "issue_comment", comment_event(5, "/nexkit plan focus on API"))
+        plan = route(
+            self.gh, "issue_comment", comment_event(5, "/nexkit plan focus on API"), cfg=self.cfg
+        )
         self.assertEqual(plan["action"], "plan")
         self.assertEqual(plan["note"], "focus on API")
         self.assertEqual(plan["branch"], "nexkit/issue-5")
         self.assertEqual(plan["base"], "main")
         self.assertEqual(plan["comment_id"], 7)
-        go = route(self.gh, "issue_comment", comment_event(5, "/nexkit go"))
+        go = route(self.gh, "issue_comment", comment_event(5, "/nexkit go"), cfg=self.cfg)
         self.assertEqual(go["action"], "implement")
         self.assertEqual(go["actor"], "alice")
 
     def fix_on_pull(self):
-        return route(self.gh, "issue_comment", comment_event(6, "/nexkit fix", on_pull=True))
+        return route(
+            self.gh, "issue_comment", comment_event(6, "/nexkit fix", on_pull=True), cfg=self.cfg
+        )
 
     def test_fix_gets_the_run_whose_failing_checks_kept_result_files(self):
         self.gh.add_pull(6, 5, head_sha="c" * 40)
@@ -353,7 +364,9 @@ class RouteTests(unittest.TestCase):
         state["feedback"]["checks"] = [{**failing, "results": ["test-results"]}]
         self.gh.update_comment(comment["id"], render_state(state))
         self.assertEqual(self.fix_on_pull()["results_run"], 77)
-        review = route(self.gh, "issue_comment", comment_event(6, "/nexkit review", on_pull=True))
+        review = route(
+            self.gh, "issue_comment", comment_event(6, "/nexkit review", on_pull=True), cfg=self.cfg
+        )
         self.assertNotIn("results_run", review)
         # A passing check never keeps files, whatever its record says.
         state["feedback"]["checks"] = [{**failing, "passed": True, "results": ["test-results"]}]
@@ -368,7 +381,9 @@ class RouteTests(unittest.TestCase):
 
         def dispatch(auto):
             inputs = {"command": "fix", "number": "6", "auto": auto}
-            return route(self.gh, "workflow_dispatch", {"sender": {"login": "x"}}, inputs)
+            return route(
+                self.gh, "workflow_dispatch", {"sender": {"login": "x"}}, inputs, cfg=self.cfg
+            )
 
         self.assertEqual(dispatch("true")["diagnose"], ["e2e"])
         self.assertEqual(dispatch("true,resume")["diagnose"], ["e2e"])
@@ -377,7 +392,7 @@ class RouteTests(unittest.TestCase):
         self.assertNotIn("diagnose", dispatch("false"))
         self.assertNotIn("diagnose", dispatch("conflicts"))
         inputs = {"command": "review", "number": "6", "auto": "true"}
-        review = route(self.gh, "workflow_dispatch", {}, inputs)
+        review = route(self.gh, "workflow_dispatch", {}, inputs, cfg=self.cfg)
         self.assertEqual(review["action"], "review")
         self.assertNotIn("diagnose", review)
 
@@ -392,7 +407,8 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(self.fix_on_pull()["verified_sha"], "c" * 40)
         # Issue commands start before there is a pull request.
         self.assertNotIn(
-            "verified_sha", route(self.gh, "issue_comment", comment_event(5, "/nexkit plan"))
+            "verified_sha",
+            route(self.gh, "issue_comment", comment_event(5, "/nexkit plan"), cfg=self.cfg),
         )
 
     def test_each_check_gets_the_last_commit_on_which_it_passed(self):
@@ -403,7 +419,9 @@ class RouteTests(unittest.TestCase):
         def decide(command="fix"):
             # As `nexkit route` does once it read the configuration.
             event = comment_event(6, f"/nexkit {command}", on_pull=True)
-            return skip_unaffected(self.gh, route(self.gh, "issue_comment", event), cfg)
+            return skip_unaffected(
+                self.gh, route(self.gh, "issue_comment", event, cfg=self.cfg), cfg
+            )
 
         self.assertNotIn("check_heads", decide())  # no earlier round
         unit, e2e, lint = (check_fingerprint(c) for c in ("make unit", "make e2e", "make lint"))
@@ -513,58 +531,76 @@ class RouteTests(unittest.TestCase):
 
     def test_go_refuses_when_pull_request_is_open(self):
         self.gh.add_pull(9, 5)
-        decision = route(self.gh, "issue_comment", comment_event(5, "/nexkit go"))
+        decision = route(self.gh, "issue_comment", comment_event(5, "/nexkit go"), cfg=self.cfg)
         self.assertEqual(decision["action"], "none")
         self.assertIn("#9", decision["reason"])
         self.assertEqual(decision["reply_to"], 5)
 
     def test_requires_write_access(self):
-        decision = route(self.gh, "issue_comment", comment_event(5, "/nexkit go", login="bob"))
+        decision = route(
+            self.gh, "issue_comment", comment_event(5, "/nexkit go", login="bob"), cfg=self.cfg
+        )
         self.assertEqual(decision["action"], "none")
         self.assertIn("write access", decision["reason"])
         self.assertEqual(decision["reply_to"], 5)
 
     def test_ignores_ordinary_and_bot_comments(self):
-        self.assertIsNone(route(self.gh, "issue_comment", comment_event(5, "thanks"))["reply_to"])
+        self.assertIsNone(
+            route(self.gh, "issue_comment", comment_event(5, "thanks"), cfg=self.cfg)["reply_to"]
+        )
         bot = comment_event(5, "/nexkit go", login=BOT_LOGIN, user_type="Bot")
-        self.assertEqual(route(self.gh, "issue_comment", bot)["action"], "none")
+        self.assertEqual(route(self.gh, "issue_comment", bot, cfg=self.cfg)["action"], "none")
         other_bot = comment_event(5, "/nexkit go", login="ci[bot]", user_type="Bot")
-        self.assertEqual(route(self.gh, "issue_comment", other_bot)["action"], "none")
+        self.assertEqual(route(self.gh, "issue_comment", other_bot, cfg=self.cfg)["action"], "none")
 
     def test_closed_issue_and_unknown_command(self):
         self.gh.add_issue(6, state="closed")
         self.assertIn(
-            "closed", route(self.gh, "issue_comment", comment_event(6, "/nexkit go"))["reason"]
+            "closed",
+            route(self.gh, "issue_comment", comment_event(6, "/nexkit go"), cfg=self.cfg)["reason"],
         )
-        unknown = route(self.gh, "issue_comment", comment_event(5, "/nexkit deploy"))
+        unknown = route(self.gh, "issue_comment", comment_event(5, "/nexkit deploy"), cfg=self.cfg)
         self.assertEqual(unknown["action"], "none")
         self.assertIn("not an issue command", unknown["reason"])
 
     def test_fix_and_review_on_nexkit_pull_request(self):
         self.gh.add_pull(9, 5, head_sha="b" * 40)
         fix = route(
-            self.gh, "issue_comment", comment_event(9, "/nexkit fix rename it", on_pull=True)
+            self.gh,
+            "issue_comment",
+            comment_event(9, "/nexkit fix rename it", on_pull=True),
+            cfg=self.cfg,
         )
         self.assertEqual(fix["action"], "fix")
         self.assertEqual((fix["issue"], fix["pr"], fix["target"]), (5, 9, 9))
         self.assertEqual(fix["head"], "b" * 40)
         self.assertEqual(fix["branch"], "nexkit/issue-5")
         self.assertEqual(fix["note"], "rename it")
-        review = route(self.gh, "issue_comment", comment_event(9, "/nexkit review", on_pull=True))
+        review = route(
+            self.gh, "issue_comment", comment_event(9, "/nexkit review", on_pull=True), cfg=self.cfg
+        )
         self.assertEqual(review["action"], "review")
 
     def test_rejects_foreign_and_closed_pull_requests(self):
         self.gh.add_pull(10, 5, branch="feature/x")
         self.gh.add_pull(11, 5, repo="someone/fork")
         self.gh.add_pull(12, 5, state="closed")
-        person = route(self.gh, "issue_comment", comment_event(10, "/nexkit fix", on_pull=True))
+        person = route(
+            self.gh, "issue_comment", comment_event(10, "/nexkit fix", on_pull=True), cfg=self.cfg
+        )
         self.assertIn("acts only on NexKit's pull requests", person["reason"])
         self.assertIn("`/nexkit review` checks and reviews this one", person["reason"])
-        fork = route(self.gh, "issue_comment", comment_event(11, "/nexkit fix", on_pull=True))
+        fork = route(
+            self.gh, "issue_comment", comment_event(11, "/nexkit fix", on_pull=True), cfg=self.cfg
+        )
         self.assertIn("comes from a fork", fork["reason"])
-        closed = route(self.gh, "issue_comment", comment_event(12, "/nexkit fix", on_pull=True))
+        closed = route(
+            self.gh, "issue_comment", comment_event(12, "/nexkit fix", on_pull=True), cfg=self.cfg
+        )
         self.assertIn("closed", closed["reason"])
-        plan = route(self.gh, "issue_comment", comment_event(10, "/nexkit plan", on_pull=True))
+        plan = route(
+            self.gh, "issue_comment", comment_event(10, "/nexkit plan", on_pull=True), cfg=self.cfg
+        )
         self.assertIn("not a pull request command", plan["reason"])
 
     def test_changes_requested_review_starts_fix(self):
@@ -578,13 +614,17 @@ class RouteTests(unittest.TestCase):
             },
             "pull_request": {"number": 9},
         }
-        decision = route(self.gh, "pull_request_review", event)
+        decision = route(self.gh, "pull_request_review", event, cfg=self.cfg)
         self.assertEqual(decision["action"], "fix")
         self.assertEqual(decision["note"], "Handle None")
         event["review"]["state"] = "approved"
-        self.assertEqual(route(self.gh, "pull_request_review", event)["action"], "none")
+        self.assertEqual(
+            route(self.gh, "pull_request_review", event, cfg=self.cfg)["action"], "none"
+        )
         event["review"].update(state="changes_requested", user={"login": "bob"})
-        self.assertEqual(route(self.gh, "pull_request_review", event)["action"], "none")
+        self.assertEqual(
+            route(self.gh, "pull_request_review", event, cfg=self.cfg)["action"], "none"
+        )
 
     def test_a_label_added_or_removed_starts_a_sweep(self):
         for action in ("labeled", "unlabeled"):
@@ -608,7 +648,7 @@ class RouteTests(unittest.TestCase):
             "pull_request": {**pull, "base": {"ref": "main", "repo": {"full_name": "acme/app"}}},
         }
         self.assertEqual(
-            route(self.gh, "pull_request_review", event),
+            route(self.gh, "pull_request_review", event, cfg=self.cfg),
             {
                 "action": "maintain",
                 "task": "approval",
@@ -622,17 +662,27 @@ class RouteTests(unittest.TestCase):
         # Not from a person with write access, a bot, or on a pull request NexKit did not open.
         for review in ({"login": "bob"}, {"login": "ci[bot]", "type": "Bot"}):
             event["review"]["user"] = review
-            self.assertEqual(route(self.gh, "pull_request_review", event)["action"], "none")
+            self.assertEqual(
+                route(self.gh, "pull_request_review", event, cfg=self.cfg)["action"], "none"
+            )
         event["review"]["user"] = {"login": "olivia"}
         event["pull_request"]["head"] = {"ref": "feature", "repo": {"full_name": "acme/app"}}
-        self.assertEqual(route(self.gh, "pull_request_review", event)["action"], "none")
+        self.assertEqual(
+            route(self.gh, "pull_request_review", event, cfg=self.cfg)["action"], "none"
+        )
         event["pull_request"]["head"] = {"ref": "nexkit/issue-5", "repo": {"full_name": "x/app"}}
-        self.assertEqual(route(self.gh, "pull_request_review", event)["action"], "none")
+        self.assertEqual(
+            route(self.gh, "pull_request_review", event, cfg=self.cfg)["action"], "none"
+        )
         event["pull_request"] = {**pull, "base": {"ref": "main", "repo": {"full_name": "acme/app"}}}
         del event["review"]["id"]
-        self.assertEqual(route(self.gh, "pull_request_review", event)["action"], "none")
+        self.assertEqual(
+            route(self.gh, "pull_request_review", event, cfg=self.cfg)["action"], "none"
+        )
         event["review"].update(id=77, state="commented")
-        self.assertEqual(route(self.gh, "pull_request_review", event)["action"], "none")
+        self.assertEqual(
+            route(self.gh, "pull_request_review", event, cfg=self.cfg)["action"], "none"
+        )
 
     def test_a_step_with_an_approval_note_becomes_the_merge_of_that_approval(self):
         pull = self.gh.add_pull(9, 5)
@@ -647,7 +697,7 @@ class RouteTests(unittest.TestCase):
 
         def step(note="approval 9 77", number="5"):
             inputs = {"command": "step", "number": number, "note": note, "auto": "false"}
-            return route(self.gh, "workflow_dispatch", {}, inputs)
+            return route(self.gh, "workflow_dispatch", {}, inputs, cfg=self.cfg)
 
         self.assertEqual(
             step(),
@@ -690,7 +740,7 @@ class RouteTests(unittest.TestCase):
     def test_a_step_with_a_resume_note_becomes_the_start_of_that_paused_run(self):
         def step(note, number="5"):
             inputs = {"command": "step", "number": number, "note": note, "auto": "false"}
-            return route(self.gh, "workflow_dispatch", {}, inputs)
+            return route(self.gh, "workflow_dispatch", {}, inputs, cfg=self.cfg)
 
         self.assertEqual(
             step("resume 1234"),
@@ -703,7 +753,7 @@ class RouteTests(unittest.TestCase):
     def test_a_step_with_a_part_note_becomes_the_storing_of_that_part_s_end(self):
         def step(note, number="1"):
             inputs = {"command": "step", "number": number, "note": note, "auto": "false"}
-            return route(self.gh, "workflow_dispatch", {}, inputs)
+            return route(self.gh, "workflow_dispatch", {}, inputs, cfg=self.cfg)
 
         self.assertEqual(
             step("part 5"),
@@ -718,17 +768,31 @@ class RouteTests(unittest.TestCase):
         self.gh.add_pull(9, 5)
         event = {"sender": {"login": BOT_LOGIN}}
         decision = route(
-            self.gh, "workflow_dispatch", event, {"command": "fix", "number": "9", "auto": "true"}
+            self.gh,
+            "workflow_dispatch",
+            event,
+            {"command": "fix", "number": "9", "auto": "true"},
+            cfg=self.cfg,
         )
         self.assertEqual(decision["action"], "fix")
         self.assertTrue(decision["auto"])
         self.gh.add_issue(6)
-        manual = route(self.gh, "workflow_dispatch", event, {"command": "go", "number": "6"})
+        manual = route(
+            self.gh, "workflow_dispatch", event, {"command": "go", "number": "6"}, cfg=self.cfg
+        )
         self.assertEqual(manual["action"], "implement")
         self.assertFalse(manual["auto"])
-        bad = route(self.gh, "workflow_dispatch", event, {"command": "go", "number": "x"})
+        bad = route(
+            self.gh, "workflow_dispatch", event, {"command": "go", "number": "x"}, cfg=self.cfg
+        )
         self.assertEqual(bad["action"], "none")
-        wait = route(self.gh, "workflow_dispatch", event, {"command": "resume", "number": "resume"})
+        wait = route(
+            self.gh,
+            "workflow_dispatch",
+            event,
+            {"command": "resume", "number": "resume"},
+            cfg=self.cfg,
+        )
         self.assertEqual(wait, {"action": "maintain", "task": "resume"})
 
     def test_a_pull_request_that_changes_nothing_goes_to_maintain(self):
@@ -737,7 +801,7 @@ class RouteTests(unittest.TestCase):
         event = {"sender": {"login": BOT_LOGIN}}
         inputs = {"command": "review", "number": "9", "auto": "true"}
         self.assertEqual(
-            route(self.gh, "workflow_dispatch", event, inputs),
+            route(self.gh, "workflow_dispatch", event, inputs, cfg=self.cfg),
             {
                 "action": "maintain",
                 "task": "on_base",
@@ -749,33 +813,39 @@ class RouteTests(unittest.TestCase):
                 "actor": BOT_LOGIN,
             },
         )
-        fix = route(self.gh, "issue_comment", comment_event(9, "/nexkit fix", on_pull=True))
+        fix = route(
+            self.gh, "issue_comment", comment_event(9, "/nexkit fix", on_pull=True), cfg=self.cfg
+        )
         self.assertEqual((fix["action"], fix["task"]), ("maintain", "on_base"))
         # A change of its own, however small, or a comparison GitHub cannot make, is
         # handled as usual.
         self.gh.on_base.clear()
-        self.assertEqual(route(self.gh, "workflow_dispatch", event, inputs)["action"], "review")
+        self.assertEqual(
+            route(self.gh, "workflow_dispatch", event, inputs, cfg=self.cfg)["action"], "review"
+        )
         self.gh.compare = mock.Mock(side_effect=GitHubError(500, "Server Error"))
-        self.assertEqual(route(self.gh, "workflow_dispatch", event, inputs)["action"], "review")
+        self.assertEqual(
+            route(self.gh, "workflow_dispatch", event, inputs, cfg=self.cfg)["action"], "review"
+        )
 
     def test_dispatch_marks_resumed_and_conflict_rounds(self):
         self.gh.add_pull(9, 5)
         event = {"sender": {"login": BOT_LOGIN}}
         inputs = {"command": "fix", "number": "9", "auto": "true,resume"}
-        decision = route(self.gh, "workflow_dispatch", event, inputs)
+        decision = route(self.gh, "workflow_dispatch", event, inputs, cfg=self.cfg)
         self.assertEqual((decision["auto"], decision["resumed"]), (True, True))
         self.assertNotIn("conflicts", decision)
         self.assertEqual(auto_input(decision, resume=True), "true,resume")
         inputs["auto"] = "resume"
-        decision = route(self.gh, "workflow_dispatch", event, inputs)
+        decision = route(self.gh, "workflow_dispatch", event, inputs, cfg=self.cfg)
         self.assertEqual((decision["auto"], decision["resumed"]), (False, True))
         self.assertEqual(auto_input(decision), "false")
         inputs["auto"] = "conflicts"
-        decision = route(self.gh, "workflow_dispatch", event, inputs)
+        decision = route(self.gh, "workflow_dispatch", event, inputs, cfg=self.cfg)
         self.assertEqual((decision["auto"], decision["conflicts"]), (True, True))
         self.assertEqual(auto_input(decision, resume=True), "conflicts,resume")
         inputs["auto"] = "true,retry"
-        decision = route(self.gh, "workflow_dispatch", event, inputs)
+        decision = route(self.gh, "workflow_dispatch", event, inputs, cfg=self.cfg)
         self.assertEqual((decision["auto"], decision["retry"]), (True, True))
         # A retry that pauses at the usage limit resumes as the retry it was.
         self.assertEqual(auto_input(decision, resume=True), "true,resume,retry")
@@ -783,7 +853,7 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(decision["retry"], 1)
         self.assertEqual(auto_input(decision, retry=2), "true,retry:2")
         inputs["auto"] = "true,autopilot,retry:3"
-        decision = route(self.gh, "workflow_dispatch", event, inputs)
+        decision = route(self.gh, "workflow_dispatch", event, inputs, cfg=self.cfg)
         self.assertEqual((decision["retry"], decision["autopilot"]), (3, True))
         self.assertEqual(auto_input(decision, resume=True), "true,autopilot,resume,retry:3")
 
@@ -792,32 +862,105 @@ class RouteTests(unittest.TestCase):
         event = {"sender": {"login": BOT_LOGIN}}
         inputs = {"command": "review", "number": "9", "note": "", "auto": "true,carry"}
         # Without an approving review there is nothing to carry over.
-        self.assertNotIn("carry_from", route(self.gh, "workflow_dispatch", event, inputs))
+        self.assertNotIn(
+            "carry_from", route(self.gh, "workflow_dispatch", event, inputs, cfg=self.cfg)
+        )
         state = empty_state(5)
         state["last_review"] = {"round": 1, "head": "a" * 40, "verdict": "approve", "findings": []}
         self.gh.comment(9, render_state(state))
-        decision = route(self.gh, "workflow_dispatch", event, inputs)
+        decision = route(self.gh, "workflow_dispatch", event, inputs, cfg=self.cfg)
         self.assertEqual(decision["carry_from"], "a" * 40)
         self.assertTrue(decision["auto"])
         # The one more try after a transient error may carry it over too.
         self.assertEqual(auto_input(decision, retry=True), "true,retry,carry")
         # Only that review: not one the branch update did not start, nor a fix round.
         inputs["auto"] = "true"
-        self.assertNotIn("carry_from", route(self.gh, "workflow_dispatch", event, inputs))
+        self.assertNotIn(
+            "carry_from", route(self.gh, "workflow_dispatch", event, inputs, cfg=self.cfg)
+        )
         inputs.update(auto="true,carry", command="fix")
-        self.assertNotIn("carry_from", route(self.gh, "workflow_dispatch", event, inputs))
+        self.assertNotIn(
+            "carry_from", route(self.gh, "workflow_dispatch", event, inputs, cfg=self.cfg)
+        )
         # Not a review that requested changes, nor one of the head itself.
         for verdict, head in (("request_changes", "a" * 40), ("approve", "e" * 40)):
             state["last_review"].update(verdict=verdict, head=head)
             self.gh.comment(9, render_state(state))
             inputs["command"] = "review"
-            self.assertNotIn("carry_from", route(self.gh, "workflow_dispatch", event, inputs))
+            self.assertNotIn(
+                "carry_from", route(self.gh, "workflow_dispatch", event, inputs, cfg=self.cfg)
+            )
 
     def test_schedule_is_maintenance(self):
         self.assertEqual(route(self.gh, "schedule", {}), {"action": "maintain", "task": "schedule"})
 
     def test_other_events_are_ignored(self):
         self.assertEqual(route(self.gh, "push", {})["action"], "none")
+
+
+class NoConfigurationTests(unittest.TestCase):
+    """A command, a *Request changes* review and a dispatch need the configuration that
+    `nexkit route` loads: without it the reply is the configuration error, and the engine is
+    not asked (`route._decide`)."""
+
+    PROBLEM = "agents is required"
+
+    def setUp(self):
+        self.gh = FakeGitHub()
+        self.gh.add_issue(5)
+        self.gh.add_pull(6, 5)
+        patched = mock.patch.object(host.engine, "answer", mock.Mock())
+        self.answer = patched.start()
+        self.addCleanup(patched.stop)
+
+    def route(self, event_name, event, inputs=None):
+        return route(self.gh, event_name, event, inputs, problem=self.PROBLEM)
+
+    def refused(self, found, item):
+        self.assertEqual(found["action"], "none")
+        self.assertEqual(found["reason"], f"NexKit configuration error: {self.PROBLEM}")
+        self.assertEqual(found["reply_to"], item)
+        self.answer.assert_not_called()
+
+    def test_a_plan_command_gets_the_configuration_error(self):
+        self.refused(self.route("issue_comment", comment_event(5, "/nexkit plan")), 5)
+
+    def test_a_fix_command_on_a_nexkit_pull_request_gets_the_configuration_error(self):
+        event = comment_event(6, "/nexkit fix", on_pull=True)
+        self.refused(self.route("issue_comment", event), 6)
+
+    def test_a_request_changes_review_gets_the_configuration_error(self):
+        event = {
+            "action": "submitted",
+            "review": {
+                "state": "changes_requested",
+                "body": "Handle None",
+                "user": {"login": "olivia"},
+            },
+            "pull_request": {"number": 6},
+        }
+        self.refused(self.route("pull_request_review", event), 6)
+
+    def test_a_dispatch_of_a_command_gets_the_configuration_error(self):
+        inputs = {"command": "fix", "number": "6", "auto": "true"}
+        event = {"sender": {"login": BOT_LOGIN}}
+        self.refused(self.route("workflow_dispatch", event, inputs), 6)
+
+    def test_a_missing_message_still_says_the_configuration_did_not_load(self):
+        found = route(self.gh, "issue_comment", comment_event(5, "/nexkit plan"))
+        self.assertEqual(
+            found["reason"], "NexKit configuration error: .nexkit/config.json did not load"
+        )
+
+    def test_what_only_github_shows_is_answered_first(self):
+        self.gh.add_issue(8, state="closed")
+        for number, body, reason in (
+            (5, "/nexkit deploy", "not an issue command"),
+            (8, "/nexkit plan", "The issue is closed"),
+        ):
+            found = self.route("issue_comment", comment_event(number, body))
+            self.assertIn(reason, found["reason"])
+        self.answer.assert_not_called()
 
 
 class TakenCommandTests(unittest.TestCase):
@@ -924,6 +1067,7 @@ class EngineStartsTests(unittest.TestCase):
 
     def setUp(self):
         self.gh = FakeGitHub()
+        self.cfg = make_config()
         # Issue 7 has no pull request, issue 5 has the open one, number 6.
         self.gh.add_issue(5)
         self.gh.add_issue(7)
@@ -932,7 +1076,9 @@ class EngineStartsTests(unittest.TestCase):
         self.gh.add_issue(8)
 
     def comment(self, number, command, on_pull=False):
-        return route(self.gh, "issue_comment", comment_event(number, command, on_pull=on_pull))
+        return route(
+            self.gh, "issue_comment", comment_event(number, command, on_pull=on_pull), cfg=self.cfg
+        )
 
     def review(self, number=6):
         event = {
@@ -945,11 +1091,13 @@ class EngineStartsTests(unittest.TestCase):
             },
             "pull_request": {"number": number},
         }
-        return route(self.gh, "pull_request_review", event)
+        return route(self.gh, "pull_request_review", event, cfg=self.cfg)
 
     def dispatch(self, command, number, auto="false"):
         inputs = {"command": command, "number": str(number), "auto": auto}
-        return route(self.gh, "workflow_dispatch", {"sender": {"login": "bot"}}, inputs)
+        return route(
+            self.gh, "workflow_dispatch", {"sender": {"login": "bot"}}, inputs, cfg=self.cfg
+        )
 
     def every_start(self):
         """(name, how to ask, the action it starts) for each way a command starts a stage."""
@@ -1115,7 +1263,7 @@ class ProfileTests(unittest.TestCase):
         if number == 9 and 9 not in self.gh.pulls:
             self.gh.add_pull(9, 5)
         event = comment_event(number, f"/nexkit {command}", on_pull=number == 9)
-        return with_profile(self.gh, route(self.gh, "issue_comment", event), self.cfg)
+        return with_profile(self.gh, route(self.gh, "issue_comment", event, cfg=self.cfg), self.cfg)
 
     def test_rounds_use_the_latest_plans_profile(self):
         self.plan("standard")
@@ -1156,7 +1304,7 @@ class ProfileTests(unittest.TestCase):
 
     def test_without_profiles_nothing_changes(self):
         self.plan("hard")
-        decision = route(self.gh, "issue_comment", comment_event(5, "/nexkit go"))
+        decision = route(self.gh, "issue_comment", comment_event(5, "/nexkit go"), cfg=self.cfg)
         cfg = make_config()
         self.assertEqual(with_profile(self.gh, decision, cfg), (decision, cfg))
 
@@ -1189,7 +1337,9 @@ class SkipUnaffectedTests(unittest.TestCase):
 
     def decide(self, auto="true,carry", cfg=None):
         inputs = {"command": "review", "number": "6", "note": "", "auto": auto}
-        decision = route(self.gh, "workflow_dispatch", {"sender": {"login": BOT_LOGIN}}, inputs)
+        decision = route(
+            self.gh, "workflow_dispatch", {"sender": {"login": BOT_LOGIN}}, inputs, cfg=self.cfg
+        )
         return skip_unaffected(self.gh, decision, cfg or self.cfg)
 
     def test_a_check_now_in_shards_is_never_skipped_by_its_own_name(self):
@@ -1259,10 +1409,14 @@ class SkipUnaffectedTests(unittest.TestCase):
     def test_a_person_or_another_round_runs_every_check(self):
         self.assertNotIn("skipped_checks", self.decide(auto="false"))
         comment = comment_event(6, "/nexkit review", on_pull=True)
-        decision = skip_unaffected(self.gh, route(self.gh, "issue_comment", comment), self.cfg)
+        decision = skip_unaffected(
+            self.gh, route(self.gh, "issue_comment", comment, cfg=self.cfg), self.cfg
+        )
         self.assertNotIn("skipped_checks", decision)
         inputs = {"command": "fix", "number": "6", "note": "", "auto": "true"}
-        fix = route(self.gh, "workflow_dispatch", {"sender": {"login": BOT_LOGIN}}, inputs)
+        fix = route(
+            self.gh, "workflow_dispatch", {"sender": {"login": BOT_LOGIN}}, inputs, cfg=self.cfg
+        )
         decision = skip_unaffected(self.gh, fix, self.cfg)
         self.assertNotIn("skipped_checks", decision)
         self.assertEqual(decision["setup"], self.setup)
@@ -1299,7 +1453,9 @@ class SkipUnaffectedTests(unittest.TestCase):
     def test_without_unaffected_by_nothing_is_compared(self):
         cfg = make_config(checks=[{"name": "unit", "run": "make unit"}])
         inputs = {"command": "review", "number": "6", "note": "", "auto": "true"}
-        decision = route(self.gh, "workflow_dispatch", {"sender": {"login": BOT_LOGIN}}, inputs)
+        decision = route(
+            self.gh, "workflow_dispatch", {"sender": {"login": BOT_LOGIN}}, inputs, cfg=self.cfg
+        )
         self.gh.compare = mock.Mock(side_effect=AssertionError("compared"))
         decision = skip_unaffected(self.gh, decision, cfg)
         self.assertNotIn("skipped_checks", decision)

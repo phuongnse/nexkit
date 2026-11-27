@@ -1734,7 +1734,8 @@ class ReportTests(ReportCase):
 
     def next_round(self):
         inputs = self.gh.dispatches[-1]["inputs"]
-        return route(self.gh, "workflow_dispatch", {"sender": {"login": "nexkit"}}, inputs)
+        cfg = make_config(fix={"max_auto_rounds": 5})
+        return route(self.gh, "workflow_dispatch", {"sender": {"login": "nexkit"}}, inputs, cfg=cfg)
 
     def many_failing(self, number):
         """Six failing e2e shards, each with an output as long as NexKit stores, whose

@@ -393,7 +393,9 @@ class Pipeline:
             return
         os.environ["GITHUB_RUN_ID"] = str(run_id)
         self.gh.runs[run_id] = {"status": "in_progress"}
-        decision = route(self.gh, "workflow_dispatch", {"sender": {"login": BOT_LOGIN}}, inputs)
+        decision = route(
+            self.gh, "workflow_dispatch", {"sender": {"login": BOT_LOGIN}}, inputs, cfg=self.cfg
+        )
         # As `nexkit route` does once it read the configuration.
         decision = skip_unaffected(self.gh, decision, self.cfg)
         if outcome == "refused":
@@ -2636,7 +2638,7 @@ class ScenarioTests(unittest.TestCase):
             "issue": {"number": 5},
             "comment": {"id": 99, "body": f"/nexkit go {close}", "user": {"login": "olivia"}},
         }
-        decision = route(pipe.gh, "issue_comment", event)
+        decision = route(pipe.gh, "issue_comment", event, cfg=pipe.cfg)
         maintain(pipe.gh, decision, pipe.cfg, workflow="nexkit.yml", ref="main")
         self.assertEqual(
             (pipe.gh.issues[5]["state"], pipe.gh.issues[5]["state_reason"]),

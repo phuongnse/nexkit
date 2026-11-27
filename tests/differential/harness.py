@@ -5,7 +5,7 @@ with their inputs, merges, issues, pull requests, labels), the preview and `nexk
 
 usage: python3 tests/differential/harness.py --v6 PATH [--tree PATH] [--family NAME ...]
                                              [--sample K] [--jobs N] [--keep DIR]
-                                             [--fallbacks]
+                                             [--fallbacks] [--forbid FUNCTION ...]
 
 `--v6` is a checkout of 8bf5190 (`git worktree add --detach PATH 8bf5190`); `--tree` is the
 tree to check, this one by default. Without `--sample` every scenario plays, which takes a
@@ -17,7 +17,10 @@ Each scenario on the tree first stores its items' imports as the App's state com
 (`common.seed`), which is not compared, since NexKit 6 never posts it: the check counts a problem
 when an item's revision moves backward in a scenario. `--fallbacks` lists, for each family, the
 decisions that `host.resync` took from the markers' document, by the host function that asked
-and why.
+and why. `--forbid FUNCTION`, which can be repeated, names a host function that must no longer
+fall back, such as `nexkit.host.command`: each fallback that it reports counts as a difference
+not listed, whether or not `--fallbacks` is set, so the check fails. The name must be a function
+of the tree. `check.sh` passes it for each function that decides on the stored state alone.
 """
 
 import argparse
@@ -154,9 +157,12 @@ def short(value, most=600):
     return text if len(text) <= most else text[:most] + "…"
 
 
-def report(family, count, seen, unlisted, examples, broken, fell, stored, back, fallbacks=False):
+def report(
+    family, count, seen, unlisted, examples, broken, fell, stored, back, fallbacks=False, forbid=()
+):
     """Print what a family found; the number of problems in it. With `fallbacks`, the decisions
-    that `host.resync` took from the markers' document, most first."""
+    that `host.resync` took from the markers' document, most first. Each fallback of a function
+    in `forbid` is printed and counts as a problem."""
     line = f"{family} ({FAMILIES[family]}): {count} scenarios, {sum(unlisted.values())} differ"
     if seen:
         line += ", listed: " + ", ".join(f"{n} × {name}" for name, n in seen.items())
@@ -171,6 +177,11 @@ def report(family, count, seen, unlisted, examples, broken, fell, stored, back, 
             print(f"  resync fell back: {n} × {origin} ({why})")
         if not fell:
             print("  resync fell back: none")
+    forbidden = 0
+    for (origin, why), n in sorted(fell.items(), key=lambda one: (-one[1], one[0])):
+        if origin in forbid:
+            print(f"  forbidden fallback: {n} × {origin} ({why})")
+            forbidden += n
     if not count:
         print(f"  {family} played no scenario")
     for shape, n in unlisted.most_common():
@@ -181,7 +192,7 @@ def report(family, count, seen, unlisted, examples, broken, fell, stored, back, 
             print(f"    at {example['path']}")
             print(f"    NexKit 6: {short(example['v6'])}")
             print(f"    tree:     {short(example['tree'])}")
-    return sum(unlisted.values()) + broken + back + (0 if count else 1)
+    return sum(unlisted.values()) + broken + back + forbidden + (0 if count else 1)
 
 
 def main(argv=None):
@@ -197,7 +208,22 @@ def main(argv=None):
         action="store_true",
         help="list each family's decisions that host.resync took from the markers' document",
     )
+    parser.add_argument(
+        "--forbid",
+        action="append",
+        default=[],
+        metavar="FUNCTION",
+        help="a host function, such as nexkit.host.command, whose fallback to the markers' "
+        "document counts as a difference; can be repeated",
+    )
     args = parser.parse_args(argv)
+    for origin in args.forbid:
+        # A name that matches no function would never match a fallback and check nothing.
+        module, _, name = origin.rpartition(".")
+        path = Path(args.tree) / (module.replace(".", "/") + ".py")
+        text = path.read_text() if module and path.is_file() else ""
+        if not re.search(rf"^def {re.escape(name)}\(", text, re.M):
+            parser.error(f"--forbid {origin} is not a function of {args.tree}")
     head = subprocess.run(
         ["git", "-C", args.v6, "rev-parse", "HEAD"], capture_output=True, text=True
     ).stdout.strip()
@@ -233,7 +259,7 @@ def main(argv=None):
             pairs = list(zip(outputs["v6"], outputs["tree"], strict=True))
             count, *found = compare(family, pairs)
             total += count
-            problems += report(family, count, *found, fallbacks=args.fallbacks)
+            problems += report(family, count, *found, fallbacks=args.fallbacks, forbid=args.forbid)
             if not args.keep:
                 for path in outputs["v6"] + outputs["tree"]:
                     path.unlink()

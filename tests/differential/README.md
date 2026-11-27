@@ -6,8 +6,9 @@ NexKit 6 at 8bf5190, and keeps the engine's invariants
 they go with NexKit 6's code once 7.0 ships.
 
 Nothing here is a test that `unittest discover` runs: the folder is no package, and no file's
-name starts with `test`. Nothing that `unittest` or the engine's mutation check runs reads it.
-Standard library only.
+name starts with `test`. The one test that reads it is `tests/test_differential.py`, which loads
+`harness.py` by its path to test how it counts `--forbid`. The engine's mutation check reads
+nothing of it. Standard library only.
 
 ## The differential check
 
@@ -16,6 +17,7 @@ git worktree add --detach ../nexkit-v6 8bf5190
 python3 tests/differential/harness.py --v6 ../nexkit-v6               # every scenario
 python3 tests/differential/harness.py --v6 ../nexkit-v6 --sample 400  # what CI plays
 python3 tests/differential/harness.py --v6 ../nexkit-v6 --fallbacks   # and the decisions that fall back
+python3 tests/differential/harness.py --v6 ../nexkit-v6 --forbid nexkit.host.close_done  # and fail on one
 ```
 
 `harness.py` plays every family of `families/` on NexKit 6, which must be a checkout of
@@ -45,6 +47,14 @@ prints `resync fell back: none` for a family with no such decision. `check.sh` p
 CI's log shows the list. A change that moves a function to the stored state shows that the
 function no longer appears there. The hook that counts them is `host.on_fallback`, which only a test
 or `play.py` sets.
+
+`--forbid FUNCTION` makes the check fail on a fallback. It names a host function as `decide_all`
+reports it, such as `nexkit.host.command`, and can be repeated. Each fallback of a named function
+counts as a difference that `known.py` does not list, whether or not `--fallbacks` is set, and the
+line `forbidden fallback` names it. A name that is no function of the tree is refused, so that a
+misspelt name cannot pass without checking anything. `check.sh` passes it for each function that
+decides on the stored state alone. Each change that moves a function there adds its own `--forbid`
+to `check.sh`, which is how the check shows that the function no longer falls back.
 
 `play.py ROOT FAMILY OUT --only I` plays one scenario on one tree, to look at it.
 

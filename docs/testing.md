@@ -109,7 +109,8 @@ Until NexKit 7.0 ships, changes move NexKit 6's decisions into the engine one by
   `tests/differential/mutants.py` instead. Each scenario stores its items' imports as the state
   comment before its first event, which the check does not compare with NexKit 6, and
   `--fallbacks` lists the decisions of `host.resync` that still come from the markers'
-  document (the [README](../tests/differential/README.md) says how). With a checkout of
+  document, and `--forbid FUNCTION` fails the check when a named host function still falls back
+  to it (the [README](../tests/differential/README.md) says how). With a checkout of
   8bf5190 for the first command:
 
   ```sh

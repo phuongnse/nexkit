@@ -352,7 +352,9 @@ class EventIdTest(HostCase):
             event = comment_event(5, "/nexkit plan Close the issue")
             event["comment"]["id"] = number
             with mock.patch.object(host, "step", wraps=host.step) as step:
-                self.assertEqual(route(self.gh, "issue_comment", event)["task"], "close_answer")
+                self.assertEqual(
+                    route(self.gh, "issue_comment", event, cfg=self.cfg)["task"], "close_answer"
+                )
             ids.append(step.call_args.args[1]["id"])
         self.assertEqual(ids, ["comment-77", "comment-78"])
 
@@ -742,10 +744,12 @@ class RefusedTest(HostCase):
             event = comment_event(5, "/nexkit plan Close the issue")
             # An engine that refuses the item starts nothing for a person's command either: the
             # person gets a reply that says so.
-            refusal = route(self.gh, "issue_comment", event)
+            refusal = route(self.gh, "issue_comment", event, cfg=self.cfg)
             self.assertEqual((refusal["action"], refusal["reply_to"]), ("none", 5))
             self.assertIn("passes the limit", refusal["reason"])
-        self.assertEqual(route(self.gh, "issue_comment", event)["task"], "close_answer")
+        self.assertEqual(
+            route(self.gh, "issue_comment", event, cfg=self.cfg)["task"], "close_answer"
+        )
 
 
 class DecideTest(HostCase):
@@ -1361,7 +1365,7 @@ class ClosingCommandTest(HostCase):
         self.asked = self.plan(5, {"questions": [{**ASKED, "recommended": 0}]})
 
     def decide(self, body):
-        return route(self.gh, "issue_comment", comment_event(5, body))
+        return route(self.gh, "issue_comment", comment_event(5, body), cfg=self.cfg)
 
     def test_a_writer_s_closing_answer_to_the_plan_is_the_engine_s_to_close(self):
         decision = self.decide("/nexkit plan Close the issue")
@@ -1375,6 +1379,35 @@ class ClosingCommandTest(HostCase):
 
     def test_another_note_goes_to_its_round(self):
         self.assertEqual(self.decide("/nexkit go Keep it")["action"], "implement")
+
+
+class NoConfigurationTest(HostCase):
+    """A command is decided with the configuration's policies: without them `command` and
+    `closing_command` raise `Refused` and the engine is not asked. `route._decide` gives the
+    configuration error before it comes to that."""
+
+    def test_command_refuses_without_the_configuration(self):
+        self.issue(5)
+        with mock.patch.object(host.engine, "answer") as answer:
+            with self.assertRaises(host.Refused):
+                host.command(None, 5, "plan", gh=self.gh, source_id=7, by="alice")
+            with self.assertRaises(host.Refused):
+                host.command(make_config(), 5, "plan", source_id=7)
+        answer.assert_not_called()
+
+    def test_closing_command_refuses_without_the_configuration(self):
+        self.issue(5)
+        self.plan(5, {"questions": [{**ASKED, "recommended": 0}]})
+        decision = {
+            "action": "plan",
+            "issue": 5,
+            "branch": "nexkit/issue-5",
+            "note": "Close the issue",
+        }
+        with mock.patch.object(host.engine, "answer") as answer:
+            with self.assertRaises(host.Refused):
+                host.closing_command(self.gh, decision, self.gh.comments(5), {"id": 7}, cfg=None)
+        answer.assert_not_called()
 
 
 class PoliciesTest(HostCase):
@@ -1773,9 +1806,11 @@ class RoundClosingCommandTest(HostCase):
         self.asked = self.run_comment(5, "go", status="failure", **run)
 
     def decide(self, body):
-        return route(self.gh, "issue_comment", comment_event(5, body))
+        return route(self.gh, "issue_comment", comment_event(5, body), cfg=self.cfg)
 
     def test_a_writer_s_closing_answer_to_a_round_is_the_engine_s_to_close(self):
+        # As `nexkit route` stores the first state before it routes the item's first event.
+        seed(self.gh, self.cfg, 5)
         with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
             decision = self.decide("/nexkit go 3")
         self.assertEqual(
@@ -2724,14 +2759,14 @@ class ManyChecksTest(ReportCase):
         repeated = self.round_with(range(40), (32, 33, 34, 35), self.fix(auto=True))
         self.assertEqual(repeated, ["c032", "c033", "c034", "c035"])
         event = {"inputs": {"command": "fix", "number": "6", "note": "", "auto": "true"}}
-        found = route(self.gh, "workflow_dispatch", event, event["inputs"])
+        found = route(self.gh, "workflow_dispatch", event, event["inputs"], cfg=make_config())
         self.assertEqual(found["diagnose"], ["c032", "c033", "c034", "c035"])
 
     def test_a_diagnosis_round_looks_into_the_first_ten_of_more(self):
         repeated = self.round_with(range(40), range(5, 40), self.fix(auto=True))
         self.assertEqual(repeated, [f"c{n:03}" for n in range(5, 40)])
         event = {"inputs": {"command": "fix", "number": "6", "note": "", "auto": "true"}}
-        found = route(self.gh, "workflow_dispatch", event, event["inputs"])
+        found = route(self.gh, "workflow_dispatch", event, event["inputs"], cfg=make_config())
         self.assertEqual(found["diagnose"], [f"c{n:03}" for n in range(5, 15)])
 
     def test_a_person_s_fix_round_s_checks_compare_too(self):
@@ -2740,7 +2775,9 @@ class ManyChecksTest(ReportCase):
 
     def route_diagnoses(self):
         event = {"inputs": {"command": "fix", "number": "6", "note": "", "auto": "true"}}
-        return route(self.gh, "workflow_dispatch", event, event["inputs"]).get("diagnose")
+        return route(self.gh, "workflow_dispatch", event, event["inputs"], cfg=make_config()).get(
+            "diagnose"
+        )
 
     def test_a_check_past_the_300th_failing_result_is_not_compared(self):
         # The state compares with the first 300 failing results, so c305 is not compared.
@@ -2833,7 +2870,9 @@ class DiagnosisTest(HostCase):
         for auto in ("true", "conflicts", "false"):
             event = {"inputs": {"command": "fix", "number": "6", "note": "", "auto": auto}}
             with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
-                found[auto] = route(self.gh, "workflow_dispatch", event, event["inputs"])
+                found[auto] = route(
+                    self.gh, "workflow_dispatch", event, event["inputs"], cfg=self.cfg
+                )
             # The command is the engine's to start. Only an automatic round then asks what it
             # diagnoses: a person's round and a conflict round diagnose nothing.
             kinds = [call.args[0]["event"]["kind"] for call in answer.call_args_list]
@@ -2845,7 +2884,8 @@ class DiagnosisTest(HostCase):
         with mock.patch.object(host, "diagnosis", side_effect=host.Refused("No.")):
             event = {"inputs": {"command": "fix", "number": "6", "note": "", "auto": "true"}}
             self.assertNotIn(
-                "diagnose", route(self.gh, "workflow_dispatch", event, event["inputs"])
+                "diagnose",
+                route(self.gh, "workflow_dispatch", event, event["inputs"], cfg=self.cfg),
             )
 
 

@@ -1462,14 +1462,37 @@ class CarriesOnTest(HostCase):
         self.assertTrue(self.carries_on(4, finding, self.cfg))
 
 
+def opened(gh, pull, head=HEAD):
+    """The round that the implement run which opened the NexKit pull request `pull` posts. With
+    none, the item is in its checks and the engine starts no command on it."""
+    gh.round_comment(
+        pull,
+        1,
+        head,
+        "passed",
+        command="go",
+        trigger="implement",
+        outcome="ready",
+        verdict="approve",
+    )
+
+
 class ClosingCommandTest(HostCase):
     def setUp(self):
         super().setUp()
         self.issue(5)
         self.asked = self.plan(5, {"questions": [{**ASKED, "recommended": 0}]})
+        # As `nexkit route` stores the first state before it routes the item's first event.
+        seed(self.gh, self.cfg, 5)
 
-    def decide(self, body):
-        return route(self.gh, "issue_comment", comment_event(5, body), cfg=self.cfg)
+    def decide(self, body, comment=None, taken=None):
+        event = comment_event(5, body)
+        if comment:
+            event["comment"]["id"] = comment["id"]
+        return route(self.gh, "issue_comment", event, cfg=self.cfg, taken=taken)
+
+    def revision(self):
+        return item_state.read(self.gh, 5)[1]["revision"]
 
     def test_a_writer_s_closing_answer_to_the_plan_is_the_engine_s_to_close(self):
         decision = self.decide("/nexkit plan Close the issue")
@@ -1477,9 +1500,58 @@ class ClosingCommandTest(HostCase):
         self.assertEqual(found, ("close_answer", "Close the issue"))
         self.assertEqual(decision["asked"], self.asked["html_url"])
 
+    def test_a_closing_go_that_take_stored_is_carried_out_from_its_answer(self):
+        said = self.gh.human_comment(5, "/nexkit go Close the issue", at=LATER)
+        taken = host.take(self.gh, self.cfg, 5)
+        # The engine closes only on an answer: `take` sends the command as one.
+        self.assertEqual([event["kind"] for event, _ in taken], ["answered"])
+        self.assertEqual(self.revision(), 2)
+        with mock.patch.object(host.engine, "answer", side_effect=AssertionError("asked again")):
+            decision = self.decide("/nexkit go Close the issue", said, taken)
+        found = (decision["task"], decision["answer"], decision["asked"])
+        self.assertEqual(found, ("close_answer", "Close the issue", self.asked["html_url"]))
+        self.assertEqual(decision["comment_id"], said["id"])
+        self.assertEqual(self.revision(), 2)
+
+    def test_a_closing_go_with_no_taken_event_only_previews_the_answer(self):
+        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+            decision = self.decide("/nexkit go Close the issue")
+        self.assertEqual(decision["task"], "close_answer")
+        self.assertEqual([r["event"]["kind"] for r in asked_step(answer)], ["answered"])
+        self.assertEqual(self.revision(), 1)
+
+    def test_a_closing_command_whose_run_was_replaced_is_carried_out_by_the_run_that_ran(self):
+        closing = self.gh.human_comment(5, "/nexkit go Close the issue", at=LATER)
+        later = self.gh.human_comment(5, "Thanks.", login="bob", at=LATER)
+        taken = host.take(self.gh, self.cfg, 5)
+        self.assertEqual([event["kind"] for event, _ in taken][0], "answered")
+        # The run of the later comment is the one that ran: it carries out the earlier command.
+        decision = self.decide("Thanks.", later, taken)
+        self.assertEqual(decision["task"], "close_answer")
+        self.assertEqual(decision["comment_id"], closing["id"])
+        self.assertEqual(decision["actor"], "alice")
+
+    def test_a_plan_is_decided_on_the_stored_state_not_on_one_built_from_markers(self):
+        read = item_state.read(self.gh, 5)
+        changed = {**read[1], "revision": 2, "title": "Stored, not built from markers"}
+        self.assertTrue(item_state.write(self.gh, 5, changed, read))
+        stored = item_state.read(self.gh, 5)[1]
+        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+            self.decide("/nexkit plan Keep it")
+        [request] = asked_step(answer)
+        self.assertEqual(request["state"], stored)
+        self.assertEqual(request["state"]["title"], "Stored, not built from markers")
+
     def test_an_open_pull_request_keeps_the_issue_for_a_person(self):
-        self.gh.add_pull(6, 5)
-        self.assertEqual(self.decide("/nexkit plan Close the issue")["action"], "plan")
+        gh = self.gh = FakeGitHub()
+        self.issue(5)
+        self.plan(5, {"questions": [{**ASKED, "recommended": 0}]})
+        gh.add_pull(6, 5)
+        opened(gh, 6)
+        seed(gh, self.cfg, 5)
+        decision = self.decide("/nexkit plan Close the issue")
+        self.assertEqual(decision["action"], "none")
+        self.assertIn("Pull request #6 is already open for this issue", decision["reason"])
 
     def test_another_note_goes_to_its_round(self):
         self.assertEqual(self.decide("/nexkit go Keep it")["action"], "implement")
@@ -1502,15 +1574,18 @@ class NoConfigurationTest(HostCase):
     def test_closing_command_refuses_without_the_configuration(self):
         self.issue(5)
         self.plan(5, {"questions": [{**ASKED, "recommended": 0}]})
-        decision = {
-            "action": "plan",
-            "issue": 5,
-            "branch": "nexkit/issue-5",
-            "note": "Close the issue",
-        }
         with mock.patch.object(host.engine, "answer") as answer:
             with self.assertRaises(host.Refused):
-                host.closing_command(self.gh, decision, self.gh.comments(5), {"id": 7}, cfg=None)
+                host.closing_command(
+                    self.gh,
+                    None,
+                    5,
+                    "Close the issue",
+                    self.gh.comments(5),
+                    7,
+                    branch="nexkit/issue-5",
+                    by="alice",
+                )
         answer.assert_not_called()
 
 
@@ -2151,15 +2226,21 @@ class RoundClosingCommandTest(HostCase):
         self.assertEqual(
             (decision["task"], decision["answer"]), ("close_answer", "Close the issue")
         )
-        # The command goes to the engine first, then the answer that only closes the issue.
+        # The engine is asked only the answer that only closes the issue, and nothing is stored:
+        # no `take` stored the command in this run.
         kinds = [call.args[0]["event"]["kind"] for call in answer.call_args_list]
-        self.assertEqual(kinds, ["requested", "answered"])
+        self.assertEqual(kinds, ["answered"])
         call = answer.call_args_list[-1]
         self.assertEqual(call.args[0]["state"]["questions"]["ref"], str(self.asked["id"]))
+        self.assertEqual(item_state.read(self.gh, 5)[1]["revision"], 1)
 
     def test_an_open_pull_request_keeps_the_issue_for_a_person(self):
         self.gh.add_pull(6, 5)
-        self.assertEqual(self.decide("/nexkit plan Close the issue")["action"], "plan")
+        opened(self.gh, 6)
+        seed(self.gh, self.cfg, 5)
+        decision = self.decide("/nexkit plan Close the issue")
+        self.assertEqual(decision["action"], "none")
+        self.assertIn("Pull request #6 is already open for this issue", decision["reason"])
 
 
 class PlanWaitsForTest(HostCase):
@@ -3284,6 +3365,9 @@ class ManyChecksTest(ReportCase):
         self.write("nexkit-agent", "result.json", {"status": "done", "tokens": TOKENS})
         self.write("nexkit-checks", "checks.json", self.checks(after, count))
         self.write("nexkit-review", "result.json", review_result())
+        # The stored state that the implement run left: the pull request in its checks. The
+        # fix round that this round starts is stored by its report, which the dispatch carries out.
+        seed(self.gh, make_config(), 5)
         self.run_report(d=d)
         return read_state(self.gh.comments(6))[1]["feedback"].get("repeated")
 
@@ -3409,7 +3493,9 @@ class DiagnosisTest(HostCase):
         self.assertEqual(host.diagnosis(self.gh, cfg, 5, 6, head, False, ["test"]), [])
 
     def test_route_takes_the_diagnosis_from_the_engine(self):
+        self.issue(5)
         self.gh.add_pull(6, 5, head_sha="c" * 40)
+        opened(self.gh, 6, "c" * 40)
         state = {**empty_state(5), "feedback": {"head": "c" * 40, "repeated": ["test"]}}
         self.gh.comment(6, render_state(state))
         found = {}
@@ -3550,6 +3636,7 @@ class DispatchedTest(HostCase):
         # diagnoses `lint` must not follow.
         state = {**empty_state(5), "feedback": {"head": self.HEAD, "repeated": ["test"]}}
         self.gh.comment(6, render_state(state))
+        opened(self.gh, 6, self.HEAD)
         seed(self.gh, self.cfg, 5)
 
     def pend(self, action, **fields):
@@ -3646,7 +3733,9 @@ class DispatchedTest(HostCase):
                 self.assertEqual(host._dispatch_id({"revision": 4}), "dispatch-local-5", run)
 
     def test_a_persons_dispatch_is_decided_as_a_new_request(self):
-        stored = self.fix_round(diagnose=["lint"])
+        # Nothing is pending: the round that opened the pull request is over.
+        stored = item_state.read(self.gh, 5)[1]
+        self.assertEqual((stored["state"], stored["pending"]), ("ready", []))
         with mock.patch.object(host, "step", wraps=host.step) as asked:
             found = self.dispatch("fix", auto="false")
         self.assertEqual(found["action"], "fix")

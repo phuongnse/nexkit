@@ -239,9 +239,15 @@ class Step:
         return f"{prefix}{self.s['revision'] + 1}.{count}"
 
     def next_action(self):
-        """The id of the next action: one a withdrawn action had is never given again."""
-        self.issued += 1
-        return self.number("a", self.issued)
+        """The id of the next action: one a withdrawn action had is never given again, nor one
+        that a pending action has, which a host that stores several events as one revision can
+        leave behind."""
+        taken = {action["id"] for action in self.s.get("pending") or []}
+        while True:
+            self.issued += 1
+            found = self.number("a", self.issued)
+            if found not in taken:
+                return found
 
     def kept(self):
         """The policies a round that starts now keeps (`KEPT`)."""
@@ -961,14 +967,19 @@ class Step:
                 self.s["waits"] = [wait for wait in self.s["waits"] if wait["for"] != "start"]
                 self.resume()
         elif what in ("plan", "planFromScratch"):
-            if self.review_only or state not in ("new", "awaitingApproval", "failed"):
+            if self.review_only or not (
+                state in ("new", "awaitingApproval", "failed") or self.waits_to_run_again()
+            ):
                 return False
             self.start_plan()
         elif what == "go":
             plan = (self.s["plan"] or {}).get("text", {}).get("ref")
-            if self.review_only or state not in ("new", "awaitingApproval"):
+            again = state == "working" and self.waits_to_run_again()
+            if self.review_only or not (state in ("new", "awaitingApproval") or again):
                 return False
-            if event["plan"] != plan:
+            # The plan of a round that waits is approved already: a go replaces the wait whatever
+            # plan it names.
+            if event["plan"] != plan and not again:
                 # A go approves the plan it names: one for another plan arrives late.
                 return False
             if self.s["plan"]:
@@ -1009,6 +1020,16 @@ class Step:
         else:
             return False
         return True
+
+    def waits_to_run_again(self):
+        """Whether the item's plan or implement run waits to run again, after a transient stop or
+        a usage limit: a person's `plan` or `go` replaces that wait, as a new command replaces it
+        in NexKit 6, so the run that waits starts nothing once its time comes."""
+        return (
+            self.state in ("planning", "working")
+            and any(wait["for"] in ("time", "usageLimit") for wait in self.s["waits"])
+            and not any(action["kind"] == "runAgent" for action in self.s["pending"])
+        )
 
     def vouched(self, event):
         """A writer's `/nexkit trust` after an untrusted edit stopped the item

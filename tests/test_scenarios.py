@@ -255,6 +255,14 @@ class Pipeline:
             cli._take(self.gh, self.cfg, "workflow_dispatch", {"inputs": {"number": str(number)}})
         return out.getvalue()
 
+    def take_group_run(self, inputs):
+        """The start of a run of an item's group, which `nexkit route` makes before it routes
+        (`take_run`), for a dispatch that names an item by its number. A command decides on the
+        stored state, which the item's first run stores before anything is decided."""
+        number = str(inputs.get("number") or "")
+        if number.isdigit():
+            self.take_run(int(number))
+
     def state_comments(self, number):
         """The state comments of item `number`, which the App posted."""
         return [c for c in self.gh.comments(number) if c["body"].startswith("### NexKit state")]
@@ -323,6 +331,7 @@ class Pipeline:
         self.steps += 1
         self.test.assertLess(self.steps, MAX_STEPS, f"a loop: {self.played}")
         before = len(self.gh.dispatches)
+        self.take_group_run(dispatch["inputs"])
         decision = route(self.gh, "workflow_dispatch", {}, dispatch["inputs"])
         if decision["action"] == "none":
             # As `nexkit route` ends it: a step with nothing to do, such as an approval of a
@@ -400,6 +409,7 @@ class Pipeline:
             return
         os.environ["GITHUB_RUN_ID"] = str(run_id)
         self.gh.runs[run_id] = {"status": "in_progress"}
+        self.take_group_run(inputs)
         decision = route(
             self.gh, "workflow_dispatch", {"sender": {"login": BOT_LOGIN}}, inputs, cfg=self.cfg
         )
@@ -562,7 +572,13 @@ class Pipeline:
 
     def later(self, step):
         """Move every record and comment of NexKit, and the time each issue closed, back by
-        `step`, as if that much time passed."""
+        `step`, as if that much time passed. Each call adds two seconds more than the one
+        before, so that two waits that end within the same real second, or on either side of a
+        real second's turn, still end at different times, as the waits of a real clock do: the
+        engine names a resume by its time and ignores a time that it has seen. One second more
+        would not do, since a turn of the real second between two waits takes it back."""
+        self.moves = getattr(self, "moves", 0) + 1
+        step += timedelta(seconds=2 * self.moves)
         self.elapsed += step
         for issue in self.gh.issues.values():
             if issue.get("closed_at"):
@@ -590,6 +606,29 @@ class Pipeline:
                     comment["body"] = autopilot.RECORD_PATTERN.sub(
                         autopilot.record_marker(record), comment["body"]
                     )
+                self.shift_state(comment, step)
+
+    @staticmethod
+    def shift_state(comment, step):
+        """Move the times that the state document in `comment`, if it is one, holds back by
+        `step`, such as the time a wait ends, and keep its revision and its cursor."""
+        if not comment["body"].startswith("### NexKit state"):
+            return
+        held = item_state.find([comment])[1]
+        if held is None:
+            return
+
+        def moved(value):
+            if isinstance(value, str) and re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", value):
+                at = datetime.fromisoformat(value.replace("Z", "+00:00")) - step
+                return at.strftime("%Y-%m-%dT%H:%M:%SZ")
+            if isinstance(value, dict):
+                return {key: moved(item) for key, item in value.items()}
+            if isinstance(value, list):
+                return [moved(item) for item in value]
+            return value
+
+        comment["body"] = item_state.render(moved(held), item_state.since(comment))
 
     # -- the invariant --------------------------------------------------------------
 
@@ -1387,7 +1426,9 @@ class ScenarioTests(unittest.TestCase):
             pipe.take_run(5)
             stored = item_state.read(pipe.gh, 5)[1]
             self.assertIn("review-9000", stored["recentEvents"])
-            self.assertEqual([action["kind"] for action in stored["pending"]], ["accept"])
+            # The refused merge stored a `needPerson` in the item's group, and the approval
+            # cancels it before the engine's accept.
+            self.assertEqual([action["kind"] for action in stored["pending"]], ["cancel", "accept"])
             pipe.drain()
         self.assertEqual(len(pipe.gh.merged), 1)
         heard = [
@@ -3870,7 +3911,13 @@ class ScenarioTests(unittest.TestCase):
 
     def stored_import(self, pipe, number=5, pull=None):
         """Run `take_run` on `pipe` and check that it stored one state comment, at revision 1,
-        which holds what `first_state.import_item` makes of the item now. Returns the document."""
+        which holds what `first_state.import_item` makes of the item now. Returns the document.
+        The runs before it stored the item's state, as every run of the group does; the item is
+        as an upgrade finds it, with the work of NexKit 6 and no state comment, so that comment
+        is deleted first."""
+        pipe.gh.issue_comments[number] = [
+            c for c in pipe.gh.issue_comments[number] if c not in pipe.state_comments(number)
+        ]
         out = pipe.take_run(number)
         self.assertIn(f"Stored the first state of #{number}", out)
         [comment] = pipe.state_comments(number)
@@ -3964,11 +4011,11 @@ class ScenarioTests(unittest.TestCase):
             pipe.gh.human_comment(5, "Please keep it small.")
         # Force the records of the two plays a second apart, as a slow runner does.
         self.same_item(imported, plain, "open", skew=timedelta(seconds=1))
-        # The runs of the item's group stored their answers past the import's revision, while
-        # the item that stored no import still has no state comment.
-        [comment] = imported.state_comments(5)
-        self.assertGreater(item_state.find([comment])[1]["revision"], 1)
-        self.assertEqual(plain.state_comments(5), [])
+        # The runs of the item's group stored their answers past the import's revision, and the
+        # item that was never imported stored its own from its first run.
+        for pipe in (imported, plain):
+            [comment] = pipe.state_comments(5)
+            self.assertGreater(item_state.find([comment])[1]["revision"], 1)
 
     def test_a_pull_request_in_its_checks_is_imported_and_carries_on_as_before(self):
         def built(import_there):

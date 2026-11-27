@@ -1819,9 +1819,9 @@ class CountTest(ReportCase):
     def test_required_checks_that_fail_at_the_merge_follow_the_engine(self):
         cfg = make_config(merge={"auto": True}, fix={"max_auto_rounds": 2})
         wait = {"bug": 77, "workflow": "ci.yml", "branch": "main", "run": 50}
-        self.assertEqual(host.required_failed(cfg, 5, 6, "c" * 40, 1, None), "auto_fix")
-        self.assertEqual(host.required_failed(cfg, 5, 6, "c" * 40, 1, wait), "ci_waiting")
-        self.assertEqual(host.required_failed(cfg, 5, 6, "c" * 40, 2, wait), "needs_human")
+        self.assertEqual(host.required_failed(self.gh, cfg, 5, 6, "c" * 40, 1, None), "auto_fix")
+        self.assertEqual(host.required_failed(self.gh, cfg, 5, 6, "c" * 40, 1, wait), "ci_waiting")
+        self.assertEqual(host.required_failed(self.gh, cfg, 5, 6, "c" * 40, 2, wait), "needs_human")
 
     def test_required_checks_read_the_base_failure_only_when_a_fix_round_is_left(self):
         head = "c" * 40
@@ -1863,7 +1863,9 @@ class AcceptAnswerTest(ReportCase):
         cfg = cfg or make_config(merge={"auto": True}, fix={"max_auto_rounds": 2})
         refusal = result if isinstance(result, dict) else {"accepted": False, "refusal": result}
         refusal = {"text": "Refused.", **refusal}
-        return host.accept_answer(cfg, 5, 6, self.HEAD, used, refusal, at=self.AT, **fields)
+        return host.accept_answer(
+            self.gh, cfg, 5, 6, self.HEAD, used, refusal, at=self.AT, **fields
+        )
 
     def test_a_merge_that_went_through_is_accepted(self):
         end, state = self.answer({"accepted": True, "refusal": None})
@@ -1918,7 +1920,7 @@ class AcceptAnswerTest(ReportCase):
     def test_an_update_that_failed_is_a_person_s(self):
         resolve = make_config(merge={"auto": True}, conflicts={"auto_resolve": True})
         with mock.patch.object(host, "step", wraps=host.step) as step:
-            end = host.update_failed(resolve, 5, 6, self.HEAD, 0, "It failed.", 1)
+            end = host.update_failed(self.gh, resolve, 5, 6, self.HEAD, 0, "It failed.", 1)
         self.assertEqual(end, "person")
         state, event = step.call_args.args[:2]
         self.assertEqual(state["rounds"]["updates"], 1)
@@ -1926,7 +1928,7 @@ class AcceptAnswerTest(ReportCase):
         self.assertEqual(event["result"], failed)
         with mock.patch.object(host, "step", side_effect=host.Refused("no")):
             with self.assertRaises(host.Refused):
-                host.update_failed(resolve, 5, 6, self.HEAD, 0, "It failed.")
+                host.update_failed(self.gh, resolve, 5, 6, self.HEAD, 0, "It failed.")
 
     def test_a_merge_that_was_not_accepted_fails_the_item(self):
         end, state = self.answer("notAccepted")
@@ -2042,6 +2044,192 @@ class ApprovedTest(TestCase):
                 self.answer("merge_refused", True)
 
 
+class MergeDecideTest(ReportCase):
+    """A merge decision that runs in the item's group stores the engine's answer at the next
+    revision, and one that does not only previews it (`host.decide`)."""
+
+    HEAD = "c" * 40
+    MOVED = "d" * 40
+    AT = "2026-11-23T15:01:11Z"
+    CFG = make_config(
+        merge={"auto": True}, fix={"max_auto_rounds": 2}, conflicts={"auto_resolve": True}
+    )
+
+    def setUp(self):
+        super().setUp()
+        self.assertTrue(host.store_import(self.gh, self.CFG, 5))
+
+    def read(self):
+        return item_state.read(self.gh, 5)[1]
+
+    def refused(self, kind):
+        return {"accepted": False, "refusal": kind, "text": "Refused."}
+
+    def spied(self):
+        """A stand-in for `host.step` that calls it and keeps its requests."""
+        seen, real = [], host.step
+
+        def spy(state, event, found_policies):
+            found = real(state, event, found_policies)
+            seen.append((state, event, found))
+            return found
+
+        return seen, spy
+
+    def test_a_branch_behind_its_base_stores_its_update_and_the_updates_used(self):
+        refusal = self.refused("behind")
+        end, state = host.accept_answer(
+            self.gh, self.CFG, 5, 6, self.HEAD, 0, refusal, updates=1, write=True
+        )
+        self.assertEqual(end, "update")
+        stored = self.read()
+        self.assertEqual(stored, state)
+        self.assertEqual(stored["revision"], 2)
+        self.assertEqual([action["kind"] for action in stored["pending"]], ["updateChange"])
+        # The update counts once it is done, so the stored count is what was used before it.
+        self.assertEqual(stored["rounds"]["updates"], 1)
+
+    def test_a_branch_whose_updates_are_used_up_stores_the_wait_for_a_person(self):
+        cfg = make_config(merge={"auto": True}, conflicts={"auto_resolve": True, "max_rounds": 2})
+        end, _ = host.accept_answer(
+            self.gh, cfg, 5, 6, self.HEAD, 0, self.refused("behind"), updates=2, write=True
+        )
+        self.assertEqual(end, "person")
+        stored = self.read()
+        self.assertEqual(
+            (stored["state"], stored["attention"]["reason"]), ("ready", "acceptRefused")
+        )
+        self.assertEqual(stored["rounds"]["updates"], 2)
+
+    def test_a_conflict_stores_the_conflict_rounds_the_engine_counts(self):
+        end, state = host.accept_answer(
+            self.gh, self.CFG, 5, 6, self.HEAD, 0, self.refused("conflict"), conflicts=1, write=True
+        )
+        self.assertEqual(end, "fix")
+        stored = self.read()
+        self.assertEqual(stored, state)
+        self.assertEqual(stored["revision"], 2)
+        self.assertEqual(stored["rounds"]["conflicts"], 2)
+        self.assertEqual([action["stage"] for action in stored["pending"]], ["fix"])
+
+    def test_a_conflict_with_no_round_left_stores_the_wait_for_a_person(self):
+        cfg = make_config(merge={"auto": True}, conflicts={"auto_resolve": True, "max_rounds": 1})
+        end, _ = host.accept_answer(
+            self.gh, cfg, 5, 6, self.HEAD, 0, self.refused("conflict"), conflicts=1, write=True
+        )
+        self.assertEqual(end, "person")
+        stored = self.read()
+        self.assertEqual(
+            (stored["state"], stored["attention"]["reason"]), ("ready", "acceptRefused")
+        )
+        self.assertEqual(stored["rounds"]["conflicts"], 1)
+
+    def test_a_head_that_moved_is_stored_before_the_merge_s_result_is_decided_on_it(self):
+        before = [host.head_observed(5, 6, self.MOVED)]
+        seen, spy = self.spied()
+        with mock.patch.object(host, "step", spy):
+            end, state = host.accept_answer(
+                self.gh,
+                self.CFG,
+                5,
+                6,
+                self.HEAD,
+                0,
+                self.refused("headMoved"),
+                before=before,
+                at=self.AT,
+                write=True,
+            )
+        self.assertEqual(end, "review")
+        # The observation is decided on the stored revision and stored at the next, and the
+        # result, which the engine hears next, is decided on that stored document.
+        [(first, observed, found), (second, result, _)] = seen
+        self.assertEqual((first["revision"], found["state"]["revision"]), (1, 2))
+        self.assertEqual(observed["kind"], "changeObserved")
+        self.assertEqual(second["revision"], 2)
+        self.assertIn(observed["id"], second["recentEvents"])
+        self.assertEqual(result["kind"], "actionFinished")
+        stored = self.read()
+        self.assertEqual(stored["revision"], 2)
+        self.assertEqual(stored["change"]["version"], self.MOVED)
+        self.assertIn(observed["id"], stored["recentEvents"])
+        self.assertEqual(state["change"]["version"], self.MOVED)
+
+    def test_a_merge_decision_without_write_stores_nothing(self):
+        before = copy.deepcopy(self.gh.comments(5))
+        cfg, now = self.CFG, datetime(2026, 11, 23, 15, 0, 0, tzinfo=UTC)
+        run = {"head": self.HEAD, "outcome": "merge_refused"}
+        seen = {"version": self.HEAD, "merged": False, "empty": True}
+        answers = [
+            lambda: host.required_failed(self.gh, cfg, 5, 6, self.HEAD, 0, None),
+            lambda: host.accept_answer(
+                self.gh, cfg, 5, 6, self.HEAD, 0, self.refused("behind"), updates=1
+            ),
+            lambda: host.accept_answer(
+                self.gh,
+                cfg,
+                5,
+                6,
+                self.HEAD,
+                0,
+                self.refused("headMoved"),
+                before=[host.head_observed(5, 6, self.MOVED)],
+            ),
+            lambda: host.checks_waited(self.gh, cfg, 5, 6, self.HEAD, now, now),
+            lambda: host.refusal_cleared(self.gh, cfg, 5, 6, run, True),
+            lambda: host.update_failed(self.gh, cfg, 5, 6, self.HEAD, 0, "It failed."),
+            lambda: host.change_seen(self.gh, cfg, 5, 6, self.HEAD, 0, seen),
+        ]
+        for answer in answers:
+            answer()
+        self.assertEqual(self.gh.comments(5), before)
+        self.assertEqual(self.read()["revision"], 1)
+
+    def test_each_merge_decision_stores_one_answer_at_the_next_revision(self):
+        cfg, now = self.CFG, datetime(2026, 11, 23, 15, 0, 0, tzinfo=UTC)
+        seen = {"version": self.HEAD, "merged": False, "empty": True}
+        answers = {
+            "required_failed": lambda: host.required_failed(
+                self.gh, cfg, 5, 6, self.HEAD, 0, None, write=True
+            ),
+            "checks_waited": lambda: host.checks_waited(
+                self.gh, cfg, 5, 6, self.HEAD, now, now, write=True
+            ),
+            "update_failed": lambda: host.update_failed(
+                self.gh, cfg, 5, 6, self.HEAD, 0, "It failed.", write=True
+            ),
+            "change_seen": lambda: host.change_seen(
+                self.gh, cfg, 5, 6, self.HEAD, 0, seen, write=True
+            ),
+        }
+        for name, answer in answers.items():
+            with self.subTest(name):
+                self.gh.issue_comments[5] = [
+                    c for c in self.gh.comments(5) if not c["body"].startswith("### NexKit state")
+                ]
+                self.assertTrue(host.store_import(self.gh, cfg, 5))
+                answer()
+                self.assertEqual(self.read()["revision"], 2)
+
+    def test_a_tick_names_the_wait_of_the_document_it_is_decided_on(self):
+        self.assertIsNone(host.wait_id(self.read(), "requiredChecks"))
+        refusal = self.refused("waitingForChecks")
+        host.accept_answer(self.gh, self.CFG, 5, 6, self.HEAD, 0, refusal, at=self.AT, write=True)
+        waiting = self.read()
+        named = host.wait_id(waiting, "requiredChecks")
+        self.assertTrue(named and named != "w1.1")
+        self.assertIsNone(host.wait_id(waiting, "baseFailure"))
+        event = host._event("tick", 5, self.AT, "merge-6-x", wait="w1.1")
+        seen, spy = self.spied()
+        with mock.patch.object(host, "step", spy):
+            host.decide(self.gh, self.CFG, 5, event, waiting, pull=6, wait="requiredChecks")
+            host.decide(self.gh, self.CFG, 5, event, waiting, pull=6)
+        # With `wait`, the tick names the stored document's wait, and without it, its own.
+        [(_, with_wait, _), (_, without, _)] = seen
+        self.assertEqual(with_wait["wait"], named)
+        self.assertEqual(without["wait"], "w1.1")
+
+
 class ChecksWaitedTest(ReportCase):
     """A sweep's tick of a merge that waits for required checks: the six hours are the
     engine's."""
@@ -2049,7 +2237,7 @@ class ChecksWaitedTest(ReportCase):
     def waited(self, hours):
         since = datetime(2026, 11, 23, 15, 0, 0, tzinfo=UTC)
         cfg = make_config(merge={"auto": True})
-        return host.checks_waited(cfg, 5, 6, "c" * 40, since, since + hours)
+        return host.checks_waited(self.gh, cfg, 5, 6, "c" * 40, since, since + hours)
 
     def test_the_merge_is_tried_again_for_six_hours_and_then_a_person_looks(self):
         self.assertEqual(self.waited(timedelta(hours=1)), "merge")
@@ -2064,11 +2252,11 @@ class ChecksWaitedTest(ReportCase):
                 conflicts = {"auto_resolve": resolve}
                 cfg = make_config(merge={"auto": True}, conflicts=conflicts)
                 with mock.patch.object(host, "step", wraps=host.step) as step:
-                    end = host.checks_waited(cfg, 5, 6, "c" * 40, since, late, behind=True)
+                    end = host.checks_waited(self.gh, cfg, 5, 6, "c" * 40, since, late, behind=True)
                 self.assertEqual(end, expected)
                 self.assertTrue(step.call_args.args[0]["observed"]["behind"])
         with mock.patch.object(host, "step", wraps=host.step) as step:
-            host.checks_waited(cfg, 5, 6, "c" * 40, since, late)
+            host.checks_waited(self.gh, cfg, 5, 6, "c" * 40, since, late)
         self.assertNotIn("behind", step.call_args.args[0]["observed"])
 
     def test_a_tick_the_engine_refuses_is_refused(self):
@@ -2080,7 +2268,7 @@ class ChecksWaitedTest(ReportCase):
         cfg = make_config(merge={"auto": True})
         now = datetime(2026, 11, 23, 15, 0, 0, tzinfo=UTC)
         with mock.patch.object(host, "step", wraps=host.step) as step:
-            end = host.checks_waited(cfg, 5, 6, "c" * 40, None, now)
+            end = host.checks_waited(self.gh, cfg, 5, 6, "c" * 40, None, now)
         self.assertEqual(end, "merge")
         self.assertNotIn("checksSince", step.call_args.args[0])
 
@@ -2094,7 +2282,7 @@ class RefusalClearedTest(ReportCase):
         run = {"head": "c" * 40, "outcome": "merge_refused"}
         if refused_clean:
             run["refused_clean"] = "c" * 40
-        return host.refusal_cleared(cfg, 5, 6, run, acceptable)
+        return host.refusal_cleared(self.gh, cfg, 5, 6, run, acceptable)
 
     def test_an_acceptable_head_is_merged_whatever_merge_auto_says(self):
         for auto in (True, False):
@@ -2659,7 +2847,7 @@ class ChangeSeenTest(ReportCase):
     def seen(self, merged=False, empty=False, version=None, waiting=False, cfg=None):
         cfg = cfg or make_config(merge={"auto": True})
         seen = {"version": version or self.HEAD, "merged": merged, "empty": empty}
-        return host.change_seen(cfg, 5, 6, self.HEAD, 0, seen, waiting=waiting)
+        return host.change_seen(self.gh, cfg, 5, 6, self.HEAD, 0, seen, waiting=waiting)
 
     def test_a_pull_request_a_person_merged_ends_the_item_as_accepted(self):
         self.assertEqual(self.seen(merged=True), "accepted")
@@ -2840,7 +3028,7 @@ class MergeFindsTest(ReportCase):
         with mock.patch.object(host, "change_seen", wraps=host.change_seen) as seen:
             outcome = self.merge()
         self.assertEqual(outcome["outcome"], "pull_closed")
-        self.assertEqual(seen.call_args.args[5], {"version": HEAD, "merged": True, "empty": False})
+        self.assertEqual(seen.call_args.args[6], {"version": HEAD, "merged": True, "empty": False})
         self.merged_by_person()
         with mock.patch.object(host, "change_seen", side_effect=host.Refused("no")):
             outcome = self.merge()
@@ -2861,14 +3049,14 @@ class MergeFindsTest(ReportCase):
         with mock.patch.object(host, "change_seen", wraps=host.change_seen) as seen:
             outcome = self.merge()
         self.assertEqual(outcome["outcome"], "pull_closed")
-        self.assertTrue(seen.call_args.args[5]["merged"])
+        self.assertTrue(seen.call_args.args[6]["merged"])
 
     def test_a_change_the_base_branch_holds_is_closed_only_when_the_engine_ends_it(self):
         self.gh.on_base.add(HEAD)
         with mock.patch.object(host, "change_seen", wraps=host.change_seen) as seen:
             outcome = self.merge()
         self.assertEqual(outcome["outcome"], "already_on_base")
-        self.assertEqual(seen.call_args.args[5], {"version": HEAD, "merged": False, "empty": True})
+        self.assertEqual(seen.call_args.args[6], {"version": HEAD, "merged": False, "empty": True})
         self.assertEqual(self.gh.pulls[6]["state"], "closed")
         self.gh = FakeGitHub()
         self.gh.add_issue(5)
@@ -2951,7 +3139,7 @@ class MergeStepTest(ReportCase):
         with mock.patch.object(host, "change_seen", wraps=host.change_seen) as seen:
             step = self.step()
         self.assertEqual((step["state"], step["command"]), ("start", "review"))
-        self.assertEqual(seen.call_args.args[5]["version"], "d" * 40)
+        self.assertEqual(seen.call_args.args[6]["version"], "d" * 40)
         self.assertTrue(seen.call_args.kwargs["waiting"])
 
     def test_a_head_the_engine_refuses_waits_for_a_person(self):

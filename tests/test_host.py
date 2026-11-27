@@ -2096,7 +2096,10 @@ class ApprovedTest(TestCase):
         run = {"outcome": outcome, "head": self.HEAD, "status": "success"}
         if decide:
             run["decide"] = [1]
-        return host.approved(cfg, 5, 6, run, commit, "olivia")
+        gh = FakeGitHub()
+        gh.add_issue(5)
+        gh.add_pull(6, 5, head_sha=self.HEAD)
+        return host.approved(gh, cfg, 5, 6, run, commit, "olivia")
 
     def test_an_approval_after_a_refusal_or_a_reopen_merges_only_with_merge_auto(self):
         for outcome in ("merge_refused", autopilot.PULL_CLOSED):

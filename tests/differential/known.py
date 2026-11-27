@@ -216,6 +216,34 @@ KNOWN += [
     for family in families
 ]
 
+KNOWN += [
+    {
+        "name": "the stored state is read before a command or an approval is decided",
+        "family": family,
+        "by": "#644",
+        "why": (
+            "A command, a closing command and an approval read the item's stored state, which is "
+            "the import in memory when the item has no state comment, and the import reads the "
+            "issues that block it. So do the families whose flows send NexKit's own dispatch of "
+            "a command or an approval: the waits, refusals, ends, conflicts, branches behind "
+            "their base and parents. A read by `FakeGitHub` adds the issue to its `blockers` "
+            "with no blocker, where NexKit 6's flow never read it. Only a record that differs "
+            "by such an empty entry is excused."
+        ),
+        "match": lambda sc, old, new: _without_empty_blockers(old) == _without_empty_blockers(new),
+    }
+    for family in (
+        "command",
+        "approvals",
+        "waits",
+        "refusals",
+        "ended",
+        "conflicted",
+        "behind",
+        "parents",
+    )
+]
+
 
 def _without_empty_blockers(record):
     """`record` without the entries of `blockers` that hold no blocker, in what GitHub holds

@@ -232,6 +232,52 @@ KNOWN += [
     for family in ("stop", "give")
 ]
 
+
+def _state_count(record):
+    """The `auto_fixes` that the state comment of pull request 6 holds in `record`, or None."""
+    for comment in (record.get("gh") or {}).get("issue_comments", {}).get("6", []):
+        found = re.search(r'"auto_fixes": (\d+)', str(comment.get("body")))
+        if found:
+            return int(found.group(1))
+    return None
+
+
+def _kept_a_retried_rounds_count(sc, old, new):
+    """Whether a retried or resumed automatic fix round that the host stopped before its
+    review keeps its count in `new` where NexKit 6 gave it back: the stored state does not mark
+    it as automatic, since the import marks only a counted automatic fix round."""
+    used = sc.get("fixes")
+    return (
+        sc.get("part") == "report"
+        and sc["auto"]
+        and not sc["conflicts"]
+        and sc["again"] in ("retry", "resumed")
+        and sc["agent"] in ("untrusted", "on_base", "on_base_failed")
+        and isinstance(used, int)
+        and used >= 1
+        and _state_count(old) == used - 1
+        and _state_count(new) == used
+    )
+
+
+KNOWN += [
+    {
+        "name": "a retried or resumed automatic fix round keeps its count when NexKit stops it",
+        "family": "give",
+        "by": "#748",
+        "why": (
+            "NexKit 6's report gave the count back of a retried or resumed automatic fix "
+            "round that NexKit stopped before its review, as it does for any other automatic "
+            "round, though its push-run path does not. The engine decides from the stored "
+            "state alone, and the import marks a running round as automatic only when "
+            "`state.counted_fix` says it counts, which leaves out a retried or resumed one. "
+            "So such a round that was running at the upgrade keeps its count. Only a record "
+            "that differs by that count is excused."
+        ),
+        "match": _kept_a_retried_rounds_count,
+    }
+]
+
 _READ = (
     "reads the item's stored state, which is the import in memory when the item has no state "
     "comment, and the import reads the issues that block it. A read by `FakeGitHub` adds the "

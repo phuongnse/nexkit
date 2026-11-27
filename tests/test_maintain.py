@@ -441,6 +441,7 @@ class ParentAsksTheEngineTests(unittest.TestCase):
         from nexkit import report
 
         self.gh.issues[5].update(state="closed", state_reason="completed")
+        self.gh.add_pull(6, 5, head_sha=HEAD)
         target = {"issue": 5, "pr": 6, "head": HEAD, "state": {}}
         with self.stays() as ended:
             report._parent_ends(self.gh, self.CFG, target)
@@ -548,6 +549,7 @@ class PartEndTests(unittest.TestCase):
         from nexkit import report
 
         self.gh.issues[5].update(state="closed", state_reason="completed")
+        self.gh.add_pull(6, 5)
         target = {"issue": 5, "pr": 6, "head": HEAD, "state": {}}
         calls, patch = self.spies()
         with patch:

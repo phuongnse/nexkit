@@ -123,14 +123,15 @@ KNOWN = [
             "While GitHub refuses a dispatch, the sweep sends no `step`, so it makes none of "
             "the writes NexKit 6's sweep made itself, and says so in its log. The next sweep "
             "sends the step again. Only that is excused: GitHub holds the same after each "
-            "sweep as before the first."
+            "sweep as before the first, apart from the empty `blockers` entries that the "
+            "stored state's import reads (see the entries for it below)."
         ),
         "match": lambda sc, old, new: (
             sc["refusal"] == "dispatch_fails"
             and any(line.startswith("Could not send a step to") for line in _lines(new))
             and isinstance(new.get("gh"), dict)
-            and new.get("gh1") == new["gh"]
-            and new.get("gh2") == new["gh"]
+            and _without_empty_blockers(new).get("gh1") == _without_empty_blockers(new)["gh"]
+            and _without_empty_blockers(new).get("gh2") == _without_empty_blockers(new)["gh"]
         ),
     },
     {
@@ -242,6 +243,35 @@ KNOWN += [
         "ended",
         "conflicted",
         "behind",
+        "parents",
+    )
+]
+
+KNOWN += [
+    {
+        "name": "the stored state is read before a merge decision",
+        "family": family,
+        "by": "#647",
+        "why": (
+            "A decision at a merge, for a refusal, a wait for required checks, a branch update "
+            "or what the merge found, reads the item's stored state, which is the import in "
+            "memory when the item has no state comment, and the import reads the issues that "
+            "block it. A read by `FakeGitHub` adds the issue to its `blockers` with no "
+            "blocker, where NexKit 6's flow never read it. Only a record that differs by such "
+            "an empty entry is excused."
+        ),
+        "match": lambda sc, old, new: _without_empty_blockers(old) == _without_empty_blockers(new),
+    }
+    for family in (
+        "required",
+        "waits",
+        "refusals",
+        "behind",
+        "conflicted",
+        "cleared",
+        "ended",
+        "approvals",
+        "sweep",
         "parents",
     )
 ]

@@ -246,8 +246,8 @@ the change, which `command` sends as an observation. The host starts only the st
 engine answers; a change that the engine ends as `noChange` goes to the `on_base` task. An open
 pull request for `/nexkit plan` or `/nexkit go` is the engine's to refuse, and the host says it in
 NexKit 6's words ("Pull request #N is already open"); so is a command on an item whose state does
-not take it, such as `/nexkit go` while a round waits to run again, which `route` refuses with
-the engine's reply. An engine that refuses, or answers another stage, starts nothing, and the
+not take it, such as `/nexkit fix` on an item with no change, which `route` refuses with the
+engine's reply. An engine that refuses, or answers another stage, starts nothing, and the
 person gets a reply. A closed issue or pull request, which a state comment outlives, a fork, a
 person's pull request, which takes no `/nexkit fix`, an unknown command and an implement round
 that still runs for a person's command (`route._one_round`) stay host checks: the reply to a

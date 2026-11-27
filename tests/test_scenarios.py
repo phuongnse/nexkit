@@ -564,11 +564,13 @@ class Pipeline:
 
     def later(self, step):
         """Move every record and comment of NexKit, and the time each issue closed, back by
-        `step`, as if that much time passed. Each call adds a second more than the one before,
-        so that two waits that end within the same real second still end at different times, as
-        the waits of a real clock do: the engine names a resume by its time."""
+        `step`, as if that much time passed. Each call adds two seconds more than the one
+        before, so that two waits that end within the same real second, or on either side of a
+        real second's turn, still end at different times, as the waits of a real clock do: the
+        engine names a resume by its time and ignores a time that it has seen. One second more
+        would not do, since a turn of the real second between two waits takes it back."""
         self.moves = getattr(self, "moves", 0) + 1
-        step += timedelta(seconds=self.moves)
+        step += timedelta(seconds=2 * self.moves)
         self.elapsed += step
         for issue in self.gh.issues.values():
             if issue.get("closed_at"):

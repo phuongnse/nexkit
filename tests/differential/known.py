@@ -6,6 +6,8 @@ the scenario and both records that holds only where the difference is reachable.
 differs from NexKit 6 on purpose, such as one that fixes a NexKit 6 bug, adds its entry here,
 and its pull request calls it out."""
 
+import re
+
 KNOWN = [
     {
         "name": "mergeable race",
@@ -273,6 +275,77 @@ KNOWN += [
         "parents",
     )
 ]
+
+
+KNOWN += [
+    {
+        "name": "the parent's stored state is read before its end is decided",
+        "family": family,
+        "by": "#648",
+        "why": (
+            "The engine decides the end of a part on the parent's stored state, which is the "
+            "import in memory when the parent has no state comment, and the import reads the "
+            "issues that block it. A read by `FakeGitHub` adds the parent to its `blockers` "
+            "and its comments with nothing in them, where NexKit 6's flow never read them. "
+            "Only a record that differs by such an empty entry is excused."
+        ),
+        "match": lambda sc, old, new: _without_empty_reads(old) == _without_empty_reads(new),
+    }
+    for family in ("ended", "parents")
+]
+
+KNOWN += [
+    {
+        "name": "a part's end is sent to its parent's group",
+        "family": "parents",
+        "by": "#648",
+        "why": (
+            "When a sub-issue closes, its run sends the end of the part as one `step` into its "
+            "parent's group, whose run stores the answer in the parent's stored state. The "
+            "part's run still closes the parent and leaves its notes as NexKit 6 did, and the "
+            "`step` run writes nothing else on GitHub. Only that dispatch and its line in the "
+            "log are excused, and nothing else may differ."
+        ),
+        "match": lambda sc, old, new: _without_empty_reads(old)
+        == _without_empty_reads(_without_part_ends(new)),
+    }
+]
+
+
+def _without_empty_reads(record):
+    """`_without_empty_blockers` of `record`, also without the entries of `issue_comments` that
+    hold no comment."""
+    found = _without_empty_blockers(record)
+    for key, item in found.items():
+        if isinstance(item, dict) and isinstance(item.get("issue_comments"), dict):
+            kept = {number: held for number, held in item["issue_comments"].items() if held}
+            found[key] = {**item, "issue_comments": kept}
+    return found
+
+
+def _without_part_ends(record):
+    """`record` without the `step` dispatches that send the end of a part to its parent's
+    group (`part N`) and the lines of the log that say so."""
+    found = dict(record)
+    for key in ("gh", "gh1", "gh2"):
+        item = record.get(key)
+        if isinstance(item, dict) and isinstance(item.get("dispatches"), list):
+            kept = [
+                dispatch
+                for dispatch in item["dispatches"]
+                if not (
+                    dispatch["inputs"].get("command") == "step"
+                    and re.fullmatch(r"part \d+", dispatch["inputs"].get("note") or "")
+                )
+            ]
+            found[key] = {**item, "dispatches": kept}
+    if isinstance(record.get("out"), list):
+        found["out"] = [
+            line
+            for line in record["out"]
+            if not (isinstance(line, str) and line.startswith("Sent the end of #"))
+        ]
+    return found
 
 
 def _without_empty_blockers(record):

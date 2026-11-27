@@ -3077,6 +3077,80 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(len(mention), 1)
         self.assertIn("Its plan lists 3 parts, but it has 2 sub-issues.", mention[0]["body"])
 
+    def parts_of_a_parent(self, cfg):
+        """The parent 1 with the completed part 2 and the open part 5, imported into its
+        state, and the part 5 closed as completed after it."""
+        gh = FakeGitHub()
+        gh.add_milestone(1)
+        gh.add_issue(1, title="Epic", milestone=1)
+        gh.add_issue(2, title="Part", state="closed", reason="completed", milestone=1)
+        gh.add_issue(5, title="Part", milestone=1)
+        gh.parents.update({2: 1, 5: 1})
+        self.assertTrue(host.store_import(gh, cfg, 1))
+        self.assertEqual(item_state.read(gh, 1)[1]["state"], "split")
+        gh.close_issue(5, "completed")
+        return gh
+
+    def close_a_part(self, gh, cfg):
+        """The `issues: closed` run of the part 5, as the part's group runs it, and the `step`
+        run that it sent into the parent's group. Returns the calls that the first made to
+        `item_state.apply` and `item_state.write`, and the lines of both."""
+        calls = []
+
+        def spied(real):
+            def spy(client, number, *args, **kwargs):
+                calls.append(number)
+                return real(client, number, *args, **kwargs)
+
+            return spy
+
+        before = copy.deepcopy(gh.issue_comments)
+        decision = {"action": "maintain", "task": "parents", "issue": 5}
+        with (
+            mock.patch.object(item_state, "apply", spied(item_state.apply)),
+            mock.patch.object(item_state, "write", spied(item_state.write)),
+        ):
+            first = maintain(gh, decision, cfg, workflow="nexkit.yml", ref="main")
+        # The part's run never stores the parent's state.
+        self.assertNotIn(1, calls)
+        self.assertEqual(
+            [c for c in gh.issue_comments[1] if "nexkit:item-state" in c["body"]],
+            [c for c in before[1] if "nexkit:item-state" in c["body"]],
+        )
+        [step] = [d["inputs"] for d in gh.dispatches if d["inputs"]["command"] == "step"]
+        self.assertEqual((step["number"], step["note"]), ("1", "part 5"))
+        self.assertEqual(queue_item(gh, "workflow_dispatch", {"inputs": step}), 1)
+        self.assertEqual(item_state.read(gh, 1)[1]["revision"], 1)
+        from tests.support import play_steps
+
+        return first, play_steps(gh, cfg)
+
+    def test_the_last_part_s_close_ends_its_parent_through_the_parent_s_stored_state(self):
+        cfg = config(close_parent_issues=True)
+        gh = self.parts_of_a_parent(cfg)
+        first, played = self.close_a_part(gh, cfg)
+        self.assertIn("Closed #1 as completed: all its sub-issues are closed.", first)
+        self.assertIn("Sent the end of #5 to #1's queue.", first)
+        # The step run of the parent's group stores the end, and writes nothing else on GitHub.
+        self.assertEqual(played[0], ["Recorded the end of #5 in #1's state: close."])
+        _, doc = item_state.read(gh, 1)
+        self.assertEqual((doc["revision"], doc["state"]), (2, "accepted"))
+        self.assertIn("part-1-5", doc["recentEvents"])
+        self.assertTrue(any(action["kind"] == "close" for action in doc["pending"]))
+        self.assertEqual(gh.issues[1]["state"], "closed")
+        self.assertEqual(len(gh.comments_matching(1, "<!-- nexkit:parent-closed -->")), 1)
+
+    def test_without_close_parent_issues_a_parent_s_stored_end_waits_for_a_person(self):
+        cfg = config(close_parent_issues=False)
+        gh = self.parts_of_a_parent(cfg)
+        first, played = self.close_a_part(gh, cfg)
+        self.assertNotIn("Closed #1", " ".join(first))
+        _, doc = item_state.read(gh, 1)
+        self.assertEqual((doc["revision"], doc["state"]), (2, "split"))
+        self.assertIn("part-1-5", doc["recentEvents"])
+        self.assertEqual(doc["attention"]["reason"], "splitIncomplete")
+        self.assertEqual(gh.issues[1]["state"], "open")
+
     def test_a_stopped_go_plans_again_once_a_person_answers_or_its_blocker_closes(self):
         def script():
             gos = itertools.count()

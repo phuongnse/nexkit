@@ -1851,13 +1851,14 @@ def changed_comment(comments):
     )
 
 
-def _parent_step(cfg, issue, parts):
+def _parent_step(gh, cfg, issue, parts, write=False):
     """The step for a parent issue whose sub-issues `parts` are all closed, which the engine
     decides (`host.part_ended`, as `maintain.close_parent` asks it after the part that closed
     last): close it, as that does after the last part closed, which may not have run, or may
     close it while this sweep runs, whichever comes first; or wait for a person, without
     `close_parent_issues` or a completed part. An issue whose next step the engine refuses to
-    decide waits for a person, alone."""
+    decide waits for a person, alone. With `write`, which the step run of the parent's group
+    passes, the engine's answer is stored in the parent's state; a sweep only previews it."""
     from . import first_state
     from .host import Refused, part_ended, refused_reason
     from .maintain import _last_closed  # maintain imports this module
@@ -1865,7 +1866,8 @@ def _parent_step(cfg, issue, parts):
     last = _last_closed(parts)
     found = next(part for part in parts if part["number"] == last)
     try:
-        answer = part_ended(cfg, issue["number"], parts, last, first_state._ended(found))
+        state = first_state._ended(found)
+        answer = part_ended(gh, cfg, issue["number"], parts, last, state, write=write)
     except Refused as error:
         return _step(issue, "waits", refused_reason(error))
     if answer == "close":
@@ -1902,7 +1904,7 @@ def _assess(gh, cfg, issue, open_pulls, now=None, where=None, write=False):
     if missing:
         return _step(issue, "waits", person(UNFILED_DO, missing))
     if parts and all(part.get("state") == "closed" for part in parts):
-        return _parent_step(cfg, issue, parts)
+        return _parent_step(gh, cfg, issue, parts, write=write)
     if parts:
         reason = "a parent issue: autopilot works on its sub-issues"
         return _step(issue, "waits", reason, person=False)

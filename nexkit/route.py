@@ -181,6 +181,11 @@ APPROVAL_PATTERN = re.compile(r"approval (\d+) (\d+)")
 # comment that holds the resume record, which the step reads back from GitHub.
 RESUMED = "resume {}"
 RESUMED_PATTERN = re.compile(r"resume (\d+)")
+# The note of a `step` that a closed sub-issue sends into its parent's queue, and how route
+# reads it: the part's number, which the step reads back from GitHub. The step only stores the
+# end of the part in the parent's state.
+PART_ENDED = "part {}"
+PART_ENDED_PATTERN = re.compile(r"part (\d+)")
 # The note of a sweep that waits for a workflow run to end first, and how route reads it.
 AFTER_RUN = "after run {}"
 AFTER_RUN_PATTERN = re.compile(r"after run (\d+)")
@@ -459,6 +464,15 @@ def _route(gh, event_name, event, inputs, cfg, taken):
                     "task": "resumed",
                     "number": int(number),
                     "comment": int(resumed[1]),
+                }
+            ended = PART_ENDED_PATTERN.fullmatch(note)
+            if ended:
+                # A sub-issue that closed, stored in its parent's state in the parent's queue.
+                return {
+                    "action": "maintain",
+                    "task": "part_ended",
+                    "issue": int(number),
+                    "part": int(ended[1]),
                 }
             # One issue's step, in the issue's queue (`autopilot.step`).
             return {"action": "maintain", "task": "step", "issue": int(number)}

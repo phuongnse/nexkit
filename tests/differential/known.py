@@ -190,15 +190,78 @@ KNOWN += [
 ]
 
 
+# The families that play the decisions of a pull request's rounds (#646).
+FAMILIES_646 = (
+    "report",
+    "round",
+    "conflict",
+    "give",
+    "diag",
+    "many",
+    "chains",
+    "review",
+    "stop",
+    "sweep",
+    "moved",
+    "required",
+    "waits",
+    "pause",
+    "ended",
+    "conflicted",
+    "behind",
+    "refusals",
+)
+
+KNOWN += [
+    {
+        "name": "the stored state is read before a round's decision",
+        "family": family,
+        "by": "#646",
+        "why": (
+            "The decisions about a pull request's rounds, which are a round's end, its conflict, "
+            "the wait for a hold or the base branch, the checks a fix round diagnoses and the "
+            "rounds that count, read the item's stored state, which is the import in memory "
+            "when the item has no state comment, and the import reads the issues that block "
+            "the item and its comments. A read by `FakeGitHub` adds the issue to its "
+            "`blockers` and its `issue_comments` with nothing in them, where NexKit 6's flow "
+            "never read them. Only a record that differs by such an empty entry is excused."
+        ),
+        "match": lambda sc, old, new: _without_empty_blockers(old) == _without_empty_blockers(new),
+    }
+    for family in FAMILIES_646
+]
+
+
 def _without_empty_blockers(record):
-    """`record` without the entries of `blockers` that hold no blocker, in what GitHub holds
-    after the command and after each sweep."""
+    """`record` without the entries of `blockers` and `issue_comments` that hold nothing, in
+    what GitHub holds after the command and after each sweep: a read of the issues that block an
+    item or of its comments, which the stored state's import makes, adds such an entry to
+    `FakeGitHub`."""
     found = dict(record)
-    for key in ("gh", "gh1", "gh2"):
+    for key in ("gh", "gh1", "gh2", "gh3", "after", "after_report", "after_rounds", "end"):
         item = found.get(key)
-        if isinstance(item, dict) and isinstance(item.get("blockers"), dict):
-            kept = {number: held for number, held in item["blockers"].items() if held}
-            found[key] = {**item, "blockers": kept}
+        if isinstance(item, dict):
+            found[key] = _without_empty(item)
+    if isinstance(found.get("steps"), list):
+        found["steps"] = [
+            {**step, "gh": _without_empty(step["gh"])}
+            if isinstance(step, dict) and isinstance(step.get("gh"), dict)
+            else step
+            for step in found["steps"]
+        ]
+    return found
+
+
+def _without_empty(item):
+    """The state `item` of `FakeGitHub` without the entries of `blockers` that hold no blocker
+    and the empty lists of `issue_comments`."""
+    found = dict(item)
+    if isinstance(found.get("blockers"), dict):
+        found["blockers"] = {number: held for number, held in found["blockers"].items() if held}
+    if isinstance(found.get("issue_comments"), dict):
+        found["issue_comments"] = {
+            number: held for number, held in found["issue_comments"].items() if held
+        }
     return found
 
 

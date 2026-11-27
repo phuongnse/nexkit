@@ -521,10 +521,11 @@ class PausedRunTests(unittest.TestCase):
         self.assertEqual((run_action(new), run_kinds(new)), ("fix", {"auto"}))
         self.assertEqual(run_kinds({**old, "kinds": []}), set())
         # An automatic fix round that NexKit stopped gives its round back, read from them.
+        self.gh.add_pull(6, 5)
         self.gh.comment(6, render_state({"version": 2, "issue": 5, "auto_fixes": 1}))
-        _give_back(self.gh, 6, self.gh.comments(6), {**old, "kinds": []})
+        _give_back(self.gh, make_config(), 5, 6, self.gh.comments(6), {**old, "kinds": []})
         self.assertEqual(read_state(self.gh.comments(6))[1]["auto_fixes"], 1)
-        _give_back(self.gh, 6, self.gh.comments(6), new)
+        _give_back(self.gh, make_config(), 5, 6, self.gh.comments(6), new)
         self.assertEqual(read_state(self.gh.comments(6))[1]["auto_fixes"], 0)
 
     def test_a_new_command_replaces_a_paused_one(self):

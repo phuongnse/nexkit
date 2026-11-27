@@ -3604,6 +3604,48 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(plain.gh.issues[5]["state"], "closed")
         self.assertEqual(len(imported.state_comments(5)), 1)
 
+    def test_a_rounds_checks_and_review_are_stored_and_the_stored_count_stops_the_rounds(self):
+        def built(stored_count):
+            seen = {"revisions": [], "heads": [], "events": []}
+
+            def checking(pipe, pull):
+                if not seen["revisions"]:
+                    self.stored_import(pipe, 5, pull)
+                comment, doc = item_state.read(pipe.gh, 5)
+                seen["revisions"].append(doc["revision"])
+                seen["heads"].append(pipe.gh.pulls[pull]["head"]["sha"])
+                seen["events"].append(doc["recentEvents"])
+                if len(seen["revisions"]) == 2 and stored_count:
+                    # The state says that the rounds are used, as another run of the item's
+                    # group may have stored it, while NexKit 6's marker counts one.
+                    found = {**doc, "revision": doc["revision"] + 1}
+                    found["rounds"] = {**doc["rounds"], "counted": stored_count}
+                    self.assertTrue(item_state.write(pipe.gh, 5, found, (comment, doc)))
+
+            def script(pipe, inputs):
+                if inputs["command"] == "plan":
+                    return plan()
+                return {**done(checks=False), "checking": checking}
+
+            pipe = Pipeline(self, config(fix={"max_auto_rounds": 3}), script)
+            pipe.issue(5)
+            return pipe, pipe.play(), seen
+
+        plain, played, seen = built(0)
+        # The import, then the checks and the review of each round raise the revision by two.
+        self.assertEqual(seen["revisions"], [1, 3, 5, 7])
+        first, head = seen["events"][1], seen["heads"][0]
+        self.assertIn(f"checks-6-{head}", first)
+        self.assertIn(f"round-review-6-{head}", first)
+        self.assertEqual(played, [("plan", 5), ("go", 5), ("fix", 6), ("fix", 6), ("fix", 6)])
+        # The stored count, above the one NexKit 6's marker holds, stops the rounds earlier.
+        stored, played, seen = built(3)
+        self.assertEqual(played, [("plan", 5), ("go", 5), ("fix", 6)])
+        self.assertEqual(stored.played[-1][2], "needs_human")
+        self.assertEqual(read_state(stored.gh.comments(6))[1]["auto_fixes"], 1)
+        self.assertEqual(stored.gh.issues[5]["state"], "open")
+        self.assertEqual(plain.gh.issues[5]["state"], "open")
+
     def test_a_paused_run_is_imported_and_resumes_as_before(self):
         def built():
             pauses = itertools.count()

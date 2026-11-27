@@ -69,7 +69,7 @@ class SweepTests(unittest.TestCase):
             self.sweep()
         self.assertEqual(self.gh.dispatches, [])
         # What the host asks: the pull request conflicts, and no round runs its checks.
-        [(cfg, issue, number, head, conflicts, behind, checking, used, updates)] = [
+        [(_, cfg, issue, number, head, conflicts, behind, checking, used, updates)] = [
             call.args for call in moved.call_args_list
         ]
         self.assertEqual((issue, number, conflicts, behind, checking), (5, 6, True, False, False))
@@ -87,7 +87,7 @@ class SweepTests(unittest.TestCase):
         self.round(6, 1, conflicts=True)
         with mock.patch.object(host, "base_moved", return_value="round") as moved:
             self.sweep()
-        self.assertEqual(moved.call_args.args[7], 1)
+        self.assertEqual(moved.call_args.args[8], 1)
 
     def test_starts_a_round_only_for_conflicting_nexkit_pull_requests(self):
         self.assertEqual(self.sweep(), ["Started an automatic round on #6 to merge `main`."])
@@ -339,7 +339,7 @@ class SupersededTests(unittest.TestCase):
         self.assertEqual(nothing, ([], [], []))
         self.assertEqual(self.latest()["run"]["status"], "running")
         # What the host asks: behind, with no conflict, while the round runs its checks.
-        [(_, issue, number, head, conflicts, behind, checking, used, updates)] = [
+        [(_, _, issue, number, head, conflicts, behind, checking, used, updates)] = [
             call.args for call in moved.call_args_list
         ]
         self.assertEqual((issue, number, head), (5, 6, CHECKED))
@@ -352,7 +352,7 @@ class SupersededTests(unittest.TestCase):
         self.assertEqual((self.gh.cancelled, rounds_started(self.gh)), ([], []))
         # Asked for the round's stop first, then for the round that no round runs against.
         first, *_ = moved.call_args_list
-        self.assertEqual(first.args[4:7], (True, False, True))
+        self.assertEqual(first.args[5:8], (True, False, True))
 
     def test_a_round_is_stopped_for_an_update_only_when_the_engine_answers_one(self):
         self.behind()
@@ -1126,7 +1126,7 @@ class MergeRefusalTests(ReportCase):
         self.assertFalse(rounds_started(self.gh))
         self.assertEqual(self.gh.cancelled, [])
         args = moved.call_args.args
-        self.assertEqual((args[1], *args[4:]), (5, True, False, False, 0, 0))
+        self.assertEqual((args[2], *args[5:]), (5, True, False, False, 0, 0))
         self.assertNotIn("Started an automatic round", outcome["summary"])
 
     def test_an_implement_round_whose_conflict_round_the_engine_refuses_starts_none(self):

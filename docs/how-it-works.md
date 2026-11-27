@@ -415,8 +415,9 @@ On each open issue, and on each person's pull request that gets a non-approving 
 `/nexkit` command, the App also keeps one `### NexKit state` comment, which the first run of the
 item posts. It holds the engine's state document, imported from the markers above, and its
 revision. The runs of the item take its comments, reviews and hold labels from after that
-comment. Nothing is decided from the document yet: decisions still read the markers above, so the
-document goes stale until the host decides from it. A comment of it that someone other than the App
+comment. Only some decisions read the document yet, and store the engine's answer in it: those
+after a plan and those about a pull request's rounds. The others still read the markers above, so
+the document goes stale until the host decides from it. A comment of it that someone other than the App
 changed counts for nothing, and the item waits for a person ([troubleshooting](troubleshooting.md#a-comment-of-nexkit-was-changed-by-someone-else)).
 
 A writer edits the state comment, and autopilot's record comment, only while the comment still

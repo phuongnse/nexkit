@@ -1,7 +1,7 @@
 """The GitHub host's calls of the engine: what follows a plan is the engine's answer, which
 autopilot and `route` carry out in NexKit 6's words. Most decisions store no state; those after
-a plan, for a first plan and after a vouch store the answer in the item's group
-(docs/engine.md#getting-there)."""
+a plan, for a first plan, after a vouch and about a pull request's rounds store the answer in
+the item's group (docs/engine.md#getting-there)."""
 
 import base64
 import contextlib
@@ -1844,12 +1844,13 @@ class CountTest(ReportCase):
                 self.assertEqual(outcome, "auto_fix" if read else "needs_human")
 
     def test_a_round_nexkit_stopped_gives_its_count_back_only_when_automatic(self):
-        head = "c" * 40
-        self.assertEqual(host.stopped_counts(5, 6, head, 2, True, True), 1)
-        self.assertEqual(host.stopped_counts(5, 6, head, 2, True, True, checking=True), 1)
+        head, cfg = "c" * 40, make_config()
+        counts = host.stopped_counts
+        self.assertEqual(counts(self.gh, cfg, 5, 6, head, 2, True, True), 1)
+        self.assertEqual(counts(self.gh, cfg, 5, 6, head, 2, True, True, checking=True), 1)
         # A person's round counts nothing, and an agent that stopped by itself keeps its count.
-        self.assertEqual(host.stopped_counts(5, 6, head, 2, False, True), 2)
-        self.assertEqual(host.stopped_counts(5, 6, head, 2, True, False), 2)
+        self.assertEqual(counts(self.gh, cfg, 5, 6, head, 2, False, True), 2)
+        self.assertEqual(counts(self.gh, cfg, 5, 6, head, 2, True, False), 2)
 
 
 class AcceptAnswerTest(ReportCase):
@@ -2346,13 +2347,12 @@ class ConflictingTest(ReportCase):
 
     def test_the_engine_starts_the_conflict_round_or_leaves_it_to_a_person(self):
         cfg = make_config(conflicts={"auto_resolve": True, "max_rounds": 2})
+        conflicting, gh = host.conflicting, self.gh
+        self.assertEqual(conflicting(gh, cfg, decision("fix", head="b"), 6, HEAD, None, 1), "round")
         self.assertEqual(
-            host.conflicting(cfg, decision("fix", head="b"), 6, HEAD, None, 1), "round"
+            conflicting(gh, cfg, decision("fix", head="b"), 6, HEAD, None, 2), "used_up"
         )
-        self.assertEqual(
-            host.conflicting(cfg, decision("fix", head="b"), 6, HEAD, None, 2), "used_up"
-        )
-        self.assertEqual(host.conflicting(cfg, decision(), 6, HEAD, "on-hold", 2), "held")
+        self.assertEqual(conflicting(gh, cfg, decision(), 6, HEAD, "on-hold", 2), "held")
         found, calls = self.conflicting(cfg, used=2)
         self.assertEqual(found["outcome"], "conflicting")
         self.assertEqual(calls[-1]["state"]["rounds"]["conflicts"], 2)
@@ -2368,23 +2368,30 @@ class ConflictingTest(ReportCase):
     def test_a_held_conflict_round_released_follows_the_engine(self):
         cfg = make_config(conflicts={"auto_resolve": True, "max_rounds": 2})
         run = {"head": HEAD, "held_back": "conflicts"}
-        ends = host.conflicts_released
-        self.assertEqual(ends(cfg, 5, 6, run, HEAD, True, 1), "round")
-        self.assertEqual(ends(cfg, 5, 6, run, HEAD, True, 2), "waits")
-        self.assertEqual(ends(cfg, 5, 6, run, HEAD, False, 2), "review")
+        released, gh = host.conflicts_released, self.gh
+        self.assertEqual(released(gh, cfg, 5, 6, run, HEAD, True, 1), "round")
+        self.assertEqual(released(gh, cfg, 5, 6, run, HEAD, True, 2), "waits")
+        self.assertEqual(released(gh, cfg, 5, 6, run, HEAD, False, 2), "review")
         # A head that moved is checked, and the round after it finds any conflict.
-        self.assertEqual(ends(cfg, 5, 6, run, "d" * 40, True, 0), "review")
+        self.assertEqual(released(gh, cfg, 5, 6, run, "d" * 40, True, 0), "review")
         off = make_config(conflicts={"auto_resolve": False})
-        self.assertEqual(ends(off, 5, 6, run, HEAD, True, 0), "waits")
+        self.assertEqual(released(gh, off, 5, 6, run, HEAD, True, 0), "waits")
 
 
 class DiagnosisTest(HostCase):
     """The fix round that `route` starts diagnoses what the engine names."""
 
     def test_only_an_automatic_round_diagnoses_the_repeated_failures(self):
-        self.assertEqual(host.diagnosis(5, 6, "c" * 40, True, ["test"]), ["test"])
-        self.assertEqual(host.diagnosis(5, 6, "c" * 40, False, ["test"]), [])
-        self.assertEqual(host.diagnosis(5, 6, "c" * 40, True, []), [])
+        head = "c" * 40
+        self.assertEqual(host.diagnosis(None, None, 5, 6, head, True, ["test"]), ["test"])
+        self.assertEqual(host.diagnosis(None, None, 5, 6, head, False, ["test"]), [])
+        self.assertEqual(host.diagnosis(None, None, 5, 6, head, True, []), [])
+        # On the item's stored state, with its configuration, the answer is the same.
+        self.issue(5)
+        self.gh.add_pull(6, 5, head_sha=head)
+        cfg = make_config()
+        self.assertEqual(host.diagnosis(self.gh, cfg, 5, 6, head, True, ["test"]), ["test"])
+        self.assertEqual(host.diagnosis(self.gh, cfg, 5, 6, head, False, ["test"]), [])
 
     def test_route_takes_the_diagnosis_from_the_engine(self):
         self.gh.add_pull(6, 5, head_sha="c" * 40)
@@ -2407,6 +2414,218 @@ class DiagnosisTest(HostCase):
             self.assertNotIn(
                 "diagnose", route(self.gh, "workflow_dispatch", event, event["inputs"])
             )
+
+
+class RoundDecideTest(ReportCase):
+    """The decisions about a pull request's rounds read the item's stored state document, and
+    those that run in the item's group store the engine's answer at the next revision
+    (`host.decide`). A stored count above NexKit 6's wins (`host._counted`)."""
+
+    GOOD = {"verdict": "approve", "criteria": [], "findings": []}
+    RED = [{"name": "test", "passed": False, "output": "AssertionError"}]
+    GREEN = [{"name": "test", "passed": True}]
+
+    def setUp(self):
+        super().setUp()
+        self.cfg = make_config(
+            fix={"max_auto_rounds": 3},
+            conflicts={"auto_resolve": True, "max_rounds": 2},
+            autopilot={"enabled": True, "labels": {"on-hold": {"hold": True}}},
+        )
+        self.assertTrue(host.store_import(self.gh, self.cfg, 5))
+
+    def read(self):
+        return item_state.read(self.gh, 5)
+
+    def store(self, **rounds):
+        """Store the state again at the next revision, with `rounds` changed."""
+        comment, doc = self.read()
+        found = {**doc, "revision": doc["revision"] + 1}
+        found["rounds"] = {**doc["rounds"], **rounds}
+        self.assertTrue(item_state.write(self.gh, 5, found, (comment, doc)))
+        return found
+
+    def spied(self):
+        """A stand-in for `host.step` that keeps a copy of each request and answer."""
+        seen, real = [], host.step
+
+        def spy(state, event, found_policies):
+            found = real(state, event, found_policies)
+            seen.append((copy.deepcopy(state), event, found))
+            return found
+
+        return seen, spy
+
+    def ended(self, **options):
+        review = ("done", self.GOOD)
+        d = decision("fix", pr=6, target=6, head="b" * 40)
+        return host.round_ended(
+            self.gh, self.cfg, d, 6, HEAD, 0, self.GREEN, None, review, **options
+        )
+
+    def test_a_rounds_checks_and_review_each_store_a_revision(self):
+        seen, spy = self.spied()
+        with mock.patch.object(host, "step", spy):
+            end, _ = self.ended(write=True)
+        self.assertEqual(end, "ready")
+        [(_, checks, _), (_, review, _)] = seen
+        self.assertEqual((checks["kind"], review["kind"]), ("actionFinished",) * 2)
+        _, doc = self.read()
+        self.assertEqual(doc["revision"], 3)
+        self.assertEqual(doc["recentEvents"][-2:], [f"checks-6-{HEAD}", f"round-review-6-{HEAD}"])
+        # The review's result names the review run that the checks' answer started.
+        self.assertEqual(seen[1][0]["revision"], 2)
+        self.assertEqual(seen[1][2]["state"], doc)
+
+    def test_without_write_a_rounds_end_stores_nothing(self):
+        before = copy.deepcopy(self.gh.comments(5)), copy.deepcopy(self.gh.comments(6))
+        self.assertEqual(self.ended()[0], "ready")
+        self.assertEqual((self.gh.comments(5), self.gh.comments(6)), before)
+        self.assertEqual(self.read()[1]["revision"], 1)
+
+    def test_the_checks_result_names_the_runChecks_id_of_the_stored_outbox(self):
+        seen, spy = self.spied()
+        with mock.patch.object(host, "step", spy):
+            self.ended()
+        # The stored state says what the markers' document says, but the id of its outbox.
+        agreeing = copy.deepcopy(seen[0][0])
+        agreeing["revision"] = 2
+        agreeing["pending"][0]["id"] = "a7.1"
+        self.assertTrue(item_state.write(self.gh, 5, agreeing, self.read()))
+        seen.clear()
+        with mock.patch.object(host, "step", spy):
+            self.ended()
+        self.assertEqual(seen[0][1]["action"], host.pending_id(self.read()[1], "runChecks"))
+        self.assertEqual(seen[0][1]["action"], "a7.1")
+        self.assertEqual(seen[0][0]["revision"], 2)
+
+    def test_a_stored_count_above_nexkit_6_s_stops_the_automatic_fix_rounds(self):
+        review = self.GOOD
+        d = decision("fix", pr=6, target=6, head="b" * 40)
+
+        def after(**options):
+            args = (self.gh, self.cfg, d, 6, HEAD, 0, self.RED, review, False, None, None)
+            return host.after_round(*args, **options)
+
+        self.assertEqual(after(), "auto_fix")
+        self.store(counted=3)
+        self.assertEqual(after(), "needs_human")
+        # NexKit 6's count is a floor, while the stored one is below it.
+        self.store(counted=0)
+        args = (self.gh, self.cfg, d, 6, HEAD, 3, self.RED, review, False, None, None)
+        self.assertEqual(host.after_round(*args), "needs_human")
+        self.assertEqual(host._counted(self.read()[1], 3, "counted"), 3)
+        self.assertEqual(host._counted(None, -1, "counted"), 0)
+
+    def conflicting(self, held=None, used=0, **options):
+        args = (self.gh, self.cfg, decision("fix", head="b"), 6, HEAD, held, used)
+        return host.conflicting(*args, **options)
+
+    def test_a_conflict_stores_the_engine_s_answer_at_the_next_revision(self):
+        seen, spy = self.spied()
+        with mock.patch.object(host, "step", spy):
+            self.assertEqual(self.conflicting(write=True), "round")
+        [(_, event, found)] = seen
+        self.assertEqual(event["action"], host.pending_id(found["state"], "publish"))
+        self.assertEqual(self.read()[1], found["state"])
+        self.assertEqual(self.read()[1]["revision"], 2)
+
+    def test_a_held_conflict_answers_held_whatever_the_stored_conflicts_are(self):
+        self.store(conflicts=2)
+        self.assertEqual(self.conflicting(held="on-hold"), "held")
+        self.assertEqual(self.conflicting(held="on-hold", used=2), "held")
+        self.assertEqual(self.conflicting(held="on-hold", write=True), "held")
+        # Without the label the stored count is at its limit.
+        self.store(conflicts=2)
+        self.assertEqual(self.conflicting(), "used_up")
+
+    def test_a_conflict_round_counts_from_the_stored_conflicts(self):
+        self.store(conflicts=2)
+        self.assertEqual(self.conflicting(used=0), "used_up")
+        run = {"head": HEAD, "held_back": "conflicts"}
+        args = (self.gh, self.cfg, 5, 6, run, HEAD, True, 0)
+        self.assertEqual(host.conflicts_released(*args), "waits")
+        self.assertEqual(
+            host.base_moved(self.gh, self.cfg, 5, 6, HEAD, True, False, False, 0, 0), "waits"
+        )
+
+    def test_a_release_stores_one_revision_for_each_event(self):
+        run = {"head": HEAD, "held_back": "fix"}
+        self.assertEqual(host.released(self.gh, self.cfg, 5, 6, run, HEAD, 1, write=True), "fix")
+        _, doc = self.read()
+        self.assertEqual((doc["revision"], doc["rounds"]["counted"]), (2, 2))
+        self.assertEqual(doc["recentEvents"][-1], f"released-6-{HEAD}")
+        # A head pushed meanwhile is a second event.
+        moved = host.released(self.gh, self.cfg, 5, 6, run, "d" * 40, 1, write=True)
+        self.assertEqual(moved, "review")
+        self.assertEqual(self.read()[1]["revision"], 4)
+        # Previewed, it stores nothing.
+        self.assertEqual(host.released(self.gh, self.cfg, 5, 6, run, HEAD, 1), "fix")
+        self.assertEqual(self.read()[1]["revision"], 4)
+
+    def test_a_held_fix_round_released_counts_from_the_stored_count(self):
+        run = {"head": HEAD, "held_back": "fix"}
+        self.store(counted=3)
+        self.assertEqual(host.released(self.gh, self.cfg, 5, 6, run, HEAD, 0), "used_up")
+
+    def test_the_end_of_a_wait_for_the_base_branch_stores_the_answer(self):
+        run = {"head": HEAD, "ci_wait": {"bug": 77, "workflow": "ci.yml", "branch": "main"}}
+        args = (self.gh, self.cfg, 5, 6, run, 1)
+        self.assertEqual(host.base_passes(*args, write=True), "fix")
+        _, doc = self.read()
+        self.assertEqual((doc["revision"], doc["rounds"]["counted"]), (2, 2))
+        self.store(counted=3)
+        self.assertEqual(host.base_passes(*args), "used_up")
+
+    def test_a_held_conflict_round_released_stores_both_events(self):
+        run = {"head": HEAD, "held_back": "conflicts"}
+        args = (self.gh, self.cfg, 5, 6, run, HEAD, True, 1)
+        self.assertEqual(host.conflicts_released(*args, write=True), "round")
+        _, doc = self.read()
+        self.assertGreater(doc["revision"], 1)
+        self.assertEqual(doc["recentEvents"][-1], f"released-6-{HEAD}")
+        # The round that started counts: the stored conflicts are at the limit now.
+        self.assertEqual(doc["rounds"]["conflicts"], 2)
+        before = copy.deepcopy(self.gh.comments(5))
+        self.assertEqual(host.conflicts_released(*args), "waits")
+        self.assertEqual(self.gh.comments(5), before)
+
+    def test_a_stopped_round_stores_its_count_given_back(self):
+        counts = host.stopped_counts
+        args = (self.gh, self.cfg, 5, 6, HEAD, 2, True, True)
+        self.assertEqual(counts(*args, write=True), 1)
+        _, doc = self.read()
+        self.assertEqual((doc["revision"], doc["rounds"]["counted"]), (2, 1))
+        # A stored count above NexKit 6's is the one that is given back.
+        self.store(counted=3)
+        self.assertEqual(counts(*args), 2)
+        # An agent that stopped by itself finishes its round and keeps its count.
+        self.assertEqual(counts(*args[:-1], False, write=True), 3)
+        self.assertEqual(self.read()[1]["revision"], 4)
+
+    def test_a_base_branch_move_and_a_diagnosis_leave_the_state_as_it_is(self):
+        before = copy.deepcopy(self.gh.comments(5)), copy.deepcopy(self.gh.comments(6))
+        moved = host.base_moved(self.gh, self.cfg, 5, 6, HEAD, True, False, False, 0, 0)
+        self.assertEqual(moved, "round")
+        self.assertEqual(host.diagnosis(self.gh, self.cfg, 5, 6, HEAD, True, ["test"]), ["test"])
+        self.assertEqual((self.gh.comments(5), self.gh.comments(6)), before)
+        self.assertEqual(self.read()[1]["revision"], 1)
+
+    def test_a_decision_on_a_state_that_someone_else_changed_is_refused(self):
+        comment, _ = self.read()
+        comment["editors"] = [BOT_LOGIN, "mallory"]
+        with self.assertRaises(host.Refused):
+            self.ended(write=True)
+        with self.assertRaises(host.Refused):
+            self.conflicting()
+
+    def test_a_pull_request_with_no_state_comment_decides_as_before_and_stores_none(self):
+        self.gh.add_issue(7)
+        self.gh.add_pull(8, 7, head_sha=HEAD)
+        before = copy.deepcopy(self.gh.comments(7))
+        run = {"head": HEAD, "held_back": "fix"}
+        self.assertEqual(host.released(self.gh, self.cfg, 7, 8, run, HEAD, 1, write=True), "fix")
+        self.assertEqual(self.gh.comments(7), before)
 
 
 class HeldConflictReleasedTest(HostCase):

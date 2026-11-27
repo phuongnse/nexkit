@@ -1002,6 +1002,7 @@ def stop_superseded(gh, pull, base, conflicting, strict, workflow, ref, max_roun
         # The engine decides what the base branch's move leaves: the conflict round, the
         # update, or checks that go on to their end.
         answer = host.base_moved(
+            gh,
             cfg,
             issue_from_branch(pull["head"]["ref"]),
             number,
@@ -1069,7 +1070,7 @@ def stop_superseded(gh, pull, base, conflicting, strict, workflow, ref, max_roun
         started = failed
     else:
         run.update(status=SUCCESS, outcome=SUPERSEDED)
-    _give_back(gh, number, comments, run)
+    _give_back(gh, cfg, issue_from_branch(pull["head"]["ref"]), number, comments, run)
     text = f"{stopped} {started}"
     for sha in checked:
         for context in progress.STATUS_CONTEXTS:
@@ -1083,10 +1084,12 @@ def stop_superseded(gh, pull, base, conflicting, strict, workflow, ref, max_roun
     return f"#{number}: {text}"
 
 
-def _give_back(gh, number, comments, run):
-    """An automatic fix round whose checks NexKit stopped gives its `fix.max_auto_rounds`
-    back, as the engine decides (`host.stopped_counts`). A conflict round, and a retried or
-    resumed one, counts toward no automatic fix round here."""
+def _give_back(gh, cfg, issue, number, comments, run):
+    """An automatic fix round of the pull request `number` of `issue` whose checks NexKit
+    stopped gives its `fix.max_auto_rounds` back, as the engine decides (`host.stopped_counts`),
+    which only previews here: this runs in the push run's or the sweep's group, and only the
+    item's own group stores its state. A conflict round, and a retried or resumed one, counts
+    toward no automatic fix round here."""
     from .host import Refused, stopped_counts
 
     automatic = counted_fix(run)
@@ -1096,7 +1099,9 @@ def _give_back(gh, number, comments, run):
     read = json.loads(json.dumps(state))
     try:
         found = state["auto_fixes"]
-        counted = stopped_counts(number, number, run.get("head"), found, automatic, True, True)
+        counted = stopped_counts(
+            gh, cfg, issue, number, run.get("head"), found, automatic, True, True
+        )
     except Refused:
         return
     if counted != state["auto_fixes"]:
@@ -1168,6 +1173,7 @@ def moved_round(gh, cfg, pull, base, workflow, ref, max_rounds, settle):
     number = pull["number"]
     try:
         answer = host.base_moved(
+            gh,
             cfg,
             issue_from_branch(pull["head"]["ref"]),
             number,

@@ -705,7 +705,13 @@ def _decide(
             # round and a conflict round, which merges the base branch, do not.
             try:
                 found = host.diagnosis(
-                    decision["issue"], number, pull["head"]["sha"], auto and not conflicts, repeated
+                    gh,
+                    cfg,
+                    decision["issue"],
+                    number,
+                    pull["head"]["sha"],
+                    auto and not conflicts,
+                    repeated,
                 )
             except host.Refused:
                 found = []

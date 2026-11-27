@@ -85,8 +85,9 @@ the same pull request, and links it from the rule or page that the choice shapes
 
 A change follows the decisions and rules in force; none is widened to let a change pass. When a
 review or a check finds that a decision or a rule forbids the change, the change is made to follow
-it, or a new decision that weighs the alternatives changes the rule first, and the owner agrees to
-it. A plan that would edit an Agreed decision's choice proposes such a decision instead.
+it, or it adds a **Proposed** decision that weighs the alternatives and goes ahead only once the
+owner agrees to it. A plan that would edit an Agreed decision's choice proposes such a decision
+instead.
 
 A new decision takes the next number that no decision has used, superseded ones included. Its slug
 is its title in kebab-case, so the title must state the choice, as `D1. State lives only on GitHub`

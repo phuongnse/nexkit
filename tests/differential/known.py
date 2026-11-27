@@ -189,6 +189,34 @@ KNOWN += [
     for family in ("replan", "vouch")
 ]
 
+KNOWN += [
+    {
+        "name": "the stored state is read before a command or an approval is decided",
+        "family": family,
+        "by": "#644",
+        "why": (
+            "A command, a closing command and an approval read the item's stored state, which is "
+            "the import in memory when the item has no state comment, and the import reads the "
+            "issues that block it. So do the families whose flows send NexKit's own dispatch of "
+            "a command or an approval: the waits, refusals, ends, conflicts, branches behind "
+            "their base and parents. A read by `FakeGitHub` adds the issue to its `blockers` "
+            "with no blocker, where NexKit 6's flow never read it. Only a record that differs "
+            "by such an empty entry is excused."
+        ),
+        "match": lambda sc, old, new: _without_empty_blockers(old) == _without_empty_blockers(new),
+    }
+    for family in (
+        "command",
+        "approvals",
+        "waits",
+        "refusals",
+        "ended",
+        "conflicted",
+        "behind",
+        "parents",
+    )
+]
+
 
 # The families that play the decisions of a pull request's rounds (#646).
 FAMILIES_646 = (

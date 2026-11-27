@@ -1303,6 +1303,8 @@ class PipelineCommandTests(unittest.TestCase):
         raw = json.loads(path.read_text())
         raw["limits"] = {"setup_timeout_minutes": 10}
         path.write_text(json.dumps(raw))
+        # Another comment: an earlier run took the first, and a command starts only once.
+        event["comment"]["id"] = 4
         out = self.run_route("issue_comment", event)
         timeout = json.loads(out["check_matrix"])["include"][0]["timeout"]
         self.assertEqual((out["agent_timeout"], timeout), ("55", 15 + 10 + 10))
@@ -1405,7 +1407,7 @@ class PipelineCommandTests(unittest.TestCase):
         self.assertEqual(out["agent_timeout"], str(5 + 40 + 30))
         self.assertIsNone(json.loads(out["decision"])["previous_profile"])
         # Other runs get the profile's settings in the configuration they pass on.
-        event["comment"]["body"] = "/nexkit go"
+        event["comment"].update(id=4, body="/nexkit go")
         out = self.run_route("issue_comment", event)
         self.assertEqual(json.loads(out["decision"])["profile"], "standard")
         cfg = json.loads(out["config"])
@@ -1446,7 +1448,7 @@ class PipelineCommandTests(unittest.TestCase):
         out = self.run_route("issue_comment", event)
         self.assertEqual(json.loads(out["agent_secrets"]), sorted([*claude, *team]))
         # Without a plan, go runs on default_profile: implement and review on Claude.
-        event["comment"]["body"] = "/nexkit go"
+        event["comment"].update(id=4, body="/nexkit go")
         out = self.run_route("issue_comment", event)
         self.assertEqual(json.loads(out["agent_secrets"]), claude)
         self.assertEqual(json.loads(out["review_secrets"]), claude)
@@ -2819,7 +2821,7 @@ class WorkItemGroupTests(unittest.TestCase):
             calls.append(("take", number))
             return []
 
-        def routed(gh, event_name, event, inputs=None, cfg=None):
+        def routed(gh, event_name, event, inputs=None, cfg=None, taken=None):
             calls.append(("route", None))
             return {"action": "none", "reason": "test"}
 

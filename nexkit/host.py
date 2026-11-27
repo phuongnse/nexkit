@@ -27,7 +27,17 @@ or the close of an issue that blocks it. So does one that stopped as blocked wit
 answer, which waits for a person and, with autopilot, is planned again after a comment or the
 close of an issue that blocks it (`afterFailure`). So does one that failed on an error, with no
 pull request, and not on time: the host sends it as an agent error, and the engine plans it again
-after a collaborator's comment or the same close.
+after a collaborator's comment or the same close. These decisions (`after_go`, `round_carried_on`)
+read the item's stored state alone. `report` sends the round's result on the stored `working`
+state. The sweep and the `step` run send it only while the stored state still waits for the
+implement run and does not hold the result's event yet, so no second result reaches the engine. A
+collaborator's comment or a blocker's close that the stored state holds (its id is in the events
+seen, because `take` stored it) is not sent again, and a writer's closing answer names the
+question reference that the state holds. When nothing is left to send, the step carries out what
+the stored state holds: a pending run, with autopilot's answers shown when the state says it
+answered, a close, or the wait for a person with the attention's reason. An imported round that
+autopilot's answers restart has no run pending, so autopilot's `requested` start, with no
+person, starts it.
 
 And it decides what follows a round's checks and review on a NexKit pull request (`report`):
 the review's verdict and criteria, an automatic fix round within `fix.max_auto_rounds`, counted,
@@ -269,7 +279,8 @@ the decision is the markers' document at the stored revision, with the stored `c
 `first_state.empty` never gives a budget back, and so that NexKit 6's answers stay
 exactly as they are: a finished plan's import is `awaitingApproval`, which cannot take the plan's
 result, and a second send of one event, such as the plan's result that `report` and the step run
-both send, would be a duplicate. The last move to the stored document removes `resync`.
+both send, would be a duplicate. `after_go` and `round_carried_on` no longer go through it: they
+pass no document of the markers. The last move to the stored document removes `resync`.
 
 A row of events, such as a hold and then the stop, or a round's result and then a comment, is one
 write: the state after the last event, at the revision read plus one, since `item_state.write`
@@ -314,7 +325,7 @@ from . import autopilot, engine, first_state, item_state, protocol, usage
 from . import config as configuration
 from .checks import failing_signatures
 from .engine.machine import RUNS
-from .github import GitHubError
+from .github import TRUSTED_ASSOCIATIONS, GitHubError
 from .protocol.size import LONGEST, MOST
 from .report import TOO_LARGE
 from .schema import filled
@@ -767,7 +778,11 @@ def _taken_event(gh, number, pull, comments, holds, one):
         fields = {"what": command, "by": _person(login, "writer"), "note": note, "plan": plan}
         return _event("requested", number, at, name, **fields)
     text = {"name": "comment", "ref": str(raw["id"])}
-    return _event("commented", number, at, name, by=_person(login, "reader"), text=text)
+    # The engine ignores what is not a collaborator's comment (`autopilot._commented_after`): an
+    # author outside the repository's collaborators, and a command that is not taken as one.
+    trusted = raw.get("author_association") in TRUSTED_ASSOCIATIONS and command is None
+    by = _person(login, "reader" if trusted else "outside")
+    return _event("commented", number, at, name, by=by, text=text)
 
 
 def _edited(edited):
@@ -813,7 +828,11 @@ def take(gh, cfg, number, tries=item_state.TRIES, sleep=time.sleep):
     replaced with a newer one is answered by the run that ran, not lost
     (docs/engine-hosts.md#hosts). The sources are a writer's `/nexkit` comments, other people's
     comments, a writer's approving or *Request changes* review of the change, and the adding
-    and removing of a label of `autopilot.labels` that holds the item. Each is answered by
+    and removing of a label of `autopilot.labels` that holds the item. A comment of someone
+    outside the repository's collaborators, or text of a command that is not taken as one, is
+    sent with the role `outside`, which the engine ignores, as autopilot ignores it
+    (`autopilot._commented_after`). A writer's comment that picks the option that only closes the
+    issue, on questions that the state holds, is sent as an `answered` event. Each is answered by
     `item_state.apply`, which moves the cursor past it, even when the answer changes nothing,
     so that an old remark is never answered on a state that moved on. A work item with no
     state comment has nothing to take: `store_import` stores its first state before.
@@ -869,17 +888,36 @@ def _take(gh, cfg, number, tries, sleep):
             continue
         stored = []
 
-        def answer(state, event=event, stored=stored):
+        def answer(state, event=event, stored=stored, one=one):
+            event = _closing_answer(gh, number, event, one, state) or event
             found = step(state, event, found_policies)
-            stored[:] = [found["changed"]]
+            stored[:] = [found["changed"], event]
             return found["state"], found["actions"], found["changed"]
 
         _, actions = item_state.apply(
             gh, number, answer, tries=tries, sleep=sleep, since=one.cursor
         )
         if stored and stored[0]:
-            taken.append((event, actions))
+            taken.append((stored[1], actions))
     return taken
+
+
+def _closing_answer(gh, number, event, one, state):
+    """The `answered` event that the collaborator's comment `event`, taken from the source
+    `one`, is on the questions that `state` holds, when it picks the option that only closes the
+    issue and its author may write, which closing is; otherwise None, and the comment stays a
+    comment. Without it, the questions that wait would be answered by a new plan, and the
+    writer's answer lost (`after_go`)."""
+    asked = state.get("questions")
+    if event["kind"] != "commented" or event["by"]["role"] != "reader" or not asked:
+        return None
+    picked = _picked(one.raw.get("body"), {"questions": asked["items"]})
+    by = (one.raw.get("user") or {}).get("login") or ""
+    if not picked or not by or not gh.can_write(by):
+        return None
+    answers = [{"question": picked[0], "option": picked[1]}]
+    fields = {"by": _person(by, "writer"), "answers": answers, "note": "", "asked": asked["ref"]}
+    return _event("answered", number, one.at, one.name, **fields)
 
 
 # -- the stored document and the decisions that store their answer -------------------------
@@ -1567,21 +1605,10 @@ def round_output(run):
     }
 
 
-def _working(doc, again):
-    """`doc` while its `/nexkit go` runs, which the engine waits for. `again` says that
-    autopilot's answers started this round and no person commented since
-    (`autopilot.asked_again`)."""
-    doc["state"] = "working"
-    doc["pending"] = [first_state.agent_run("implement", None)]
-    doc["asked"] += ["answers"] * again
-    if doc["plan"]:
-        doc["plan"]["approved"] = True
-    return doc
-
-
 def _asks(doc, comment, run):
     """`doc` while the questions of the blocked round whose run comment is `comment` wait:
-    a comment that came before NexKit 6's next sweep is taken on them as they wait."""
+    a comment that came before NexKit 6's next sweep is taken on them as they wait. Only
+    `closing_command` still uses it; the decisions on its stored state replace it."""
     ref = str(comment["id"])
     items = [
         {**item, "replans": sorted(set(item["replans"]) - {0, item["closes"]})}
@@ -1605,54 +1632,80 @@ def after_go(gh, cfg, issue, comment, run, record, start, comments, write=False)
     """The step after the `/nexkit go` of `issue` whose run comment `comment`, with the
     marker `run`, says it stopped as blocked, with questions or protected paths or with
     nothing to answer, or failed on an error and not on time (`autopilot.engine_round`,
-    `autopilot._assess`), as the engine decides it: a writer's comment since that
-    picks the option that only closes the issue closes it; otherwise the round's result,
-    then a collaborator's comment since, or the close of an issue that blocked it after the
-    round started. `record` is autopilot's record and `start` what
-    a command that the step starts begins from. With `write`, which only the run of the item's
-    group passes, the engine's answer is stored (`decide_all`). Raises `Refused`."""
+    `autopilot._assess`), as the engine decides it on the item's stored state alone. It sends
+    only what that state does not hold yet: the round's result, while the state still waits for
+    the implement run and does not have the result's event among its recent events; then a
+    writer's answer that picks the option that only closes the issue, which names the question
+    reference the state holds, or a collaborator's comment since, or the close of an issue that
+    blocked it after the round started, each unless its id is in the recent events, because
+    `take` or `report` stored it. When nothing is left to send, the step carries out what the
+    state holds (`_held`): a pending run, a close, or the wait for a person. `record` is
+    autopilot's record, which this decision no longer reads, and `start` what a command that
+    the step starts begins from. With `write`, which only the run of the item's group passes,
+    the engine's answer is stored (`decide_all`). Raises `Refused`, with no configuration or no
+    state to decide on."""
     number = issue["number"]
     said = autopilot._commented_after(comments, comment)
     picked = _picked(said[-1].get("body"), run) if said else None
     by = ((said[-1].get("user") or {}).get("login") or "") if picked else ""
     view = _RoundView(issue, run, start, said, picked)
-    if picked and by and gh.can_write(by):
-        # Closing is a write: a collaborator who may only read comments on the questions.
-        doc = _asks(_plan_doc(issue, record, comments), comment, run)
-        answers = [{"question": picked[0], "option": picked[1]}]
-        asked = doc["attention"]["ref"]
-        fields = {"by": _person(by, "writer"), "answers": answers, "note": "", "asked": asked}
-        at, name = said[-1].get("created_at"), event_id("comment", said[-1])
-        event = _event("answered", number, at, name, **fields)
-        return view.carry(decide(gh, cfg, number, event, doc, write=write)[1])
-    doc = _working(_plan_doc(issue, record, comments), autopilot.asked_again(comments))
-    events = [_round_result(number, comment, run)]
+    doc = stored(gh, cfg, number)[1] if cfg is not None else None
+    if doc is None:
+        raise Refused("The item has no state to decide on.")
+    seen = set(doc["recentEvents"])
+    result = first_state._round_result(number, comment, run)
+    waiting = any(a["kind"] == "runAgent" and a.get("stage") == "implement" for a in doc["pending"])
+    send_result = result["id"] not in seen and waiting
+    events = [result] if send_result else []
+    heard, restart = None, False
     if said:
-        # A collaborator, as `autopilot._commented_after` reads them.
-        login = (said[-1].get("user") or {}).get("login") or ""
-        text = {"name": "comment", "ref": str(said[-1]["id"])}
         at, name = said[-1].get("created_at"), event_id("comment", said[-1])
-        events.append(_event("commented", number, at, name, by=_person(login, "reader"), text=text))
+        login = (said[-1].get("user") or {}).get("login") or ""
+        if name in seen:
+            # `take` stored it: a writer's pick on the questions as an answer (`_closing_answer`),
+            # any other comment as a comment.
+            heard = "commented"
+        elif picked and by and gh.can_write(by):
+            # Closing is a write: a collaborator who may only read comments on the questions.
+            asked = pending_id(doc, "runAgent", "implement") if send_result else None
+            asked = asked or (doc.get("questions") or {}).get("ref")
+            if asked is None:
+                raise Refused("The round has no questions that the answer names.")
+            answers = [{"question": picked[0], "option": picked[1]}]
+            fields = {"by": _person(by, "writer"), "answers": answers, "note": "", "asked": asked}
+            events.append(_event("answered", number, at, name, **fields))
+        else:
+            # A collaborator, as `autopilot._commented_after` reads them.
+            text = {"name": "comment", "ref": str(said[-1]["id"])}
+            by_reader = _person(login, "reader")
+            events.append(_event("commented", number, at, name, by=by_reader, text=text))
     else:
         closed = _closed_since(gh, issue, comment)
         view.closed = list(closed)
-        events += [
-            _event(
-                "blockerClosed",
-                number,
-                None,
-                f"blocker-{found}",
-                blocker=str(found),
-                completed=done,
+        for found, done in closed.items():
+            name = f"blocker-{found}"
+            if name in seen:
+                heard = "blockerClosed"
+                continue
+            events.append(
+                _event("blockerClosed", number, None, name, blocker=str(found), completed=done)
             )
-            for found, done in closed.items()
-        ]
-    _, answers = decide_all(
+        if not send_result and doc["state"] in ("working", "planning"):
+            # Autopilot's answers start the round again: the import leaves no run pending for it.
+            if any(wait["for"] == "start" for wait in doc["waits"]):
+                name = f"start-{number}-{doc['revision']}"
+                fields = {"what": "start", "by": None, "note": "", "plan": None}
+                events.insert(0, _event("requested", number, None, name, **fields))
+                restart = True
+    if not events:
+        view.by_event = heard
+        return view.carry(_held(doc))
+    state, answers = decide_all(
         gh,
         cfg,
         number,
         events,
-        doc,
+        None,
         action=("runAgent", "implement"),
         until=lambda acts: any(x["kind"] in ("runAgent", "close", "createParts") for x in acts),
         write=write,
@@ -1662,27 +1715,38 @@ def after_go(gh, cfg, issue, comment, run, record, start, comments, write=False)
         if found:
             actions = found
             view.by_event = sent["kind"]
-    return view.carry(actions)
+    if restart:
+        # A request shows no answers, though the state says that autopilot's answers started it.
+        actions = _with_answers(actions, state)
+    return view.carry(actions or _held(state))
 
 
-def _round_result(number, comment, run):
-    """The end of the `/nexkit go` whose run comment `comment` holds the marker `run`: a
-    blocked round's result, or for any other failed round an agent error, worded from NexKit's
-    own marker and never from agent text."""
-    if run.get("outcome") == "agent_blocked":
-        result = {**AGENT, "output": round_output(run)}
-    else:
-        text = str(run.get("attention") or "The round failed.")[: LONGEST["reason"]]
-        result = {**AGENT, "error": text, "output": None}
-    return _event(
-        "actionFinished",
-        number,
-        comment.get("created_at"),
-        _run_event_id(run.get("url")),
-        action=first_state.RUN_ID,
-        changeVersion=None,
-        result=result,
-    )
+def _with_answers(actions, doc):
+    """`actions` and, when they run an agent that autopilot's answers started, which the state
+    `doc` says in its `asked`, the `show` of those answers, if they do not hold it."""
+    shown = any(a["kind"] == "show" and a["what"] == "answers" for a in actions)
+    runs = any(a["kind"] == "runAgent" for a in actions)
+    if runs and not shown and "answers" in doc["asked"]:
+        return [*actions, {"kind": "show", "what": "answers"}]
+    return actions
+
+
+def _held(doc):
+    """What the stored state `doc` holds for autopilot to carry out, as the engine's actions:
+    its pending run, with autopilot's answers shown when it answered, or its pending close; a
+    change that ends as `noChange` closes as completed, which the import keeps no close for;
+    otherwise the wait for a person that its attention names. None when it holds nothing."""
+    for action in doc["pending"]:
+        if action["kind"] == "runAgent":
+            return _with_answers([action], doc)
+    for action in doc["pending"]:
+        if action["kind"] == "close":
+            return [action]
+    if doc["state"] == "noChange":
+        return [{"kind": "close", "outcome": "completed"}]
+    if doc["attention"]:
+        return [{"kind": "needPerson", "reason": doc["attention"]["reason"]}]
+    return []
 
 
 def _closed_since(gh, issue, comment):
@@ -1778,16 +1842,15 @@ def _carries_on(actions):
 def round_carried_on(gh, cfg, issue, decision, agent, ran=None, write=False):
     """Whether autopilot carries on after the `/nexkit go` that a run of `decision` ran and
     that stopped as blocked, with the agent's result `agent`, as the engine decides what
-    follows it, so that `report` mentions nobody. A wait for a person, the closing answer
-    included, makes `report` mention them. With `write`, which the `report` of the item's group
-    passes, the answer is stored (`decide`). Raises `Refused`."""
+    follows it on the item's stored state, which waits for the implement run, so that `report`
+    mentions nobody. A wait for a person, the closing answer included, makes `report` mention
+    them. With `write`, which the `report` of the item's group passes, the answer is stored
+    (`decide`), and the sweep's `after_go` then does not send the result again. Raises
+    `Refused`."""
     from .report import _autopilot_fields
 
-    comments = gh.comments(issue["number"])
-    again = autopilot.asked_again(comments)
     found = _autopilot_fields(agent)
     run = {**found, "protected_paths": ((agent.get("output") or {}).get("protected_paths") or [])}
-    doc = _working(_document(issue, autopilot.find_record(comments)[1]), again)
     event = _event(
         "actionFinished",
         issue["number"],
@@ -1802,7 +1865,7 @@ def round_carried_on(gh, cfg, issue, decision, agent, ran=None, write=False):
         cfg,
         issue["number"],
         event,
-        doc,
+        None,
         action=("runAgent", "implement"),
         write=write,
     )

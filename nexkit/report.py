@@ -2730,7 +2730,18 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         # The run whose `nexkit-checks` artifact holds the failing checks' result files.
         state["feedback"]["run_id"] = int(run_id)
 
-    from .host import Refused, after_round, round_ended
+    from .host import Refused, after_round, round_ended, round_published
+
+    # The round's agent and publish results reach the stored state before its checks do.
+    stored_round = False
+    if action in ("implement", "fix"):
+        try:
+            stored_round = round_published(
+                gh, cfg, decision, pr, head, agent, agent_ran, conflicting
+            )
+        except Refused as error:
+            why = autopilot.quoted(str(error), 300)
+            print(f"::warning::The state of #{decision['issue']} does not hold the round: {why}")
 
     def ended(given, now=None):
         """What the engine answers to this round's checks and a review that is not a
@@ -2752,6 +2763,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             ran=review_ran,
             now=now,
             write=True,
+            published=stored_round,
         )
         state["feedback"] = _with_repeated(state["feedback"], repeated)
         return found_end
@@ -2858,6 +2870,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
                 seen,
                 ran=review_ran,
                 write=True,
+                published=stored_round,
             )
         except Refused as error:
             ends, refused = "needs_human", error

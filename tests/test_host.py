@@ -3142,6 +3142,104 @@ class DiagnosisTest(HostCase):
             )
 
 
+class RoundPublishedTest(HostCase):
+    """The end of an implement or fix round reaches the stored state before its checks do
+    (`host.round_published`), only while that state waits for the round's agent."""
+
+    NEW = "e" * 40
+    RED = [{"name": "test", "passed": False, "output": "AssertionError"}]
+    REVIEW = ("done", {"verdict": "approve", "criteria": [], "findings": []})
+    OUTPUT = {"status": "done", "summary": "Fixed.", "checks_run": []}
+
+    def setUp(self):
+        super().setUp()
+        self.cfg = make_config(fix={"max_auto_rounds": 3}, conflicts={"auto_resolve": True})
+        self.issue(5)
+        self.gh.add_pull(6, 5, head_sha=HEAD)
+        self.found = {"action": "fix", "issue": 5, "pr": 6, "target": 6, "head": HEAD}
+
+    def read(self):
+        return item_state.read(self.gh, 5)
+
+    def publish(self, head, conflicts=False, found=None, agent=None):
+        agent = {"status": "done", "output": self.OUTPUT} if agent is None else agent
+        args = (self.gh, self.cfg, found or self.found, 6, head, agent, None, conflicts)
+        return host.round_published(*args)
+
+    def fail_the_checks(self):
+        """The round's checks fail, which stores an automatic fix round with its agent pending."""
+        args = (self.gh, self.cfg, self.found, 6, HEAD, 0, self.RED, None, self.REVIEW)
+        self.assertEqual(host.round_ended(*args, write=True)[0], "auto_fix")
+        doc = self.read()[1]
+        self.assertEqual(doc["state"], "fixing")
+        self.assertEqual(runs_of(doc), ["fix"])
+
+    def test_a_round_that_the_import_placed_in_its_checks_sends_nothing(self):
+        seed(self.gh, self.cfg, 5)
+        before = self.read()[1]
+        self.assertEqual(before["state"], "checking")
+        self.assertEqual([a["kind"] for a in before["pending"]], ["runChecks"])
+        with mock.patch.object(host, "step", side_effect=AssertionError("step was called")):
+            self.assertFalse(self.publish(HEAD))
+            self.assertFalse(self.publish(HEAD, conflicts=True))
+        self.assertEqual(self.read()[1], before)
+        self.assertEqual(self.read()[1]["revision"], 1)
+
+    def test_a_round_without_a_checked_result_or_a_state_sends_nothing(self):
+        with mock.patch.object(host, "step", side_effect=AssertionError("step was called")):
+            # No state comment: the import is only in memory.
+            self.assertFalse(self.publish(HEAD))
+        seed(self.gh, self.cfg, 5)
+        with mock.patch.object(host, "step", side_effect=AssertionError("step was called")):
+            for agent in (None, {"status": "done"}, {"status": "done", "output": "text"}):
+                self.assertFalse(self.publish(HEAD, agent=agent or {}))
+            self.assertFalse(host.round_published(self.gh, None, self.found, 6, HEAD, {}, None, 0))
+            review = {**self.found, "action": "review"}
+            self.assertFalse(self.publish(HEAD, found=review))
+        self.assertEqual(self.read()[1]["revision"], 1)
+
+    def test_a_fix_round_stores_its_results_in_one_write_and_a_report_that_runs_again_none(self):
+        seed(self.gh, self.cfg, 5)
+        self.fail_the_checks()
+        before = self.read()[1]
+        self.assertTrue(self.publish(self.NEW))
+        doc = self.read()[1]
+        self.assertEqual(doc["revision"], before["revision"] + 1)
+        self.assertEqual(doc["state"], "checking")
+        self.assertEqual(doc["change"], {"id": "6", "version": self.NEW})
+        self.assertEqual([a["kind"] for a in doc["pending"]], ["runChecks"])
+        self.assertEqual(doc["pending"][0]["changeVersion"], self.NEW)
+        self.assertEqual(doc["rounds"]["fixed"], self.NEW)
+        self.assertNotIn("recheck", doc["rounds"])
+        # The same report again: nothing waits for the agent, so nothing is sent.
+        with mock.patch.object(host, "step", side_effect=AssertionError("step was called")):
+            self.assertFalse(self.publish(self.NEW))
+        self.assertEqual(self.read()[1], doc)
+
+    def test_a_fix_round_that_changed_nothing_stores_the_head_it_checks_again(self):
+        seed(self.gh, self.cfg, 5)
+        self.fail_the_checks()
+        self.assertTrue(self.publish(HEAD))
+        rounds = self.read()[1]["rounds"]
+        self.assertEqual((rounds["recheck"], rounds["fixed"]), (HEAD, HEAD))
+
+    def test_a_conflicting_commit_stores_only_the_agent_result_and_conflicting_the_publish(self):
+        seed(self.gh, self.cfg, 5)
+        self.fail_the_checks()
+        before = self.read()[1]
+        self.assertFalse(self.publish(self.NEW, conflicts=True))
+        doc = self.read()[1]
+        self.assertEqual(doc["revision"], before["revision"] + 1)
+        self.assertEqual([a["kind"] for a in doc["pending"]], ["publish"])
+        self.assertEqual(doc["pending"][0]["stage"], "fix")
+        self.assertFalse(any(name.startswith("publish-") for name in doc["recentEvents"]))
+        # `conflicting` then sends the publish result, which the stored state still waits for.
+        args = (self.gh, self.cfg, self.found, 6, self.NEW, None, 0)
+        self.assertEqual(host.conflicting(*args, write=True), "round")
+        seen = self.read()[1]["recentEvents"]
+        self.assertTrue(any(name.startswith("publish-6-") for name in seen))
+
+
 class DispatchedTest(HostCase):
     """NexKit's own dispatch of a command carries out the action that the stored state has
     pending, and is otherwise decided as a new request named by its run

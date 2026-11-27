@@ -466,7 +466,21 @@ class Pipeline:
             outcome["meanwhile"](self, decision["pr"])
         agent = outcome.get("agent")
         if agent is not None and decision["action"] != "review":
-            write("nexkit-agent", {"stage": decision["action"], **agent})
+            written = {"stage": decision["action"], **agent}
+            if decision["action"] in ("implement", "fix") and agent["status"] == "done":
+                # What the agent job leaves after it checked its output against the stage's
+                # schema (`results/<stage>.schema.json`), which `report` stores for the engine.
+                written.setdefault(
+                    "output",
+                    {
+                        "status": "done",
+                        "summary": agent.get("summary", ""),
+                        "checks_run": [],
+                        "changes": [],
+                        "testing": "",
+                    },
+                )
+            write("nexkit-agent", written)
         needs = {}
         published = {"published": False}
         issue_round = decision["action"] in ("plan", "implement")
@@ -1457,6 +1471,58 @@ class ScenarioTests(unittest.TestCase):
         pipe.play()
         self.assertEqual(len(pipe.gh.merged), 1)
         self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+
+    def test_a_label_added_while_the_agent_works_holds_a_round_decided_on_the_stored_state(self):
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            # Added after `route` took the item's events, so the stored state is not held yet.
+            pipe.gh.issues[5]["labels"] = [{"name": "on-hold"}]
+            return done()
+
+        settings = {"labels": {"on-hold": {"hold": True}}}
+        pipe = Pipeline(self, config(autopilot=settings), script)
+        pipe.issue(5)
+        pipe.take_run(5)
+        entries, fallbacks = self.round_ends()
+        pipe.play()
+        [(_, _, before)] = entries
+        self.assertFalse(before["hold"])
+        self.assertNotIn("nexkit.host.round_ended", fallbacks)
+        self.assertEqual((pipe.gh.merged, pipe.played[-1][2]), ([], "held"))
+        self.assertTrue(item_state.read(pipe.gh, 5)[1]["hold"])
+        pipe.gh.issues[5]["labels"] = []
+        pipe.play()
+        self.assertEqual(len(pipe.gh.merged), 1)
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+
+    def test_a_label_added_again_while_the_next_round_works_holds_that_round_too(self):
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            # Each round's agent works while the label is added, after `route` took the events.
+            pipe.gh.issues[5]["labels"] = [{"name": "on-hold"}]
+            return done(checks=inputs["command"] == "fix")
+
+        settings = {"labels": {"on-hold": {"hold": True}}}
+        pipe = Pipeline(self, config(autopilot=settings), script)
+        pipe.issue(5)
+        pipe.take_run(5)
+        entries, fallbacks = self.round_ends()
+        pipe.play()
+        self.assertEqual([command for command, _, _ in pipe.played], ["plan", "go"])
+        self.assertEqual(pipe.played[-1][2], "held")
+        self.assertTrue(item_state.read(pipe.gh, 5)[1]["hold"])
+        # The label goes, the item is released and the next round starts; it is added again.
+        pipe.gh.issues[5]["labels"] = []
+        pipe.play()
+        self.assertEqual([command for command, _, _ in pipe.played][-1], "fix")
+        self.assertEqual((pipe.gh.merged, pipe.played[-1][2]), ([], "held"))
+        self.assertTrue(item_state.read(pipe.gh, 5)[1]["hold"])
+        self.assertNotIn("nexkit.host.round_ended", fallbacks)
+        pipe.gh.issues[5]["labels"] = []
+        pipe.play()
+        self.assertEqual(len(pipe.gh.merged), 1)
 
     def test_checks_that_keep_failing_use_their_rounds_then_wait(self):
         def script(pipe, inputs):
@@ -2585,6 +2651,93 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(pipe.played[-1][2], "recheck_failed")
         [mention] = pipe.gh.comments_matching(6, "a person is needed")
         self.assertIn(cause.rstrip(".").replace("`", "'"), mention["body"])
+
+    def round_ends(self):
+        """Watch the ends of the rounds that `report` decides: the stored state of the item on
+        entry to `host.round_ended`, as (action, head, state) for each round, and the
+        fallbacks to the markers' document that `round_ended` made (`host.on_fallback`).
+        Returns (entries, fallbacks)."""
+        entries, fallbacks = [], []
+        real = host.round_ended
+
+        def spy(gh, cfg, decision, pr, head, *args, **kwargs):
+            state = copy.deepcopy(item_state.read(gh, decision["issue"])[1])
+            entries.append((decision["action"], head, state))
+            return real(gh, cfg, decision, pr, head, *args, **kwargs)
+
+        patches = (
+            mock.patch.object(host, "round_ended", spy),
+            mock.patch.object(host, "on_fallback", lambda origin, why: fallbacks.append(origin)),
+        )
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+        return entries, fallbacks
+
+    def test_a_go_round_is_stored_before_its_checks_and_they_decide_on_that_state(self):
+        working = []
+
+        def during(pipe):
+            # The agent works: the stored state has its stage pending, as `/nexkit go` left it.
+            doc = item_state.read(pipe.gh, 5)[1]
+            working.append((doc["state"], [a["stage"] for a in doc["pending"] if "stage" in a]))
+
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else {**done(), "working": during}
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        pipe.take_run(5)
+        entries, fallbacks = self.round_ends()
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
+        self.assertEqual(working, [("working", ["implement"])])
+        [(action, head, state)] = entries
+        # The agent's result and the publish result reached the state before the checks did.
+        self.assertEqual(action, "implement")
+        self.assertEqual(state["state"], "checking")
+        self.assertEqual(state["change"], {"id": "6", "version": head})
+        checks = [a for a in state["pending"] if a["kind"] == "runChecks"]
+        self.assertEqual([a["changeVersion"] for a in checks], [head])
+        self.assertFalse([a for a in state["pending"] if a["kind"] == "runAgent"])
+        self.assertTrue(any(name.startswith("publish-6-") for name in state["recentEvents"]))
+        self.assertNotIn("nexkit.host.round_ended", fallbacks)
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+
+    def test_a_fix_round_that_changed_nothing_is_stored_with_its_head_before_its_checks(self):
+        outside = {"cause": "The registry failed.", "cause_outside": True}
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            if inputs["command"] == "go":
+                return done(checks=False)
+            found = {**done(checks=True), "recheck": True}
+            found["agent"] = {
+                **found["agent"],
+                "recheck": True,
+                "output": {
+                    "status": "done",
+                    "summary": "Nothing to change.",
+                    "checks_run": [],
+                    **outside,
+                },
+            }
+            return found
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        pipe.take_run(5)
+        entries, fallbacks = self.round_ends()
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("fix", 6)])
+        [(first, head, _), (second, again, state)] = entries
+        self.assertEqual((first, second), ("implement", "fix"))
+        # The fix round published the head that the round before it checked.
+        self.assertEqual(again, head)
+        self.assertEqual(state["state"], "checking")
+        self.assertEqual(state["rounds"]["recheck"], head)
+        self.assertEqual(state["rounds"]["fixed"], head)
+        self.assertNotIn("nexkit.host.round_ended", fallbacks)
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
 
     def test_an_answer_that_only_closes_the_issue_closes_it(self):
         finding = "8b9cb87 already fixed it: the last 20 runs of `e2e` on `main` passed."
@@ -3817,11 +3970,13 @@ class ScenarioTests(unittest.TestCase):
             return pipe, pipe.play(), seen
 
         plain, played, seen = built(0)
-        # The import, then the checks and the review of each round raise the revision by two.
-        self.assertEqual(seen["revisions"], [1, 3, 5, 7])
+        # The import, then each round: its agent's and publish results in one write
+        # (`host.round_published`), and its checks and its review, each as its own revision.
+        self.assertEqual(seen["revisions"], [1, 4, 7, 10])
         first, head = seen["events"][1], seen["heads"][0]
-        self.assertIn(f"checks-6-{head}", first)
-        self.assertIn(f"round-review-6-{head}", first)
+        self.assertTrue(any(name.startswith(f"publish-6-{head}") for name in first), first)
+        self.assertTrue(any(name.startswith(f"checks-6-{head}") for name in first), first)
+        self.assertTrue(any(name.startswith(f"round-review-6-{head}") for name in first), first)
         self.assertEqual(played, [("plan", 5), ("go", 5), ("fix", 6), ("fix", 6), ("fix", 6)])
         # The stored count, above the one NexKit 6's marker holds, stops the rounds earlier.
         stored, played, seen = built(3)
@@ -4253,23 +4408,15 @@ class DispatchedFixRoundsTest(unittest.TestCase):
         self.assertEqual(end, "auto_fix")
         return host.pending_id(self.read()[1], "runAgent", "fix")
 
-    def publish_the_fix(self):
-        """The fix round ends: the engine takes its result, and the next checks follow."""
-        comment, doc = self.read()
-        result = {**host.AGENT, "changeVersion": self.HEAD}
-        result["output"] = {"status": "done", "summary": "Fixed.", "checks_run": []}
-        event = host._event(
-            "actionFinished",
-            5,
-            None,
-            f"run-{doc['revision']}",
-            action=host.pending_id(doc, "runAgent", "fix"),
-            changeVersion=self.HEAD,
-            result=result,
-        )
-        found = host.step(doc, event, host.policies(self.cfg))
-        stored = {**found["state"], "revision": doc["revision"] + 1}
-        self.assertTrue(item_state.write(self.gh, 5, stored, (comment, doc)))
+    def publish_the_fix(self, run):
+        """The fix round of the workflow run `run` ends: its agent's and publish results reach
+        the state, as `report` stores them, and the next checks follow."""
+        found = {"action": "fix", "issue": 5, "pr": 6, "target": 6, "head": self.HEAD}
+        output = {"status": "done", "summary": "Fixed.", "checks_run": []}
+        agent = {"status": "done", "output": output}
+        args = (self.gh, self.cfg, found, 6, self.HEAD, agent, None, False)
+        with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": str(run)}):
+            self.assertTrue(host.round_published(*args))
 
     def dispatch(self, run):
         inputs = {"command": "fix", "number": "6", "note": "", "auto": "true"}
@@ -4301,7 +4448,7 @@ class DispatchedFixRoundsTest(unittest.TestCase):
             self.assertEqual(self.read()[1], before)
             self.assertEqual(before["pending"][0]["id"], ids[-1])
             self.assertFalse(any(e.startswith("dispatch-") for e in before["recentEvents"]))
-            self.publish_the_fix()
+            self.publish_the_fix(run)
         # Each round has its own pending action, which its dispatch carried out.
         self.assertEqual(len(set(ids)), 2, ids)
         self.assertEqual(self.read()[1]["rounds"]["counted"], 2)
@@ -4353,25 +4500,15 @@ class ConflictRoundsStoredTest(unittest.TestCase):
     def end_round(self, number, sha):
         """The round merged the base branch into a new head, and its checks and review ended
         as `report` stores them."""
-        comment, doc = item_state.read(self.gh, 5)
         head = f"{number:x}" * 40
-        result = {**host.AGENT, "changeVersion": self.head}
-        result["output"] = {"status": "done", "summary": "Merged.", "checks_run": []}
-        event = host._event(
-            "actionFinished",
-            5,
-            None,
-            f"run-{doc['revision']}",
-            action=host.pending_id(doc, "runAgent", "fix"),
-            changeVersion=self.head,
-            result=result,
-        )
-        found = host.step(doc, event, host.policies(self.cfg))
-        stored = {**found["state"], "revision": doc["revision"] + 1}
-        self.assertTrue(item_state.write(self.gh, 5, stored, (comment, doc)))
         found = {"action": "fix", "issue": 5, "pr": 6, "target": 6, "head": self.head}
-        args = (self.gh, self.cfg, found, 6, head, 0, self.GREEN, None, self.REVIEW)
-        self.assertEqual(host.round_ended(*args, write=True)[0], "ready")
+        output = {"status": "done", "summary": "Merged.", "checks_run": []}
+        agent = {"status": "done", "output": output}
+        args = (self.gh, self.cfg, found, 6, head, agent, None, False)
+        with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": str(3000 + number)}):
+            self.assertTrue(host.round_published(*args))
+            args = (self.gh, self.cfg, found, 6, head, 0, self.GREEN, None, self.REVIEW)
+            self.assertEqual(host.round_ended(*args, write=True, published=True)[0], "ready")
         self.gh.round_comment(6, number + 1, head, "failed", conflicts=True, base_sha=sha)
         self.gh.pulls[6]["head"]["sha"] = self.head = head
 

@@ -471,16 +471,38 @@ def cmd_item(args):
     return 0
 
 
-def cmd_install_agents(args):
-    import subprocess
+# Seconds to wait before each further try of an agent CLI's installer.
+INSTALL_WAITS = (10, 30)
 
+
+def _install(command):
+    import subprocess
+    import time
+
+    for wait in (*INSTALL_WAITS, None):
+        try:
+            # From the home directory, so nothing in the checkouts can change the install.
+            subprocess.run(command, cwd=Path.home(), check=True)
+            return
+        except subprocess.CalledProcessError as error:
+            if wait is None:
+                raise
+            print(
+                f"warning: the install failed with exit status {error.returncode}. "
+                f"Trying again in {wait} seconds.",
+                file=sys.stderr,
+                flush=True,
+            )
+            time.sleep(wait)
+
+
+def cmd_install_agents(args):
     for name in args.runtime or configuration.runtimes(_config()):
         runtime = RUNTIMES[name]
         commands, bin_dir = runtime.install()
         print(f"Installing {name} {runtime.version}", flush=True)
         for command in commands:
-            # From the home directory, so nothing in the checkouts can change the install.
-            subprocess.run(command, cwd=Path.home(), check=True)
+            _install(command)
         path = os.environ.get("GITHUB_PATH")
         if path:
             with open(path, "a", encoding="utf-8") as handle:

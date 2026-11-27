@@ -26,12 +26,14 @@ from nexkit.state import (
     answers_marker,
     empty_state,
     latest_plan,
+    plan_data,
     plan_data_record,
     profile_record,
     questions,
     read_state,
     render_run,
     render_state,
+    run_comments,
 )
 from tests.support import BOT_LOGIN, FakeGitHub, make_config, play_resume, profile_config
 from tests.test_autopilot import AutopilotCase, pilot, plan_output
@@ -882,6 +884,78 @@ class DecideTest(HostCase):
         self.assertEqual(host.resync(state, built, event)["revision"], 4)
         self.assertIs(host.resync(None, built, event), built)
 
+    def test_a_stage_result_names_the_pending_action_of_the_stored_outbox(self):
+        comment, doc = self.read()
+        built = host._planning(copy.deepcopy(doc), 0, False)
+        stored = copy.deepcopy(built)
+        stored.update(revision=2)
+        stored["pending"][0]["id"] = "a2.1"
+        self.assertTrue(item_state.write(self.gh, 5, stored, (comment, doc)))
+        plan = latest_plan(self.gh.comments(5))
+        event = host._result(5, plan, plan_data(plan), self.PLAN_RUN)
+        seen, spy = self.spied()
+        with mock.patch.object(host, "step", spy):
+            host.decide(self.gh, self.cfg, 5, event, built, action=("runAgent", "plan"), write=True)
+        [(sent, _, found)] = seen
+        # The stored document agrees with the markers, so it is what the result is decided on.
+        self.assertEqual((sent["revision"], sent["pending"][0]["id"]), (2, "a2.1"))
+        self.assertEqual(seen[0][1]["action"], "a2.1")
+        self.assertNotEqual(seen[0][1]["action"], first_state.RUN_ID)
+        self.assertEqual(self.read()[1], found["state"])
+
+    def test_a_tick_names_the_wait_of_the_document_it_is_decided_on(self):
+        doc = {"waits": [{"id": "w2.1", "for": "usageLimit"}, {"id": "w2.2", "for": "time"}]}
+        self.assertEqual(host.wait_id(doc, "usageLimit"), "w2.1")
+        self.assertEqual(host.wait_id(doc, "time"), "w2.2")
+        self.assertEqual(host.wait_id({"waits": []}, "time"), "w1.1")
+        self.assertEqual(host.wait_id({}, "usageLimit"), "w1.1")
+
+    def test_events_sent_in_a_row_give_one_state_at_the_next_revision(self):
+        built = host._planning(host._document({"number": 5}, {}), 0, False)
+        events = [
+            host._event("held", 5, None, "held-5", label="on-hold"),
+            host._event("tick", 5, None, "tick-5", wait="w1.1"),
+        ]
+        seen, spy = self.spied()
+        before = copy.deepcopy(self.gh.comments(5))
+        with mock.patch.object(host, "step", spy):
+            state, answers = host.decide_all(
+                self.gh, self.cfg, 5, events, built, wait="time", until=lambda actions: False
+            )
+        self.assertEqual([sent["kind"] for sent, _ in answers], ["held", "tick"])
+        self.assertEqual(self.gh.comments(5), before)
+        # The second event is sent on the state that the first gave.
+        self.assertEqual(seen[1][0], seen[0][2]["state"])
+        self.assertEqual(seen[1][1]["wait"], "w1.1")
+        self.assertEqual(state["revision"], 2)
+        # The row stops after the event whose actions satisfy `until`.
+        with mock.patch.object(host, "step", spy):
+            _, answers = host.decide_all(
+                self.gh, self.cfg, 5, events, built, until=lambda actions: True
+            )
+        self.assertEqual([sent["kind"] for sent, _ in answers], ["held"])
+
+    def test_with_no_configuration_the_markers_decide_and_nothing_is_read(self):
+        built = host._planning(host._document({"number": 5}, {}), 0, False)
+        event = host._event("held", 5, None, "held-5", label="on-hold")
+        gh = mock.Mock()
+        state, answers = host.decide_all(gh, None, 5, [event], built, found_policies={})
+        self.assertEqual(state["revision"], 2)
+        self.assertEqual(len(answers), 1)
+        self.assertEqual(gh.mock_calls, [])
+
+    def test_the_stored_state_that_holds_any_event_of_a_row_is_decided_on_the_markers(self):
+        built = host._planning(host._document({"number": 5}, {}), 0, False)
+        state = copy.deepcopy(built)
+        state.update(revision=4, recentEvents=["comment-9"])
+        events = [{"id": "held-5"}, {"id": "resume-5"}]
+        self.assertIs(host.resync(state, built, events), state)
+        state["recentEvents"] = ["comment-9", "held-5"]
+        base = host.resync(state, built, events)
+        self.assertEqual((base["revision"], base["recentEvents"]), (4, ["comment-9"]))
+        state["recentEvents"] = ["resume-5", "held-5", "comment-9"]
+        self.assertEqual(host.resync(state, built, events)["recentEvents"], ["comment-9"])
+
 
 class SweepTest(HostCase):
     """The start steps of `autopilot.preview` go through the engine's `sweep`, which orders and
@@ -1307,19 +1381,26 @@ class AfterGoTest(HostCase):
     """What follows a `/nexkit go` that stopped as blocked, with questions, protected paths or
     nothing to answer, is the engine's answer, in NexKit 6's words."""
 
+    def stored(self, number, comment):
+        """`comment`, once the item has the state comment that `nexkit route` stores before its
+        first event: a decision then reads it, where it would import the item in memory and
+        send the engine the round's result a second time."""
+        host.store_import(self.gh, self.cfg, number)
+        return comment
+
     def blocked(self, number, **fields):
         """A plan, then a `/nexkit go` that stopped as blocked with nothing to answer."""
         self.issue(number)
         self.plan(number)
         run = {"outcome": "agent_blocked", "attention": "It needs a secret.", **fields}
-        return self.run_comment(number, "go", status="failure", **run)
+        return self.stored(number, self.run_comment(number, "go", status="failure", **run))
 
     def failed(self, number, **fields):
         """A plan, then a `/nexkit go` that failed on an agent error with no pull request."""
         self.issue(number)
         self.plan(number)
         run = {"outcome": "agent_error", "attention": "The agent crashed.", **fields}
-        return self.run_comment(number, "go", status="failure", **run)
+        return self.stored(number, self.run_comment(number, "go", status="failure", **run))
 
     def stopped(self, number, asked=(), **fields):
         """A plan, then a `/nexkit go` that stopped as blocked with the questions `asked`, as
@@ -1328,7 +1409,8 @@ class AfterGoTest(HostCase):
         self.plan(number)
         found = questions([dict(item) for item in asked])
         run = {"outcome": "agent_blocked", "questions": found, **fields}
-        return self.run_comment(number, "go", status="failure", attention="Answer them.", **run)
+        comment = self.run_comment(number, "go", status="failure", attention="Answer them.", **run)
+        return self.stored(number, comment)
 
     def test_the_engine_hears_the_round_s_result_then_a_comment_after_it(self):
         self.stopped(5, [{**ASKED, "recommended": 0}])
@@ -2978,14 +3060,25 @@ class LostAgainTest(TestCase):
     # The minutes after the last start that the n-th start waits.
     DUE = (0, 30, 60, 120)
 
+    def github(self):
+        """A repository with the issue and its pull request, which the item's state is read
+        from."""
+        gh = FakeGitHub()
+        gh.add_issue(5, title="Add it")
+        gh.add_pull(6, 5)
+        return gh
+
     def lost(self, command="plan", target=5, tries=0, now=None, at=None, **kwargs):
+        gh = kwargs.pop("gh", None) or self.github()
         record = {"command": command, "target": target, "at": at or self.AT, "tries": tries}
         record.update(kwargs.pop("record", {}))
         fields = {"command": command, "target": target, "note": "", "remember": {}}
         fields.update(kwargs.pop("fields", {}))
         now = now or self.NOW
         with mock.patch.object(host, "step", wraps=host.step) as sent:
-            found = host.lost_again(self.CFG, self.ISSUE, record, now, self.WHAT, fields, **kwargs)
+            found = host.lost_again(
+                gh, self.CFG, self.ISSUE, record, now, self.WHAT, fields, **kwargs
+            )
         return found, [call.args for call in sent.call_args_list]
 
     def test_a_lost_command_starts_again_when_it_is_due(self):
@@ -3100,6 +3193,232 @@ class LostAgainTest(TestCase):
 
     def test_autopilot_waits_for_a_person_when_the_engine_refuses(self):
         fields = {"command": "close", "target": 5, "note": "", "remember": {}}
-        found = autopilot._again(self.CFG, self.ISSUE, {}, self.NOW, self.WHAT, fields)
+        found = autopilot._again(
+            self.github(), self.CFG, self.ISSUE, {}, self.NOW, self.WHAT, fields
+        )
         self.assertEqual(found["state"], "waits")
         self.assertIn("refused to decide", found["reason"])
+
+
+class StoredStopsTest(HostCase):
+    """A blocked or failed `/nexkit go`, a stopped or timed-out round, a usage limit, a transient
+    error, a resume that comes due and a lost command store the engine's answer at the next
+    revision when they run in the item's group, and only preview it otherwise."""
+
+    NOW = datetime(2026, 10, 11, 5, 0, tzinfo=UTC)
+    START = {"basis": "b", "target": 5, "note": "", "remember": {}}
+    GO = {"issue": 5, "pr": None, "action": "implement"}
+    PLAN = {"issue": 5, "pr": None, "action": "plan"}
+
+    def setUp(self):
+        super().setUp()
+        self.cfg = pilot(answer="recommended", labels={"on-hold": {"hold": True}})
+        self.issue(5)
+        self.plan(5)
+
+    def stored(self):
+        """The item has the state comment that `nexkit route` stores before its first event."""
+        self.assertTrue(host.store_import(self.gh, self.cfg, 5))
+
+    def read(self):
+        return item_state.read(self.gh, 5)
+
+    def blocked(self):
+        run = {"outcome": "agent_blocked", "questions": questions([{**ASKED, "closes": 0}])}
+        return self.run_comment(5, "go", status="failure", attention="Answer them.", **run)
+
+    def timed_out(self):
+        return self.run_comment(5, "go", status="failure", outcome="agent_error", timed_out=True)
+
+    def after_go(self, write=False):
+        comments = self.gh.comments(5)
+        comment, run = [(c, r) for c, r in run_comments(comments) if "command" in r][-1]
+        record = autopilot.find_record(comments)[1]
+        issue = self.gh.issues[5]
+        return host.after_go(
+            self.gh, self.cfg, issue, comment, run, record, self.START, comments, write=write
+        )
+
+    def stopped(self, write=False):
+        comments = self.gh.comments(5)
+        _, run = [(c, r) for c, r in run_comments(comments) if "command" in r][-1]
+        record = autopilot.find_record(comments)[1]
+        issue = self.gh.issues[5]
+        return host.stopped(
+            self.gh, self.cfg, issue, run, record, self.START, comments, write=write
+        )
+
+    def paused(self, command="plan", at="2026-10-11T04:40:00Z", **resume):
+        record = {"command": command, "number": 5, "note": "", "auto": "resume", "at": at}
+        run = {"url": "https://x/runs/1", "command": command, "status": "paused"}
+        run["resume"] = {**record, **resume}
+        self.gh.comment(5, render_run(run, "⏸️ Paused."))
+        return run
+
+    def lost(self, write=False, now=None):
+        record = {"command": "go", "target": 5, "at": "2026-10-11T04:50:00Z", "tries": 1}
+        fields = {"command": "go", "target": 5, "note": "", "remember": {}}
+        return host.lost_again(
+            self.gh,
+            self.cfg,
+            self.gh.issues[5],
+            record,
+            now or self.NOW,
+            "the run ended without a report",
+            fields,
+            write=write,
+        )
+
+    def calls(self):
+        """(name, setup, call) of each decision, where `call(write)` carries it out."""
+        agent = {"status": "blocked", "output": {"questions": [{**ASKED, "closes": 0}]}}
+        timed_out = {"timed_out": True}
+        return [
+            ("after_go", self.blocked, self.after_go),
+            (
+                "round_carried_on",
+                self.blocked,
+                lambda write: host.round_carried_on(
+                    self.gh, self.cfg, self.gh.issues[5], self.GO, agent, write=write
+                ),
+            ),
+            ("stopped", self.timed_out, self.stopped),
+            (
+                "stop_carried_on",
+                self.timed_out,
+                lambda write: host.stop_carried_on(
+                    self.gh, self.cfg, self.gh.issues[5], self.GO, timed_out, write=write
+                ),
+            ),
+            (
+                "stage_limited",
+                lambda: None,
+                lambda write: host.stage_limited(
+                    self.gh, self.cfg, self.PLAN, "2026-10-11T04:40:00Z", write=write
+                ),
+            ),
+            (
+                "stage_transient",
+                lambda: None,
+                lambda write: host.stage_transient(
+                    self.gh, self.cfg, self.PLAN, self.NOW, "Overloaded", write=write
+                ),
+            ),
+            (
+                "resumes",
+                self.paused,
+                lambda write: host.resumes(
+                    self.gh, self.cfg, {"resume": self.resume_record()}, 5, self.NOW, write=write
+                ),
+            ),
+            ("lost_again", lambda: None, self.lost),
+        ]
+
+    def resume_record(self):
+        return {"command": "plan", "number": 5, "at": "2026-10-11T04:40:00Z"}
+
+    def spied(self):
+        seen, real = [], host.step
+
+        def spy(state, event, found_policies):
+            found = real(state, event, found_policies)
+            seen.append(found)
+            return found
+
+        return seen, spy
+
+    def test_each_decision_stores_the_engine_s_answer_at_the_next_revision(self):
+        for name, setup, call in self.calls():
+            with self.subTest(decision=name):
+                self.setUp()
+                setup()
+                self.stored()
+                before = self.read()[1]["revision"]
+                seen, spy = self.spied()
+                with mock.patch.object(host, "step", spy):
+                    call(True)
+                doc = self.read()[1]
+                self.assertEqual(doc["revision"], before + 1)
+                # The row of events is one write: the state after the last of them.
+                self.assertEqual({**doc, "revision": 0}, {**seen[-1]["state"], "revision": 0})
+
+    def test_without_write_the_comments_and_the_revision_stay(self):
+        for name, setup, call in self.calls():
+            with self.subTest(decision=name):
+                self.setUp()
+                setup()
+                self.stored()
+                before = copy.deepcopy(self.gh.comments(5))
+                call(False)
+                self.assertEqual(self.gh.comments(5), before)
+                self.assertEqual(self.read()[1]["revision"], 1)
+
+    def test_a_due_tick_of_a_lost_command_is_a_second_answer_stored_after_the_first(self):
+        self.stored()
+        before = self.read()[1]["revision"]
+        seen, spy = self.spied()
+        with mock.patch.object(host, "step", spy):
+            # Due: the loss is answered with a wait, and its tick, named by that wait, starts it.
+            step = self.lost(write=True, now=self.NOW + timedelta(hours=5))
+        self.assertEqual((step["state"], step["command"]), ("start", "go"))
+        self.assertEqual([found["state"]["revision"] for found in seen], [before + 1, before + 2])
+        doc = self.read()[1]
+        self.assertEqual(doc, seen[-1]["state"])
+        self.assertEqual([w for w in doc["waits"]], [])
+
+    def test_a_decision_with_no_state_comment_stores_nothing(self):
+        self.blocked()
+        before = copy.deepcopy(self.gh.comments(5))
+        self.after_go(write=True)
+        self.assertEqual(self.gh.comments(5), before)
+        self.assertEqual(self.read(), (None, None))
+
+    def test_a_comment_after_the_round_is_stored_with_its_result_as_one_answer(self):
+        # A round with nothing to answer waits for a person, until the comment plans it again.
+        self.run_comment(5, "go", status="failure", outcome="agent_blocked", attention="Secret.")
+        self.gh.human_comment(5, "Keep it, but only for a day.")
+        self.stored()
+        before = self.read()[1]["revision"]
+        seen, spy = self.spied()
+        with mock.patch.object(host, "step", spy):
+            self.after_go(write=True)
+        self.assertEqual(len(seen), 2)
+        self.assertEqual(self.read()[1]["revision"], before + 1)
+
+    def test_an_edited_state_comment_refuses_each_decision(self):
+        for name, setup, call in self.calls():
+            with self.subTest(decision=name):
+                self.setUp()
+                setup()
+                self.stored()
+                comment, _ = self.read()
+                comment["editors"] = [BOT_LOGIN, "mallory"]
+                with self.assertRaises(host.Refused):
+                    call(True)
+
+    def test_a_run_paused_at_a_usage_limit_that_the_step_starts_clears_its_wait(self):
+        cfg = pilot(answer="recommended")
+        self.cfg = cfg
+        self.stored()
+        d = {"issue": 5, "pr": None, "action": "plan"}
+        until = host.stage_limited(self.gh, cfg, d, "2026-10-11T04:40:00Z", write=True)
+        self.assertEqual(until, "2026-10-11T04:40:00Z")
+        waiting = self.read()[1]
+        [wait] = waiting["waits"]
+        self.assertEqual(wait["for"], "usageLimit")
+        self.paused()
+        lines, _ = play_resume(self.gh, cfg, self.NOW)
+        self.assertEqual(lines, ["Resumed /nexkit plan on #5."])
+        doc = self.read()[1]
+        self.assertEqual([w for w in doc["waits"] if w["for"] == "usageLimit"], [])
+        self.assertEqual([(a["kind"], a["stage"]) for a in doc["pending"]], [("runAgent", "plan")])
+        self.assertEqual(doc["revision"], waiting["revision"] + 1)
+
+    def test_the_resume_run_without_a_configuration_stores_nothing(self):
+        self.stored()
+        before = copy.deepcopy(self.gh.comments(5))
+        self.paused()
+        with_run = copy.deepcopy(self.gh.comments(5))
+        self.assertTrue(host.resumes(self.gh, None, {"resume": self.resume_record()}, 5, self.NOW))
+        self.assertEqual(self.gh.comments(5), with_run)
+        self.assertNotEqual(before, with_run)

@@ -1229,10 +1229,12 @@ def _paused_agent(gh, decision, cfg, agent):
     refused = None
     try:
         until = host.stage_limited(
+            gh,
             cfg,
             decision,
             limit_reset(agent, cfg, resumed),
             _held(gh, cfg, decision["issue"]),
+            write=True,
         )
     except host.Refused as error:
         until, refused = None, host.refused_reason(error)
@@ -2468,7 +2470,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
 
                 try:
                     label = _held(gh, cfg, decision["issue"])
-                    answer = host.stage_transient(cfg, decision, now, error, label)
+                    answer = host.stage_transient(gh, cfg, decision, now, error, label, write=True)
                 except host.Refused as exc:
                     refused = host.refused_reason(exc)
                 else:

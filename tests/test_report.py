@@ -501,7 +501,7 @@ class ReportTests(ReportCase):
         }
         self.write("nexkit-agent", "result.json", found)
         d = decision("fix", pr=6, target=6, head=HEAD, auto=True)
-        with mock.patch.object(host, "decide", side_effect=host.Refused("no")):
+        with mock.patch.object(host, "on_base_found", side_effect=host.Refused("no")):
             outcome = self.run_report(d=d, published=False)
         self.assertEqual(outcome["outcome"], "on_base_failed")
         self.assertIn("NexKit's engine refused to decide", outcome["attention"])

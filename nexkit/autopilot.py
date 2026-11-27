@@ -1490,7 +1490,7 @@ def _pull_step(
         if step:
             return step
     if latest.get("outcome") == CI_WAITING:
-        return _ci_step(gh, cfg, issue, pull, latest, pull_comments, start)
+        return _ci_step(gh, cfg, issue, pull, latest, pull_comments, start, write)
     if latest.get("status") == FAILURE and (engine_round(latest) or latest.get("timed_out")):
         fields = {"pull": pull, "pull_comments": pull_comments}
         return _after_stop(gh, cfg, issue, latest, record, start, comments, write=write, **fields)
@@ -1515,7 +1515,8 @@ def _released(gh, cfg, issue, pull, comment, run, pull_comments, start, now, wri
     `/nexkit review` instead, as does a conflict that is gone. The engine decides what
     follows a held merge or fix round (`host.released`): the fix round is counted only now,
     while `fix.max_auto_rounds` has one left. An issue whose next step the engine refuses
-    to decide waits for a person, alone."""
+    to decide waits for a person, alone. With `write`, which only the step run of the item's
+    group passes, the engine's answer is stored."""
     from .host import Refused, refused_reason
 
     back = run.get("held_back")
@@ -1523,7 +1524,7 @@ def _released(gh, cfg, issue, pull, comment, run, pull_comments, start, now, wri
     if back == "merge":
         try:
             # `_merge_step` reads the head, and reviews one that moved.
-            _held_end(cfg, issue, pull, run, pull_comments, run.get("head"))
+            _held_end(gh, cfg, issue, pull, run, pull_comments, run.get("head"), write)
         except Refused as error:
             return _step(issue, "waits", refused_reason(error))
         step = _merge_step(gh, cfg, issue, pull, comment, run, start, now, write=write)
@@ -1535,9 +1536,9 @@ def _released(gh, cfg, issue, pull, comment, run, pull_comments, start, now, wri
     review = {**start, "target": pull, "auto": "true"}
     moved = f"{gone}, and pull request #{pull} got the new commit `{str(head)[:7]}`"
     if back == "conflicts":
-        return _conflicts_released(gh, cfg, issue, pull, run, pull_comments, start, details)
+        return _conflicts_released(gh, cfg, issue, pull, run, pull_comments, start, details, write)
     try:
-        ends = _held_end(cfg, issue, pull, run, pull_comments, head)
+        ends = _held_end(gh, cfg, issue, pull, run, pull_comments, head, write)
     except Refused as error:
         return _step(issue, "waits", refused_reason(error))
     if ends == "review":
@@ -1550,12 +1551,12 @@ def _released(gh, cfg, issue, pull, comment, run, pull_comments, start, now, wri
     return _step(issue, "start", reason, command="fix", **fields)
 
 
-def _conflicts_released(gh, cfg, issue, pull, run, pull_comments, start, details):
+def _conflicts_released(gh, cfg, issue, pull, run, pull_comments, start, details, write=False):
     """The step once no label holds an issue whose pull request's round held back its
     conflict round: the round, now, while the pull request still conflicts and a conflict
     round is left; `/nexkit review` of a head that moved or that no longer conflicts, as the
     engine decides (`host.conflicts_released`). An issue whose next step the engine refuses
-    to decide waits for a person."""
+    to decide waits for a person. With `write`, the engine's answer is stored."""
     # `maintain` imports this module.
     from .host import Refused, conflicts_released, refused_reason
     from .maintain import conflict_note
@@ -1567,7 +1568,15 @@ def _conflicts_released(gh, cfg, issue, pull, run, pull_comments, start, details
     conflicts = details.get("mergeable") is False
     try:
         ends = conflicts_released(
-            cfg, issue["number"], pull, run, head, conflicts, conflict_rounds_used(rounds)
+            gh,
+            cfg,
+            issue["number"],
+            pull,
+            run,
+            head,
+            conflicts,
+            conflict_rounds_used(rounds),
+            write=write,
         )
     except Refused as error:
         return _step(issue, "waits", refused_reason(error))
@@ -1587,15 +1596,16 @@ def _conflicts_released(gh, cfg, issue, pull, run, pull_comments, start, details
     return _step(issue, "start", reason, command="fix", **fields)
 
 
-def _held_end(cfg, issue, pull, run, pull_comments, head):
+def _held_end(gh, cfg, issue, pull, run, pull_comments, head, write=False):
     """What the engine answers once the label that held back the merge or the automatic fix
     round of `pull` is gone (`host.released`). `head` is the pull request's head now, which
-    a held merge reads in `_merge_step` instead. Raises `host.Refused`."""
+    a held merge reads in `_merge_step` instead. With `write`, the answer is stored. Raises
+    `host.Refused`."""
     from .host import released
 
     _, state = read_state(pull_comments)
     found = (state or {}).get("auto_fixes", 0)
-    return released(cfg, issue["number"], pull, run, head, found)
+    return released(gh, cfg, issue["number"], pull, run, head, found, write=write)
 
 
 def _refused_step(gh, cfg, issue, pull, comment, run, write=False):
@@ -3693,12 +3703,13 @@ def ci_wait_over(gh, wait):
     return None
 
 
-def _ci_step(gh, cfg, issue, pull, run, pull_comments, start):
+def _ci_step(gh, cfg, issue, pull, run, pull_comments, start, write=False):
     """The step for a pull request whose round waits for a bug issue about the default
     branch: it waits while the wait lasts, then gets the automatic fix round it waited
     for, which merges the base branch and counts toward `fix.max_auto_rounds`, as the
     engine decides once the wait ends (`host.base_passes`). An issue whose next step the
-    engine refuses to decide waits for a person, alone."""
+    engine refuses to decide waits for a person, alone. With `write`, the engine's answer is
+    stored."""
     from .host import Refused, base_passes, refused_reason
 
     wait = run.get("ci_wait") or {}
@@ -3708,7 +3719,8 @@ def _ci_step(gh, cfg, issue, pull, run, pull_comments, start):
         return _step(issue, "waits", reason, person=False, ci_bug=wait["bug"])
     _, state = read_state(pull_comments)
     try:
-        ends = base_passes(cfg, issue["number"], pull, run, (state or {}).get("auto_fixes", 0))
+        found = (state or {}).get("auto_fixes", 0)
+        ends = base_passes(gh, cfg, issue["number"], pull, run, found, write=write)
     except Refused as error:
         return _step(issue, "waits", refused_reason(error))
     if ends == "used_up":

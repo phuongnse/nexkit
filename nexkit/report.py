@@ -709,7 +709,7 @@ def _already_on_base(gh, cfg, decision, agent):
         outcome, text, commit = close_on_base(gh, cfg, target, agent.get("on_base"))
         reason = needs_person(outcome, cfg)
     fields = {"on_base": commit} if commit else {}
-    _stop_round(gh, decision, agent, outcome, text, reason, **fields)
+    _stop_round(gh, cfg, decision, agent, outcome, text, reason, **fields)
     return {"outcome": outcome, "summary": text, "attention": reason}
 
 
@@ -1128,7 +1128,7 @@ def _retried(gh, decision, error, message):
     return message
 
 
-def _stop_round(gh, decision, agent, outcome, message, reason=None, **fields):
+def _stop_round(gh, cfg, decision, agent, outcome, message, reason=None, **fields):
     """Show a pull request round that published nothing, with the reason. An automatic
     fix round that NexKit stopped, for a reason outside the agent's work, gives its round
     back, as the engine decides (`host.stopped_counts`)."""
@@ -1142,12 +1142,15 @@ def _stop_round(gh, decision, agent, outcome, message, reason=None, **fields):
         automatic = bool(decision.get("auto")) and not decision.get("conflicts")
         try:
             counted = stopped_counts(
+                gh,
+                cfg,
                 decision["issue"],
                 decision["pr"],
                 decision["head"],
                 state["auto_fixes"],
                 automatic,
                 outcome in UNCOUNTED,
+                write=True,
             )
         except Refused:
             # The count stays as it is: a person reads the round's comment.
@@ -2094,7 +2097,7 @@ def _skipped_conflicting(gh, cfg, decision, pr, head, files, row, workflow_ref, 
     try:
         # A hold keeps the round back whatever rounds are left, so they are read only without.
         used = 0 if label else conflict_rounds_of(gh, pr, row)
-        ends = conflicting(cfg, decision, pr, head, label, used)
+        ends = conflicting(gh, cfg, decision, pr, head, label, used, write=True)
         if ends == "held":
             row["held_back"] = "conflicts"
             later = "starts the round that resolves it"
@@ -2137,6 +2140,7 @@ def _conflicts_after(gh, cfg, decision, pr, row, workflow, default_branch):
         # The engine decides whether a conflict round is left, while NexKit 6's other
         # reasons not to start one stay `start_conflict_round`'s.
         answer = base_moved(
+            gh,
             cfg,
             decision["issue"],
             pr,
@@ -2478,7 +2482,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             message = (
                 f"`{decision['base']}` merges cleanly into this pull request now; nothing to do."
             )
-            _stop_round(gh, decision, agent, "up_to_date", message)
+            _stop_round(gh, cfg, decision, agent, "up_to_date", message)
             return {"outcome": "up_to_date", "summary": message}
         if agent and agent.get("status") == "already_on_base":
             return _already_on_base(gh, cfg, decision, agent)
@@ -2538,7 +2542,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             if shortened:
                 message = f"{message}\n\n{shortened}"
             if decision.get("pr"):
-                _stop_round(gh, decision, agent, outcome, message, reason, **fields)
+                _stop_round(gh, cfg, decision, agent, outcome, message, reason, **fields)
             return {
                 "outcome": outcome,
                 "summary": message,
@@ -2672,6 +2676,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         diagnoses first, kept in the state comment. `now` is when a review stopped on a
         transient error."""
         found_end, repeated = round_ended(
+            gh,
             cfg,
             decision,
             pr,
@@ -2683,6 +2688,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             recheck,
             ran=review_ran,
             now=now,
+            write=True,
         )
         state["feedback"] = _with_repeated(state["feedback"], repeated)
         return found_end
@@ -2774,6 +2780,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
         seen = {}
         try:
             ends = after_round(
+                gh,
                 cfg,
                 decision,
                 pr,
@@ -2787,6 +2794,7 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
                 before,
                 seen,
                 ran=review_ran,
+                write=True,
             )
         except Refused as error:
             ends, refused = "needs_human", error

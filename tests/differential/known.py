@@ -277,6 +277,50 @@ KNOWN += [
 ]
 
 
+# The families that play the decisions of a pull request's rounds (#646).
+FAMILIES_646 = (
+    "report",
+    "round",
+    "conflict",
+    "give",
+    "diag",
+    "many",
+    "chains",
+    "review",
+    "stop",
+    "sweep",
+    "moved",
+    "required",
+    "waits",
+    "pause",
+    "ended",
+    "conflicted",
+    "behind",
+    "refusals",
+)
+
+KNOWN += [
+    {
+        "name": "the stored state is read before a round's decision",
+        "family": family,
+        "by": "#646",
+        "why": (
+            "The decisions about a pull request's rounds, which are a round's end, its conflict, "
+            "the wait for a hold or the base branch, the checks a fix round diagnoses and the "
+            "rounds that count, read the item's stored state, which is the import in memory "
+            "when the item has no state comment, and the import reads the issues that block "
+            "the item and its comments. A read by `FakeGitHub` adds the issue to its "
+            "`blockers` and its `issue_comments` with nothing in them, where NexKit 6's flow "
+            "never read them. Only a record that differs by such an empty entry is excused."
+        ),
+        "match": lambda sc, old, new: (
+            _without_empty_reads_in_steps(old) == _without_empty_reads_in_steps(new)
+        ),
+    }
+    for family in FAMILIES_646
+]
+
+
 KNOWN += [
     {
         "name": "the parent's stored state is read before its end is decided",
@@ -320,6 +364,20 @@ def _without_empty_reads(record):
         if isinstance(item, dict) and isinstance(item.get("issue_comments"), dict):
             kept = {number: held for number, held in item["issue_comments"].items() if held}
             found[key] = {**item, "issue_comments": kept}
+    return found
+
+
+def _without_empty_reads_in_steps(record):
+    """`_without_empty_reads` of `record`, also without the empty `blockers` and `issue_comments`
+    entries of what GitHub holds after each `step` of a family that plays steps."""
+    found = _without_empty_reads(record)
+    if isinstance(found.get("steps"), list):
+        found["steps"] = [
+            {**step, "gh": _without_empty_reads({"gh": step["gh"]})["gh"]}
+            if isinstance(step, dict) and isinstance(step.get("gh"), dict)
+            else step
+            for step in found["steps"]
+        ]
     return found
 
 

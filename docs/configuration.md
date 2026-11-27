@@ -4,8 +4,8 @@ NexKit reads `.nexkit/config.json` from the repository's **default branch** on e
 Changes on a pull request branch never affect the run that is checking that branch.
 Unknown keys are rejected so typos fail loudly.
 
-The runner (`ubuntu-24.04`), the version of each agent runtime and NexKit's Python
-version are set by the NexKit release and are not configurable. See
+The runner, the version of each agent runtime and NexKit's Python version are set by the
+NexKit release and are not configurable. See
 [supported versions](../README.md#supported-versions).
 
 A complete configuration with every key at its default, except `agents`, `setup`, `checks` and
@@ -182,7 +182,8 @@ only restores, so your CI starts warm there too. For NexKit to find what it save
 
 - The step comes before your setup, so the key files are hashed as committed, as NexKit
   hashes them.
-- The job runs on `ubuntu-24.04` or `ubuntu-latest`, like NexKit.
+- The job runs on the runner that [supported versions](../README.md#supported-versions) names,
+  like NexKit, or on `ubuntu-latest`.
 - With the checkout in a folder, name it with `repo:`. A run on a schedule may not say which
   branch is the default one; give it with `base: main`, or it only restores.
 
@@ -719,6 +720,26 @@ its parent.
    trigger for the default branch, so remove one of the two. `nexkit doctor` names each such
    workflow, whether by `branches`, by a `branches-ignore` that leaves the default branch
    out, or by no filter.
+
+### Wave labels replace the last-in-milestone label in 7.0
+
+NexKit 6.x could hold an issue until the rest of its milestone closed, with
+`autopilot.last_in_milestone_label`. NexKit 7.0 rejects a label name there and says what to
+set instead. `"last_in_milestone_label": null`, as the full example of 6.x showed, is still
+accepted and does nothing. Remove the key, and give the label a wave in `autopilot.labels`:
+
+```json
+"autopilot": {"labels": {"<label>": {"wave": 1}}}
+```
+
+Issues with that label then run side by side, so give one of them a higher wave to keep
+them in order. See *Labels* under [Autopilot](autopilot.md#autopilot).
+
+### Money limits removed
+
+NexKit rejects `max_budget_usd` in every stage and profile stage, because NexKit sets no
+money limit. `timeout_minutes` limits each agent's run instead. Remove the key, and lower
+`timeout_minutes` where a stage needs a tighter limit. See [Stages](#stages).
 
 ### Bug issues of earlier releases
 

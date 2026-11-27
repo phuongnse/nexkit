@@ -91,6 +91,8 @@ MAX_WAIT = 330
 MAX_RETRIES = 10
 # The longest a stage may run, with all of its agents.
 MAX_STAGE_MINUTES = 340
+# The longest the triage call may run, with all of its agents.
+MAX_TRIAGE_MINUTES = 30
 # Objects whose keys are merged over the defaults one by one.
 GROUPS = (
     "review",
@@ -821,7 +823,8 @@ def validate(raw, *, layered=False):
 
     _profiles(cfg)
     for name, settings in cfg["stages"].items():
-        _stage_values(settings, f"stages.{name}", 30 if name == TRIAGE else MAX_STAGE_MINUTES, cfg)
+        maximum = MAX_TRIAGE_MINUTES if name == TRIAGE else MAX_STAGE_MINUTES
+        _stage_values(settings, f"stages.{name}", maximum, cfg)
     _runtime_settings(cfg, profiles=not layered)
     if not layered:
         _secret_slots(cfg)

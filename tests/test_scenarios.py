@@ -597,12 +597,17 @@ class ItemGroup:
     run queued while another waits replaces it, so its event is never answered by its own run.
     Each run takes the item's events from their sources as `nexkit route` does at its start
     (`cli._take`, docs/engine-hosts.md#hosts), on a state comment that is already stored, or,
-    with `stored` off, with none, so that the first run stores the item's import."""
+    with `stored` off, with none, so that the first run stores the item's import. With `routes`,
+    a run that is queued with the comment of its event also routes it (`route`) on what it took,
+    as `nexkit route` does, and `decisions` holds each run's decision."""
 
     NUMBER = 5
 
-    def __init__(self, test, stored=True):
+    def __init__(self, test, stored=True, routes=False):
         self.test = test
+        self.routes = routes
+        self.comments = {}  # the comment that gave a run its event
+        self.decisions = {}  # what each run that routed decided
         self.gh = FakeGitHub()
         self.cfg = make_config(autopilot={"enabled": True})
         self.gh.add_issue(self.NUMBER)
@@ -621,9 +626,11 @@ class ItemGroup:
         at = f"2026-01-02T00:00:{next(self.clock):02d}Z"
         return self.gh.human_comment(self.NUMBER, body, login=login, at=at)
 
-    def queue(self, run):
-        """A run of the item's group starts when none runs, and otherwise waits, replacing
-        the one that waits."""
+    def queue(self, run, comment=None):
+        """A run of the item's group, whose event is the posted `comment`, starts when none
+        runs, and otherwise waits, replacing the one that waits."""
+        if comment is not None:
+            self.comments[run] = comment
         if self.running is None:
             self._start(run)
             return
@@ -651,14 +658,23 @@ class ItemGroup:
             return take(gh, cfg, number, sleep=lambda seconds: None)
 
         # The event of a run in the item's group: a comment on the item.
-        event = {"action": "created", "issue": {"number": self.NUMBER}, "comment": {"id": 1}}
+        comment = self.comments.get(run) if self.routes else None
+        event = {
+            "action": "created",
+            "issue": {"number": self.NUMBER},
+            "comment": comment or {"id": 1},
+        }
         with (
             mock.patch.object(host, "step", spy),
             mock.patch.object(host, "take", quick),
             contextlib.redirect_stdout(io.StringIO()),
         ):
             try:
-                cli._take(self.gh, self.cfg, "issue_comment", event)
+                taken = cli._take(self.gh, self.cfg, "issue_comment", event)
+                if comment is not None:
+                    self.decisions[run] = route(
+                        self.gh, "issue_comment", event, cfg=self.cfg, taken=taken
+                    )
             except item_state.Moved:
                 self.failed.append(run)
                 self.finish()
@@ -1285,6 +1301,32 @@ class ScenarioTests(unittest.TestCase):
         pipe.play()
         self.assertEqual(pipe.gh.issues[5]["state"], "closed")
         self.assertEqual(len(pipe.gh.comments_matching(6, "a person is needed")), 1)
+
+    def test_an_approval_stores_its_answer_only_from_the_items_group(self):
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        pipe.gh.review_states[6] = {"decision": "REVIEW_REQUIRED"}
+        pipe.gh.files["CODEOWNERS"] = "* @olivia\n"
+        pipe.gh.pr_files[6] = [{"filename": "app.py", "additions": 3, "deletions": 1}]
+        pipe.gh.merge_error = GitHubError(405, "Waiting on code owner review from olivia.")
+        pipe.play()
+        self.assertEqual(pipe.played[-1][2], "merge_refused")
+        # The item's group stores the state comment, as the run that took it did.
+        pipe.take_run(5)
+        [comment] = copy.deepcopy(pipe.state_comments(5))
+        pipe.gh.merge_error = None
+        # The approval's own run, in its group `approved-N`, only previews: nothing is stored.
+        self.assertEqual(pipe.approve(), ["#6: sent @olivia's approval to #5's queue."])
+        self.assertEqual(pipe.state_comments(5), [comment])
+        # The step run in the item's group stores the engine's answer, at the next revision.
+        pipe.drain()
+        self.assertEqual(len(pipe.gh.merged), 1)
+        stored = item_state.read(pipe.gh, 5)[1]
+        self.assertEqual(stored["revision"], item_state.find([comment])[1]["revision"] + 1)
+        self.assertIn("approval-6-" + pipe.gh.pulls[6]["head"]["sha"], stored["recentEvents"])
 
     def test_an_approval_of_a_commit_that_is_no_longer_the_head_merges_nothing(self):
         def script(pipe, inputs):
@@ -3717,6 +3759,57 @@ class ScenarioTests(unittest.TestCase):
         self.assertGreaterEqual(
             item_state.order(group.cursor()), item_state.order((at, f"comment-{asked['id']}"))
         )
+
+    def test_a_plan_command_starts_its_plan_once_and_stores_one_revision(self):
+        for stored in (True, False):
+            with self.subTest(stored=stored):
+                group = ItemGroup(self, stored=stored, routes=True)
+                if not stored:
+                    group.queue("import")
+                    group.finish()
+                before = group.state()["revision"]
+                asked = group.post("/nexkit plan Keep it short")
+                name = f"comment-{asked['id']}"
+                group.queue("asked", comment=asked)
+                decision = group.decisions["asked"]
+                found = (decision["action"], decision["comment_id"])
+                self.assertEqual(found, ("plan", asked["id"]))
+                # The engine answered it once, when `take` stored its answer, and the state
+                # comment moved by that one revision.
+                self.assertEqual(group.answered.count(name), 1)
+                state = group.state()
+                self.assertEqual(state["revision"], before + 1)
+                self.assertEqual(state["recentEvents"].count(name), 1)
+                self.assertEqual(state["state"], "planning")
+                # A remark's run, and a run again of the command, which an earlier run took,
+                # start nothing and reply nothing.
+                group.finish()
+                remark = group.post("Thanks, that helps", login="bob")
+                group.queue("remark", comment=remark)
+                self.assertEqual(group.decisions["remark"]["action"], "none")
+                group.finish()
+                group.queue("again", comment=asked)
+                again = group.decisions["again"]
+                self.assertEqual((again["action"], again.get("reply_to")), ("none", None))
+                self.assertEqual(group.state()["recentEvents"].count(name), 1)
+
+    def test_a_command_whose_run_was_replaced_starts_its_stage_in_the_run_that_ran(self):
+        group = ItemGroup(self, routes=True)
+        group.queue("running")
+        asked = group.post("/nexkit plan Keep it short")
+        group.queue("asked", comment=asked)
+        remark = group.post("Thanks, that helps", login="bob")
+        group.queue("remark", comment=remark)
+        self.assertEqual((group.replaced, group.waiting), (["asked"], "remark"))
+        group.finish()
+        # The remark's run, which ran, starts the plan that the command asked for, and the
+        # command's comment is the one that gets 👀 (`progress.start` reacts to `comment_id`).
+        decision = group.decisions["remark"]
+        self.assertEqual((decision["action"], decision["comment_id"]), ("plan", asked["id"]))
+        self.assertNotIn("also_reply", decision)
+        self.assertEqual(group.state()["state"], "planning")
+        self.assertEqual(group.state()["recentEvents"].count(f"comment-{asked['id']}"), 1)
+        self.assertNotIn("asked", group.decisions)
 
 
 if __name__ == "__main__":

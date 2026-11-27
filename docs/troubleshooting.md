@@ -146,8 +146,10 @@ secrets. Run them in a clean container to reproduce.
 branch. The comment's first line must start with `/nexkit`. Edited comments are ignored;
 post a new one.
 
-**A command never got 👀.** Another command replaced it while it waited. Post it again
-once the running command finishes. See [One run at a time](how-it-works.md#one-run-at-a-time).
+**A command never got 👀.** Another command replaced it while it waited. The run that ran
+starts it when that run has nothing else to start, so wait for the running command to finish.
+If it still has no 👀 then, post it again. See
+[One run at a time](how-it-works.md#one-run-at-a-time).
 
 **"needs write access".** The commenter must be a collaborator with write, maintain or
 admin permission.

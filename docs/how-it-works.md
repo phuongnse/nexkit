@@ -182,7 +182,8 @@ wait in this queue; other comments do not. GitHub keeps one waiting run, so a co
 posted while another waits replaces it, also one on the issue that waits behind a round of
 its pull request. A command that never got 👀 did not run; post it again. Each run in the
 queue first takes the item's events from their sources, so a command whose run GitHub
-replaced is still answered by the run that ran: [Hosts](engine-hosts.md#hosts) says how.
+replaced is still answered by the run that ran, and starts there, when that run has nothing
+else to start, and gets 👀 then: [Hosts](engine-hosts.md#hosts) says how.
 
 Four kinds of run keep a group of their own, so they never replace a command that waits:
 sweeps and the issue and milestone events that bring issues into scope share

@@ -229,18 +229,104 @@ def parse_command(body):
     return match.group(1), match.group(2).strip()
 
 
+# Why a run starts nothing for a command that an earlier run of the item already took.
+EARLIER_RUN = "An earlier run of this item already took this command"
+
+
 def _none(reason, reply_to=None):
     return {"action": "none", "reason": reason, "reply_to": reply_to}
 
 
-def route(gh, event_name, event, inputs=None, cfg=None):
+def route(gh, event_name, event, inputs=None, cfg=None, taken=None, again=False):
     """Decide the action. The result is a JSON-serialisable dict. `cfg` is the configuration,
-    when it loaded; a person's command goes to the engine with it (`_decide`).
+    when it loaded; a person's command goes to the engine with it (`_decide`). `taken` is what
+    `host.take` stored in this run, [(event, actions)]: the run's own command is carried out
+    from its answer. When the run's own event starts nothing, the first other taken command
+    that started a stage starts it here, since the run that was to start it was replaced by
+    this one (docs/engine-hosts.md#hosts). `again` marks that second routing.
 
     Every action needs a trusted actor: a user with write access, or a dispatch, which
     GitHub already restricts to writers and to this repository's own workflows.
     """
-    inputs = inputs or {}
+    decision = _route(gh, event_name, event, inputs or {}, cfg, taken)
+    if again or not taken or decision["action"] != "none":
+        return decision
+    return _taken_start(gh, cfg, taken, decision, event_name, event)
+
+
+def _own_id(event_name, event):
+    """The id of the event that the run's own comment or review gives, or None."""
+    from .host import event_id
+
+    try:
+        if event_name == "issue_comment":
+            return event_id("comment", event["comment"])
+        if event_name == "pull_request_review":
+            return event_id("review", event["review"])
+    except (KeyError, ValueError):
+        pass
+    return None
+
+
+def _taken_start(gh, cfg, taken, decision, event_name, event):
+    """`decision`, which starts nothing, or the decision that the first command taken in this
+    run starts, other than the run's own: its comment or review is routed as its own run
+    would have routed it, and the run that ran gives it 👀 and starts its stage. A reply that
+    `decision` had stays as `also_reply`."""
+    from .host import starts
+
+    own = _own_id(event_name, event)
+    for taken_event, actions in taken:
+        name = taken_event["id"]
+        if name == own or taken_event["kind"] not in ("requested", "changesRequested"):
+            continue
+        if not starts(actions):
+            continue
+        try:
+            found = _again(gh, cfg, taken, name, taken_event)
+        except (GitHubError, KeyError, ValueError):
+            continue
+        if found is None:
+            continue
+        if decision.get("reply_to"):
+            found["also_reply"] = {"to": decision["reply_to"], "reason": decision["reason"]}
+        return found
+    return decision
+
+
+def _again(gh, cfg, taken, name, taken_event):
+    """The decision for the taken command `name`, routed as the event of its own run, or None
+    for a source that cannot be read."""
+    kind, _, given = name.partition("-")
+    if kind == "comment":
+        raw = gh.issue_comment(int(given))
+        number = int(raw["issue_url"].rstrip("/").rsplit("/", 1)[1])
+        issue = {"number": number}
+        if "pull_request" in gh.issue(number):
+            issue["pull_request"] = {}
+        ev = {"action": "created", "issue": issue, "comment": raw}
+        return route(gh, "issue_comment", ev, cfg=cfg, taken=taken, again=True)
+    if kind == "review":
+        item = int(taken_event["item"])
+        pulls = [one["number"] for one in gh.open_pulls(branch_for(item))] + [item]
+        for number in pulls:
+            try:
+                reviews = gh.reviews(number)
+            except GitHubError:
+                continue
+            for review in reviews:
+                if review.get("id") == int(given):
+                    ev = {
+                        "action": "submitted",
+                        "review": {**review, "state": "changes_requested"},
+                        "pull_request": gh.pull(number),
+                    }
+                    return route(gh, "pull_request_review", ev, cfg=cfg, taken=taken, again=True)
+    return None
+
+
+def _route(gh, event_name, event, inputs, cfg, taken):
+    """`route`'s decision for this event alone."""
     if event_name == "issue_comment":
         if event.get("action") != "created" or by_bot(event["comment"]):
             return _none("Not a new human comment")
@@ -267,9 +353,10 @@ def route(gh, event_name, event, inputs=None, cfg=None):
                 cfg=cfg,
                 by=actor,
                 source_id=event["comment"]["id"],
+                taken=taken,
             )
             decision = _one_round(gh, decision)
-            decision = _closing(gh, decision, event["comment"])
+            decision = _closing(gh, decision, event["comment"], cfg)
         decision.update(actor=actor, comment_id=event["comment"]["id"])
         return decision
 
@@ -295,6 +382,7 @@ def route(gh, event_name, event, inputs=None, cfg=None):
             cfg=cfg,
             by=actor,
             review_id=review.get("id"),
+            taken=taken,
         )
         decision = _one_round(gh, decision)
         decision["actor"] = actor
@@ -391,6 +479,7 @@ def route(gh, event_name, event, inputs=None, cfg=None):
             conflicts=conflicts,
             cfg=cfg,
             by=sender,
+            taken=taken,
         )
         decision["actor"] = sender
         if decision["action"] not in ("none", "maintain"):
@@ -496,17 +585,17 @@ def _approval_step(gh, issue, pr, review_id):
     }
 
 
-def _closing(gh, decision, command):
+def _closing(gh, decision, command, cfg=None):
     """A person's `/nexkit plan` or `/nexkit go` whose note picks the option, of the
     questions NexKit asked last on the issue, that only closes it: the `maintain` job
     closes the issue as not planned, and no agent runs, since another round could only
     stop at the same place. Any other note goes to its round as it is. `command` is the
-    comment of the command."""
+    comment of the command. With `cfg`, the engine answers on the item's stored state."""
     if decision["action"] not in ("plan", "implement") or not decision.get("note"):
         return decision
     from .host import closing_command
 
-    return closing_command(gh, decision, gh.comments(decision["issue"]), command)
+    return closing_command(gh, decision, gh.comments(decision["issue"]), command, cfg=cfg)
 
 
 def _trust(issue, note):
@@ -603,16 +692,19 @@ def _decide(
     by=None,
     source_id=None,
     review_id=None,
+    taken=None,
 ):
     """The decision for a person's command, or NexKit's own dispatch of one. A command starts
     its stage only as the engine answers it (`host.command`); what stays here are the facts
     that only GitHub shows: an unknown command, a fork, a person's pull request, which takes
     no `/nexkit fix`, and the pull request's and the issue's state, which the engine is told.
-    `cfg` is the configuration, or None when it did not load: the answer of a request does
-    not depend on it."""
+    `cfg` is the configuration, or None when it did not load, and then the answer is on
+    NexKit 6's document. `taken` is what `host.take` stored in this run: the answer to the
+    run's own command is carried out from it, and a command that an earlier run took starts
+    nothing and gets no reply."""
     from . import host
 
-    given = {"cfg": cfg, "by": by, "note": note, "source_id": source_id}
+    given = {"cfg": cfg, "by": by, "note": note, "source_id": source_id, "gh": gh, "taken": taken}
     if on_pull:
         if command not in PR_COMMANDS:
             return _none(f"`/nexkit {command}` is not a pull request command. {USAGE}", number)
@@ -649,6 +741,8 @@ def _decide(
             )
         except host.Refused as exc:
             return _none(host.refused_reason(exc), number)
+        if answer == "answered":
+            return _none(EARLIER_RUN)
         if answer == "noChange":
             if person:
                 return _none(
@@ -732,6 +826,8 @@ def _decide(
         )
     except host.Refused as exc:
         return _none(host.refused_reason(exc), number)
+    if answer == "answered":
+        return _none(EARLIER_RUN)
     if answer != action:
         if closed:
             return _none("The issue is closed", number)

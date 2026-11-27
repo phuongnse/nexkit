@@ -1277,18 +1277,20 @@ def _unapprovable(gh, decision):
     return None, comment, run
 
 
-def _approval(cfg, decision, run):
+def _approval(gh, cfg, decision, run, write=False):
     """What the engine says a writer's approval does after the round `run` (`host.approved`):
     `(answer, line)`, `answer` being `merge`, `accept` or `none`, and `line` the log line that
     says why nothing starts, or None. When the engine refuses to answer, the approval starts
-    nothing and `line` says so. The texts stay as NexKit 6's."""
+    nothing and `line` says so. The texts stay as NexKit 6's. The answer is a preview in the
+    approval's own group `approved-N` (`send_approval`), and `write`, which only the `step` run
+    in the item's group passes (`merge_approved`), stores it."""
     # `report` and `host` import this module.
     from . import host
 
     pr, issue = decision["pr"], decision["issue"]
     commit = decision.get("commit")
     try:
-        answer = host.approved(cfg, issue, pr, run, commit, decision.get("actor"))
+        answer = host.approved(gh, cfg, issue, pr, run, commit, decision.get("actor"), write=write)
     except host.Refused as exc:
         return None, f"#{pr}: NexKit could not decide what the approval does: {exc}"
     if answer != "none":
@@ -1304,16 +1306,17 @@ def _approval(cfg, decision, run):
 
 
 def send_approval(gh, cfg, decision, workflow, ref):
-    """The run of a writer's approval of a NexKit pull request: it writes nothing on GitHub
-    but a `step` dispatch for the pull request's issue, so the merge runs in the issue's
-    queue behind the rounds and commands already there (`merge_approved`). It sends the step
+    """The run of a writer's approval of a NexKit pull request, in its own group
+    `approved-N`: it writes nothing on GitHub, and no state, but a `step` dispatch for the pull
+    request's issue, so the merge runs in the issue's queue behind the rounds and commands
+    already there (`merge_approved`). It sends the step
     only when the engine answers that the approval merges or accepts (`host.approved`) and the
     read-only checks of `merge_approved` pass, since GitHub keeps one waiting run for the
     queue and a needless step could replace a command that waits. Returns lines for the log."""
     line, _, run = _unapprovable(gh, decision)
     if line:
         return [line]
-    answer, line = _approval(cfg, decision, run)
+    answer, line = _approval(gh, cfg, decision, run)
     if line:
         return [line]
     pr, issue = decision["pr"], decision["issue"]
@@ -1332,7 +1335,8 @@ def send_approval(gh, cfg, decision, workflow, ref):
 
 def merge_approved(gh, cfg, decision, workflow, ref):
     """Merge a NexKit pull request that a writer approved, in the issue's queue (the `step`
-    that `send_approval` sent), as the engine answers (`host.approved`): its latest round ended
+    that `send_approval` sent), as the engine answers (`host.approved`), whose answer it stores
+    in the item's state, as the item's group is the one writer of it: its latest round ended
     as `merge_refused`, `ready`, or `pull_closed` before it was reopened, on the head that its
     checks and review passed, with the guards of every merge (see `report.merge_pull`): a
     head that moved since gets a review instead. A round on its way, any other outcome, or, for
@@ -1350,7 +1354,7 @@ def merge_approved(gh, cfg, decision, workflow, ref):
     line, comment, run = _unapprovable(gh, decision)
     if line:
         return [line]
-    answer, line = _approval(cfg, decision, run)
+    answer, line = _approval(gh, cfg, decision, run, write=True)
     if line:
         return [line]
     if answer == "accept":

@@ -77,7 +77,11 @@ def situation(case):
     issue = {"state": "open", "state_reason": None, **given["issue"]}
     pull = given.get("pull")
     if pull:
-        known = {key: pull[key] for key in ("mergeable", "changed_files", "merged") if key in pull}
+        known = {
+            key: pull[key]
+            for key in ("mergeable", "mergeable_state", "changed_files", "merged")
+            if key in pull
+        }
         pull = {"number": pull["number"], "head": {"sha": pull["head"]}, **known}
     now = datetime.fromisoformat(case.get("now", NOW).replace("Z", "+00:00")).astimezone(UTC)
     return {

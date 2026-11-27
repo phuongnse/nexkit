@@ -4,13 +4,14 @@ owner review the files and their owners."""
 import unittest
 from unittest import mock
 
-from nexkit import autopilot, refusal
+from nexkit import autopilot, host, item_state, refusal
 from nexkit.github import GitHubError
 from nexkit.maintain import maintain
 from nexkit.refusal import codeowners, explain, owners_of
 from nexkit.state import render_run
 from nexkit.status import collect
 from tests.support import FakeGitHub, make_config, play_sweep
+from tests.test_host import seed
 from tests.test_report import HEAD, ReportCase, review_result
 
 # What GitHub answers when a ruleset refuses a merge for a code owner review.
@@ -558,6 +559,32 @@ class CleanMergeSweepTests(ReportCase):
         self.gh.merge_error = None
         self.sweep()
         self.assertEqual(self.gh.merged, [])
+
+
+class CleanRefusalStoreTests(ReportCase):
+    """A merge that GitHub refuses while it calls the pull request `clean` is stored as refused
+    while acceptable, so that the engine does not try that head again."""
+
+    def refused_while(self, mergeable_state):
+        self.cfg = make_config(merge={"auto": True})
+        self.candidate()
+        seed(self.gh, self.cfg, 5)
+        self.gh.merge_error = GitHubError(405, "At least 1 approving review is required.")
+        self.gh.pulls[6]["mergeable_state"] = mergeable_state
+        outcome = self.run_report(cfg=self.cfg)
+        self.assertEqual(outcome["outcome"], "merge_refused")
+        return item_state.read(self.gh, 5)[1]
+
+    def test_a_merge_refused_while_clean_keeps_that_head_as_refused(self):
+        stored = self.refused_while("clean")
+        self.assertEqual(stored["refusedAcceptable"], HEAD)
+        # The sweep's look at the same head does not accept it again.
+        self.assertEqual(host.refusal_cleared(self.gh, self.cfg, 5, 6, HEAD, True), "waits")
+
+    def test_a_merge_refused_while_blocked_is_tried_again_once_it_is_clean(self):
+        stored = self.refused_while("blocked")
+        self.assertNotIn("refusedAcceptable", stored)
+        self.assertEqual(host.refusal_cleared(self.gh, self.cfg, 5, 6, HEAD, True), "merge")
 
 
 class ReviewFixTests(ReportCase):

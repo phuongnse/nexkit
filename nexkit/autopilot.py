@@ -1609,9 +1609,9 @@ def _refused_step(gh, cfg, issue, pull, comment, run, write=False):
     """The merge of a pull request whose merge GitHub refused, once GitHub reports it as
     mergeable (`clean`, `unstable` or `has_hooks`) on the head that its checks and review
     passed, such as after an owner approved it while no run could, or a rule changed; or
-    None. The engine decides (`host.refusal_cleared`): a head that GitHub called mergeable
-    and still refused is not tried again. A pull request whose head moved is not this
-    round's to merge."""
+    None. The engine decides (`host.refusal_cleared`), on the item's stored state: a head
+    that GitHub called mergeable and still refused is not tried again. A pull request whose
+    head moved is not this round's to merge."""
     from .host import Refused, refusal_cleared, refused_reason
 
     details = gh.pull(pull)
@@ -1621,7 +1621,7 @@ def _refused_step(gh, cfg, issue, pull, comment, run, write=False):
     acceptable = details.get("mergeable_state") in MERGEABLE_STATES
     try:
         number = issue["number"]
-        answer = refusal_cleared(gh, cfg, number, pull, run, acceptable, write=write)
+        answer = refusal_cleared(gh, cfg, number, pull, head, acceptable, write=write)
     except Refused as error:
         return _step(issue, "waits", refused_reason(error))
     if answer != "merge":
@@ -1638,7 +1638,8 @@ def _merge_step(gh, cfg, issue, pull, comment, run, start, now, write=False):
     required check that failed gets an automatic fix round when the sweep tries the merge
     (see `report.merge_waiting`), and a branch behind its base, however long it waited,
     an update from it when `conflicts.auto_resolve` is on: the engine makes that exception
-    (`host.checks_waited`)."""
+    (`host.checks_waited`). Both and the look at a pushed head (`host.change_seen`) decide on
+    the stored state, which holds the start of the wait."""
     details = gh.pull(pull)
     head = details["head"]["sha"]
     if head != run.get("head"):
@@ -1648,7 +1649,7 @@ def _merge_step(gh, cfg, issue, pull, comment, run, start, now, write=False):
         seen = {"version": head, "merged": False, "empty": False}
         try:
             number = issue["number"]
-            change_seen(gh, cfg, number, pull, run["head"], 0, seen, waiting=True, write=write)
+            change_seen(gh, cfg, number, pull, seen, write=write)
         except Refused as error:
             return _step(issue, "waits", refused_reason(error))
         reason = (
@@ -1661,11 +1662,10 @@ def _merge_step(gh, cfg, issue, pull, comment, run, start, now, write=False):
     # branch behind its base, and the merge of a round with no start of its wait recorded.
     from .host import Refused, checks_waited, refused_reason
 
-    since = parse_iso(run.get("waiting_since"))
     behind = details.get("mergeable_state") == "behind"
     try:
         number = issue["number"]
-        waited = checks_waited(gh, cfg, number, pull, head, since, now, behind=behind, write=write)
+        waited = checks_waited(gh, cfg, number, pull, head, now, behind=behind, write=write)
     except Refused as error:
         return _step(issue, "waits", refused_reason(error))
     if waited == "waits":

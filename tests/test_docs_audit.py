@@ -441,6 +441,32 @@ class MainTests(unittest.TestCase):
         )
         self.assertNotIn("next audit", err.getvalue())
 
+    def test_plan_without_homes_replaces_no_link(self):
+        answers = {"issue list": "[]", "milestones": ""}
+        with tempfile.TemporaryDirectory() as tmp:
+            gh = Path(tmp) / "gh"
+            gh.write_text(
+                "#!/usr/bin/env python3\nimport json, sys\n"
+                f"answers = json.loads({json.dumps(json.dumps(answers))})\n"
+                "args = ' '.join(sys.argv[1:])\n"
+                "print(next(v for k, v in answers.items() if k in args), end='')\n"
+            )
+            gh.chmod(0o755)
+            found = Path(tmp) / "findings.json"
+            found.write_text("[]")
+            # The homes step failed or was skipped, so its file was never written.
+            homes = Path(tmp) / "homes.json"
+            out = io.StringIO()
+            env = {"GH": str(gh), "GITHUB_REPOSITORY": "phuongnse/nexkit"}
+            with (
+                mock.patch.dict("os.environ", env),
+                mock.patch.object(audit, "planned_markers", return_value=[]),
+                mock.patch.object(audit, "doc_words", return_value=[]),
+                contextlib.redirect_stdout(out),
+            ):
+                self.assertEqual(audit.main(["x", "plan", str(found), str(homes), "77"]), 0)
+        self.assertEqual(json.loads(out.getvalue())["relinks"], [])
+
     def test_the_schema_holds_only_what_an_agent_receives(self):
         keywords = {"type", "enum", "properties", "required", "items", "description"}
 

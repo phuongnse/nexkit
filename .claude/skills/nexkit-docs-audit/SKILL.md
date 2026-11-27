@@ -19,7 +19,8 @@ opens issues, which NexKit takes.
    `skills/` and `.claude/skills/`, and `AGENTS.md` and `README.md`, in order, whose index modulo 4
    is the run number's, so every page is read once in four runs.
 2. `links <out>` lists each link of an open issue to a file of this repository on `main` that no
-   longer exists, or to a heading it no longer has, with where git says the file went.
+   longer exists, or to a heading it no longer has, with where git says the file went. A failure
+   of this step fails no run: every link stays as it is, and the pages are still read.
 3. `read <run number> <out>` reads each page in a session of its own, at most four at a time. It
    runs as NexKit's review stage runs, with its agents and fallbacks, model, time and read-only
    tools, and asks for the findings' schema in place of the review's. Each session follows
@@ -27,7 +28,8 @@ opens issues, which NexKit takes.
    has been read.
 4. `homes <links> <out>` asks one session, with the same access, for the new home of each broken
    link, as [broken links](broken-links.md) says, and keeps a home only when its file and heading
-   exist.
+   exist. It runs only when `links` succeeded. If it fails, no run fails, every link stays as it is,
+   and the findings are still filed.
 5. `plan <findings> <homes> <run id>` adds what needs no judgement, groups the findings into
    issues, leaves out each that an open issue covers, and keeps at most ten. It prints each finding
    that the cap leaves out. The next audit finds again what the plan adds on its own, listed
@@ -40,11 +42,15 @@ opens issues, which NexKit takes.
      [structure](../../../docs/writing-docs.md#structure) splits a doc.
 
    It also writes, for each issue with a broken link that has a home, its text as read and as it
-   reads with the link replaced.
+   reads with the link replaced. It reads the homes only when `homes` wrote them. Without them, it
+   replaces no link.
 
-The job that reads holds no token that writes. A job that runs no model and no repository code
-opens the planned issues, and replaces an issue's text only while it is still the one read, so a
-page or an issue that tries to steer the agent cannot write to the repository.
+The job that reads holds no token that writes. Before anything is planned, the audit job checks
+every file its steps wrote for the agent's credential, which the agent's read-only tools could
+still read from the runner. It deletes any file that holds the credential and fails, so nothing is
+filed. A job that runs no model and no repository code opens the planned issues, and replaces an
+issue's text only while it is still the one read, so a page or an issue that tries to steer the
+agent cannot write to the repository.
 
 In the owner's own session, follow [reading a page](#reading-a-page) for the pages the owner names
 and report the findings to the owner instead of opening issues.

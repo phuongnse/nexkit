@@ -93,7 +93,9 @@
     "asked": [],
     "parts": [],
     "policies": {},
-    "recentEvents": [],
+    "recentEvents": [
+      "run-2"
+    ],
     "questions": {
       "ref": "3",
       "stage": "implement",

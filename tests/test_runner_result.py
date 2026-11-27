@@ -170,12 +170,17 @@ class AfterPlanTest(HostCase):
 
 
 class StoppedTest(HostCase):
-    def carries_on(self, decision, outcome, ran=RUN, **agent):
-        """The stopped round's event and whether autopilot carries on, in a fresh repository."""
+    def carries_on(self, decision, outcome, ran=RUN, running=False, **agent):
+        """The stopped round's event and whether autopilot carries on, in a fresh repository.
+        With `running`, the item's state was stored while its `/nexkit go` ran, as the decision
+        after a blocked `/nexkit go` reads it."""
         self.setUp()
         self.issue(5)
-        self.gh.add_pull(6, 5)
         cfg = pilot(answer="recommended")
+        if running:
+            self.run_comment(5, "go", status="running")
+            host.store_import(self.gh, cfg, 5)
+        self.gh.add_pull(6, 5)
         with finished() as events, mock.patch.dict(os.environ, {"GITHUB_RUN_ID": "9"}):
             carried = autopilot.carries_on(self.gh, cfg, decision, outcome, agent, ran=ran)
         return one(events, "run-"), carried
@@ -183,7 +188,8 @@ class StoppedTest(HostCase):
     def test_a_blocked_go_sends_the_runner_s_tokens(self):
         go = {"issue": 5, "pr": None, "action": "implement"}
         output = {"questions": [{**ASKED, "closes": 0}]}
-        event, carried = self.carries_on(go, "agent_blocked", status="blocked", output=output)
+        found = self.carries_on(go, "agent_blocked", running=True, status="blocked", output=output)
+        event, carried = found
         self.assertTrue(carried)
         self.assertEqual(spending(event), SPENT)
         self.assertEqual(event["result"]["output"]["questions"][0]["closes"], 0)

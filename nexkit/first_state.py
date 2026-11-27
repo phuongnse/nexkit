@@ -388,6 +388,9 @@ class Item:
         return self.be("reviewed", "ready")
 
     def after_go(self, comment, run):
+        """Place an item whose latest run is a `/nexkit go` that did not end in a pull request.
+        A round that stopped as blocked or failed on an error records its result (`seen`), as
+        the import decided on it."""
         outcome = run.get("outcome")
         if run.get("status") == SUCCESS and outcome in ("no_change", "already_on_base"):
             return self.be("no change", "noChange")
@@ -403,10 +406,21 @@ class Item:
             return self.be("failed", "failed", "untrusted", run)
         if run.get("status") == FAILURE and outcome != "issue_closed" and not run.get("timed_out"):
             # A round that failed on an error: NexKit 6 plans again after a comment.
+            self.seen(_round_result(self.issue["number"], comment, run), run)
             return self.be("failed", "failed", "roundFailed", run)
         # A time-out and an issue that closed with its round are `failed`, so that a comment
         # does not plan them again under `afterFailure`: NexKit 6 waits for a person.
         return self.be("failed", "failed", "failed", run)
+
+    def seen(self, event, run):
+        """Record the round's result `event` as an event the state has seen, when the run's
+        link names the workflow run it came from: the import decides on that result itself, so a
+        later decision on this state never sends it again to a run the engine started after it.
+        The id is the one that `report` and the sweep send (`host._run_event_id`)."""
+        from .route import RUN_ID as NAMES
+
+        if NAMES.search(run.get("url") or "") and event["id"] not in self.doc["recentEvents"]:
+            self.doc["recentEvents"].append(event["id"])
 
     def after_blocked(self, comment, run):
         """A `/nexkit go` that stopped as blocked, in the state where the engine puts the
@@ -415,11 +429,12 @@ class Item:
         answer on GitHub does."""
         from . import host  # host imports this module
 
-        doc = host._working(copy.deepcopy(self.doc), autopilot.asked_again(self.comments))
+        doc = _working(copy.deepcopy(self.doc), autopilot.asked_again(self.comments))
         policies = host.policies(self.cfg)
         if not self.taken:
             policies["planApproval"] = "person"
-        event = host._round_result(self.issue["number"], comment, run)
+        event = _round_result(self.issue["number"], comment, run)
+        self.seen(event, run)
         try:
             found = host.step(doc, event, policies)["state"]
         except host.Refused:
@@ -857,6 +872,40 @@ def _last_review(item):
     if left_out and left_out > 0:
         review["leftOut"] = left_out
     return review
+
+
+def _working(doc, again):
+    """`doc` while its `/nexkit go` runs, which the engine waits for. `again` says that
+    autopilot's answers started this round and no person commented since
+    (`autopilot.asked_again`)."""
+    doc["state"] = "working"
+    doc["pending"] = [agent_run("implement", None)]
+    doc["asked"] += ["answers"] * again
+    if doc["plan"]:
+        doc["plan"]["approved"] = True
+    return doc
+
+
+def _round_result(number, comment, run):
+    """The end of the `/nexkit go` whose run comment `comment` holds the marker `run`: a
+    blocked round's result, or for any other failed round an agent error, worded from NexKit's
+    own marker and never from agent text."""
+    from .host import AGENT, _event, _run_event_id, round_output  # host imports this module
+
+    if run.get("outcome") == "agent_blocked":
+        result = {**AGENT, "output": round_output(run)}
+    else:
+        text = str(run.get("attention") or "The round failed.")[: LONGEST["reason"]]
+        result = {**AGENT, "error": text, "output": None}
+    return _event(
+        "actionFinished",
+        number,
+        comment.get("created_at"),
+        _run_event_id(run.get("url")),
+        action=RUN_ID,
+        changeVersion=None,
+        result=result,
+    )
 
 
 def agent_run(stage, version):

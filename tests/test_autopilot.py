@@ -4854,8 +4854,13 @@ class StepDispatchTests(AutopilotCase):
         return maintain(gh, decision, self.cfg, workflow="nexkit.yml", ref="main")
 
     def effects(self, gh):
+        # The state comment is the item's group's, which the step run stores and a sweep's
+        # preview does not, so its revision is no effect that the two must share.
         return {
-            "comments": {n: [c["body"] for c in gh.comments(n)] for n in sorted(gh.issues)},
+            "comments": {
+                n: [c["body"] for c in gh.comments(n) if item_state.PREFIX not in c["body"]]
+                for n in sorted(gh.issues)
+            },
             "issues": {n: (i["state"], i.get("state_reason")) for n, i in gh.issues.items()},
             "dispatches": [d["inputs"] for d in gh.dispatches],
             "merged": list(gh.merged),
@@ -4935,6 +4940,8 @@ class StepDispatchTests(AutopilotCase):
 
     def test_a_merge_is_what_a_sweep_did(self):
         self.merge_waiting()
+        # The merge waits in the stored state, as the round that stored it left it.
+        self.assertTrue(host.store_import(self.gh, self.cfg, 5, now=NOW))
         mine, sweep = self.same_as_a_sweep(5)
         self.assertEqual(mine, sweep)
         self.assertEqual(self.gh.merged, [(10, self.HEAD, "squash")])

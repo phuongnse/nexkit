@@ -4189,6 +4189,17 @@ class ScenarioTests(unittest.TestCase):
         mentions = [c for n in (5, 6) for c in stored.gh.comments_matching(n, "a person is needed")]
         self.assertEqual(len(mentions), 1)
 
+        # A further sweep after the hand-off waits for the person: the engine's tick changes
+        # nothing, the merge is not tried, and no one is mentioned again.
+        for pipe in (stored, plain):
+            sweep(pipe, 9)
+        document = item_state.read(stored.gh, 5)[1]
+        self.assertEqual(document["state"], "ready")
+        self.assertEqual(document["attention"]["reason"], "acceptRefused")
+        self.assertEqual(stored.gh.merged, [])
+        mentions = [c for n in (5, 6) for c in stored.gh.comments_matching(n, "a person is needed")]
+        self.assertEqual(len(mentions), 1)
+
         # What people read is what a plain run leaves.
         self.assertEqual(people_read(stored), people_read(plain))
         self.assertEqual(stored.played, plain.played)
@@ -4222,7 +4233,8 @@ class ScenarioTests(unittest.TestCase):
             autopilot.step(pipe.gh, pipe.cfg, 5, "nexkit.yml", "main")
         document = item_state.read(pipe.gh, 5)[1]
         self.assertGreater(document["revision"], 1)
-        self.assertIn(f"merge-6-{head}", document["recentEvents"])
+        # The id carries the revision that the tick was decided on.
+        self.assertIn(f"merge-6-{head}-r1", document["recentEvents"])
 
     def test_a_state_comment_that_someone_else_changed_gets_no_second_one_and_waits_for_a_person(
         self,

@@ -1394,6 +1394,8 @@ class MergeRefusalTests(ReportCase):
         from nexkit import autopilot, host
 
         self.waiting_merge()
+        # The sweep decides on the stored state, which holds the start of the wait.
+        self.assertTrue(item_state.read(self.gh, 5)[1]["checksSince"])
         later = datetime.now(UTC) + timedelta(hours=7)
         real = host.step
 
@@ -1418,8 +1420,9 @@ class MergeRefusalTests(ReportCase):
         with mock.patch.object(host, "step", wraps=host.step) as step:
             step_ = autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {5: 6}, now=later)
         self.assertEqual(step_["state"], "merge")
-        [(state, event, _)] = [call.args for call in step.call_args_list]
-        self.assertEqual((event["kind"], state["observed"]["behind"]), ("tick", True))
+        [(_, observed, _), (state, tick, _)] = [call.args for call in step.call_args_list]
+        self.assertEqual((observed["kind"], observed["behind"]), ("changeObserved", True))
+        self.assertEqual((tick["kind"], state["observed"]["behind"]), ("tick", True))
         # Without it, a person looks into the checks, as for any other branch.
         with mock.patch.dict(self.cfg["conflicts"], {"auto_resolve": False}):
             step_ = autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {5: 6}, now=later)

@@ -1508,10 +1508,9 @@ def _seen(gh, cfg, target, message, seen, expect):
     since the engine refused to decide."""
     from .host import Refused, change_seen, refused_parts
 
-    auto_fixes = (target.get("state") or {}).get("auto_fixes", 0)
     try:
-        issue, pr, head = target["issue"], target["pr"], target["head"]
-        end = change_seen(gh, cfg, issue, pr, head, auto_fixes, seen, write=True)
+        issue, pr = target["issue"], target["pr"]
+        end = change_seen(gh, cfg, issue, pr, seen, write=True)
         if end != expect:
             raise Refused(f"The engine answers {end!r}, not {expect!r}, to what the merge found.")
     except Refused as error:
@@ -1610,10 +1609,11 @@ def _guarded(gh, cfg, target, outcome, message, found=None):
     return outcome, message
 
 
-def _engine_accept(gh, cfg, target, kind, text, before=()):
+def _engine_accept(gh, cfg, target, kind, text, before=(), at=None):
     """What the engine decides after the accept of `target`'s pull request ended with the
     refusal `kind`, and `text` for a person, once it has heard the events `before`
-    (`host.accept_answer`'s end). Raises `host.Refused`."""
+    (`host.accept_answer`'s end), all at the time `at`, which defaults to now. Raises
+    `host.Refused`."""
     from .host import accept_answer
 
     result = {"accepted": False, "refusal": kind, "text": text}
@@ -1624,7 +1624,7 @@ def _engine_accept(gh, cfg, target, kind, text, before=()):
         target["pr"],
         result,
         before=before,
-        at=iso(datetime.now(UTC)),
+        at=at or iso(datetime.now(UTC)),
         write=True,
     )
     return end
@@ -1651,7 +1651,11 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch, after
     request, the base branch's required checks and the head's checks. The error's text
     counts only for required checks that have not reported, when the data cannot say. What
     follows a head that moved, a refusal after the base branch kept moving (`after_move`) and
-    any other refusal only a person clears is the engine's (`host.accept_answer`)."""
+    any other refusal only a person clears is the engine's (`host.accept_answer`). A refusal
+    while GitHub calls the pull request `clean`, or while the sweep's retry found the head
+    mergeable (`target["clean"]`), is sent after the observation that GitHub would accept the
+    head (`host.acceptable_observed`), so that the engine does not try that head again, and
+    `refused_clean` stays for the people and NexKit 6's readers of the round's comment."""
     pr, base, head = target["pr"], target["base"], target["head"]
     try:
         pull = gh.pull(pr)
@@ -1702,6 +1706,13 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch, after
     if failed:
         return _required_failed(gh, cfg, target, row, message, failed, workflow, default_branch)
     state = merge_state(gh, pr)
+    # A head that GitHub called mergeable and still refused is sent as acceptable before the
+    # refusal, so that the engine keeps it as refused and no sweep tries it again.
+    from .host import acceptable_observed
+
+    at = iso(datetime.now(UTC))
+    mergeable = state == "clean" or target.get("clean")
+    before = [acceptable_observed(target["issue"], pr, head, at)] if mergeable else []
     if auto_resolve and state == "behind":
         # Checks that passed on a head behind its base count as "expected" when branch
         # protection wants it up to date: they never pass without an update.
@@ -1759,7 +1770,9 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch, after
         text = f"It conflicts with `{base}`."
         result = {"accepted": False, "refusal": refusal_kind, "text": text}
         try:
-            end, _ = accept_answer(gh, cfg, target["issue"], pr, result, write=True)
+            end, _ = accept_answer(
+                gh, cfg, target["issue"], pr, result, before=before, at=at, write=True
+            )
             if end != "person":
                 raise Refused(f"The engine answers {end!r} to a conflict at the merge.")
             do, why = _not_up_to_date("dirty", base)
@@ -1772,7 +1785,9 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch, after
 
         result = {"accepted": False, "refusal": "behind", "text": f"It is behind `{base}`."}
         try:
-            end, _ = accept_answer(gh, cfg, target["issue"], pr, result, write=True)
+            end, _ = accept_answer(
+                gh, cfg, target["issue"], pr, result, before=before, at=at, write=True
+            )
             if end != "person":
                 raise Refused(f"The engine answers {end!r} to a branch that is behind.")
             do, why = _not_up_to_date("behind", base)
@@ -1783,7 +1798,7 @@ def _refused(gh, cfg, target, row, message, exc, workflow, default_branch, after
 
         kind = "transient" if after_move else "needsPerson"
         try:
-            end = _engine_accept(gh, cfg, target, kind, "GitHub refused the merge.")
+            end = _engine_accept(gh, cfg, target, kind, "GitHub refused the merge.", before, at)
             if end != "person":
                 raise Refused(f"The engine answers {end!r} to a merge that GitHub refused.")
         except Refused as error:
@@ -2201,6 +2216,7 @@ def merge_waiting(gh, cfg, step, workflow, default_branch, now=None):
         waited = run.get("outcome") == "merge_waiting"
         target = {"pr": pr, "head": run["head"], "issue": step["number"], "base": step["base"]}
         target["waiting"] = waited
+        target["clean"] = bool(step.get("clean"))
         intro = step.get("intro", "")
         outcome, text = merge_pull(gh, cfg, target, run, intro, workflow, default_branch)
         if outcome == "merge_waiting" and waited:

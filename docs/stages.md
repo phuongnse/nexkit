@@ -179,9 +179,10 @@ fetched it, with git and without running any repository code:
   within `conflicts.max_rounds`, as after a merge refused because of a conflict. That round
   resolves the conflict in its `agent` job as any fix round does. With its conflict rounds
   used up, no round starts: the round ends as `conflicting`, says so, and a person decides.
-  Without `conflicts.auto_resolve`, the round checks and reviews the head as before.
+  Without `conflicts.auto_resolve`, `publish` pushes the round's commit alone, and the round
+  checks and reviews that head.
 - Otherwise, such as when the rules do not want pull requests up to date, or the base
-  branch has not moved, the round publishes its commit alone, as before.
+  branch has not moved, the round publishes its commit alone.
 
 The review agent judges the pull request's own change against the base branch, so the
 extra merge commit changes nothing in what it reviews.
@@ -228,10 +229,6 @@ parent, the protected-path check counts only what differs from git's own merge, 
 round's comment says the base branch was merged. When the agent merged any other commit,
 or another commit than the one NexKit merged, the round ends with an error and publishes
 nothing.
-
-A round whose own commit conflicts with the base branch's tip when `publish` pushes it
-skips its checks and review, and with `conflicts.auto_resolve` starts the conflict round at
-once (see *A base branch that moved while the agent worked* above).
 
 **Failing checks the base branch fixed.** A check can fail for a reason that the base
 branch fixed after the pull request branched off, such as a flaky test. An automatic fix
@@ -359,14 +356,14 @@ git and without running any repository code:
   change next to its lines, runs the review.
 
 When both hold, the review carries over: no agent runs, `nexkit/review` succeeds with
-"AI review of `abc1234` carried over", the earlier findings stay the last review's, and
-the round's comment says that the review was carried over. The checks run on the new
+"AI review of abc1234 carried over; the change is the same", the earlier findings stay the last
+review's, and the round's comment says that the review was carried over. The checks run on the new
 commit as after any round, but a check whose
 [`unaffected_by`](checks.md#checks-that-a-change-cannot-affect) lists every path
 that changed since it passed gets no runner and counts as passed. When they pass, NexKit
 merges it with the earlier approval; when they fail, an automatic fix round starts as after any failing checks, counted in
-`fix.max_auto_rounds`, and its own review runs as usual. Otherwise the review runs as
-before, and the round's comment says why. A merge that has a conflict is a conflict round
+`fix.max_auto_rounds`, and its own review runs as usual. Otherwise the review agent runs,
+and the round's comment says why. A merge that has a conflict is a conflict round
 instead (see *Conflicts with the base branch* above), which the review always follows. A run
 again after a transient error compares the same way. A `/nexkit review` that a person
 comments never carries an approval over. A merge that leaves the pull request without a
@@ -492,7 +489,7 @@ One or two sentences: the main reason for the verdict.
 **Things to look at**         findings, blocking first, with file and line
 **Previous findings**         what happened to each earlier finding (later rounds)
 **Acceptance criteria**       ✅ met, ❌ unmet or ❔ unverifiable, and the covering test
-**Checklist**                 ✅ met, ❌ not met or ⚖️ a person decides, for each [review checklist](configuration.md#review-checklist) item
+**Checklist**                 ✅ met, ❌ not met, ➖ not applicable or ⚖️ not met, a person decides, for each [review checklist](configuration.md#review-checklist) item
 **Checks**: ✅ `test`
 
 <details><summary>Evidence</summary>

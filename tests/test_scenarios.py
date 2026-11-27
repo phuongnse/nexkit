@@ -350,10 +350,10 @@ class Pipeline:
         lines = autopilot.sweep(self.gh, self.cfg, "nexkit.yml", "main", sent=sent)
         return lines + [self.wait_for_ends(self.gh, sent)]
 
-    def approve(self, commit=None, login="olivia"):
+    def approve(self, commit=None, login="olivia", at=None):
         """A writer's approval of pull request 6 on `commit` (its head by default): the review
-        GitHub holds, and the run of the approval, which sends a `step` into the issue's
-        queue. Returns the lines of that run."""
+        GitHub holds, submitted at `at` when given, and the run of the approval, which sends a
+        `step` into the issue's queue. Returns the lines of that run."""
         pull = self.gh.pulls[6]
         review = {
             "id": 9000 + len(self.gh.pr_reviews[6]),
@@ -361,6 +361,8 @@ class Pipeline:
             "user": {"login": login},
             "commit_id": commit or pull["head"]["sha"],
         }
+        if at:
+            review["submitted_at"] = at
         self.gh.pr_reviews[6].append(review)
         event = {
             "action": "submitted",
@@ -1353,6 +1355,51 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(pipe.gh.issues[5]["state"], "closed")
         self.assertEqual(len(pipe.gh.comments_matching(6, "a person is needed")), 1)
 
+    def test_an_approval_that_the_items_run_took_merges_once_and_reaches_the_engine_once(self):
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        pipe.gh.review_states[6] = {"decision": "REVIEW_REQUIRED"}
+        pipe.gh.files["CODEOWNERS"] = "* @olivia\n"
+        pipe.gh.pr_files[6] = [{"filename": "app.py", "additions": 3, "deletions": 1}]
+        pipe.gh.merge_error = GitHubError(405, "Waiting on code owner review from olivia.")
+        pipe.play()
+        self.assertEqual(pipe.played[-1][2], "merge_refused")
+        # The item's group stores the state comment before the review, which comes after it.
+        pipe.take_run(5)
+        pipe.gh.merge_error = None
+        written = item_state.read(pipe.gh, 5)[0]["created_at"]
+        submitted = datetime.fromisoformat(written.replace("Z", "+00:00")) + timedelta(minutes=1)
+        self.assertEqual(
+            pipe.approve(at=submitted.strftime("%Y-%m-%dT%H:%M:%SZ")),
+            ["#6: sent @olivia's approval to #5's queue."],
+        )
+        with mock.patch.object(host.engine, "answer", wraps=host.engine.answer) as answer:
+            # The run takes the review before its step: the engine hears it here.
+            pipe.take_run(5)
+            stored = item_state.read(pipe.gh, 5)[1]
+            self.assertIn("review-9000", stored["recentEvents"])
+            self.assertEqual([action["kind"] for action in stored["pending"]], ["accept"])
+            pipe.drain()
+        self.assertEqual(len(pipe.gh.merged), 1)
+        heard = [
+            call.args[0]["event"]["kind"]
+            for call in answer.call_args_list
+            if call.args[0]["call"] == "step"
+        ]
+        self.assertEqual(heard.count("changeApproved"), 1)
+        self.assertEqual(
+            [
+                call.args[0]["event"]["id"]
+                for call in answer.call_args_list
+                if call.args[0]["call"] == "step"
+                and call.args[0]["event"]["kind"] == "changeApproved"
+            ],
+            ["review-9000"],
+        )
+
     def test_an_approval_stores_its_answer_only_from_the_items_group(self):
         def script(pipe, inputs):
             return plan() if inputs["command"] == "plan" else done()
@@ -1379,7 +1426,8 @@ class ScenarioTests(unittest.TestCase):
         stored = item_state.read(pipe.gh, 5)[1]
         self.assertEqual(stored["revision"], item_state.find([comment])[1]["revision"] + 3)
         self.assertEqual((stored["state"], stored["pending"]), ("accepted", []))
-        self.assertIn("approval-6-" + pipe.gh.pulls[6]["head"]["sha"], stored["recentEvents"])
+        # The approval is named after its review, as `take` names it.
+        self.assertIn("review-9000", stored["recentEvents"])
 
     def test_an_approval_of_a_commit_that_is_no_longer_the_head_merges_nothing(self):
         def script(pipe, inputs):
@@ -1421,6 +1469,7 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(len(pipe.gh.comments_matching(6, "a person is needed")), 1)
         # The owner approves and merges in the same minute, before NexKit's merge reads
         # the issue, which the merge closed through the `Closes` line.
+        pipe.take_run(5)
         pipe.gh.pulls[6].update(state="closed", merged=True, merged_by={"login": "olivia"})
         pipe.gh.issues[5].update(state="closed", state_reason="completed")
         self.assertEqual(pipe.approve(), ["#6: sent @olivia's approval to #5's queue."])

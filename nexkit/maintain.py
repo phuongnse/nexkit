@@ -1353,9 +1353,11 @@ def _approval(gh, cfg, decision, run, write=False):
     from . import host
 
     pr, issue = decision["pr"], decision["issue"]
-    commit = decision.get("commit")
+    commit, review = decision.get("commit"), decision.get("review")
     try:
-        answer = host.approved(gh, cfg, issue, pr, run, commit, decision.get("actor"), write=write)
+        answer = host.approved(
+            gh, cfg, issue, pr, run, commit, decision.get("actor"), write=write, review=review
+        )
     except host.Refused as exc:
         return None, f"#{pr}: NexKit could not decide what the approval does: {exc}"
     if answer != "none":

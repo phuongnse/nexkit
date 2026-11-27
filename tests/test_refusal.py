@@ -11,7 +11,7 @@ from nexkit.refusal import codeowners, explain, owners_of
 from nexkit.state import render_run
 from nexkit.status import collect
 from tests.support import FakeGitHub, make_config, play_sweep
-from tests.test_host import seed
+from tests.test_host import restate, seed
 from tests.test_report import HEAD, ReportCase, review_result
 
 # What GitHub answers when a ruleset refuses a merge for a code owner review.
@@ -259,6 +259,12 @@ class ApprovedMergeTests(ReportCase):
     def latest(self):
         return self.gh.run_comments(6)[-1]["run"]
 
+    @staticmethod
+    def later(review):
+        """The approval in review `review`, a review of its own, which the item's state has not
+        taken, as a second approval of the same pull request is."""
+        return {**APPROVED, "review": review}
+
     def send(self, cfg=None, **fields):
         """The run of an approval, which only sends a `step` into the issue's queue."""
         approval = {**APPROVAL, **fields}
@@ -416,10 +422,13 @@ class ApprovedMergeTests(ReportCase):
 
     def test_an_approval_of_a_pull_request_a_person_merged_first_changes_nothing(self):
         # The owner approved and merged in the same minute; the merge closed the issue.
+        ready = seed(self.gh, self.cfg, 5)[1]
         self.gh.pulls[6].update(state="closed", merged=True, merged_by={"login": "olivia"})
         self.gh.issues[5].update(state="closed", state_reason="completed")
         before = list(self.gh.comments(6))
-        self.assertEqual(self.approve(), ["#6: pull_closed; its round stays as it was."])
+        self.assertEqual(
+            self.approve(approval=self.later(1)), ["#6: pull_closed; its round stays as it was."]
+        )
         self.assertEqual((self.gh.merged, self.gh.dispatches), ([], []))
         # No mention, and the round's comment stays as it was.
         self.assertEqual(self.gh.comments(6), before)
@@ -427,7 +436,12 @@ class ApprovedMergeTests(ReportCase):
         # A pull request a person closed without merging is left alone too.
         self.gh.pulls[6].update(merged=False, merged_by=None)
         self.gh.issues[5]["state"] = "open"
-        self.assertEqual(self.approve(), ["#6: pull_closed; its round stays as it was."])
+        # The item's state is as it was before the first approval, which a person's merge
+        # outran, and a review of its own approves again.
+        restate(self.gh, 5, **ready)
+        self.assertEqual(
+            self.approve(approval=self.later(2)), ["#6: pull_closed; its round stays as it was."]
+        )
         self.assertEqual(self.gh.comments(6), before)
 
     def test_a_merge_a_person_or_a_sweep_made_while_nexkit_tried_mentions_nobody(self):
@@ -465,6 +479,7 @@ class ApprovedMergeTests(ReportCase):
         self.assertEqual(self.gh.merged, [(6, HEAD, "squash")])
 
     def test_an_approval_merges_nothing_for_a_closed_issue_or_an_untrusted_edit(self):
+        ready = seed(self.gh, self.cfg, 5)[1]
         self.gh.issues[5]["state"] = "closed"
         mentions = len(self.gh.comments_matching(6, "@owner"))
         self.assertEqual(self.approve(), ["#6: merge_issue_closed."])
@@ -476,7 +491,10 @@ class ApprovedMergeTests(ReportCase):
         self.gh.round_comment(6, 2, HEAD, "passed", outcome="merge_refused")
         self.gh.human_comment(5, "/nexkit trust")
         self.gh.edits[5] = [("bob", "2026-02-01T00:00:00Z")]
-        self.assertEqual(self.approve(), [f"#6: {autopilot.UNTRUSTED_MERGE}."])
+        restate(self.gh, 5, **ready)
+        self.assertEqual(
+            self.approve(approval=self.later(2)), [f"#6: {autopilot.UNTRUSTED_MERGE}."]
+        )
         self.assertEqual(self.gh.merged, [])
 
     def test_an_approval_starts_nothing_after_another_outcome_or_on_hold(self):
@@ -492,6 +510,7 @@ class ApprovedMergeTests(ReportCase):
         )
         self.gh.add_milestone(1)
         self.gh.issues[5]["milestone"] = {"number": 1}
+        seed(self.gh, held, 5)
         self.assertEqual(
             self.approve(held), ["#6: #5 is on hold (`on-hold`), so NexKit does not merge it."]
         )

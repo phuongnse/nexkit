@@ -35,7 +35,7 @@ Three parts are played around NexKit:
 
 Everything NexKit writes on GitHub, it writes as the repository's
 [GitHub App](configuration.md#the-github-app). The reasons are in
-[D2](decisions/d2-nexkit-writes-only-as-the-app.md).
+[D13](decisions/d13-the-pipeline-writes-as-the-app-and-maintenance-jobs-with-the-actions-token.md).
 
 NexKit carries the work on by itself wherever these docs say it does: automatic fix and
 conflict rounds, runs again after growing waits after a transient error, and with autopilot its plans,

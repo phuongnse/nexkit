@@ -395,7 +395,8 @@ when a list of what the code defines misses an entry. These rules close each of 
    - `test_each_value_a_page_repeats_is_its_constant`: each value that [agents and
      profiles](agents-and-profiles.md), [how it works](how-it-works.md), [work without a
      command](work-without-a-command.md), [failure handling](failure-handling.md),
-     [stages](stages.md) and [autopilot](autopilot.md) repeat equals its constant in the code.
+     [stages](stages.md), [autopilot](autopilot.md) and [the configuration
+     reference](configuration.md) repeat equals its constant in the code.
    - `test_the_page_lists_the_secret_words_and_names_the_code_has`: the words and names of the
      redaction list in [how it works](how-it-works.md#what-is-redacted) are those of
      `SECRET_WORDS` and `SECRET_NAMES` in `nexkit/redact.py`, and no other.

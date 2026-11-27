@@ -1823,6 +1823,26 @@ VALUES = (
     ("stages.md", f"cut to {publish.PLAN_FLOOR} characters"),
     ("stages.md", f"more than {checks.FAILED_TESTS_LIMIT} failing tests"),
     ("stages.md", f"deletes up to {NUMBERS[maintain.STALE_BRANCHES]}"),
+    ("configuration.md", f"At most {config.MAX_CACHES} entries"),
+    (
+        "configuration.md",
+        f"in at most {config.MAX_CHECKLIST_ITEM} characters; a list holds at most "
+        f"{config.MAX_CHECKLIST}",
+    ),
+    (
+        "configuration.md",
+        f"plan {config.DEFAULTS['stages']['plan']['timeout_minutes']}, "
+        f"implement {config.DEFAULTS['stages']['implement']['timeout_minutes']}, "
+        f"review {config.DEFAULTS['stages']['review']['timeout_minutes']} and "
+        f"triage {config.TRIAGE_DEFAULTS['timeout_minutes']} by default; "
+        f"triage at most {config.MAX_TRIAGE_MINUTES}, other stages at most "
+        f"{config.MAX_STAGE_MINUTES}",
+    ),
+    ("configuration.md", f"up to {config.MAX_STAGE_MINUTES} minutes for a stage"),
+    ("configuration.md", f"toward the {runtimes.SECRET_SLOTS} per job"),
+    ("configuration.md", f"at most {runtimes.SECRET_SLOTS} per job"),
+    ("configuration.md", f"download artifacts for {artifact_days()} days"),
+    ("configuration.md", f"first and last {runlog.HEAD_LINES} lines of its output"),
 )
 # The redaction list of how it works: its heading, and the regex that finds the words of its first
 # bullet. Its other bullets name the token shapes and the passwords, each in a code span.

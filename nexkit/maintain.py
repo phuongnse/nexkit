@@ -23,6 +23,7 @@ from .github import GitHubError
 from .route import (
     APPROVAL,
     BRANCH_PREFIX,
+    PART_ENDED,
     RESUMED,
     RUN_ID,
     implementing,
@@ -52,6 +53,9 @@ from .usage import PAUSE_WINDOW, iso, parse_iso
 # runs.
 TASKS = {
     "parents": ("close_parent_issues", "autopilot.enabled"),
+    # The run of a part's end in its parent's queue: it only stores the end in the parent's
+    # state, which no setting gates, since the part's run sent it.
+    "part_ended": (),
     "schedule": (
         "usage_limit.resume",
         "retry.wait_minutes",
@@ -199,7 +203,8 @@ def close_parent(gh, cfg, number, part=None):
     # A list that GitHub has not caught up with may miss the part, which has closed.
     state = first_state._ended(found or gh.issue(part)) or "accepted"
     try:
-        answer = host.part_ended(cfg, number, subs, part, state)
+        # A preview: only the `step` run of the parent's group stores the parent's state.
+        answer = host.part_ended(gh, cfg, number, subs, part, state)
     except host.Refused as error:
         why = autopilot.quoted(str(error), 300)
         return [f"Left #{number} as it is: NexKit's engine refused to decide: {why}"], False
@@ -244,6 +249,43 @@ def close_parent(gh, cfg, number, part=None):
             f"closed:\n\n{listing}",
         )
     return [f"Closed #{number} as completed: all its sub-issues are closed."], True
+
+
+def send_part_end(gh, number, workflow, ref):
+    """After sub-issue `number` closed: send its end to its parent's queue, a `step` whose run
+    stores it in the parent's state (`record_part_end`), since only the run of the item's group
+    writes that state. Sends nothing for an issue with no parent in this repository. Returns
+    lines for the log; a dispatch that fails becomes a line."""
+    try:
+        parent = gh.parent_issue(number)
+        if not parent or not in_repository(gh, parent):
+            return []
+        note = PART_ENDED.format(number)
+        autopilot.request_step(gh, workflow, ref, parent["number"], note=note, auto="false")
+    except GitHubError as exc:
+        return [f"Could not send the end of #{number} to its parent's queue: {exc}"]
+    return [f"Sent the end of #{number} to #{parent['number']}'s queue."]
+
+
+def record_part_end(gh, cfg, decision):
+    """In the queue of the parent issue `decision["issue"]`: decide the end of its sub-issue
+    `decision["part"]` on the parent's stored state and store the answer
+    (`host.part_ended`). It reads the part back from GitHub, which must be a closed sub-issue
+    of the parent, and writes nothing else on GitHub. Returns lines for the log."""
+    from . import first_state, host  # host imports this module
+
+    parent, part = decision["issue"], decision["part"]
+    found, issue = gh.parent_issue(part), gh.issue(part)
+    if not found or found["number"] != parent or issue.get("state") != "closed":
+        return [f"#{part} is not a closed sub-issue of #{parent}: nothing is recorded."]
+    state = first_state._ended(issue) or "accepted"
+    try:
+        subs = gh.sub_issues(parent)
+        answer = host.part_ended(gh, cfg, parent, subs, part, state, write=True)
+    except host.Refused as error:
+        why = autopilot.quoted(str(error), 300)
+        return [f"Recorded nothing for #{part}: NexKit's engine refused to decide: {why}"]
+    return [f"Recorded the end of #{part} in #{parent}'s state: {answer}."]
 
 
 def close_or_find_closed(gh, number, reason="completed"):
@@ -1396,7 +1438,10 @@ def maintain(gh, decision, cfg, *, workflow="", ref="", alerts=None):
     if task == "parents":
         issue = decision["issue"]
         lines = close_parents_safely(gh, cfg, issue) if cfg["close_parent_issues"] else []
+        lines += send_part_end(gh, issue, workflow, ref)
         return lines + autopilot.request_safely(gh, cfg, workflow, ref, issue)
+    if task == "part_ended":
+        return record_part_end(gh, cfg, decision)
     if task == "autopilot":
         # Even an event that changes nothing in scope, such as a milestoned issue with
         # `null`, starts a sweep: its run joins the group `nexkit-autopilot`, where it may

@@ -658,7 +658,8 @@ def _no_change(gh, cfg, decision, agent):
     finding = no_change_finding(agent)
     try:
         # The issue closes only as the engine ends the item, on the agent's own finding.
-        no_change_found(cfg, decision, filled(((agent or {}).get("output") or {}).get("no_change")))
+        found = filled(((agent or {}).get("output") or {}).get("no_change"))
+        no_change_found(gh, cfg, decision, found, write=True)
     except Refused as exc:
         message = f"No change is needed, but NexKit did not close #{issue}: the engine refused"
         return {
@@ -696,7 +697,7 @@ def _already_on_base(gh, cfg, decision, agent):
     target = {**decision, "merge_base": agent.get("merge_base") or decision["base"]}
     try:
         # The pull request and its issue close only as the engine ends the item.
-        on_base_found(cfg, decision)
+        on_base_found(gh, cfg, decision, write=True)
     except Refused as exc:
         outcome, commit, reason = "on_base_failed", agent.get("on_base"), refused_reason(exc)
         by = f", brought by {commit}" if commit else ""
@@ -1522,7 +1523,8 @@ def _parent_ends(gh, cfg, target):
             raise Refused(f"The engine answers {end!r} to a merge that went through.")
         if cfg["close_parent_issues"]:
             return close_parents_safely(gh, cfg, issue)
-        part_ended(cfg, parent["number"], gh.sub_issues(parent["number"]), issue, state["state"])
+        subs = gh.sub_issues(parent["number"])
+        part_ended(gh, cfg, parent["number"], subs, issue, state["state"])
     except GitHubError as exc:
         return [f"Could not check the parent issue of #{issue}: {exc}"]
     except Refused as error:

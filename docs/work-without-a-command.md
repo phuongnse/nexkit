@@ -29,7 +29,9 @@ the check. When NexKit closes the issue itself after an automatic merge, `report
 same check in that run, for its comment, and the event's run finds nothing left. With
 [autopilot](#autopilot), each sweep also sends a `step` run that closes an open parent in
 scope whose sub-issues are all closed, one of them completed, by the same rules, in case
-that check did not run or failed: it never asks a person to close it. A parent missing
+that check did not run or failed: it never asks a person to close it. The run of a part
+that closed also sends its end to the parent's queue, where a `step` run stores it in the
+parent's state and writes nothing else. A parent missing
 parts of its plan waits for a person from the sweep that finds it, even while its other
 parts are open. Whichever comes first closes the parent, with
 one comment, posted after its close; a run whose close another request beat leaves the

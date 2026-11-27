@@ -2243,25 +2243,49 @@ class WaitEndTest(HostCase):
         self.gh.comment(6, render_state(state))
         self.gh.round_comment(6, 1, "c" * 40, "failed", action="fix", kinds=["auto"], **fields)
 
+    HOLD = make_config(autopilot={"enabled": True, "labels": {"on-hold": {"hold": True}}})
+
+    def held(self, used, **fields):
+        """`waiting`, with the hold label on the issue while its first state is stored, and gone
+        after, as the sweep finds it once a person removed the label."""
+        self.waiting(used, **fields)
+        self.gh.issues[5]["labels"] = [{"name": "on-hold"}]
+        seed(self.gh, self.HOLD, 5)
+        self.gh.issues[5]["labels"] = []
+        return self.HOLD
+
     def test_a_held_fix_round_is_counted_only_when_it_runs(self):
-        self.waiting(1, outcome="held", held_back="fix")
-        [request] = self.requests(5)
+        cfg = self.held(1, outcome="held", held_back="fix")
+        [request] = self.requests(5, cfg)
         self.assertEqual(request["event"]["kind"], "released")
         state = request["state"]
         self.assertEqual((state["rounds"]["counted"], state["rounds"]["due"]), (1, True))
-        step = self.step(5)
+        step = self.step(5, cfg)
         self.assertEqual((step["state"], step["command"], step["count"]), ("start", "fix", True))
         # `fix.max_auto_rounds` lowered while it waited: a person decides, as NexKit 6 does.
-        step = self.step(5, pilot_with(fix={"max_auto_rounds": 1}))
+        step = self.step(5, self.lowered(cfg))
         self.assertEqual(step["state"], "waits")
         self.assertIn("it has no automatic fix rounds left", step["reason"])
 
-    def test_a_head_pushed_while_the_label_held_it_is_reviewed(self):
-        self.waiting(2, outcome="held", held_back="fix")
-        self.gh.pulls[6]["head"]["sha"] = "d" * 40
-        kinds = [request["event"]["kind"] for request in self.requests(5)]
-        self.assertEqual(kinds, ["changeObserved", "released"])
+    def lowered(self, cfg, most=1):
+        return make_config(autopilot=cfg["autopilot"], fix={"max_auto_rounds": most})
+
+    def test_an_item_imported_after_its_label_was_gone_starts_the_held_round(self):
+        # The import holds no hold, only autopilot's wait for its start: that is what ends.
+        self.waiting(1, outcome="held", held_back="fix")
+        [request] = self.requests(5)
+        event = request["event"]
+        self.assertEqual((event["kind"], event["what"], event["by"]), ("requested", "start", None))
+        self.assertEqual(request["state"]["rounds"]["counted"], 1)
         step = self.step(5)
+        self.assertEqual((step["state"], step["command"], step["count"]), ("start", "fix", True))
+
+    def test_a_head_pushed_while_the_label_held_it_is_reviewed(self):
+        cfg = self.held(2, outcome="held", held_back="fix")
+        self.gh.pulls[6]["head"]["sha"] = "d" * 40
+        kinds = [request["event"]["kind"] for request in self.requests(5, cfg)]
+        self.assertEqual(kinds, ["changeObserved", "released"])
+        step = self.step(5, cfg)
         self.assertEqual((step["state"], step["command"]), ("start", "review"))
 
     def test_the_base_failure_wait_ends_as_the_engine_answers(self):
@@ -3084,19 +3108,38 @@ class ConflictingTest(ReportCase):
         self.assertEqual(found["outcome"], "needs_human")
         self.assertIn("refused", found["attention"])
 
+    HOLD = {"enabled": True, "labels": {"on-hold": {"hold": True}}}
+
+    def held_conflict(self, used):
+        """A pull request whose conflict round a label held back, after `used` conflict rounds,
+        as a run of the item's group stored it, once the label is gone."""
+        gh = FakeGitHub()
+        gh.add_issue(5)
+        gh.add_pull(6, 5, head_sha=HEAD)
+        for n in range(used):
+            gh.round_comment(6, n + 1, "b" * 40, "failed", conflicts=True, base_sha="d" * 40)
+        gh.round_comment(6, used + 1, HEAD, "failed", outcome="held", held_back="conflicts")
+        gh.issues[5]["labels"] = [{"name": "on-hold"}]
+        seed(gh, make_config(autopilot=self.HOLD), 5)
+        gh.issues[5]["labels"] = []
+        return gh
+
     def test_a_held_conflict_round_released_follows_the_engine(self):
-        cfg = make_config(conflicts={"auto_resolve": True, "max_rounds": 2})
+        cfg = make_config(conflicts={"auto_resolve": True, "max_rounds": 2}, autopilot=self.HOLD)
         run = {"head": HEAD, "held_back": "conflicts"}
-        released, gh = host.conflicts_released, self.gh
-        self.conflict_round(1)
-        self.assertEqual(released(gh, cfg, 5, 6, run, HEAD, True, 1), "round")
-        self.conflict_round(2)
-        self.assertEqual(released(gh, cfg, 5, 6, run, HEAD, True, 2), "waits")
-        self.assertEqual(released(gh, cfg, 5, 6, run, HEAD, False, 2), "review")
+        released = host.conflicts_released
+        # The conflict rounds used are the stored ones: the round comments that the import counts.
+        gh = self.held_conflict(1)
+        self.assertEqual(released(gh, cfg, 5, 6, run, HEAD, True), "round")
+        gh = self.held_conflict(2)
+        self.assertEqual(released(gh, cfg, 5, 6, run, HEAD, True), "waits")
+        self.assertEqual(released(gh, cfg, 5, 6, run, HEAD, False), "review")
         # A head that moved is checked, and the round after it finds any conflict.
-        self.assertEqual(released(gh, cfg, 5, 6, run, "d" * 40, True, 0), "review")
-        off = make_config(conflicts={"auto_resolve": False})
-        self.assertEqual(released(gh, off, 5, 6, run, HEAD, True, 0), "waits")
+        gh = self.held_conflict(0)
+        self.assertEqual(released(gh, cfg, 5, 6, run, "d" * 40, True), "review")
+        off = make_config(conflicts={"auto_resolve": False}, autopilot=self.HOLD)
+        gh = self.held_conflict(0)
+        self.assertEqual(released(gh, off, 5, 6, run, HEAD, True), "waits")
 
 
 class DiagnosisTest(HostCase):
@@ -3315,6 +3358,17 @@ class RoundDecideTest(ReportCase):
 
         return seen, spy
 
+    def waiting(self, **fields):
+        """Item 5's first state again, imported while a label holds it, when the round of pull
+        request 6 is held back by it (`held_back` in `fields`), and the round waits as `fields`
+        say, a hold's `held_back` or a base failure's `ci_wait`. The label is gone after, as the
+        sweep finds it."""
+        self.gh.issue_comments[5] = []
+        self.gh.issues[5]["labels"] = [{"name": "on-hold"}] if "held_back" in fields else []
+        self.gh.round_comment(6, 1, HEAD, "failed", action="fix", kinds=["auto"], **fields)
+        seed(self.gh, self.cfg, 5)
+        self.gh.issues[5]["labels"] = []
+
     def ended(self, **options):
         review = ("done", self.GOOD)
         d = decision("fix", pr=6, target=6, head="b" * 40)
@@ -3429,56 +3483,118 @@ class RoundDecideTest(ReportCase):
     def test_a_conflict_round_counts_from_the_stored_conflicts(self):
         self.store(conflicts=2)
         self.assertEqual(self.conflicting(used=0), "used_up")
-        run = {"head": HEAD, "held_back": "conflicts"}
-        args = (self.gh, self.cfg, 5, 6, run, HEAD, True, 0)
-        self.assertEqual(host.conflicts_released(*args), "waits")
         self.assertEqual(
             host.base_moved(self.gh, self.cfg, 5, 6, HEAD, True, False, False, 0, 0), "waits"
         )
+        self.waiting(outcome="held", held_back="conflicts")
+        self.store(conflicts=2)
+        args = (self.gh, self.cfg, 5, 6, {"head": HEAD, "held_back": "conflicts"}, HEAD, True)
+        self.assertEqual(host.conflicts_released(*args), "waits")
 
     def test_a_release_stores_one_revision_for_each_event(self):
         run = {"head": HEAD, "held_back": "fix"}
+        self.waiting(outcome="held", held_back="fix")
         self.store(counted=1)
-        self.assertEqual(host.released(self.gh, self.cfg, 5, 6, run, HEAD, 1, write=True), "fix")
+        self.assertEqual(host.released(self.gh, self.cfg, 5, 6, run, HEAD, write=True), "fix")
         _, doc = self.read()
         self.assertEqual((doc["revision"], doc["rounds"]["counted"]), (3, 2))
         self.assertEqual(doc["recentEvents"][-1], f"released-6-{HEAD}")
         # A head pushed meanwhile is a second event.
-        moved = host.released(self.gh, self.cfg, 5, 6, run, "d" * 40, 1, write=True)
+        self.waiting(outcome="held", held_back="fix")
+        self.store(counted=1)
+        moved = host.released(self.gh, self.cfg, 5, 6, run, "d" * 40, write=True)
         self.assertEqual(moved, "review")
-        self.assertEqual(self.read()[1]["revision"], 5)
+        self.assertEqual(self.read()[1]["revision"], 4)
         # Previewed, it stores nothing.
-        self.assertEqual(host.released(self.gh, self.cfg, 5, 6, run, HEAD, 1), "fix")
-        self.assertEqual(self.read()[1]["revision"], 5)
+        self.waiting(outcome="held", held_back="fix")
+        self.assertEqual(host.released(self.gh, self.cfg, 5, 6, run, HEAD), "fix")
+        self.assertEqual(self.read()[1]["revision"], 1)
 
     def test_a_held_fix_round_released_counts_from_the_stored_count(self):
         run = {"head": HEAD, "held_back": "fix"}
+        self.waiting(outcome="held", held_back="fix")
         self.store(counted=3)
-        self.assertEqual(host.released(self.gh, self.cfg, 5, 6, run, HEAD, 0), "used_up")
+        self.assertEqual(host.released(self.gh, self.cfg, 5, 6, run, HEAD), "used_up")
 
     def test_the_end_of_a_wait_for_the_base_branch_stores_the_answer(self):
-        run = {"head": HEAD, "ci_wait": {"bug": 77, "workflow": "ci.yml", "branch": "main"}}
-        args = (self.gh, self.cfg, 5, 6, run, 1)
+        wait = {"bug": 77, "workflow": "ci.yml", "branch": "main"}
+        run = {"head": HEAD, "ci_wait": wait}
+        args = (self.gh, self.cfg, 5, 6, run)
+        self.waiting(outcome="ci_waiting", ci_wait=wait)
         self.store(counted=1)
         self.assertEqual(host.base_passes(*args, write=True), "fix")
         _, doc = self.read()
         self.assertEqual((doc["revision"], doc["rounds"]["counted"]), (3, 2))
+        self.waiting(outcome="ci_waiting", ci_wait=wait)
         self.store(counted=3)
         self.assertEqual(host.base_passes(*args), "used_up")
 
     def test_a_held_conflict_round_released_stores_both_events(self):
         run = {"head": HEAD, "held_back": "conflicts"}
-        args = (self.gh, self.cfg, 5, 6, run, HEAD, True, 1)
+        args = (self.gh, self.cfg, 5, 6, run, HEAD, True)
+        self.waiting(outcome="held", held_back="conflicts")
         self.store(conflicts=1)
         self.assertEqual(host.conflicts_released(*args, write=True), "round")
         _, doc = self.read()
-        self.assertGreater(doc["revision"], 1)
+        self.assertGreater(doc["revision"], 2)
         self.assertEqual(doc["recentEvents"][-1], f"released-6-{HEAD}")
         # The round that started counts: the stored conflicts are at the limit now.
         self.assertEqual(doc["rounds"]["conflicts"], 2)
+        # The release is stored: the round that it started is the one that is carried out.
         before = copy.deepcopy(self.gh.comments(5))
-        self.assertEqual(host.conflicts_released(*args), "waits")
+        self.assertEqual(host.conflicts_released(*args), "round")
         self.assertEqual(self.gh.comments(5), before)
+
+    def test_a_release_that_take_stored_is_carried_out_and_stores_nothing(self):
+        run = {"head": HEAD, "held_back": "fix"}
+        self.waiting(outcome="held", held_back="fix")
+        self.gh.label_event(5, "on-hold", "unlabeled", at=LATER)
+        taken = host.take(self.gh, self.cfg, 5)
+        self.assertEqual([event["kind"] for event, _ in taken], ["released"])
+        _, doc = self.read()
+        self.assertFalse(doc["hold"])
+        self.assertEqual(runs_of(doc), ["fix"])
+        before = copy.deepcopy(self.gh.comments(5))
+        revision = doc["revision"]
+        self.assertEqual(host.released(self.gh, self.cfg, 5, 6, run, HEAD, write=True), "fix")
+        self.assertEqual(self.gh.comments(5), before)
+        self.assertEqual(self.read()[1]["revision"], revision)
+
+    def test_the_end_of_a_wait_that_is_stored_already_is_carried_out_from_the_state(self):
+        wait = {"bug": 77, "workflow": "ci.yml", "branch": "main"}
+        self.waiting(outcome="ci_waiting", ci_wait=wait)
+        run = {"head": HEAD, "ci_wait": wait}
+        args = (self.gh, self.cfg, 5, 6, run)
+        self.assertEqual(host.base_passes(*args, write=True), "fix")
+        before = copy.deepcopy(self.gh.comments(5))
+        # The engine gets the end of the same wait a second time: it holds the answer already.
+        self.assertEqual(host.base_passes(*args, write=True), "fix")
+        self.assertEqual(self.gh.comments(5), before)
+
+    def test_the_end_of_a_wait_decides_without_a_document_of_the_markers(self):
+        wait = {"bug": 77, "workflow": "ci.yml", "branch": "main"}
+        gh, cfg = self.gh, self.cfg
+
+        def ends(name, run, write):
+            if name == "released":
+                return host.released(gh, cfg, 5, 6, run, HEAD, write=write)
+            if name == "conflicts_released":
+                return host.conflicts_released(gh, cfg, 5, 6, run, HEAD, True, write=write)
+            return host.base_passes(gh, cfg, 5, 6, run, write=write)
+
+        waits = {
+            "released": {"outcome": "held", "held_back": "fix"},
+            "conflicts_released": {"outcome": "held", "held_back": "conflicts"},
+            "base_passes": {"outcome": "ci_waiting", "ci_wait": wait},
+        }
+        with mock.patch.object(host, "on_fallback") as fallback:
+            for name, fields in waits.items():
+                for write in (False, True):
+                    with self.subTest(function=name, write=write):
+                        self.waiting(**fields)
+                        ends(name, {"head": HEAD, **fields}, write)
+        origins = [call.args[0] for call in fallback.call_args_list]
+        self.assertEqual([one for one in origins if one.rsplit(".", 1)[-1] in waits], [])
 
     def test_a_stopped_round_stores_its_count_given_back(self):
         counts = host.stopped_counts
@@ -3515,7 +3631,9 @@ class RoundDecideTest(ReportCase):
         self.gh.add_pull(8, 7, head_sha=HEAD)
         before = copy.deepcopy(self.gh.comments(7))
         run = {"head": HEAD, "held_back": "fix"}
-        self.assertEqual(host.released(self.gh, self.cfg, 7, 8, run, HEAD, 1, write=True), "fix")
+        self.gh.round_comment(8, 1, HEAD, "failed", outcome="held", held_back="fix")
+        before = copy.deepcopy(self.gh.comments(7))
+        self.assertEqual(host.released(self.gh, self.cfg, 7, 8, run, HEAD, write=True), "fix")
         self.assertEqual(self.gh.comments(7), before)
 
 
@@ -3527,6 +3645,7 @@ class HeldConflictReleasedTest(HostCase):
         self.gh.add_issue(5)
         self.gh.add_pull(6, 5, head_sha="c" * 40)
         self.gh.pulls[6]["mergeable"] = True
+        self.gh.round_comment(6, 1, "c" * 40, "failed", outcome="held", held_back="conflicts")
         details = {**self.gh.pull(6), "mergeable": False}
         cfg = make_config(conflicts={"auto_resolve": False})
         run = {"head": "c" * 40, "held_back": "conflicts"}

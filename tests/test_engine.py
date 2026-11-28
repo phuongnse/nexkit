@@ -22,8 +22,9 @@ ROOT = Path(__file__).resolve().parent.parent
 EXAMPLES = protocol.ROOT / "examples"
 # What each module of the engine may import, and the modules of NexKit those import in turn,
 # with relative imports resolved. Nothing here reads the network or the clock: `machine`,
-# `nexkit.textutil` and `nexkit.protocol.stages` read nothing, `prompt` reads only its own
-# templates and `nexkit.protocol` only its own schemas, which ship inside the `nexkit` package,
+# `nexkit.textutil`, `nexkit.protocol.keys` and `nexkit.protocol.stages` read nothing, `prompt`
+# reads only its own templates and `nexkit.protocol` only its own schemas, which ship inside the
+# `nexkit` package,
 # `nexkit.engine.cli` reads only standard input, and `nexkit.engine.serve`, the program around
 # the engine as `cli` is, only the requests that come to its socket. Nothing imports either of
 # those two but `cli`. Any other import fails the test.
@@ -61,11 +62,13 @@ ALLOWED = {
         "re",
         "string",
         "nexkit.protocol",
+        "nexkit.protocol.keys",
         "nexkit.protocol.stages",
         "nexkit.textutil",
     },
     # Shared with the host, so outside the engine; as pure as the engine's own modules.
     "nexkit.textutil": {"__future__", "re"},
+    "nexkit.protocol.keys": {"__future__", "re"},
     "nexkit.protocol.stages": {"__future__", "re"},
     "nexkit.engine.cli": {"__future__", "sys", "nexkit.engine", "nexkit.engine.serve"},
     "nexkit.engine.serve": {
@@ -419,6 +422,26 @@ class ImportsOutsideTheEngineTest(unittest.TestCase):
             module = ".".join(rel.parts).removesuffix(".__init__")
             found = imports(module, path.read_text()) & banned
             self.assertFalse(found, f"{module} imports {sorted(found)}")
+
+    def test_the_context_step_imports_nothing_from_the_engine(self):
+        source = (ROOT / "nexkit" / "context.py").read_text()
+        found = {
+            name
+            for name in imports("nexkit.context", source)
+            if name == "nexkit.engine" or name.startswith("nexkit.engine.")
+        }
+        self.assertFalse(found, f"nexkit.context imports {sorted(found)}")
+
+    def test_an_import_of_the_engine_puts_the_context_step_in_the_test(self):
+        for line in (
+            "from .engine import prompt",
+            "from nexkit.engine import prompt",
+            "import nexkit.engine",
+        ):
+            found = imports("nexkit.context", f"{line}\n")
+            self.assertTrue(
+                any(n == "nexkit.engine" or n.startswith("nexkit.engine.") for n in found), line
+            )
 
     def test_an_import_of_the_engine_s_text_helpers_fails_the_test(self):
         source = "from .engine.textutil import fence\n"

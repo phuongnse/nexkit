@@ -2,7 +2,8 @@
 
 Gathering happens in its own step so the agent process never holds a GitHub token. This
 module only reads: it fetches the texts a stage's prompt needs, as the inputs of the engine's
-`prompt` call (docs/engine.md#the-engine), and the engine writes the prompt's texts from them.
+`prompt` call (docs/engine.md#the-engine). The agent step adds what its round makes and sends
+the call, so the engine alone writes the prompt.
 """
 
 from __future__ import annotations
@@ -22,7 +23,6 @@ from .autopilot import (
 )
 from .checks import RESULTS_DIR, failing_signatures, results_limit
 from .config import NAME
-from .engine import prompt
 from .evidence import EVIDENCE_LIMIT, collect, named_runs, summary_lines
 from .github import TRUSTED_ASSOCIATIONS, GitHubError
 from .redact import Redactor
@@ -680,29 +680,60 @@ def gather(
     ci=None,
     cfg=None,
     workflow="",
-    texts=None,
 ):
-    """Context for an agent stage. `stage` defaults to the decision's action; the review
-    stage also gets the previous review round, with `fix_result` from this run's fix. A
-    fix round also gets the failing checks' result files, which the agent job downloaded
-    into the folder `results`. With `ci` and `cfg`, a plan, implement or fix round also
-    gets the evidence of the CI runs the issue names, downloaded into the folder `ci`,
-    other than runs of NexKit's own workflow, the file `workflow`. A text that the prompt
-    keeps only the start of goes whole to the folder `texts`, and `shortened` names it.
+    """Context for an agent stage, as `record` gives it. `stage` defaults to the decision's
+    action; the review stage also gets the previous review round, with `fix_result` from
+    this run's fix. A fix round also gets the failing checks' result files, which the agent
+    job downloaded into the folder `results`. With `ci` and `cfg`, a plan, implement or fix
+    round also gets the evidence of the CI runs the issue names, downloaded into the folder
+    `ci`, other than runs of NexKit's own workflow, the file `workflow`.
 
-    The engine writes the texts from what `fetch` fetched (`prompt.texts`)."""
+    The agent step writes the prompt from this record with one `prompt` call."""
     stage = stage or decision["action"]
     inputs, host = fetch(gh, decision, stage, fix_result, results, ci, cfg, workflow)
-    shelf = prompt.Shelf(Path(texts).resolve() if texts else None)
-    context = prompt.texts(stage, inputs, shelf, host.get("state"))
-    if shelf.folder:
-        keep_texts(
-            ({"path": path, "text": text} for path, text in shelf.files.items()), shelf.folder
-        )
+    return record(stage, inputs, host)
+
+
+def record(stage, inputs, host):
+    """What the context step hands the agent step: what `fetch` fetched (`inputs`, and the
+    `state` document) and the fields that the agent and publish steps read: `title`,
+    `person`, `replan` (a plan that revises an earlier one), `untrusted`, `merge_moved_base`,
+    `linked.read`, `ci_evidence`, `diagnose`, `previous_head` (the version the last review
+    read, for a person's pull request or a review of one) and `merged` (a review's merge of
+    the base branch)."""
+    item = inputs["item"]
+    state = host.get("state")
+    found = {
+        "inputs": inputs,
+        "state": state,
+        "title": item.get("title") or "",
+        "person": bool(item.get("person")),
+        "replan": stage == "plan" and (inputs.get("previous_plan") or {}).get("text") is not None,
+    }
     if host.get("untrusted"):
-        context["untrusted"] = host["untrusted"]
-    if context.get("linked") is not None:
-        context["linked"]["read"] = host["read"]
+        found["untrusted"] = host["untrusted"]
     if "merge_moved_base" in host:
-        context["merge_moved_base"] = host["merge_moved_base"]
-    return context
+        found["merge_moved_base"] = host["merge_moved_base"]
+    if "read" in host:
+        found["linked"] = {"read": host["read"]}
+    evidence = inputs.get("evidence") or {}
+    if stage in ("plan", "implement", "fix") and "ci" in evidence:
+        ci = evidence["ci"]
+        found["ci_evidence"] = (
+            {key: value for key, value in ci.items() if key != "keeps"}
+            if isinstance(ci, dict)
+            else ci
+        )
+    if stage == "fix":
+        found["diagnose"] = list((inputs.get("checks") or {}).get("diagnose") or [])
+    last = ((state or {}).get("rounds") or {}).get("lastReview")
+    if last and (item.get("person") or (stage == "review" and item.get("change"))):
+        found["previous_head"] = last["version"]
+    merged = (inputs.get("diff") or {}).get("merged") or {}
+    if stage == "review" and item.get("change") and not item.get("person") and merged.get("base"):
+        found["merged"] = {
+            "head": merged.get("head"),
+            "base": merged["base"],
+            "conflicts": merged.get("conflicts") or [],
+        }
+    return found

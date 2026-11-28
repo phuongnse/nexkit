@@ -17,7 +17,8 @@ issue's commands and its pull request's rounds alike, so the check below only ca
 that misses. A person who may write to the repository can edit the App's comment, and it
 still has the App as its author: a state comment that someone else changed counts for nothing,
 and `find` raises `Edited` for it, so that nothing posts a second state comment over it and
-the item waits for a person (phuongnse/nexkit#329 closes that for every other marker).
+the item waits for a person. Every other marker counts only in a comment that
+`state.bot_record` accepts, as docs/security.md#comments-and-markers says.
 """
 
 from __future__ import annotations

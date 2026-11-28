@@ -12,6 +12,7 @@ import io
 import json
 import re
 import tempfile
+import tokenize
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -170,6 +171,8 @@ CI_TITLES_HEADER = "| Failure | Title |"
 WRITING_DOCS = DOCS / "writing-docs.md"
 # Rule 9 of how the docs stay correct, with its indented lines, up to the next unindented line.
 RULE_9 = re.compile(r"^9\. \*\*Checks catch what a machine can\.\*\*(.*?)(?=^\S|\Z)", re.M | re.S)
+# A milestone named by its number, as "milestone 12". context.ISSUE_REF covers issues and pulls.
+MILESTONE_REFERENCE = re.compile(r"\bmilestone \d+\b", re.I)
 TESTING_PAGE = DOCS / "testing.md"
 # The names of the walker's invariants on the testing page, after its sentence that introduces them.
 WALK_INVARIANTS = re.compile(
@@ -233,6 +236,21 @@ def docs_tests():
         for f in c.body
         if isinstance(f, ast.FunctionDef) and f.name.startswith("test_")
     }
+
+
+def comments_and_docstrings(path):
+    """The comments and the docstrings of the Python file `path`, each as (first line, text)."""
+    source = path.read_text()
+    found = []
+    for token in tokenize.generate_tokens(io.StringIO(source).readline):
+        if token.type == tokenize.COMMENT:
+            found.append((token.start[0], token.string))
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            doc = ast.get_docstring(node, clean=False)
+            if doc is not None:
+                found.append((node.body[0].lineno, doc))
+    return found
 
 
 class ChecksListTests(unittest.TestCase):
@@ -439,6 +457,32 @@ class AgentsTests(unittest.TestCase):
                 any(target.startswith("docs/") and "#" in target for target in targets),
                 f"a rule of AGENTS.md links no doc section: {rule[:60]!r}",
             )
+
+
+class CodeReferencesTests(unittest.TestCase):
+    def test_the_code_names_no_milestone_issue_or_pull_request(self):
+        # The Python files that NexKit ships. tests/ is not read: its comments are not checked yet.
+        files = [
+            *sorted((ROOT / "nexkit").rglob("*.py")),
+            *sorted((ROOT / "scripts").glob("*.py")),
+            *sorted((ROOT / "bin").iterdir()),
+        ]
+        for path in files:
+            for line, text in comments_and_docstrings(path):
+                # A reference inside a code span is an example, as `#12` is in this file.
+                code = [m.span() for m in context.CODE.finditer(text)]
+                for pattern in (context.ISSUE_REF, MILESTONE_REFERENCE):
+                    for match in pattern.finditer(text):
+                        if any(start <= match.start() < end for start, end in code):
+                            continue
+                        number = line + text.count("\n", 0, match.start())
+                        where = f"{path.relative_to(ROOT)}:{number}"
+                        with self.subTest(where=where, reference=match.group(0)):
+                            self.fail(
+                                f"{where} names {match.group(0)}, which the code does not name: "
+                                "a milestone, an issue or a pull request is progress and history "
+                                "(docs/writing-docs.md#references-in-the-code)"
+                            )
 
 
 class ReadmeVersionsTests(unittest.TestCase):

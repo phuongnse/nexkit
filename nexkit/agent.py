@@ -511,6 +511,23 @@ WORKSPACE_TEXT = {
     "pipeline_file": "a workflow",
     "protected_example": "`.github/workflows/ci.yml`",
     "person_change": "on this branch",
+    "fix_location": "working in a checkout of",
+    "earlier_work": "The branch already contains earlier work.",
+    "merge_rule": (
+        "Do not merge the base branch or any other branch yourself. NexKit merges the base\n"
+        "  branch when the round needs it, and publishes nothing after a merge of another commit."
+    ),
+    "version_kind": "commit",
+    "base_kind": "base branch",
+    "merge_into": "into the branch, without committing it",
+    "last_merged": "this branch last merged it",
+    "merge_undo": "do not run `git merge --abort`, `git commit` or `git reset`.",
+    "side_history": (
+        "`git log --merge -p -- <file>` shows the commits that\n  each side made to a file."
+    ),
+    "side_note": "A commit message on one side is not an answer.",
+    "other_versions": "Any later commits were pushed without a NexKit fix round.",
+    "workspace_name": "this checkout",
 }
 
 

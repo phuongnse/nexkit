@@ -315,6 +315,21 @@ class Host:
                 "pipelineFile": "a validation rule",
                 "protectedExample": "`settings/limits`",
                 "personChange": "in this draft",
+                "fixLocation": "working through the application's tools on",
+                "earlierWork": "The draft already holds earlier edits.",
+                "mergeRule": (
+                    "Do not take in the published request yourself. "
+                    "The application does that when the round needs it."
+                ),
+                "versionKind": "version",
+                "baseKind": "published request",
+                "mergeInto": "into the draft, without saving it",
+                "lastMerged": "this draft last took it in",
+                "mergeUndo": "do not discard or publish it.",
+                "sideHistory": "The draft's history shows what each side changed.",
+                "sideNote": "A side's note is not an answer.",
+                "otherVersions": "Any later versions were saved without a fix round.",
+                "workspaceName": "this draft's history",
             },
         }
         if stage in ("implement", "fix", "review"):

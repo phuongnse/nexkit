@@ -1,7 +1,7 @@
 
 ## Merge with `$base` in this round
 
-This pull request conflicted with `$base`, so this fix round merged `$base` (commit
+This $change_kind conflicted with `$base`, so this fix round merged `$base` ($version_kind
 $base_commit) into it. The fix agent resolved the conflicts in these files:
 
 $files
@@ -15,7 +15,7 @@ What each side changed in these files before the merge:
 $base_side
 ```
 
-This pull request:
+This $change_kind:
 
 ```diff
 $pr_side
@@ -23,7 +23,7 @@ $pr_side
 </untrusted>
 
 - In each of these files, check that the current code keeps both sides: the change from
-  `$base` and the change from this pull request. A side that was dropped is a blocking
+  `$base` and the change from this $change_kind. A side that was dropped is a blocking
   finding, unless a person's note in a fix round asked for it.
-- Changes that came from `$base` are not part of this pull request. Do not raise findings
+- Changes that came from `$base` are not part of this $change_kind. Do not raise findings
   about them.

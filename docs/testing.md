@@ -81,8 +81,8 @@ image's base has its own check, `release.yml`. A ruleset on `main` requires its 
 `smoke-claude-code`, which GitHub counts as passed when CI skips it. So a pull request from a branch
 of this repository that breaks real Claude Code does not merge.
 
-The reasons for pinning each version the pipeline installs in one place, and testing only the pinned versions, are in
-[D9](decisions/d9-pins-live-in-one-place.md).
+The reasons for keeping every pin the pipeline installs in one source, and testing only the pinned versions, are in
+[D14](decisions/d14-every-pin-has-one-source.md).
 
 ## Moving decisions into the engine
 

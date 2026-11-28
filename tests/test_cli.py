@@ -2030,11 +2030,14 @@ class InstallAgentsTests(unittest.TestCase):
 
 
 class SupportedVersionTests(unittest.TestCase):
-    """The workflows use the tested versions, and the Claude Code pin has one source."""
+    """The workflows and the caller template use the tested versions. They repeat the runner and
+    Python as copies of the pins, and the Claude Code pin has one source."""
 
     def test_workflows_use_the_tested_versions(self):
         wanted_python = ".".join(map(str, nexkit.PYTHON))
-        for path in (ROOT / ".github/workflows").glob("*.yml"):
+        template = ROOT / "nexkit/templates/workflow.yml"
+        paths = [*sorted((ROOT / ".github/workflows").glob("*.yml")), template]
+        for path in paths:
             text = path.read_text()
             # nexkit.yml, NexKit's own caller, only calls pipeline.yml, so it has no runner.
             self.assertLessEqual(
@@ -2047,6 +2050,10 @@ class SupportedVersionTests(unittest.TestCase):
             # Runtime versions are read from nexkit/__init__.py, never repeated.
             for runtime in RUNTIMES.values():
                 self.assertNotIn(runtime.version, text, path.name)
+        # The template is what `nexkit init` installs, so it must name the runner and Python.
+        text = template.read_text()
+        self.assertEqual(set(re.findall(r"runs-on: (\S+)", text)), {nexkit.RUNNER})
+        self.assertEqual(set(re.findall(r'python-version: "([^"]+)"', text)), {wanted_python})
 
     def test_pyproject_declares_the_minimum_python(self):
         text = (ROOT / "pyproject.toml").read_text()

@@ -29,7 +29,6 @@ from .autopilot import CI_RUNS, FAILED, on_default_branch
 from .checks import _is_text, size_text
 from .github import LOG_CUT, TRUSTED_ASSOCIATIONS, GitHubError
 from .state import bot_record, by_bot
-from .textutil import since_text
 
 # A link to a run, an attempt of it, or a job of it.
 RUN_LINK = re.compile(
@@ -368,6 +367,16 @@ def _artifact(gh, artifact, folder, budget, redact, item):
     item["files"].append(
         {"path": target.relative_to(folder.parent).as_posix() + "/", "count": files}
     )
+
+
+def since_text(run):
+    """Whether a newer run of a named run's workflow passed on the default branch, in words."""
+    name, branch, passed = run["workflow"], run.get("branch"), run.get("passed_since")
+    if not passed:
+        return f"no newer run of `{name}` has passed on `{branch}` since"
+    commit = f" at {passed['sha'][:7]}" if passed.get("sha") else ""
+    link = f", {passed['url']}" if passed.get("url") else ""
+    return f"run {passed['id']} of `{name}` passed on `{branch}` since{commit}{link}"
 
 
 def summary_lines(found):

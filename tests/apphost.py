@@ -312,7 +312,7 @@ class Host:
                 "state": state,
                 "stage": stage,
                 "inputs": inputs,
-                "policies": copy.deepcopy(self.policies),
+                "policies": self.prompt_policies(stage),
                 "words": self.words(row),
                 "texts": None,
             },
@@ -324,6 +324,18 @@ class Host:
             row.running[action["id"]] = result
             return None
         return result
+
+    def prompt_policies(self, stage):
+        """The policies a prompt call sends: the host's own, and for a plan or implement the
+        application's findings that show no change is needed."""
+        found = copy.deepcopy(self.policies)
+        if stage in ("plan", "implement"):
+            found["noChange"] = [
+                "The request's records already hold what it asks for.",
+                "The request asks for what the application's own rules forbid, and nothing in "
+                "its records could change that.",
+            ]
+        return found
 
     def words(self, row):
         """The application's words for its request and its draft, which a prompt uses in place

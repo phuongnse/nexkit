@@ -44,13 +44,8 @@ $round_checks
 - If you cannot finish (missing information, a contradictory requirement, a broken
   environment), stop and return `status: blocked` with the reason in `blocker`.
 - When the evidence shows that no change is needed, change nothing and write the finding
-  in `no_change`. Two findings count:
-  - A commit on the base branch already fixed the failure.
-  - A CI failure came from outside the repository, such as a download host, a package
-    registry or a service that failed, or a runner that was lost, and nothing in the
-    repository caused it or could prevent it. The evidence of the CI runs above must name
-    that outside cause, and *Since* must show a newer run of the same workflow that
-    passed on the default branch.
+  in `no_change`. $no_change_count:
+$no_change_findings
 
   When the $item_kind, the plan or the discussion says to stop without a change in that case,
   return `status: done`, and NexKit closes the $item_kind with the finding. Otherwise return

@@ -80,6 +80,18 @@ policies of the engine, and each has its place:
 - **Checklist and profiles** are the `prompt` call's policies. `checklist` is the items the plan and
   the review answer, and `profiles` the profiles triage chooses from. The plan prompt also names the
   implement stage's time from `budgets`. GitHub's `review.checklist` gives the checklist.
+  `noChange` is the findings that show a plan or implement stage that no change is needed, which
+  the engine refuses a plan or implement call without. GitHub sends a commit on the default branch
+  that already fixed it, and a failure of CI from outside the repository that a newer run
+  passed since.
+- **Evidence and required checks** arrive in the host's words: the evidence's name and
+  description, each run's `since` text, the note on what its checks keep of result files, and
+  for each required check why the host refused and what the check is. GitHub sends the text of
+  its CI runs (`the CI runs`, the folder the agent job downloaded them to, and no GitHub access
+  in the session), a *Since* text that says whether a newer run of the workflow passed on the
+  default branch, "GitHub refused the merge" with the sentence on branch protection, and "a check
+  job keeps at most 50 MB of result files". It builds them from fixed text, numbers and the
+  runner's own folder, never from what anyone wrote, and the prompts read as they always did.
 - **Words** are the `prompt` call's `words`: how the host names its work item, its change, the
   places where people write and read, and its commands, in the prompts of every stage. The
   engine's templates hold the stage's contract and read these words in place of any host's own,

@@ -49,16 +49,6 @@ def person_decides(item):
     return isinstance(item, dict) and item.get("person") is True
 
 
-def since_text(run):
-    """Whether a newer run of a named run's workflow passed on the default branch, in words."""
-    name, branch, passed = run["workflow"], run.get("branch"), run.get("passed_since")
-    if not passed:
-        return f"no newer run of `{name}` has passed on `{branch}` since"
-    commit = f" at {passed['sha'][:7]}" if passed.get("sha") else ""
-    link = f", {passed['url']}" if passed.get("url") else ""
-    return f"run {passed['id']} of `{name}` passed on `{branch}` since{commit}{link}"
-
-
 def shown_command(check):
     """A check's command as prompts show it: a shard's with its NEXKIT_SHARD, so an agent
     runs that shard alone."""

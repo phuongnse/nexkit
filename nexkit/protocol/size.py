@@ -56,7 +56,7 @@ LONGEST = {
     "check": 40,
 }
 # The most characters of each text of the history, as the prompts clip it
-# (`engine.textutil.clip`, which ends a shortened text with a line of its own): a fix round's
+# (`textutil.clip`, which ends a shortened text with a line of its own): a fix round's
 # note, summary and cause, a finding's body, and the failure signature that a fix record shows.
 HISTORY = {"note": 2000, "summary": 4000, "cause": 2000, "body": 1500, "signature": 200}
 # The most bytes of a failure signature as JSON writes it; a longer one is named by its hash.

@@ -13,10 +13,10 @@ import hashlib
 import json
 import re
 
-from .engine.textutil import MAX_PARTS, clip
-from .engine.textutil import TEXT_LIMIT as TEXT_LIMIT
 from .runlog import NO_DATA, agent_text, stage_agent, tokens_text
 from .schema import filled
+from .textutil import MAX_PARTS, clip
+from .textutil import TEXT_LIMIT as TEXT_LIMIT
 
 ACTIONS_BOT = "github-actions[bot]"
 # Who writes as NexKit: the App that `use_app` names, and only it. A pull request's own CI

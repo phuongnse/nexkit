@@ -240,19 +240,24 @@ backstop, for workflows installed before the `item` job, whose runs may overlap:
 
 - A conflict round does not start while the implement round runs. When the implement
   round ends and the pull request conflicts, that round starts the conflict round, on the
-  branch as it left it: after a refused merge, or when it ends ready, with findings and no
-  automatic round left, or without a review.
+  branch as it left it: after a refused merge, or when it ends ready. One that ends with
+  findings and no automatic round left, with a failed review or waiting for CI starts none: a
+  person decides, or the fix round that is due merges the base branch itself.
 - A person's command or *Request changes* review on the pull request meanwhile gets a
   reply that the implement round still runs; comment it again once it ends.
 - The rounds that a run starts as it ends, such as an automatic fix round or the one more
   try, run after it in the item's queue.
 - A conflict round does not start while any other round of the pull request runs either.
   When the base branch moved meanwhile, the sweep at the end of that round starts it,
-  however the round ended (see *Resolving conflicts* under [Work without a
+  unless the round failed, which a person decides (see *Resolving conflicts* under [Work without a
   command](work-without-a-command.md#work-without-a-command)). The one exception is a round in its checks, whose
   checks can no longer lead to a merge: NexKit stops it and starts the next round at once
   (see *Stopping a round in its checks* there).
-- A run whose workflow run ended without a report holds nothing up.
+- A run whose workflow run ended without a report is shown as ended by the next sweep. Until
+  then the item's stored state holds it on its way, and the conflict round waits for that.
+  Once the sweep shows it as ended, the round counts as failed. With autopilot off, nothing
+  starts the conflict round after that, and a person decides. With autopilot, its start of the
+  command again comes first.
 
 A hidden marker in each run comment holds the run's URL, so `report` edits the comment its
 own run started. If that comment was deleted, `report` posts a new one.
@@ -435,7 +440,7 @@ On each open issue, and on each person's pull request that gets a non-approving 
 `/nexkit` command, the App also keeps one `### NexKit state` comment, which the first run of the
 item posts. It holds the engine's state document, imported from the markers above, and its
 revision. The runs of the item take its comments, reviews and hold labels from after that
-comment. The decisions that [the engine's page](engine.md#getting-there) lists read the document
+comment, a hold label's adding only when autopilot takes the issue. The decisions that [the engine's page](engine.md#getting-there) lists read the document
 and store the engine's answer in it: those after a plan, those about commands and approvals, and
 those about a round of a stage or of a pull request. The others read the markers above and do not
 use the document, so it can fall behind them. A comment of it that someone other than the App

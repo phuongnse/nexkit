@@ -90,7 +90,7 @@
       ]
     },
     "inputs": {
-      "$comment": "The texts the host fetched, by the kinds that runAgent names (machine.INPUTS). Every stage needs `item`; implement, fix and review need `plan`, which may be null; fix and review need `diff`; every stage but triage needs `workspace`. A kind left out is empty.",
+      "$comment": "The texts the host fetched, by the kinds that runAgent names (protocol.stages.INPUTS). Every stage needs `item`; implement, fix and review need `plan`, which may be null; fix and review need `diff`; every stage but triage needs `workspace`. A kind left out is empty.",
       "type": "object",
       "properties": {
         "item": {

@@ -138,6 +138,13 @@ MUTANTS = {
             elif self.update_left():""",
         "new": """            if self.update_left():""",
     },
+    # An automatic fix request that NexKit dispatches starts as a person's round: not counted,
+    # not marked automatic, and no diagnosis (#765).
+    "automatic-request-counts-nothing": {
+        "path": MACHINE,
+        "old": """            if event.get("automatic"):""",
+        "new": """            if False:""",
+    },
     # A judged round's next fix round starts even under a hold (#341).
     "hold-ignored-on-fix": {
         "path": MACHINE,

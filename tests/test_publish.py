@@ -808,7 +808,7 @@ class PublishTests(unittest.TestCase):
         self.assertEqual((data["parts"], len(data["split"])), (MAX_PARTS, MAX_PARTS))
 
     def test_a_plan_too_long_for_a_comment_has_its_longest_texts_cut_to_fit(self):
-        from nexkit.engine.textutil import TEXT_LIMIT
+        from nexkit.textutil import TEXT_LIMIT
 
         parts = [{"title": f"P{n}", "body": "b" * 9000, "depends_on": []} for n in range(1, 6)]
         output = {

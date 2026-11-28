@@ -21,20 +21,21 @@ from tests.test_conformance import AGENT
 ROOT = Path(__file__).resolve().parent.parent
 EXAMPLES = protocol.ROOT / "examples"
 # What each module of the engine may import, and the modules of NexKit those import in turn,
-# with relative imports resolved. Nothing here reads the network or the clock: `machine` and
-# `textutil` read nothing, `prompt` reads only its own templates and `nexkit.protocol` only its own
-# schemas, which ship inside the `nexkit` package, `nexkit.engine.cli` reads only standard
-# input, and `nexkit.engine.serve`, the program around the engine as `cli` is, only the requests
-# that come to its socket. Nothing imports either of those two but `cli`. Any other import
-# fails the test.
+# with relative imports resolved. Nothing here reads the network or the clock: `machine`,
+# `nexkit.textutil` and `nexkit.protocol.stages` read nothing, `prompt` reads only its own
+# templates and `nexkit.protocol` only its own schemas, which ship inside the `nexkit` package,
+# `nexkit.engine.cli` reads only standard input, and `nexkit.engine.serve`, the program around
+# the engine as `cli` is, only the requests that come to its socket. Nothing imports either of
+# those two but `cli`. Any other import fails the test.
 ALLOWED = {
     "nexkit": set(),
     "nexkit.engine.machine": {
         "__future__",
         "copy",
-        "nexkit.engine.textutil",
         "nexkit.protocol.size",
+        "nexkit.protocol.stages",
         "nexkit.schema",
+        "nexkit.textutil",
     },
     "nexkit.protocol.size": {"__future__", "hashlib", "json"},
     "nexkit.engine": {
@@ -59,9 +60,12 @@ ALLOWED = {
         "re",
         "string",
         "nexkit.protocol",
-        "nexkit.engine.textutil",
+        "nexkit.protocol.stages",
+        "nexkit.textutil",
     },
-    "nexkit.engine.textutil": {"__future__", "re"},
+    # Shared with the host, so outside the engine; as pure as the engine's own modules.
+    "nexkit.textutil": {"__future__", "re"},
+    "nexkit.protocol.stages": {"__future__", "re"},
     "nexkit.engine.cli": {"__future__", "sys", "nexkit.engine", "nexkit.engine.serve"},
     "nexkit.engine.serve": {
         "__future__",
@@ -402,6 +406,22 @@ class PurityTest(unittest.TestCase):
                 self.assertTrue(found, line)
         found = impurities("nexkit.engine.machine", f"{source}\nopen('x')\n")
         self.assertEqual(found, ["nexkit.engine.machine calls open"])
+
+
+class ImportsOutsideTheEngineTest(unittest.TestCase):
+    def test_no_module_outside_the_engine_imports_its_text_helpers_or_its_machine(self):
+        banned = {"nexkit.engine.textutil", "nexkit.engine.machine"}
+        for path in sorted((ROOT / "nexkit").rglob("*.py")):
+            rel = path.relative_to(ROOT).with_suffix("")
+            if rel.parts[1] == "engine":
+                continue
+            module = ".".join(rel.parts).removesuffix(".__init__")
+            found = imports(module, path.read_text()) & banned
+            self.assertFalse(found, f"{module} imports {sorted(found)}")
+
+    def test_an_import_of_the_engine_s_text_helpers_fails_the_test(self):
+        source = "from .engine.textutil import fence\n"
+        self.assertEqual(imports("nexkit.runlog", source), {"nexkit.engine.textutil"})
 
 
 if __name__ == "__main__":

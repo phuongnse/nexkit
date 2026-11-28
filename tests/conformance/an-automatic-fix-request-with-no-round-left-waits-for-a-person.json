@@ -1,0 +1,55 @@
+{
+  "policies": {
+    "fixRounds": 2,
+    "conflicts": "resolve"
+  },
+  "state": {
+    "example": "ready",
+    "set": {
+      "rounds": {
+        "started": 2,
+        "counted": 2,
+        "conflicts": 0,
+        "signatures": [
+          "FAIL A"
+        ],
+        "findings": [],
+        "criteria": [
+          "met"
+        ],
+        "checklist": [],
+        "repeated": [
+          "test"
+        ],
+        "failing": [
+          "9e6d8cb93a58"
+        ]
+      },
+      "attention": {
+        "reason": "roundsUsedUp",
+        "text": "No round is left.",
+        "ref": null
+      }
+    }
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "requested",
+        "what": "fix",
+        "by": null,
+        "automatic": true
+      },
+      "state": "ready",
+      "changed": true,
+      "actions": [
+        "needPerson"
+      ],
+      "expect": {
+        "rounds.counted": 2,
+        "attention.reason": "roundsUsedUp"
+      },
+      "note": "With no automatic fix round left, NexKit's own request starts nothing and a person decides."
+    }
+  ]
+}

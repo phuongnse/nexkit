@@ -13,8 +13,8 @@ import secrets
 import time
 from pathlib import Path
 
-from .engine.textutil import fence
 from .runtimes.base import TOKENS
+from .textutil import fence
 
 HEAD_LINES = 20
 MAX_CHARS = 4000

@@ -14,7 +14,6 @@ from unittest import mock
 
 from nexkit import autopilot, first_state, host, item_state, progress, state
 from nexkit import maintain as maintain_module
-from nexkit.engine.textutil import TEXT_LIMIT
 from nexkit.github import GitHubError
 from nexkit.maintain import maintain
 from nexkit.progress import StateMoved
@@ -22,6 +21,7 @@ from nexkit.report import report
 from nexkit.route import route
 from nexkit.state import ACTIONS_BOT, PLAN_MARKER, render_run
 from nexkit.status import collect, render
+from nexkit.textutil import TEXT_LIMIT
 from tests.answers import NOT_ANSWERS, STEPS, _before, _calls
 from tests.support import BOT_LOGIN, FakeGitHub, make_config, play_steps, play_sweep
 

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/phuongnse/nexkit/protocol/v1/events/requested.schema.json",
-  "$comment": "A person, or the sweep with `by` null, asks for something. A `go` names the plan the person approves by it, `plan.text.ref` in the state, or null when the item has no plan; a go for another plan changes nothing. Other requests send null.",
+  "$comment": "A person, or the sweep with `by` null, asks for something. A `go` names the plan the person approves by it, `plan.text.ref` in the state, or null when the item has no plan; a go for another plan changes nothing. Other requests send null. A `fix` with `by` null and `automatic` true is the host's own automatic fix round, which the engine counts and marks as it does its own due round.",
   "type": "object",
   "properties": {
     "protocol": {
@@ -57,6 +57,10 @@
     "title": {
       "$comment": "The work item's title as it is now, when the host gives it again, such as on a request that starts a plan.",
       "type": "string"
+    },
+    "automatic": {
+      "$comment": "Only on a `fix`, sent with `by` null: the host's own automatic fix round, which the engine counts toward `fixRounds` and marks automatic as it does its own due round. Absent or false: a person's request.",
+      "type": "boolean"
     },
     "depth": {
       "$comment": "How many levels of parts the item is below the item first split, when the host gives it again.",

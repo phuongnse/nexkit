@@ -72,7 +72,7 @@ and fails when the runner's result, or its output, does not fit the protocol's s
 what it covers.
 
 Run it when changing `scripts/smoke.py`, `engine/prompts/`, `engine/prompt.py`,
-`engine/textutil.py`, `agent.py`, `schema.py`, `runtimes/` or a runtime's pin in `nexkit/__init__.py`.
+`textutil.py`, `protocol/stages.py`, `agent.py`, `schema.py`, `runtimes/` or a runtime's pin in `nexkit/__init__.py`.
 CI runs it on such a pull request from a branch of this repository, never from a fork, because a
 fork's pull request gets no secrets. CI also runs it on the pull request of `update-agents.yml` for
 the runtime it updates. The other pins, of the image's base, the runner and Python, start no smoke

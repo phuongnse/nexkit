@@ -405,7 +405,8 @@ of a stored hold (`_release_row`), autopilot's start for an import made after th
 or, when `take` released the hold already, the stored pending action. Whether a stopped round
 gives its count back is the stored `rounds.automatic` and the pending fix run, never a flag of
 its caller, and a round whose result `stop_carried_on` stored in the same run sends nothing more,
-which the stored events seen show. A conflict goes first as a `held` event when a hold is on.
+which the stored events seen show. In a conflict, the hold label goes first as a `held` event
+while the stored state is not held, and the conflict follows.
 
 A row of events, such as a hold and then the stop, or a round's result and then a comment, is one
 write: the state after the last event, at the revision read plus one, since `item_state.write` takes

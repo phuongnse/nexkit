@@ -3908,6 +3908,53 @@ class DispatchedTest(HostCase):
         self.assertEqual(asked.call_args_list[0].args[1]["id"], "dispatch-1001")
         self.assertNotIn("diagnose", found)
         self.assertGreaterEqual(item_state.read(self.gh, 5)[1]["revision"], stored["revision"])
+        # A person's round counts nothing and is not automatic.
+        rounds = item_state.read(self.gh, 5)[1]["rounds"]
+        self.assertNotIn("automatic", rounds)
+        self.assertEqual(rounds["counted"], stored["rounds"]["counted"])
+        self.assertNotIn("automatic", asked.call_args_list[0].args[1])
+
+    def test_an_automatic_dispatch_is_counted_and_marked_automatic(self):
+        stored = item_state.read(self.gh, 5)[1]
+        self.assertEqual((stored["state"], stored["pending"]), ("ready", []))
+        with mock.patch.object(host, "step", wraps=host.step) as asked:
+            found = self.dispatch("fix", auto="true")
+        self.assertEqual((found["action"], found["diagnose"]), ("fix", ["test"]))
+        request = asked.call_args_list[0].args[1]
+        self.assertEqual((request["kind"], request["what"]), ("requested", "fix"))
+        self.assertTrue(request["automatic"])
+        self.assertIsNone(request["by"])
+        rounds = item_state.read(self.gh, 5)[1]["rounds"]
+        self.assertTrue(rounds["automatic"])
+        self.assertEqual(rounds["counted"], stored["rounds"]["counted"] + 1)
+
+    def test_an_automatic_dispatch_with_no_round_left_starts_nothing(self):
+        used = restate(self.gh, 5)["rounds"]["counted"]
+        self.cfg = make_config(fix={"max_auto_rounds": used})
+        found = self.dispatch("fix", auto="true")
+        self.assertEqual(found["action"], "none")
+        _, doc = item_state.read(self.gh, 5)
+        self.assertEqual(doc["rounds"]["counted"], used)
+        self.assertNotIn("automatic", doc["rounds"])
+
+    def test_a_round_run_again_or_resumed_is_not_counted_again(self):
+        for auto in ("true,retry", "true,retry:2", "true,resume"):
+            with self.subTest(auto):
+                before = restate(self.gh, 5, state="ready", pending=[])
+                with mock.patch.object(host, "step", wraps=host.step) as asked:
+                    self.dispatch("fix", auto=auto, run="2002")
+                request = asked.call_args_list[0].args[1]
+                self.assertEqual(request["kind"], "requested")
+                self.assertNotIn("automatic", request)
+                rounds = item_state.read(self.gh, 5)[1]["rounds"]
+                self.assertNotIn("automatic", rounds)
+                self.assertEqual(rounds["counted"], before["rounds"]["counted"])
+
+    def test_a_conflict_round_is_not_sent_as_an_automatic_request(self):
+        with mock.patch.object(host, "step", wraps=host.step) as asked:
+            self.dispatch("fix", auto="true,conflicts")
+        for call in asked.call_args_list:
+            self.assertNotIn("automatic", call.args[1])
 
     def test_the_imports_run_on_its_way_is_decided_as_a_new_request(self):
         self.fix_round(id=first_state.RUN_ID, diagnose=["lint"])

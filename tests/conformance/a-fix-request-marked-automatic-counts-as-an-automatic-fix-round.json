@@ -1,0 +1,59 @@
+{
+  "policies": {
+    "fixRounds": 2,
+    "conflicts": "resolve"
+  },
+  "state": {
+    "example": "ready",
+    "set": {
+      "rounds": {
+        "started": 2,
+        "counted": 1,
+        "conflicts": 0,
+        "signatures": [
+          "FAIL A"
+        ],
+        "findings": [],
+        "criteria": [
+          "met"
+        ],
+        "checklist": [],
+        "repeated": [
+          "test"
+        ],
+        "failing": [
+          "9e6d8cb93a58"
+        ]
+      },
+      "attention": {
+        "reason": "roundsUsedUp",
+        "text": "No round is left.",
+        "ref": null
+      }
+    }
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "requested",
+        "what": "fix",
+        "by": null,
+        "automatic": true
+      },
+      "state": "fixing",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ],
+      "expect": {
+        "rounds.counted": 2,
+        "rounds.automatic": true,
+        "pending.-1.stage": "fix",
+        "pending.-1.diagnose": [
+          "test"
+        ]
+      },
+      "note": "NexKit's own automatic fix round is counted, marked automatic and diagnoses the repeated checks, as the engine's due round does."
+    }
+  ]
+}

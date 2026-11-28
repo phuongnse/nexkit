@@ -513,6 +513,14 @@ def _route(gh, event_name, event, inputs, cfg, taken, problem=None):
             by=sender,
             taken=taken,
             dispatched=bool(kinds - {"false"}),
+            # Only NexKit's own first automatic fix round counts: a conflict round, a run again
+            # and a resume do not (`state.counted_fix`).
+            automatic=(
+                "true" in kinds
+                and not conflicts
+                and "resumed" not in kinds
+                and not retry_number(kinds)
+            ),
             problem=problem,
             # Only the first dispatch of a conflict round is counted: a resumed or retried one
             # was counted when it started.
@@ -730,6 +738,7 @@ def _decide(
     observe_conflict=False,
     updated=False,
     asked=False,
+    automatic=False,
 ):
     """The decision for a person's command, or NexKit's own dispatch of one. A command starts
     its stage only as the engine answers it (`host.command`), on the item's stored state alone;
@@ -748,7 +757,10 @@ def _decide(
     run counts in the item's state (`host.command`), unless the same conflict was tried
     already. `updated` says that this is the first dispatch of the review after NexKit updated a
     pull request's branch (`maintain.update_branch`), which its own run stores in the item's
-    state (`host.command`), except for a person's pull request. `asked` says that a person's
+    state (`host.command`), except for a person's pull request. `automatic` says that this is
+    NexKit's own first automatic fix round (its `auto` input names `true`, and not `conflicts`,
+    `retry` or `resumed`), which the engine counts and marks automatic when nothing is pending
+    for it (`host.command`). `asked` says that a person's
     comment or *Request changes* review gave the command: on a pull request whose implement round
     still runs it is refused in NexKit 6's words, before the engine, which refuses it too."""
     from . import host
@@ -763,6 +775,7 @@ def _decide(
         "taken": taken,
         "dispatched": dispatched,
         "carried": carried,
+        "automatic": automatic,
     }
     if on_pull:
         if command not in PR_COMMANDS:

@@ -10,5 +10,6 @@
     "role": "decides"
   },
   "note": "",
-  "plan": null
+  "plan": null,
+  "automatic": false
 }

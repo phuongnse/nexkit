@@ -365,7 +365,7 @@ artifacts of the stages that ran:
 |---|---|
 | `plan` | `nexkit-agent` |
 | `go`, `fix` (and automatic rounds) | `nexkit-agent`; `nexkit-checks` and `nexkit-review` once a commit was published |
-| `review` | `nexkit-checks`, `nexkit-review` |
+| `review` | `nexkit-checks` when a check ran; `nexkit-review` once the checks finished or were all skipped |
 
 A skipped stage adds no annotation. An *Artifact not found* error on `report` means a stage
 ran but stopped before its upload, for example because it was cancelled; `report` still

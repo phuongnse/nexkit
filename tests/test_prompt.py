@@ -1045,6 +1045,14 @@ class PromptInputTests(unittest.TestCase):
                     self.assertIn(word, flat)
                 self.assertNotIn("GitHub", flat)
                 self.assertNotIn("pull request", flat)
+                self.assertNotIn("issue", flat)
+        inputs = self.needs("triage")
+        inputs["previousPlan"] = {"text": "Old plan.", "before": 0, "profile": "x"}
+        request = self.request("triage", inputs)
+        request["policies"]["profiles"] = {"x": {"when": "Small."}}
+        flat = " ".join(engine.answer(request)["text"].split())
+        self.assertIn("The latest plan of this request used the profile `x`.", flat)
+        self.assertNotIn("issue", flat)
         # The review of a person's change and a plan that revises an earlier one take the words too.
         inputs = self.needs("review")
         inputs["item"].update(change="3", person=True)

@@ -1032,9 +1032,9 @@ def triage_extras(context, profiles, previous):
         "profiles": "\n".join(
             f"- `{name}`: {profile['when'].strip()}" for name, profile in profiles.items()
         ),
-        "previous": f"The latest plan of this issue used the profile `{previous}`."
+        "previous": f"The latest plan of this {context['item_kind']} used the profile `{previous}`."
         if previous
-        else "None. This is the first plan of this issue with a profile.",
+        else f"None. This is the first plan of this {context['item_kind']} with a profile.",
     }
 
 

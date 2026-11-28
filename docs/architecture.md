@@ -80,10 +80,13 @@ flowchart LR
 
 The diagram shows the jobs of one run. Each arrow means that the job after it waits for the job
 before it. `report` also waits for every job before it, and `finish` runs only when `report` did
-not finish. `maintain` is not part of a round. It waits for `route` only, and it runs
-for events that are not commands. `route` also starts each run in an item's concurrency group by
-taking the item's waiting events from their sources (`host.take`), so every job waits for that
-first. With `parallel_checks`, one `verify` job runs for each check
+not finish. `maintain` is not part of a round. It waits for `route` only. It runs for events
+that are not commands, and for some commands and reviews that `route` sends to it: `/nexkit trust`,
+a writer's approval of a NexKit pull request, a writer's answer that only closes an issue, and a
+command on a pull request whose base branch already holds its change. [One run, ten
+jobs](how-it-works.md#one-run-ten-jobs) lists every trigger. `route` also starts each run in an
+item's concurrency group by taking the item's waiting events from their sources (`host.take`), so
+every job waits for that first. With `parallel_checks`, one `verify` job runs for each check
 job, all at once. Jobs that do not apply to a command are skipped. What each job does is in
 [One run, ten jobs](how-it-works.md#one-run-ten-jobs).
 
@@ -181,16 +184,19 @@ flowchart LR
     Runner --> Agents
 ```
 
-The engine answers three calls: `step` decides what happens to one work item, `prompt` writes a
-stage's prompt from the texts the host fetched, and `sweep` chooses which waiting items start. [The
-engine](engine.md#the-engine) defines each call. The GitHub host gets its `step` and `sweep` answers
-from the engine program. `host.step` and the sweep send one JSON request through `nexkit/program.py`,
-which runs `python -P -m nexkit.engine <call>` with the host's own Python and the same installed
-package. The program's environment holds only `PATH`, `PYTHONPATH` and `LANG`, so no token or secret
-of the job reaches it, and `-P` keeps the working folder, which may hold a repository's code, off its
-import path. A program that is missing, crashes or runs past its timeout counts as an engine refusal:
-the item waits for a person, as it does when the engine itself refuses. The GitHub host still calls
-`prompt` in the same process, as a Python function. It sends only some of its decisions to `step`, and
+The engine answers four calls. `describe` tells a host which protocol version (major and minor) the
+engine speaks, the engine's version and its calls. [Versions](engine.md#versions) explains the
+numbers. `step` decides what happens to one work item, `prompt` writes a stage's prompt from the
+texts the host fetched, and `sweep` chooses which waiting items start. [The
+engine](engine.md#the-engine) defines each call. The GitHub host does not call `describe`. It gets
+its `step` and `sweep` answers from the engine program. `host.step` and the sweep send one JSON
+request through `nexkit/program.py`, which runs `python -P -m nexkit.engine <call>` with the host's
+own Python and the same installed package. The program's environment holds only `PATH`,
+`PYTHONPATH` and `LANG`, so no token or secret of the job reaches it. `-P` keeps the working folder,
+which may hold a repository's code, off its import path. A program that is missing, crashes or runs
+past its timeout counts as an engine refusal: the item waits for a person, as it does when the
+engine itself refuses. The GitHub host still calls `prompt` in the same process, as a Python
+function. It sends only some of its decisions to `step`, and
 [getting there](engine.md#getting-there) lists them.
 
 The `nexkit-engine` program runs the same calls for a host that reads JSON, one request on standard

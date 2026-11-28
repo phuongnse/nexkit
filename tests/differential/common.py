@@ -39,12 +39,10 @@ SKIP = {"calls", "_next", "events"}
 # ends the comment (`item_state.PATTERN`). NexKit 6 never posts it, so it is not compared.
 STATE = re.compile(r"<!-- nexkit:item-state [A-Za-z0-9+/=]+ -->\s*\Z")
 # What `seed` and the tree record for a scenario, which `play.py` writes beside its record and
-# `harness.py` reads: each write of a state comment as (item, revision), each decision that
-# `host.resync` took from the markers' document as [function, why], and the items that were
+# `harness.py` reads: each write of a state comment as (item, revision), and the items that were
 # seeded.
 STATES = []
 TRACKED = []  # the fake GitHub that `seed` watches
-FALLBACKS = []
 SEEDED = 0
 OWN_BRANCH = re.compile(r"nexkit/issue-\d+")
 
@@ -127,7 +125,6 @@ def reset():
     global SEEDED
     STATES.clear()
     TRACKED.clear()
-    FALLBACKS.clear()
     SEEDED = 0
 
 

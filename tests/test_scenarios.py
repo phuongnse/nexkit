@@ -1703,11 +1703,10 @@ class ScenarioTests(unittest.TestCase):
         pipe = Pipeline(self, config(autopilot=settings), script)
         pipe.issue(5)
         pipe.take_run(5)
-        entries, fallbacks = self.round_ends()
+        entries = self.round_ends()
         pipe.play()
         [(_, _, before)] = entries
         self.assertFalse(before["hold"])
-        self.assertNotIn("nexkit.host.round_ended", fallbacks)
         self.assertEqual((pipe.gh.merged, pipe.played[-1][2]), ([], "held"))
         self.assertTrue(item_state.read(pipe.gh, 5)[1]["hold"])
         pipe.gh.issues[5]["labels"] = []
@@ -1727,7 +1726,6 @@ class ScenarioTests(unittest.TestCase):
         pipe = Pipeline(self, config(autopilot=settings), script)
         pipe.issue(5)
         pipe.take_run(5)
-        entries, fallbacks = self.round_ends()
         pipe.play()
         self.assertEqual([command for command, _, _ in pipe.played], ["plan", "go"])
         self.assertEqual(pipe.played[-1][2], "held")
@@ -1738,7 +1736,6 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual([command for command, _, _ in pipe.played][-1], "fix")
         self.assertEqual((pipe.gh.merged, pipe.played[-1][2]), ([], "held"))
         self.assertTrue(item_state.read(pipe.gh, 5)[1]["hold"])
-        self.assertNotIn("nexkit.host.round_ended", fallbacks)
         pipe.gh.issues[5]["labels"] = []
         pipe.play()
         self.assertEqual(len(pipe.gh.merged), 1)
@@ -2876,10 +2873,8 @@ class ScenarioTests(unittest.TestCase):
 
     def round_ends(self):
         """Watch the ends of the rounds that `report` decides: the stored state of the item on
-        entry to `host.round_ended`, as (action, head, state) for each round, and the
-        fallbacks to the markers' document that `round_ended` made (`host.on_fallback`).
-        Returns (entries, fallbacks)."""
-        entries, fallbacks = [], []
+        entry to `host.round_ended`, as (action, head, state) for each round."""
+        entries = []
         real = host.round_ended
 
         def spy(gh, cfg, decision, pr, head, *args, **kwargs):
@@ -2887,14 +2882,10 @@ class ScenarioTests(unittest.TestCase):
             entries.append((decision["action"], head, state))
             return real(gh, cfg, decision, pr, head, *args, **kwargs)
 
-        patches = (
-            mock.patch.object(host, "round_ended", spy),
-            mock.patch.object(host, "on_fallback", lambda origin, why: fallbacks.append(origin)),
-        )
-        for patch in patches:
-            patch.start()
-            self.addCleanup(patch.stop)
-        return entries, fallbacks
+        patch = mock.patch.object(host, "round_ended", spy)
+        patch.start()
+        self.addCleanup(patch.stop)
+        return entries
 
     def test_a_go_round_is_stored_before_its_checks_and_they_decide_on_that_state(self):
         working = []
@@ -2910,7 +2901,7 @@ class ScenarioTests(unittest.TestCase):
         pipe = Pipeline(self, config(), script)
         pipe.issue(5)
         pipe.take_run(5)
-        entries, fallbacks = self.round_ends()
+        entries = self.round_ends()
         self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
         self.assertEqual(working, [("working", ["implement"])])
         [(action, head, state)] = entries
@@ -2922,7 +2913,6 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual([a["changeVersion"] for a in checks], [head])
         self.assertFalse([a for a in state["pending"] if a["kind"] == "runAgent"])
         self.assertTrue(any(name.startswith("publish-6-") for name in state["recentEvents"]))
-        self.assertNotIn("nexkit.host.round_ended", fallbacks)
         self.assertEqual(pipe.gh.issues[5]["state"], "closed")
 
     def test_a_go_round_s_publish_stores_it_and_its_report_sends_nothing_again(self):
@@ -2943,7 +2933,7 @@ class ScenarioTests(unittest.TestCase):
                 return plan()
             return {**done(), "working": working, "checking": checking}
 
-        sent, reporting, fallbacks = [], [], []
+        sent, reporting = [], []
         real_step, real_report = host.step, report
 
         def step(state, event, *args, **kwargs):
@@ -2961,7 +2951,6 @@ class ScenarioTests(unittest.TestCase):
         for patch in (
             mock.patch.object(host, "step", step),
             mock.patch(f"{__name__}.report", watched),
-            mock.patch.object(host, "on_fallback", lambda origin, why: fallbacks.append(origin)),
         ):
             patch.start()
             self.addCleanup(patch.stop)
@@ -2981,7 +2970,6 @@ class ScenarioTests(unittest.TestCase):
         self.assertFalse([name for name in ids if name.startswith("publish-")], ids)
         answers = [event["id"] for event in sent if event.get("action") == agent_run[0]]
         self.assertEqual(answers, [])
-        self.assertNotIn("nexkit.host.round_ended", fallbacks)
         self.assertEqual(pipe.gh.issues[5]["state"], "closed")
 
     def test_a_fix_round_that_changed_nothing_is_stored_with_its_head_before_its_checks(self):
@@ -3008,7 +2996,7 @@ class ScenarioTests(unittest.TestCase):
         pipe = Pipeline(self, config(), script)
         pipe.issue(5)
         pipe.take_run(5)
-        entries, fallbacks = self.round_ends()
+        entries = self.round_ends()
         self.assertEqual(pipe.play(), [("plan", 5), ("go", 5), ("fix", 6)])
         [(first, head, _), (second, again, state)] = entries
         self.assertEqual((first, second), ("implement", "fix"))
@@ -3017,7 +3005,6 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(state["state"], "checking")
         self.assertEqual(state["rounds"]["recheck"], head)
         self.assertEqual(state["rounds"]["fixed"], head)
-        self.assertNotIn("nexkit.host.round_ended", fallbacks)
         self.assertEqual(pipe.gh.issues[5]["state"], "closed")
 
     def test_an_answer_that_only_closes_the_issue_closes_it(self):

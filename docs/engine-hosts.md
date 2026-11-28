@@ -71,7 +71,7 @@ shapes, and a host shows them in its own words.
 ## What a host decides
 
 A host gives the engine its policies in its configuration. Each has a default, and the
-protocol's `policies.schema.json` names it, as the first column does below. Four settings are not
+protocol's `policies.schema.json` names it, as the first column does below. Five settings are not
 policies of the engine, and each has its place:
 
 - **Start** is the host's. It sends `requested` when a person or its sweep starts an item, and calls
@@ -80,6 +80,15 @@ policies of the engine, and each has its place:
 - **Checklist and profiles** are the `prompt` call's policies. `checklist` is the items the plan and
   the review answer, and `profiles` the profiles triage chooses from. The plan prompt also names the
   implement stage's time from `budgets`. GitHub's `review.checklist` gives the checklist.
+- **Words** are the `prompt` call's `words`: how the host names its work item, its change, the
+  places where people write and read, and its commands, in the prompts of every stage. The
+  engine's templates hold the stage's contract and read these words in place of any host's own,
+  and it refuses a stage prompt without them. GitHub sends "GitHub issue #5" for the item,
+  "pull request #6" for the change, "on GitHub" for where people write and read, and
+  `/nexkit go`, `/nexkit fix` and "`/nexkit` commands" for its commands, so its prompts read
+  as they always did. It builds them from the numbers of the issue and the pull request and
+  from fixed text, never from what anyone wrote. An application might send "request R-42",
+  "draft 3" and "in the app". See [The prompt](engine.md#the-prompt).
 - **`maxParallel` and `priority`** are the `sweep` call's policies: the most items that run at
   once, and the tags that go first. Neither is in `policies.schema.json`, so no state document
   keeps them.

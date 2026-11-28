@@ -313,6 +313,7 @@ class Host:
                 "stage": stage,
                 "inputs": inputs,
                 "policies": copy.deepcopy(self.policies),
+                "words": self.words(row),
                 "texts": None,
             },
         )
@@ -323,6 +324,23 @@ class Host:
             row.running[action["id"]] = result
             return None
         return result
+
+    def words(self, row):
+        """The application's words for its request and its draft, which a prompt uses in place
+        of GitHub's: fixed text and the ids of its own records."""
+        return {
+            "item": f"request {row.id}",
+            "itemHeading": f"Request {row.id}",
+            "itemKind": "request",
+            "itemKinds": "requests",
+            "change": f"draft {row.draft['id']}" if row.draft else "",
+            "changeKind": "draft",
+            "source": "in the application",
+            "readers": "in the application",
+            "approve": "*Approve*",
+            "fixRound": "*Request changes*",
+            "commands": "the application's actions",
+        }
 
     def plan_text(self, state):
         plan = state.get("plan")

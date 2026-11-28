@@ -66,5 +66,18 @@
     }
   },
   "policies": {},
+  "words": {
+    "item": "request R-42",
+    "itemHeading": "Request R-42",
+    "itemKind": "request",
+    "itemKinds": "requests",
+    "change": "",
+    "changeKind": "draft",
+    "source": "in the app",
+    "readers": "in the app",
+    "approve": "*Approve*",
+    "fixRound": "*Fix*",
+    "commands": "the app's actions"
+  },
   "texts": "/runner/texts"
 }

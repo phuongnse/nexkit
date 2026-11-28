@@ -136,7 +136,9 @@ def _result_problems(state, event):
 def _prompt(request, found):
     """The answer to a `prompt` call: the stage's prompt, from the texts the host fetched."""
     if not found and request.get("unfit") is None:
-        found = prompt.refusals(request["stage"], request["inputs"], request["policies"])
+        found = prompt.refusals(
+            request["stage"], request["inputs"], request["policies"], request.get("words")
+        )
         texts = request.get("texts")
         if texts is not None and not prompt.absolute(texts):
             found.append("request.texts must be an absolute path")

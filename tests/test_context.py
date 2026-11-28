@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from nexkit.agent import shortened_folders
+from nexkit.agent import prompt_words, shortened_folders
 from nexkit.checks import run_checks
 from nexkit.context import MAX_LINKED, MAX_LINKED_ISSUES, gather, keep_texts
 from nexkit.engine.prompt import (
@@ -14,6 +14,7 @@ from nexkit.engine.prompt import (
     PERSON_PLAN,
     check_results_text,
     diagnosis_text,
+    fill,
     shortened_names,
     shortened_text,
 )
@@ -505,7 +506,7 @@ class ContextTests(unittest.TestCase):
 
     def test_missing_plan(self):
         context = prompt_texts(self.gh, {"action": "implement", "issue": 5})
-        self.assertEqual(context["plan"], NO_PLAN)
+        self.assertEqual(context["plan"], fill(NO_PLAN, prompt_words(5)))
         self.assertEqual(context["discussion"], "No discussion.")
 
     def test_fix_feedback(self):
@@ -1003,7 +1004,7 @@ class PersonsPullRequestTests(unittest.TestCase):
         self.assertTrue(found["person"])
         self.assertEqual(found["title"], "Upgrade NexKit")
         self.assertEqual(found["body"], "Moves to the new release.")
-        self.assertEqual(found["plan"], PERSON_PLAN)
+        self.assertEqual(found["plan"], fill(PERSON_PLAN, prompt_words(5, 6)))
 
     def test_its_discussion_comes_once(self):
         self.gh.human_comment(10, "Keep the old key.")

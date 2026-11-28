@@ -633,7 +633,11 @@ class Round:
         from what the context step fetched."""
         folder = self.world.out / "texts"
         return prompt.texts(
-            self.stage, self.context["inputs"], prompt.Shelf(folder), self.context["state"]
+            self.stage,
+            self.context["inputs"],
+            prompt.Shelf(folder),
+            self.context["state"],
+            prompt.snake(self.request()["words"]),
         )
 
 
@@ -710,6 +714,20 @@ class PromptCallTests(unittest.TestCase):
 
 
 EXAMPLE = protocol.ROOT / "examples" / "calls"
+# The words of a host that is not GitHub, which no prompt of GitHub's holds.
+OTHER_WORDS = {
+    "item": "request R-12",
+    "itemHeading": "Request R-12",
+    "itemKind": "request",
+    "itemKinds": "requests",
+    "change": "draft 3",
+    "changeKind": "draft",
+    "source": "in the app",
+    "readers": "in the app",
+    "approve": "*Approve*",
+    "fixRound": "*Fix*",
+    "commands": "the app's actions",
+}
 
 
 def example():
@@ -858,7 +876,7 @@ class PromptInputTests(unittest.TestCase):
         self.schema = protocol.load("calls/prompt.schema.json")
         self.defs = self.schema["$defs"]
 
-    def request(self, stage, inputs, state=None):
+    def request(self, stage, inputs, state=None, words=OTHER_WORDS):
         policies = {"budgets": {"implement": {"seconds": 2700}}}
         request = {
             "protocol": 1,
@@ -867,6 +885,7 @@ class PromptInputTests(unittest.TestCase):
             "stage": stage,
             "inputs": inputs,
             "policies": policies,
+            "words": words,
             "texts": "/runner/texts",
         }
         self.assertEqual(protocol.check(request, "calls/prompt.schema.json"), [])
@@ -933,10 +952,11 @@ class PromptInputTests(unittest.TestCase):
         self.assertIn("### Round 3: fix (requested by a person, a diagnosis round)", shown)
         self.assertIn("Set popupOverflow.", shown)
         self.assertIn("The popup is clipped.", shown)
-        self.assertNotIn(prompt.NO_EARLIER_FIXES, shown)
+        none = prompt.fill(prompt.NO_EARLIER_FIXES, prompt.snake(OTHER_WORDS))
+        self.assertNotIn(none, shown)
         # Without a state there are no earlier rounds.
         shown = engine.answer(self.request("fix", inputs))["text"]
-        self.assertIn(prompt.NO_EARLIER_FIXES, shown)
+        self.assertIn(none, shown)
         self.assertNotIn("### Round 2: fix", shown)
 
     def test_a_fix_prompt_lists_the_last_reviews_blocking_findings_only_for_its_version(self):
@@ -990,6 +1010,124 @@ class PromptInputTests(unittest.TestCase):
         self.assertNotIn("Before the review.", text)
         self.assertNotIn("#### Fix 2", text)
         self.assertIn("resolved conflicts in `a.py`", text)
+
+    def test_a_host_with_other_words_gets_them_in_every_stage_and_no_github(self):
+        entry = {"id": 1, "author": "ana", "at": "2026-11-23T15:01:11Z", "kind": "comment"}
+        linked = {
+            "texts": [
+                {"kind": "item", "id": 7, "title": "Other", "change": False, "text": "T"},
+                {"kind": "item", "id": 8, "title": "Draft", "change": True, "text": "T"},
+            ],
+            "chain": [
+                {"id": 9, "title": "Parent", "body": "B", "discussion": [{**entry, "text": "C"}]}
+            ],
+            "notRead": ["acme/other#9: not this repository"],
+        }
+        for stage in INPUTS:
+            with self.subTest(stage):
+                inputs = self.needs(stage)
+                inputs["item"]["change"] = "3"
+                inputs["discussion"] = {
+                    "item": [{**entry, "text": "On the item"}],
+                    "change": [{**entry, "id": 2, "text": "On the change"}],
+                }
+                inputs["linked"] = linked
+                request = self.request(stage, inputs)
+                request["policies"]["checklist"] = ["Docs are updated", "A person signs off"]
+                request["policies"]["profiles"] = {"x": {"when": "Small."}}
+                text = engine.answer(request)["text"]
+                flat = " ".join(text.split())
+                # Only the fix and the review prompts name the change.
+                named = ["request R-12", "in the app"]
+                if stage in ("fix", "review"):
+                    named.append("draft 3")
+                for word in named:
+                    self.assertIn(word, flat)
+                self.assertNotIn("GitHub", flat)
+                self.assertNotIn("pull request", flat)
+                self.assertNotIn("issue", flat)
+        inputs = self.needs("triage")
+        inputs["previousPlan"] = {"text": "Old plan.", "before": 0, "profile": "x"}
+        request = self.request("triage", inputs)
+        request["policies"]["profiles"] = {"x": {"when": "Small."}}
+        flat = " ".join(engine.answer(request)["text"].split())
+        self.assertIn("The latest plan of this request used the profile `x`.", flat)
+        self.assertNotIn("issue", flat)
+        # The review of a person's change and a plan that revises an earlier one take the words too.
+        inputs = self.needs("review")
+        inputs["item"].update(change="3", person=True)
+        text = engine.answer(self.request("review", inputs))["text"]
+        self.assertIn("A person's draft", text)
+        self.assertNotIn("pull request", " ".join(text.split()))
+        inputs = self.needs("plan")
+        inputs["previousPlan"] = {"text": "Old plan.", "before": 0}
+        inputs["parts"] = {
+            "parent": "4",
+            "parts": [{"id": "5", "title": "T", "state": "closed", "body": "B", "plan": None}],
+        }
+        flat = " ".join(engine.answer(self.request("plan", inputs))["text"].split())
+        self.assertIn("this request", flat)
+        self.assertNotIn("issue", flat)
+
+    def test_the_words_come_from_the_host_alone(self):
+        words = {**OTHER_WORDS, "itemKind": "ticket", "itemKinds": "tickets", "item": "ticket 1"}
+        text = engine.answer(self.request("plan", self.needs("plan"), words=words))["text"]
+        text = " ".join(text.split())
+        self.assertIn("Turn ticket 1 into a short, concrete plan.", text)
+        self.assertIn("when one solves the ticket as well", text)
+        self.assertIn("smaller tickets", text)
+
+    def test_a_word_with_a_space_breaks_where_githubs_does_and_one_without_does_not(self):
+        inputs = self.needs("review")
+        inputs["item"]["change"] = "3"
+        text = engine.answer(self.request("review", inputs))["text"]
+        self.assertIn("Review draft 3, which implements request\nR-12. The repository", text)
+        self.assertIn("the draft description, approvals", text)
+        words = {**OTHER_WORDS, "item": "R-12", "changeKind": "pull request"}
+        text = engine.answer(self.request("review", inputs, words=words))["text"]
+        self.assertIn("which implements R-12. The repository", text)
+        self.assertIn("the pull\n  request description", text)
+
+    def test_a_stage_prompt_without_words_is_refused_and_names_what_is_missing(self):
+        for stage in INPUTS:
+            with self.subTest(stage):
+                request = self.request(stage, self.needs(stage))
+                del request["words"]
+                self.assertEqual(engine.answer(request)["error"], "request.words is missing")
+        request = self.request("plan", self.needs("plan"))
+        for field in protocol.load("calls/prompt.schema.json")["$defs"]["words"]["required"]:
+            with self.subTest(field=field):
+                words = {key: value for key, value in OTHER_WORDS.items() if key != field}
+                answer = engine.answer({**request, "words": words})
+                self.assertEqual(answer["error"], f"request.words.{field} is missing")
+
+    def test_a_request_that_asks_again_for_a_result_needs_no_words(self):
+        request = self.request("plan", {"item": {"id": 5, "title": "Fix add", "body": ""}})
+        del request["words"]
+        request["unfit"] = AGAIN["plan"]
+        answer = engine.answer(request)
+        self.assertEqual(answer["text"], golden("result-again-plan", None))
+
+    def test_every_word_is_a_required_string_with_a_limit(self):
+        words = self.defs["words"]
+        self.assertEqual(sorted(words["required"]), sorted(words["properties"]))
+        self.assertEqual(set(prompt.snake(dict.fromkeys(words["properties"]))), set(prompt.WORDS))
+        for name, field in words["properties"].items():
+            with self.subTest(name):
+                self.assertEqual(field["type"], "string")
+                self.assertIn("maxLength", field)
+        self.assertNotIn("words", self.schema["required"])
+        self.assertEqual(self.schema["properties"]["words"], {"$ref": "#/$defs/words"})
+        # A word over its limit is refused.
+        request = self.request("plan", self.needs("plan"))
+        request["words"] = {**OTHER_WORDS, "item": "x" * 201}
+        self.assertIn("request.words.item", engine.answer(request)["error"])
+
+    def test_the_example_holds_words_that_fit_the_schema(self):
+        request = example()
+        self.assertEqual(set(request["words"]), set(self.defs["words"]["properties"]))
+        self.assertEqual(protocol.check(request, "calls/prompt.schema.json"), [])
+        self.assertNotIn("GitHub", engine.answer(request)["text"])
 
     def needs(self, stage):
         """The inputs `stage` needs, each with only its required fields."""

@@ -73,7 +73,9 @@ def prompt_texts(
     `texts`, as the agent step writes it."""
     record = context.gather(gh, decision, stage, fix_result, results, ci, cfg, workflow)
     shelf = prompt.Shelf(Path(texts).resolve() if texts else None)
-    out = prompt.texts(stage or decision["action"], record["inputs"], shelf, record["state"])
+    item = record["inputs"]["item"]
+    words = agent.prompt_words(item["id"], item.get("change"))
+    out = prompt.texts(stage or decision["action"], record["inputs"], shelf, record["state"], words)
     if shelf.folder:
         context.keep_texts(
             ({"path": path, "text": text} for path, text in shelf.files.items()), shelf.folder
@@ -91,7 +93,10 @@ def build_prompt(stage, texts, cfg, extra=None):
     """A stage's prompt from the texts `context.gather` wrote, with the round's own in
     `extra`, as `engine.prompt.finish` builds it."""
     inputs = {"workspace": agent.workspace(cfg)}
-    return prompt.build(stage, texts, prompt.settings(inputs, agent.policies(cfg)), extra)
+    words = prompt.template_words(agent.prompt_words(texts.get("issue"), texts.get("pr")))
+    return prompt.build(
+        stage, {**words, **texts}, prompt.settings(inputs, agent.policies(cfg)), extra
+    )
 
 
 def previous_round(repo, texts, base):
@@ -106,7 +111,7 @@ def evidence_text(found):
 
 def ci_evidence_text(found):
     """The plan, implement and fix prompts' section about the CI runs the issue names."""
-    return prompt.ci_evidence_text(found, context.KEEPS["ci"])
+    return prompt.ci_evidence_text(found, context.KEEPS["ci"], agent.prompt_words(None))
 
 
 def feedback(gh, decision, comments):

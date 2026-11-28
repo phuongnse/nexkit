@@ -1,6 +1,6 @@
 ## How to write
 
-People read your text on GitHub. Write for a person who knows the project but not this
+People read your text $readers. Write for a person who knows the project but not this
 change.
 
 - Use plain, everyday English. Keep sentences short, about 20 words.

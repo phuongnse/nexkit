@@ -1,4 +1,4 @@
-## Evidence from the CI runs this issue names
+## Evidence from the CI runs this $item_kind names
 
 NexKit downloaded what these runs of this repository left, before this session, to
 `$folder`, outside the working tree: the end of each failed job's log, its error

@@ -19,7 +19,7 @@ feedback and no note, only resolve the conflicts.
     example, one side sets a timeout to 10 seconds and the other to 60), or one side
     deleted code that the other side changed. Whatever you pick drops the intent of one
     side.
-- For a choice, look for the answer in the plan, the issue, the feedback and the note
+- For a choice, look for the answer in the plan, the $item_kind, the feedback and the note
   above. A commit message on one side is not an answer. When none of them settles the
   choice, do not pick a side and do not guess: return `status: blocked` and list every
   such conflict in `open_conflicts`. NexKit then publishes nothing and asks a person to

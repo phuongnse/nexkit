@@ -521,6 +521,26 @@ def policies(cfg):
     }
 
 
+def prompt_words(issue, pr=None):
+    """The words of GitHub's prompts, for the `prompt` request's `words` in snake_case: the
+    issue's and the pull request's numbers, and fixed text. They sit outside the prompt's
+    `<untrusted>` tags, so they come only from numbers and fixed strings, never from what
+    anyone wrote on GitHub."""
+    return {
+        "item": f"GitHub issue #{issue}",
+        "item_heading": f"Issue #{issue}",
+        "item_kind": "issue",
+        "item_kinds": "issues",
+        "change": f"pull request #{pr}" if pr else "",
+        "change_kind": "pull request",
+        "source": "on GitHub",
+        "readers": "on GitHub",
+        "approve": "`/nexkit go`",
+        "fix_round": "`/nexkit fix`",
+        "commands": "`/nexkit` commands",
+    }
+
+
 def prompt_request(stage, context, added, cfg, folder):
     """The `prompt` request of `stage`: the inputs the context step fetched, with what this
     round adds in `added` (its diff, checks and workspace), in the protocol's camelCase and
@@ -530,6 +550,7 @@ def prompt_request(stage, context, added, cfg, folder):
     inputs = {**fetched, **added}
     if "diff" in fetched:
         inputs["diff"] = {**fetched["diff"], **added.get("diff", {})}
+    item = inputs.get("item") or {}
     inputs = {key: value for key, value in camel(inputs).items() if key in INPUTS[stage]}
     return {
         "protocol": protocol.VERSION,
@@ -538,6 +559,7 @@ def prompt_request(stage, context, added, cfg, folder):
         "stage": stage,
         "inputs": inputs,
         "policies": policies(cfg),
+        "words": camel(prompt_words(item.get("id"), item.get("change"))),
         "texts": str(folder),
     }
 

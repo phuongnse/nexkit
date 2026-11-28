@@ -56,10 +56,11 @@ job holds, and the plugin are described in [Architecture](docs/architecture.md).
 - `tests/prompts/` is NexKit 6's record of each stage's prompt. Never write it again with
   `NEXKIT_WRITE_PROMPTS` from today's code. A prompt change edits its golden by hand and says why.
   See [Which check covers what](docs/testing.md#which-check-covers-what).
-- The pins of the agent runtimes, the image's base, the runner and Python live only in
-  `nexkit/__init__.py`; the pipeline installs exactly those, and tests use no matrix.
-  `update-agents.yml` and `update-image.yml` each propose an update that needs its own check. See [The smoke test](docs/testing.md#the-smoke-test) and
-  [D9](docs/decisions/d9-pins-live-in-one-place.md).
+- `nexkit/__init__.py` holds every pin: the agent runtimes, the image's base, the runner and Python.
+  Workflows repeat only the runner and Python, as copies a test keeps equal to it. The pipeline
+  installs exactly those, and tests use no matrix. `update-agents.yml` and `update-image.yml` each
+  propose an update that needs its own check. See [The smoke test](docs/testing.md#the-smoke-test) and
+  [D14](docs/decisions/d14-every-pin-has-one-source.md).
 - Everything specific to a CLI or provider lives in `runtimes/` behind `Runtime` and `Provider`; no
   other code branches on runtime names. Settings that identify an account or resource are secret
   fields. See [Agents](docs/agents-and-profiles.md#agents) and

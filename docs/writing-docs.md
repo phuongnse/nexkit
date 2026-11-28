@@ -288,7 +288,7 @@ when a list of what the code defines misses an entry. These rules close each of 
      README](../README.md) installs the tag of the version.
    - `test_no_doc_repeats_a_pinned_version`: no doc, the README, AGENTS.md or a skill of the plugin
      under `skills/` repeats a pinned version: the version of each agent runtime or the digest of the
-     image's base that `nexkit/__init__.py` pins, as [D9](decisions/d9-pins-live-in-one-place.md)
+     image's base that `nexkit/__init__.py` pins, as [D14](decisions/d14-every-pin-has-one-source.md)
      says, or a lint tool's version from `scripts/lint.sh`.
    - `test_the_configuration_example_is_what_nexkit_init_writes`: the configuration example of [the
      README](../README.md#configuration) is what `nexkit init` writes for the README's own setup

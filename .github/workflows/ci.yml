@@ -45,8 +45,8 @@ jobs:
         run: claude plugin validate --strict .
 
   walks:
-    # The engine's random walks against its invariants (docs/testing.md), as NexKit's walks
-    # check runs them.
+    # The engine's random walks against its invariants
+    # (docs/testing.md#which-check-covers-what), as NexKit's walks check runs them.
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -56,7 +56,7 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - run: python tests/walk.py --walks 1000
+      - run: python3 tests/walk.py --walks 1000
 
   cache-save:
     # Saves a cache as docs/configuration.md#caches tells a repository's own CI to.

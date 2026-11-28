@@ -11,6 +11,9 @@ not install.
 GitHub reads a workflow's `runs-on` and the `python-version` of `setup-python` before any step runs. So a
 workflow cannot read the runner or Python from `nexkit/__init__.py`, and it must write them out.
 
+Packaging tools and ruff read `pyproject.toml` itself and cannot read `nexkit/__init__.py`. So that file
+also writes out the Python version.
+
 ## Decision
 
 - `nexkit/__init__.py` is the one source of the pins: the agent runtimes, the image's base, the runner
@@ -19,6 +22,8 @@ workflow cannot read the runner or Python from `nexkit/__init__.py`, and it must
   never repeated.
 - The workflows and composite actions that NexKit ships, and the caller template that `nexkit init`
   installs, repeat the runner and Python as literals. A test keeps each copy equal to its pin.
+- `pyproject.toml` repeats Python, as the package's `requires-python` and ruff's `target-version`. A test
+  keeps both equal to the pin.
 - This repository's own development tools, ruff and actionlint, are pinned once in `scripts/lint.sh`.
   No workflow proposes them.
 - Tests use no matrix. They run the pinned versions and no others.
@@ -30,7 +35,8 @@ The detail is in [The smoke test](../testing.md#the-smoke-test).
 ## Consequences
 
 - A runtime version or the image's base changes in one file, in a change that the checks cover.
-- A change to the runner or Python edits the pin and each copy. The test fails until they match.
+- A change to the runner or Python edits the pin and each copy, including those in `pyproject.toml`. The
+  test fails until they match.
 - Users get a tested version rather than the newest one. The weekly proposals shorten the wait for
   a new version.
 - Only the pinned versions get the checks. Any other version runs untested.

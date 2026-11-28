@@ -16,20 +16,20 @@ runs the engine only as that program, for `step`, `sweep` and `prompt`, and impo
 page is not built yet, and NexKit 6 runs as [How it works](how-it-works.md) says._
 
 NexKit 7 splits NexKit into an **engine** that decides what happens to a piece of work, and
-**hosts** that store the work, carry out what the engine decides and show it to people. GitHub
-is the first host, and is NexKit as it runs today. An application can be a host too: one where a
-person asks an agent to change something the application holds, such as its own configuration,
-and the work lives in the application's database. GitLab and Azure DevOps, and Codex and Gemini
-as agents, can follow without a change to the engine.
+**hosts** that store the work, carry out what the engine decides and show it to people.
+[Hosts](engine-hosts.md#hosts) maps each host onto the engine's words. An application can be a
+host too: one where a person asks an agent to change something the application holds, such as
+its own configuration, and the work lives in the application's database. Other forges, and other
+agents, can follow without a change to the engine.
 
 ## Why
 
 The same loop runs wherever an agent changes something for a person: a plan the person can
 read, the change, the checks, an independent review, fix rounds and an accept that a person or
-a policy decides. NexKit runs that loop on GitHub issues and pull requests. An application runs
-it on a request and a draft of what the application holds, with no git, no CI service and no
-GitHub. Writing the loop twice gives two loops that drift apart, so each
-fix and each lesson has to be made twice.
+a policy decides. A forge runs that loop on its work items and their changes. An application runs
+it on a request and a draft of what the application holds, with no repository and no CI service.
+Writing the loop twice gives two loops that drift apart, so each fix and each lesson has to be
+made twice.
 
 The engine holds the loop once. A host decides only where the work lives and how each step is
 carried out.
@@ -40,8 +40,8 @@ or records, is in [D16](decisions/d16-the-engine-assumes-no-host-and-no-kind-of-
 
 ## Words
 
-- **Work item:** one piece of work, such as an issue or a request in an application.
-- **Change:** what the work item changes, such as a pull request or a draft. It has an id and a
+- **Work item:** one piece of work, such as a ticket in a tracker or a request in an application.
+- **Change:** what the work item changes, such as a set of commits or a draft. It has an id and a
   version, such as a commit or a draft's revision, which moves each time the change does.
 - **Stage:** what an agent session is for: triage, plan, implement, fix or review.
 - **Action:** one thing the engine asks the host to do, such as running an agent or the checks.
@@ -84,13 +84,12 @@ without a change to any host, as long as the conformance suite passes.
   own machine or a private network beside it.
 - **The image.** Each release publishes `ghcr.io/phuongnse/nexkit-engine:<version>`, built from
   the release's commit on `main`. It runs `serve` on port 8080 of the container. Its base is a
-  Python image pinned by digest; every week a pull request proposes the digest its tag names
-  now, when that moved, so the image takes the base's security fixes. A release never
+  Python image pinned by digest; every week a proposed change sets the digest its tag names now, when that moved, so the image takes the base's security fixes. A release never
   replaces an image: one whose version is already in the registry fails before it pushes.
   Each image carries an attestation of its build provenance, so a host can check the commit
   and workflow that built it with
   `gh attestation verify oci://ghcr.io/phuongnse/nexkit-engine:<version> --repo phuongnse/nexkit`.
-  Every pull request, push to `main` and release builds the image and plays the whole
+  Every proposed change, push to `main` and release builds the image and plays the whole
   [conformance suite](#conformance) against it over HTTP; an answer that differs fails the build,
   so no such image is published.
 
@@ -147,7 +146,7 @@ events and actions](engine-states.md). The runners, the policies a host decides 
   `<untrusted>` tags, as the host's own text, so a host builds them only from its own fixed text
   and ids, never from what people wrote. The engine breaks `item` and `changeKind` at their last
   space where a template breaks a line inside them, so a host's prompts keep the line breaks
-  they had. [What a host decides](engine-hosts.md#what-a-host-decides) gives GitHub's words.
+  they had. [Hosts](engine-hosts.md#hosts) gives each host's words.
 - **What a stage needs.** Every stage needs `item`, and every stage but triage `workspace`.
   Implement, fix and review need `plan`, which is null when the item has none, and fix and review
   need `diff`. The engine refuses a call without them.
@@ -155,8 +154,7 @@ events and actions](engine-states.md). The runners, the policies a host decides 
   last review from the request's `state`, and a request without one shows none. The newest fix
   record is the round a review follows, and `diff.merged` holds the merge of the base that it made.
   The fix prompt shows the last review's blocking findings only when that review read the change's
-  current version, `change.version`. A host that does not keep the state builds one for each call:
-  the GitHub host builds it from NexKit 6's state comment.
+  current version, `change.version`. A host that does not keep the state builds one for each call from what it stores.
 - **Limits.** The engine applies them: how much of each text and block a prompt keeps, how many
   comments, and in what order. A text that a prompt keeps only the start of, or leaves out, goes
   whole to a file in the folder that `texts` names, an absolute path outside the working tree,
@@ -179,10 +177,7 @@ events and actions](engine-states.md). The runners, the policies a host decides 
 - **A result that did not fit.** With `unfit`, why a session's result did not fit its schema, the
   call writes the prompt that asks the same session for its result alone.
 
-Every decision of NexKit 6 that is not about GitHub moves into the engine: plans, questions and
-answers, splits, approval, fix and diagnosis rounds and how they are counted, the review's
-rules, budgets, retries after a transient stop, usage limits, holds, waits, and when a person is
-needed.
+Every decision of the loop is the engine's: plans, questions and answers, splits, approval, fix and diagnosis rounds and how they are counted, the review's rules, budgets, retries after a transient stop, usage limits, holds, waits, and when a person is needed. A host only observes and carries out.
 
 ### The state document
 
@@ -209,16 +204,15 @@ needed.
   check output, a discussion and evidence, stay with the host as texts that the state names, and
   reach the engine only in `prompt`.
 - **It has a size.** The protocol sets the largest state document: 48,000 bytes as JSON in UTF-8
-  with its keys sorted and no spaces, so that its base64 fits one GitHub comment of 65,536
-  characters. What results and events bring is bounded as it comes in. Each list keeps at most as
+  with its keys sorted and no spaces, so that its base64 fits a text field of 65,536 characters. What results and events bring is bounded as it comes in. Each list keeps at most as
   many items as `maxItems` in its schema says: 10 questions of 6 options each, 20 protected paths,
   10 split parts, each needing only earlier parts, 30 findings with the blocking ones first, 30
   failure signatures, 300 failing checks, each kept as a 12-digit digest of its name and signature,
   150 checks that repeated, and 50 criteria and 50 checklist answers with those a decision reads
   first. A split of more parts keeps none of them, only how many it named, so a split is never filed
-  cut. Each text is clipped as NexKit 6 clips it: a question at 1,500 characters, an option at 500,
+  cut. Each text is clipped to what a person needs to read: a question at 1,500 characters, an option at 500,
   the item's title and a part's at 256, a path at 300, a finding at 300, a reason for a person at
-  1,000 and a check's name at 40, as long as NexKit's own may be. The history is clipped as the
+  1,000 and a check's name at 40, enough to compare failures by. The history is clipped as the
   prompts clip it: a note at 2,000 characters, a summary at 4,000, a cause at 2,000, a finding's
   body at 1,500 and the failure signature of a fix record at 200. The state keeps the latest 5 fix
   records, each with at most 30 failing checks, and the last review's 30 findings, in the
@@ -227,7 +221,7 @@ needed.
   When a document would still pass the limit, the engine shortens texts that a person reads in full
   where the host keeps them, each to the most that fits, in this order: the findings, the questions
   and their options, the protected paths, the attention's text, and the names of repeated checks
-  past the 10 that a diagnosis round looks into, which no name of NexKit's own ever needs. Only
+  past the 10 that a diagnosis round looks into, which only the host keeps for people. Only
   then does it shorten the history: the last review's suggestions and then its blocking findings,
   the fix records' notes, summaries and causes and the note of the round under way, the check
   names, failure signatures and conflicting files of the fix records, and the files of the last
@@ -244,20 +238,11 @@ needed.
 The protocol is built for delivery at least once, in any order a host's queues give it.
 
 - **Every event has an id**, the same each time the host sends that event again and different
-  for every other event. One webhook delivery may give several events for one item, so an id
+  for every other event. One delivery from the host's source may give several events for one item, so an id
   names the event, such as `<delivery>:<kind>`. The state keeps the ids of the 20 latest events
   that changed it, and the engine takes an event whose id it holds as a duplicate that changes
   nothing.
-  The GitHub host names each event by its source on GitHub (`host.event_id`): `comment-<id>`
-  for a comment, whether it is a remark, an answer or a command, `review-<id>`,
-  `issue-event-<id>` from the issue events API, `dispatch-<run id>`, and `run-<run id>` for an
-  agent's result, so the publish job, the report job and the sweep give one result the same id. An id is built
-  only from GitHub's number, never from a text, and its kind keeps a comment and a review with
-  one number apart.
-  The state comment also keeps the host's own cursor, a hidden line before the state marker with the
-  time and the event id of the newest source that the host took. The host answers only the sources
-  after it, since `recentEvents` keeps the ids of events that changed the state, and run results
-  would push a comment's id out of it. The cursor moves past a source even when its answer changed
+  A host that takes events from its sources keeps a cursor beside the state, with the time and the event id of the newest source it took. It answers only the sources after the cursor, since `recentEvents` keeps the ids of events that changed the state, and run results would push a source's id out of it. The cursor moves past a source even when its answer changed
   nothing, in a write of its own on the same revision, so that an old remark is never answered later
   on a state that moved on. Another writer's write keeps it.
 - **A person's decision names what it decides on.** `planApproved`, and a `go`, name the plan by
@@ -283,8 +268,7 @@ The protocol is built for delivery at least once, in any order a host's queues g
     old one. When every try loses, the run fails and the event stays at its source, past the
     cursor, for the next run to take once.
   - It reads an observation while it handles the event, never from a payload that waited in a
-    queue, and from a read that sees every write the host made itself, such as the branch's ref
-    rather than a cached pull request. A stale read would take the change back to a version it
+    queue, and from a read that sees every write the host made itself, such as the change itself rather than a cached copy. A stale read would take the change back to a version it
     left.
   - It sends an observation only when it knows each field. While a forge still computes whether
     the change conflicts, the host waits and reads again, for a bounded time such as a few
@@ -367,14 +351,12 @@ Starts stay within `maxParallel`, counting the items that already run. Each star
 item on an account in `limited` never starts, takes no place, and waits even when it is awaited.
 Each item that does not start gets a wait: `for` is `place` or `usageLimit`, and `running` is how
 many items ran at that point, those that already ran and the starts before it. A host shows that
-count as its own words say, such as "4 issues are in progress".
+count as its own words say, such as "4 items are in progress".
 
 ## Conformance
 
 `tests/conformance/` holds cases: a state, events in order, and the actions and state each must
-give. They come from the decisions that `tests/test_scenarios.py` plays today. Its scenarios that
-are about GitHub alone, such as Dependabot, shards, branch updates and carried reviews,
-stay as tests of the GitHub host.
+give. They come from the decisions that `tests/test_scenarios.py` plays today. Its scenarios about one host's own work stay as that host's tests.
 
 `tests/conformance/sweeps/` holds the cases of the `sweep` call: the items, the running count, the
 limited accounts and the policies, and the exact starts and waits. A test sends each to
@@ -401,8 +383,7 @@ The cases are short forms that only the test runner reads. `python3 scripts/conf
 writes the cases of both folders as one JSON file that anyone can read. It names the protocol's
 version and NexKit's version. Each case has its name and its requests in order. A sweep case's name
 starts with `sweeps/`. Each request is whole and comes with the exact text of the engine's
-answer, a refusal's included. The cases in `tests/conformance/imports/` stay out, since an import is
-the GitHub host's work and not a call of the engine. The file fits
+answer, a refusal's included. The cases in `tests/conformance/imports/` stay out, since an import is one host's work and not a call of the engine. The file fits
 `nexkit/protocol/v1/conformance.schema.json`. It is not committed, because it is large and carries
 NexKit's version. Build it when you need it, or take the suite of the version you pin: each release
 attaches the file that its image passed as `nexkit-engine-conformance-<version>.json`, which
@@ -440,7 +421,7 @@ adapter's tests and the answers as what its adapter carries out.
   `protocol.MINOR` in `nexkit/protocol/` is the one place the minor version lives, and `load`
   leaves `x-since` out, as it does `$comment`.
 - **A test holds each released minor version.** `scripts/protocol_freeze.py` writes the schemas to
-  `tests/golden/protocol/`: in the release pull request of 7.0, and in each release that raises
+  `tests/golden/protocol/`: in the release of 7.0, and in each release that raises
   the minor version. Whenever that folder holds a copy, a test compares the tree with it. It
   allows a new optional property whose `x-since` is above the copy's minor version, and a changed
   `$comment`. It refuses every other change, a changed `description` or `default` included: a
@@ -466,74 +447,7 @@ adapter's tests and the answers as what its adapter carries out.
   the state document. The one part that stays open is `pending`: each entry is an action as the
   engine answered it, so it follows the action's schema, and a new optional field of an action
   is the protocol's change, not the state's.
-- **A host's first state document is the host's to build.** The GitHub host builds each open
-  item's document from NexKit 6's markers, open pull requests, paused runs and waits included, and
-  an application that had a loop of its own builds each request's from its records. The import reads
-  NexKit 6's markers only from NexKit's App, each only where NexKit writes it. The change's
-  observation is what NexKit 6 knows of the open pull request: its head commit, and whether it
-  conflicts or was merged when GitHub said so; none when there is no pull request. A part of a
-  split is imported with how many levels of parts it is below the issue first split, so a part at
-  the deepest level whose plan is too large waits for a person. Autopilot's answers are kept in
-  `asked` only while the plan or round they started is on its way: a person's comment, or a run
-  that reported and changed the item, ends them. A `/nexkit go` that stopped as blocked is placed
-  where the engine puts the round's result, under the GitHub host's policies, and automatic
-  approval applies only to an issue autopilot takes. Its questions wait for answers, with the
-  ones that only a new plan carries out kept, and a change that needs protected paths waits for a
-  person whatever the round asks. A round with nothing to answer fails, one whose only question
-  recommends closing with a finding that no change is needed ends in `noChange`, and one that the
-  engine refuses fails for a person. A fix round of an issue autopilot takes that stopped as
-  blocked is placed the same way, and so is a round, a `/nexkit go` or a fix round, that ran out
-  of time, which the engine answers with the plan that asks for a split, or with `failed` for a
-  part that is at the deepest level or whose issue already asked. Answers that the engine would
-  give, and that split plan, leave the plan or round they start waiting for the sweep to start
-  it. The plan that autopilot asked for after a pull request's round ran out of time is imported
-  with `supersede`, so its split withdraws the pull request. A split that an issue above the
-  item asked for is imported into `asked`, so a part that runs out of time again waits for a
-  person. An issue autopilot does not take keeps a time-out in `failed` and a blocked fix round
-  waiting for answers. A finished plan of an issue autopilot takes, with no collaborator's comment
-  after it, is imported as the engine's answer to the plan's result, played under the item's own
-  policies: its outbox holds what follows the plan, such as the implement run of a clean plan, and
-  the plan run's id is among the events seen, so the result is never sent again. Any other
-  finished plan waits for its approval, its answers or a hand-made change. A NexKit 6 run on its
-  way, or a command that autopilot started and that
-  has not run yet, becomes the action the engine waits for. A run keeps the count of its runs again after a transient error when it is one
-  (`again.transient`, as a paused one does). Either keeps autopilot's count of lost starts
-  (`again.lost`, and `again.once` when the record says the start runs once more), from the record
-  of the same command and target started within six hours. An automatic fix round on its way, with a count, is marked
-  `rounds.automatic`, so that a stop gives its count back. A run paused at a usage limit, or until
-  it runs again after a transient stop, becomes a wait with its time, the second keeping the
-  count of runs again, unless NexKit 6 would no longer resume it, which fails for a person; an automatic run that ended without a report waits
-  to start again, later each time. A merge that waits for required checks is `accepting` with that
-  wait and, when NexKit 6 recorded when they first had not passed (`waiting_since`), with that
-  time as `checksSince`, so that their end counts from the same moment, and a round that waits
-  for a failure the base branch has is `fixing` with that wait. An
-  item without a pull request that a lower wave of its milestone holds back waits for each open
-  issue of that wave as for a blocker, read once at the import; an issue opened later in the
-  wave is not waited for. A
-  round that a hold label kept back is in the state of the step it kept back, held, or waiting to
-  start once the label is gone; a conflict round waits in its checks, where the conflict policy
-  applies with its count, and a fix round that a hold or a base failure kept back waits to be
-  issued (`rounds.due`), counted when it starts or left to a person when none is left then.
-  The checks that NexKit 6 found failing the same way before and after the last fix round are
-  kept for the next automatic fix round to diagnose (`rounds.repeated`). So are the failing
-  checks of NexKit 6's state comment (`rounds.failing`), which the checks after the next fix
-  round compare with, as NexKit 6 compares them. The fix records and the last review of NexKit 6's
-  state comment are imported with NexKit 6's round numbers, which count every run on the pull
-  request, so the engine numbers the rounds after them from the next number. The version a fix
-  round published
-  (`rounds.fixed`) is not imported, since every imported fix round in its agent still publishes
-  and the engine sets it then. A round whose run is in its check jobs (`shards`, `verify`,
-  `combine`) is imported waiting for its checks on the pull request's head, and its report
-  sends the checks' result on that stored state; a counted automatic fix round of it is marked automatic
-  (`rounds.automatic`), so that a stop gives its count back.
-  What a round decided on its head keeps that head as the change's version, and a head pushed
-  since is in the observation, so the engine checks it before it goes on. A run that waits to run again runs its own command again, and a lost round
-  runs a fix round's command or a review, as NexKit 6 does; autopilot's record of tries counts
-  only for the same command and target within six hours, and allows one start more once the
-  agent ran. Once stored, the count is the state's `again.lost`: a later loss counts from it, and
-  the six-hour window only selects which record the import reads. Each imported item is one the engine moves on from: a case in
-  `tests/conformance/imports/` takes a NexKit 6 situation in, gives the state document out, and
-  sends the events that carry the item on from there.
+- **A host's first state document is the host's to build.** A host that had a loop of its own builds each open item's document from its records, within the protocol's schema and size (see [the state document](#the-state-document)). The engine then moves the item on from it as from any other.
 
 ## Getting there
 
@@ -616,6 +530,74 @@ adapter's tests and the answers as what its adapter carries out.
    and the sweep does not mention them again. The other differences are in
    `tests/differential/known.py`. Every existing test passes after each step, and the engine's
    part of `tests/test_scenarios.py` became the conformance suite.
+
+   The GitHub host builds each open item's first document from NexKit 6's markers, open pull
+   requests, paused runs and waits included. The import reads NexKit 6's markers only from
+   NexKit's App, each only where NexKit writes it. The change's
+   observation is what NexKit 6 knows of the open pull request: its head commit, and whether it
+   conflicts or was merged when GitHub said so; none when there is no pull request. A part of a
+   split is imported with how many levels of parts it is below the issue first split, so a part at
+   the deepest level whose plan is too large waits for a person. Autopilot's answers are kept in
+   `asked` only while the plan or round they started is on its way: a person's comment, or a run
+   that reported and changed the item, ends them. A `/nexkit go` that stopped as blocked is placed
+   where the engine puts the round's result, under the GitHub host's policies, and automatic
+   approval applies only to an issue autopilot takes. Its questions wait for answers, with the
+   ones that only a new plan carries out kept, and a change that needs protected paths waits for a
+   person whatever the round asks. A round with nothing to answer fails, one whose only question
+   recommends closing with a finding that no change is needed ends in `noChange`, and one that the
+   engine refuses fails for a person. A fix round of an issue autopilot takes that stopped as
+   blocked is placed the same way, and so is a round, a `/nexkit go` or a fix round, that ran out
+   of time, which the engine answers with the plan that asks for a split, or with `failed` for a
+   part that is at the deepest level or whose issue already asked. Answers that the engine would
+   give, and that split plan, leave the plan or round they start waiting for the sweep to start
+   it. The plan that autopilot asked for after a pull request's round ran out of time is imported
+   with `supersede`, so its split withdraws the pull request. A split that an issue above the
+   item asked for is imported into `asked`, so a part that runs out of time again waits for a
+   person. An issue autopilot does not take keeps a time-out in `failed` and a blocked fix round
+   waiting for answers. A finished plan of an issue autopilot takes, with no collaborator's comment
+   after it, is imported as the engine's answer to the plan's result, played under the item's own
+   policies: its outbox holds what follows the plan, such as the implement run of a clean plan, and
+   the plan run's id is among the events seen, so the result is never sent again. Any other
+   finished plan waits for its approval, its answers or a hand-made change. A NexKit 6 run on its
+   way, or a command that autopilot started and that
+   has not run yet, becomes the action the engine waits for. A run keeps the count of its runs again after a transient error when it is one
+   (`again.transient`, as a paused one does). Either keeps autopilot's count of lost starts
+   (`again.lost`, and `again.once` when the record says the start runs once more), from the record
+   of the same command and target started within six hours. An automatic fix round on its way, with a count, is marked
+   `rounds.automatic`, so that a stop gives its count back. A run paused at a usage limit, or until
+   it runs again after a transient stop, becomes a wait with its time, the second keeping the
+   count of runs again, unless NexKit 6 would no longer resume it, which fails for a person; an automatic run that ended without a report waits
+   to start again, later each time. A merge that waits for required checks is `accepting` with that
+   wait and, when NexKit 6 recorded when they first had not passed (`waiting_since`), with that
+   time as `checksSince`, so that their end counts from the same moment, and a round that waits
+   for a failure the base branch has is `fixing` with that wait. An
+   item without a pull request that a lower wave of its milestone holds back waits for each open
+   issue of that wave as for a blocker, read once at the import; an issue opened later in the
+   wave is not waited for. A
+   round that a hold label kept back is in the state of the step it kept back, held, or waiting to
+   start once the label is gone; a conflict round waits in its checks, where the conflict policy
+   applies with its count, and a fix round that a hold or a base failure kept back waits to be
+   issued (`rounds.due`), counted when it starts or left to a person when none is left then.
+   The checks that NexKit 6 found failing the same way before and after the last fix round are
+   kept for the next automatic fix round to diagnose (`rounds.repeated`). So are the failing
+   checks of NexKit 6's state comment (`rounds.failing`), which the checks after the next fix
+   round compare with, as NexKit 6 compares them. The fix records and the last review of NexKit 6's
+   state comment are imported with NexKit 6's round numbers, which count every run on the pull
+   request, so the engine numbers the rounds after them from the next number. The version a fix
+   round published
+   (`rounds.fixed`) is not imported, since every imported fix round in its agent still publishes
+   and the engine sets it then. A round whose run is in its check jobs (`shards`, `verify`,
+   `combine`) is imported waiting for its checks on the pull request's head, and its report
+   sends the checks' result on that stored state; a counted automatic fix round of it is marked automatic
+   (`rounds.automatic`), so that a stop gives its count back.
+   What a round decided on its head keeps that head as the change's version, and a head pushed
+   since is in the observation, so the engine checks it before it goes on. A run that waits to run again runs its own command again, and a lost round
+   runs a fix round's command or a review, as NexKit 6 does; autopilot's record of tries counts
+   only for the same command and target within six hours, and allows one start more once the
+   agent ran. Once stored, the count is the state's `again.lost`: a later loss counts from it, and
+   the six-hour window only selects which record the import reads. Each imported item is one the engine moves on from: a case in
+   `tests/conformance/imports/` takes a NexKit 6 situation in, gives the state document out, and
+   sends the events that carry the item on from there.
 2. NexKit 7 is released when the GitHub host runs only through the engine. Repositories on
    NexKit 6 move to it with the usual upgrade steps, and the GitHub host imports their open work.
 3. An application can then be a host, with its adapter in its own language and, when it keeps

@@ -1,4 +1,4 @@
-"""The first state document of NexKit 6's work (docs/engine.md#versions).
+"""The first state document of NexKit 6's work (docs/engine.md#getting-there).
 
 Each file in tests/conformance/imports/ is a case: a NexKit 6 situation, its comments named by
 the records of their markers, the kind of item the import must read it as (one of

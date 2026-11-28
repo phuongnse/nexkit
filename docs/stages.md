@@ -99,11 +99,13 @@ plan, however small, goes into the plan or the round that implements it:
 - Use `/nexkit plan from scratch` only when the plan has gone wrong. It drops the latest
   plan's choices, so first comment every choice to keep.
 
-**Implement and fix.** Full access to a disposable runner. The prompt contains
-the plan, the issue, the discussion from collaborators, and for fix rounds the failing
-check output, blocking review findings and collaborators' review comments on the current
-commit. It asks the agent to run the checks before it finishes; of a
-[slow check](checks.md#slow-checks), only the tests that cover the change or that
+**Implement and fix.** Full access to a disposable runner. The implement prompt contains
+the plan, the issue and the discussion from collaborators. The fix prompt shows no
+discussion. It shows the feedback instead: the failing check output, required checks that
+failed so that GitHub refused the merge, blocking review findings and collaborators' review
+comments on the current commit. It also shows the earlier fix rounds, the note, the plan and
+the issue. Each prompt asks the agent to run the checks before it finishes. Of a
+[slow check](checks.md#slow-checks), it asks only for the tests that cover the change or that
 failed, since NexKit runs every check after the round. The agent must return `done` or
 `blocked`. A `blocked` result needs a non-empty `blocker`, unless it asks a question or, in
 a fix round, lists an open conflict; NexKit treats one with neither as a result that [does
@@ -115,16 +117,16 @@ the base branch already fixed, or a CI failure from outside the repository, such
 download host that refused requests, after which a newer run of the workflow passed on
 the default branch, changes nothing and writes the finding, with its evidence and the run
 that passed, in `no_change`. The run's comment adds a link to each run that passed since.
-An implement or fix agent whose change must modify a protected path leaves it unchanged
-and stops as `blocked` with the paths in `protected_paths`; autopilot answers none of its
-questions, and a person decides. When the issue, the plan or the discussion says to stop without a change
-in that case, it returns `done`: NexKit opens no pull request, closes the issue as
-completed, and the run's comment shows the finding (outcome `no_change`). Otherwise it
-returns `blocked` with a question whose recommended option is to close the issue, and
-names that option in the question's `closes`, which [autopilot](work-without-a-command.md#autopilot) answers by
-closing it. A round blocked for any other reason leaves `no_change` empty. A round that
-changed files and returned `done` is a change, whatever `no_change` holds: NexKit
-publishes it as usual, adds the text to the pull request's *Notes for the reviewer*, shows
+When the issue, the plan or the discussion says to stop without a change in that case, it
+returns `done`: NexKit opens no pull request, closes the issue as completed, and the run's
+comment shows the finding (outcome `no_change`). Otherwise it returns `blocked` with a
+question whose recommended option is to close the issue, and names that option in the
+question's `closes`, which [autopilot](work-without-a-command.md#autopilot) answers by
+closing it. An implement or fix agent whose change must modify a protected path leaves it
+unchanged and stops as `blocked` with the paths in `protected_paths`. Autopilot answers none
+of its questions, and a person decides. A round blocked for any other reason leaves
+`no_change` empty. A round that changed files and returned `done` is a change, whatever
+`no_change` holds: NexKit publishes it as usual, adds the text to the pull request's *Notes for the reviewer*, shows
 it in the round's comment as a note from the implement agent, and keeps the issue open.
 Only a round that changed no file closes the issue with its finding.
 
@@ -536,7 +538,8 @@ After a fix round that merged the base branch, the diff since the reviewed commi
 leaves out the changes the merge brought from the base branch: it starts from git's own
 merge of the reviewed commit with the merged base commit.
 
-When this run's fix round merged the base branch, the prompt also has a *Merge* section:
-the conflicted files and what each side changed in them before the merge. The reviewer
-checks that both sides survived in each file. A dropped side is a blocking finding, unless
-a person's note asked for it.
+When this run's fix round merged the base branch and the merge had conflicts, the prompt
+also has a *Merge* section: the conflicted files and what each side changed in them before
+the merge. The reviewer checks that both sides survived in each file. A dropped side is a
+blocking finding, unless a person's note asked for it. A merge without conflicts adds no
+*Merge* section.

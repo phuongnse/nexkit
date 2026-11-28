@@ -25,12 +25,15 @@ from nexkit.textutil import TEXT_LIMIT
 from tests.answers import NOT_ANSWERS, STEPS, _before, _calls
 from tests.support import (
     BOT_LOGIN,
+    FIX_OUTPUT,
+    IMPLEMENT_OUTPUT,
     FakeGitHub,
     make_config,
     plan_running,
     play_steps,
     play_sweep,
     prompt_texts,
+    store_fields,
 )
 
 WORKFLOW = "acme/app/.github/workflows/nexkit.yml@refs/heads/main"
@@ -3391,7 +3394,10 @@ class CIWaitTests(AutopilotCase):
             (artifacts / folder / name).write_text(json.dumps(data))
 
         tokens = {"input": 1, "output": 1}
-        write("nexkit-agent", "result.json", {"status": "done", "tokens": tokens})
+        # The agent's result that the publish job stores in the item's state before the checks.
+        stage_output = FIX_OUTPUT if action == "fix" else IMPLEMENT_OUTPUT
+        agent = {"status": "done", "tokens": tokens, "output": stage_output}
+        write("nexkit-agent", "result.json", agent)
         checks = [
             {
                 "name": name,
@@ -3427,6 +3433,29 @@ class CIWaitTests(AutopilotCase):
         self.runs += 1
         env = {"GITHUB_RUN_ID": str(200 + self.runs)}
         with mock.patch.dict(os.environ, env), contextlib.redirect_stdout(io.StringIO()):
+            # The round started its run, and the first run in the item's group stored its state
+            # while the round was on its way to its checks (`host.store_import`).
+            progress.start(self.gh, decision)
+            host.store_import(self.gh, self.cfg, issue)
+            stored = item_state.read(self.gh, issue)[1]
+            if not any(a["kind"] == "runChecks" for a in stored["pending"]):
+                # An earlier round of the pull request left its state waiting (for the bug
+                # issue): this fix round's publish job stored it back in its checks, on its
+                # head, with nothing left to wait for.
+                checks = {
+                    "id": "a9.1",
+                    "next": None,
+                    "kind": "runChecks",
+                    "changeVersion": self.HEAD,
+                }
+                store_fields(
+                    self.gh,
+                    issue,
+                    state="checking",
+                    pending=[checks],
+                    waits=[],
+                    rounds={"fixed": self.HEAD},
+                )
             return report(
                 self.gh,
                 decision,
@@ -3610,8 +3639,12 @@ class CIWaitTests(AutopilotCase):
         real = self.gh.issue_comment
         raised = []
 
+        [state_comment] = [c for c in self.gh.comments(pull) if "nexkit:state" in c["body"]]
+
         def reported(comment_id):
-            if not raised:
+            # Only the pull request's state comment is read by its id here: the item's own
+            # state comment on the issue is read the same way, and it is not the count.
+            if not raised and comment_id == state_comment["id"]:
                 # A report raises the count after the sweep read the state.
                 raised.append(comment_id)
                 stored = self.state(pull)

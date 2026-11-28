@@ -17,7 +17,17 @@ import random
 import sys
 from unittest import mock
 
-from common import TOK, WORKFLOW, Artifacts, attempt, quiet, seed, snapshot
+from common import (
+    FIX_OUTPUT,
+    IMPLEMENT_OUTPUT,
+    TOK,
+    WORKFLOW,
+    Artifacts,
+    attempt,
+    quiet,
+    seed,
+    snapshot,
+)
 
 from nexkit import autopilot, maintain, progress  # noqa: F401
 from nexkit import report as report_mod
@@ -313,7 +323,6 @@ def run(sc):
         # The conflict rounds used before the first round: fixtures that the import counts.
         pr = 7 if first["kind"] == "person_pr" else 6
         gh.round_comment(pr, 90 + n, "b" * 40, "failed", conflicts=True, base_sha="d" * 40)
-    seed(gh, cfg)
     res = {"steps": []}
     for i, rd in enumerate(sc["rounds"]):
         pr = 7 if rd["kind"] == "person_pr" else 6
@@ -336,12 +345,34 @@ def run(sc):
             publish["recheck"] = True
         if publish is not None and rd["conflicts"]:
             publish["conflicts"] = ["a.py"]
+        # The round's run stores the item's state just after its `progress.start`: the round in
+        # progress, which the first round's import holds and, for each round after it, the import
+        # again as the next revision, since these chains dispatch rounds in any order.
+        if i > 0 and "closed" in (gh.pulls[pr]["state"], gh.issues[5]["state"]):
+            # A round that merged or closed leaves nothing for the next round to start from, as
+            # a person reopens it for another round.
+            gh.reopen(pr, 5)
+        with mock.patch.dict("os.environ", {"GITHUB_RUN_ID": str(101 + i)}), quiet():
+            try:
+                progress.start(gh, d)
+            except Exception as exc:  # noqa: BLE001
+                step_start = f"EXC {type(exc).__name__}: {exc}"
+            else:
+                step_start = None
+            seed(gh, cfg, again=i > 0)
         if publish is not None:
             gh.pulls[pr]["head"]["sha"] = new_head
         art = Artifacts()
         _, found = read_state(gh.comments(pr))
         before = ((found or {}).get("feedback") or {}).get("checks")
-        art.agent({"status": "done", "tokens": TOK})
+        fits = (
+            {}
+            if publish is None
+            else IMPLEMENT_OUTPUT
+            if d["action"] == "implement"
+            else FIX_OUTPUT
+        )
+        art.agent({"status": "done", "tokens": TOK, **({"output": fits} if fits else {})})
         conflicting = publish is not None and rd["conflicts"]
         checks = _checks_now(sc, rd["checks"], before, i)
         if not conflicting:
@@ -358,6 +389,8 @@ def run(sc):
             return wait if any(not c.get("passed") for c in checks_ or []) else None
 
         step = {"kind": rd["kind"], "decision": d}
+        if step_start:
+            step["start"] = step_start
         with (
             mock.patch.dict("os.environ", {"GITHUB_RUN_ID": str(101 + i)}),
             mock.patch.object(report_mod, "_held", _held(rd["held"])),

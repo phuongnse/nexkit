@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from unittest import mock
 
-from nexkit import agent, autopilot, cli, first_state, host, item_state
+from nexkit import agent, autopilot, cli, first_state, host, item_state, progress
 from nexkit.github import GitHubError, run_url
 from nexkit.maintain import is_conflicting, maintain, resolve_conflicts, start_conflict_round
 from nexkit.report import _not_up_to_date
@@ -29,6 +29,8 @@ from nexkit.usage import iso
 from tests.support import (
     BOT_LOGIN,
     CALC,
+    FIX_OUTPUT,
+    IMPLEMENT_OUTPUT,
     SUB,
     FakeGitHub,
     GitRepos,
@@ -905,7 +907,8 @@ class ConflictReportTests(ReportCase):
         if d and d.get("conflicts"):
             own.update(trigger="fix (auto, conflicts)", conflicts=True, base_sha=d["base_sha"])
         self.gh.comment(6, render_run(own))
-        self.candidate()
+        # A fix round's result fits its schema, so that the round is stored as published.
+        self.candidate(output=FIX_OUTPUT if d else None)
         self.gh.merge_error = GitHubError(405, "Pull Request has merge conflicts")
         self.gh.pulls[6]["mergeable"] = False
         conflicts = {"auto_resolve": True, "max_rounds": max_rounds}
@@ -997,11 +1000,11 @@ class ConflictReportTests(ReportCase):
         self.gh.add_issue(4)
         self.gh.add_pull(7, 4)
         self.gh.pulls[7]["mergeable"] = False
-        self.candidate()
+        self.candidate(output=IMPLEMENT_OUTPUT)
         self.run_report(cfg=make_config(merge={"auto": True}))
         self.assertFalse(rounds_started(self.gh))  # off by default
-        self.gh.reopen(6, 5)  # the first merge closed it
         cfg = make_config(merge={"auto": True}, conflicts={"auto_resolve": True})
+        self.reopened(cfg)  # the first merge closed it
         self.run_report(cfg=cfg)
         self.assertEqual([d["inputs"]["number"] for d in rounds_started(self.gh)], ["7"])
         row = self.gh.run_comments(6)[-1]
@@ -1044,7 +1047,7 @@ class MergeRefusalTests(ReportCase):
         )
 
     def test_a_merge_refused_because_the_base_branch_moved_is_tried_again(self):
-        self.candidate()
+        self.candidate(output=IMPLEMENT_OUTPUT)
         self.gh.required = set()
         modified = GitHubError(405, "Base branch was modified. Review and try the merge again.")
         merge = self.gh.merge
@@ -1068,19 +1071,23 @@ class MergeRefusalTests(ReportCase):
         self.assertIn("at try 3", outcome["summary"])
         self.assertEqual(self.gh.issues[5]["state"], "closed")
         # Three refusals in a row: a person decides.
-        self.gh.reopen(6, 5)
+        self.reopened(self.cfg)
         with mock.patch.object(self.gh, "merge", side_effect=refuse(3)):
             self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], "merge_refused")
         # The same words while the base branch stays where it was: no other try.
+        self.reopened(self.cfg)
         self.gh.merge_error = [modified]
         self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], "merge_refused")
         self.assertEqual(len(self.sleeps.call_args_list), 4)
 
     def test_a_merge_refused_because_the_head_moved_reviews_the_new_head(self):
-        self.candidate()
+        self.candidate(output=IMPLEMENT_OUTPUT)
         self.gh.merge_error = GitHubError(
             409, "Head branch was modified. Review and try the merge again."
         )
+        # The round checked `b`, which the item's state holds; then the branch moved on.
+        self.gh.pulls[6]["head"]["sha"] = "b" * 40
+        host.store_import(self.gh, self.cfg, 5)
         self.gh.pulls[6]["head"]["sha"] = "c" * 40
         outcome = self.run_report(cfg=self.cfg, head="b" * 40)
         self.assertEqual(outcome["outcome"], "head_moved")
@@ -1234,7 +1241,7 @@ class MergeRefusalTests(ReportCase):
     def test_an_implement_round_that_ends_with_a_conflict_starts_its_conflict_round(self):
         os.environ["GITHUB_RUN_ID"] = "1"  # the id the next report runs as
         self.gh.comment(5, render_run({"command": "go", "url": run_url(), "status": "running"}))
-        self.candidate()
+        self.candidate(output=IMPLEMENT_OUTPUT)
         self.gh.pulls[6]["mergeable"] = False
         cfg = make_config(conflicts={"auto_resolve": True})
         outcome = self.run_report(cfg=cfg)
@@ -1268,7 +1275,7 @@ class MergeRefusalTests(ReportCase):
     def test_an_implement_round_starts_its_conflict_round_only_when_the_engine_answers_one(self):
         os.environ["GITHUB_RUN_ID"] = "1"  # the id the next report runs as
         self.gh.comment(5, render_run({"command": "go", "url": run_url(), "status": "running"}))
-        self.candidate()
+        self.candidate(output=IMPLEMENT_OUTPUT)
         self.gh.pulls[6]["mergeable"] = False
         cfg = make_config(conflicts={"auto_resolve": True})
         with mock.patch.object(host, "base_moved", return_value="waits") as moved:
@@ -1283,7 +1290,7 @@ class MergeRefusalTests(ReportCase):
     def test_an_implement_round_whose_conflict_round_the_engine_refuses_starts_none(self):
         os.environ["GITHUB_RUN_ID"] = "1"  # the id the next report runs as
         self.gh.comment(5, render_run({"command": "go", "url": run_url(), "status": "running"}))
-        self.candidate()
+        self.candidate(output=IMPLEMENT_OUTPUT)
         self.gh.pulls[6]["mergeable"] = False
         cfg = make_config(conflicts={"auto_resolve": True})
         with mock.patch.object(host, "base_moved", side_effect=host.Refused("no")):
@@ -1294,7 +1301,7 @@ class MergeRefusalTests(ReportCase):
     def test_a_merge_waiting_for_required_checks_is_merged_by_a_later_sweep(self):
         self.gh.add_milestone(1)
         self.gh.issues[5]["milestone"] = {"number": 1}
-        self.candidate()
+        self.candidate(output=IMPLEMENT_OUTPUT)
         pending = GitHubError(405, 'Required status check "e2e" is expected.')
         self.gh.merge_error = [pending]
         outcome = self.run_report(cfg=self.cfg)
@@ -1316,9 +1323,10 @@ class MergeRefusalTests(ReportCase):
         manual = make_config(merge={"auto": True})
         for cfg in (manual, make_config(merge={"auto": True}, autopilot={"enabled": True})):
             self.gh.merge_error = [pending]
-            self.candidate()
+            self.candidate(output=IMPLEMENT_OUTPUT)
             if cfg is not manual:
                 self.gh.issues[5]["milestone"] = None
+                self.reopened(cfg)  # the second round starts after the first one ended
             outcome = self.run_report(cfg=cfg)
             self.assertEqual(outcome["outcome"], "merge_refused")
             self.assertIn("Merge it once they pass.", outcome["summary"])
@@ -1327,7 +1335,7 @@ class MergeRefusalTests(ReportCase):
     def test_a_failed_merge_step_says_so_and_the_sweep_goes_on(self):
         self.gh.add_milestone(1)
         self.gh.issues[5]["milestone"] = {"number": 1}
-        self.candidate()
+        self.candidate(output=IMPLEMENT_OUTPUT)
         self.gh.merge_error = [GitHubError(405, 'Required status check "e2e" is expected.')]
         self.run_report(cfg=self.cfg)
         with mock.patch("nexkit.report.merge_pull", side_effect=GitHubError(502, "Bad")):
@@ -1338,7 +1346,7 @@ class MergeRefusalTests(ReportCase):
         """An approved round of #6 whose merge waits for the required check `e2e`."""
         self.gh.add_milestone(1)
         self.gh.issues[5]["milestone"] = {"number": 1}
-        self.candidate()
+        self.candidate(output=IMPLEMENT_OUTPUT)
         self.gh.merge_error = [GitHubError(405, 'Required status check "e2e" is in progress.')]
         self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], "merge_waiting")
         self.gh.dispatches.clear()
@@ -1400,7 +1408,7 @@ class MergeRefusalTests(ReportCase):
         from nexkit.context import _after_failed_checks
         from nexkit.state import read_state
 
-        self.candidate()
+        self.candidate(output=IMPLEMENT_OUTPUT)
         self.e2e_fails()
         self.gh.merge_error = [self.gh.merge_error]
         outcome = self.run_report(cfg=self.cfg)
@@ -1526,7 +1534,7 @@ class MergeRefusalTests(ReportCase):
         self.assertFalse(self.gh.comments_matching(6, "@olivia"))
 
     def test_a_branch_behind_its_base_is_updated_and_reviewed_again(self):
-        self.candidate()
+        self.candidate(output=IMPLEMENT_OUTPUT)
         self.gh.pulls[6]["mergeable_state"] = "behind"
         self.gh.merge_error = GitHubError(405, "Head branch is out of date. Review and try again.")
         outcome = self.run_report(cfg=self.cfg)
@@ -1540,14 +1548,15 @@ class MergeRefusalTests(ReportCase):
         # of the same head is refused again.
         self.gh.pulls[6]["head"]["sha"] = HEAD
         self.gh.pulls[6]["mergeable_state"] = "behind"
-        store_pending(self.gh, self.cfg, 5, 6, HEAD, rounds={"updates": 1})
+        self.reopened(self.cfg)  # the review round that follows the update
+        store_fields(self.gh, 5, rounds={"updates": 1})
         self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], "merge_refused")
         self.assertEqual(len(self.gh.updated), 1)
 
     def test_required_checks_expected_on_a_branch_behind_its_base_update_it(self):
         # Branch protection wants the branch up to date: GitHub reports the checks that
         # passed on its head as "expected", and the pull request as behind.
-        self.candidate()
+        self.candidate(output=IMPLEMENT_OUTPUT)
         self.gh.pulls[6]["mergeable_state"] = "behind"
         expected = "Repository rule violations found\n\n2 of 2 required status checks are expected."
         self.gh.merge_error = [GitHubError(405, expected)]
@@ -1564,18 +1573,20 @@ class MergeRefusalTests(ReportCase):
     def test_required_checks_expected_on_a_branch_not_behind_wait(self):
         self.gh.add_milestone(1)
         self.gh.issues[5]["milestone"] = {"number": 1}
-        self.candidate()
+        self.candidate(output=IMPLEMENT_OUTPUT)
         expected = "Repository rule violations found\n\n2 of 2 required status checks are expected."
         for state in (None, "blocked"):
+            self.reopened(self.cfg)  # each report is the end of a round that started
             if state:
                 self.gh.pulls[6]["mergeable_state"] = state
             self.gh.merge_error = [GitHubError(405, expected)]
             self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], "merge_waiting")
             self.assertFalse(self.gh.updated)
         # Without `conflicts.auto_resolve`, a branch that is behind waits too.
+        cfg = make_config(merge={"auto": True}, autopilot={"enabled": True})
+        self.reopened(cfg)
         self.gh.pulls[6]["mergeable_state"] = "behind"
         self.gh.merge_error = [GitHubError(405, expected)]
-        cfg = make_config(merge={"auto": True}, autopilot={"enabled": True})
         self.assertEqual(self.run_report(cfg=cfg)["outcome"], "merge_waiting")
         self.assertFalse(self.gh.updated)
 
@@ -1604,7 +1615,7 @@ class MergeRefusalTests(ReportCase):
     def test_the_review_after_an_update_finds_the_approval_it_carries_over(self):
         # An implement round's report runs beside the review it starts, which reads the
         # approval from the state comment: it is saved before the review is started.
-        self.candidate()
+        self.candidate(output=IMPLEMENT_OUTPUT)
         self.gh.pulls[6]["mergeable_state"] = "behind"
         self.gh.merge_error = GitHubError(405, "Head branch is out of date. Review and try again.")
         seen, dispatch = [], self.gh.dispatch
@@ -1622,7 +1633,7 @@ class MergeRefusalTests(ReportCase):
 
     def test_a_required_check_that_failed_is_found_from_githubs_data(self):
         # Words NexKit does not know: the base branch's rules and the head's checks decide.
-        self.candidate()
+        self.candidate(output=IMPLEMENT_OUTPUT)
         self.e2e_fails()
         self.gh.required = {"e2e", "lint"}
         self.gh.merge_error = [UNKNOWN_REFUSAL]
@@ -1636,7 +1647,7 @@ class MergeRefusalTests(ReportCase):
     def test_required_checks_that_have_not_reported_are_found_from_githubs_data(self):
         self.gh.add_milestone(1)
         self.gh.issues[5]["milestone"] = {"number": 1}
-        self.candidate()
+        self.candidate(output=IMPLEMENT_OUTPUT)
         # A check run still in progress, a commit status still pending, a check not seen yet.
         for required, checks, statuses in (
             ({"e2e"}, [{"name": "e2e", "status": "in_progress", "conclusion": None}], []),
@@ -1644,6 +1655,7 @@ class MergeRefusalTests(ReportCase):
             ({"deploy-preview"}, [], []),
         ):
             with self.subTest(required=required):
+                self.reopened(self.cfg)  # each report is the end of a round that started
                 self.gh.required = required
                 self.gh.commit_checks[HEAD] = checks
                 for context, state in statuses:
@@ -1651,13 +1663,14 @@ class MergeRefusalTests(ReportCase):
                 self.gh.merge_error = [UNKNOWN_REFUSAL]
                 self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], "merge_waiting")
         # A failed commit status is a failed check, as a check run is.
+        self.reopened(self.cfg)
         self.gh.required = {"ci/build"}
         self.gh.set_status(HEAD, "ci/build", "failure", "")
         self.gh.merge_error = [UNKNOWN_REFUSAL]
         self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], "auto_fix")
 
     def test_a_branch_behind_or_a_moved_head_is_found_from_githubs_data(self):
-        self.candidate()
+        self.candidate(output=IMPLEMENT_OUTPUT)
         self.gh.pulls[6]["mergeable_state"] = "behind"
         self.gh.merge_error = [UNKNOWN_REFUSAL]
         self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], "branch_updated")
@@ -1665,8 +1678,9 @@ class MergeRefusalTests(ReportCase):
         # pull request names its new head.
         for moved, error in (("9", GitHubError(409, "Conflict")), ("8", UNKNOWN_REFUSAL)):
             with self.subTest(error=error):
-                # Each refusal is of an `accept` that the engine asked for after the review.
-                store_pending(self.gh, self.cfg, 5, 6, HEAD)
+                # Each refusal ends a round that checked `HEAD`, before the branch moved.
+                self.gh.pulls[6]["head"]["sha"] = HEAD
+                self.reopened(self.cfg)
                 self.gh.pulls[6]["head"]["sha"] = moved * 40
                 self.gh.pulls[6].pop("mergeable_state", None)
                 self.gh.merge_error = [error]
@@ -1677,10 +1691,11 @@ class MergeRefusalTests(ReportCase):
         # reported on the head as required for this pull request.
         self.gh.add_milestone(1)
         self.gh.issues[5]["milestone"] = {"number": 1}
-        self.candidate()
+        self.candidate(output=IMPLEMENT_OUTPUT)
         self.gh.required, self.gh.required_complete = set(), False
         for state, outcome in (("pending", "merge_waiting"), ("failed", "auto_fix")):
             with self.subTest(state=state):
+                self.reopened(self.cfg)  # each report is the end of a round that started
                 self.gh.contexts[6] = [{"name": "Unit tests", "sha": HEAD, "state": state}]
                 self.gh.merge_error = [UNKNOWN_REFUSAL]
                 self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], outcome)
@@ -1688,6 +1703,7 @@ class MergeRefusalTests(ReportCase):
         self.assertEqual([item["name"] for item in state["feedback"]["required"]], ["Unit tests"])
         # A check of another commit, or one that passed, says nothing about this head.
         for found in ({"sha": "9" * 40, "state": "failed"}, {"sha": HEAD, "state": "passed"}):
+            self.reopened(self.cfg)
             self.gh.contexts[6] = [{"name": "Unit tests", **found}]
             self.gh.merge_error = [UNKNOWN_REFUSAL]
             self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], "merge_refused")
@@ -1695,7 +1711,7 @@ class MergeRefusalTests(ReportCase):
     def test_githubs_words_count_only_for_checks_its_data_cannot_name(self):
         self.gh.add_milestone(1)
         self.gh.issues[5]["milestone"] = {"number": 1}
-        self.candidate()
+        self.candidate(output=IMPLEMENT_OUTPUT)
         self.gh.required = set()
         expected = GitHubError(405, 'Required status check "deploy-preview" is expected.')
         failing = GitHubError(405, 'Required status check "deploy-preview" is failing.')
@@ -1709,16 +1725,17 @@ class MergeRefusalTests(ReportCase):
             (False, "blocked", failing, "merge_refused"),
         ):
             with self.subTest(complete=complete, state=state, error=str(error)):
+                cfg = make_config(merge={"auto": True}, autopilot={"enabled": True})
+                self.reopened(cfg)  # each report is the end of a round that started
                 self.gh.required_complete = complete
                 self.gh.pulls[6]["mergeable_state"] = state
                 self.gh.merge_error = [error]
-                cfg = make_config(merge={"auto": True}, autopilot={"enabled": True})
                 self.assertEqual(self.run_report(cfg=cfg)["outcome"], outcome)
 
     def test_a_mergeable_state_github_has_not_worked_out_is_asked_again(self):
         from nexkit.report import merge_state
 
-        self.candidate()
+        self.candidate(output=IMPLEMENT_OUTPUT)
         answers = iter(["unknown", "unknown", "behind"])
         with mock.patch.object(
             self.gh, "pull", side_effect=lambda n: {"mergeable_state": next(answers)}
@@ -1731,7 +1748,7 @@ class MergeRefusalTests(ReportCase):
             self.assertIsNone(merge_state(self.gh, 6))
 
     def test_a_refusal_that_needs_a_person_names_githubs_reason(self):
-        self.candidate()
+        self.candidate(output=IMPLEMENT_OUTPUT)
         self.gh.required = set()
         self.gh.merge_error = GitHubError(405, "At least 1 approving review is required.")
         outcome = self.run_report(cfg=self.cfg)
@@ -1754,7 +1771,7 @@ class MergeConflictEngineTests(ReportCase):
             self.addCleanup(patch.stop)
         self.gh.required = set()
         self.gh.merge_error = GitHubError(405, "Pull Request is not mergeable")
-        self.candidate()
+        self.candidate(output=IMPLEMENT_OUTPUT)
 
     def config(self, auto_resolve=True, max_rounds=3):
         conflicts = {"auto_resolve": auto_resolve, "max_rounds": max_rounds}
@@ -1764,6 +1781,10 @@ class MergeConflictEngineTests(ReportCase):
         """The accept results that the engine received for the merge, and the report's
         outcome, after the pull request is as `mutate` says."""
         self.gh.pulls[6].update(mutate)
+        # The report's own round started after the rounds that came before it, and the item's
+        # state holds it.
+        progress.start(self.gh, decision())
+        host.store_import(self.gh, cfg, 5)
         with mock.patch.object(host, "step", wraps=host.step) as step:
             outcome = self.run_report(cfg=cfg)
         sent = [
@@ -1831,13 +1852,18 @@ class MergeConflictEngineTests(ReportCase):
     def sent_all(self, cfg, **mutate):
         """Every result that the engine received for the merge, in order, and the outcome."""
         self.gh.pulls[6].update(mutate)
+        # The report's own round started after the rounds that came before it, and the item's
+        # state holds it.
+        progress.start(self.gh, decision())
+        host.store_import(self.gh, cfg, 5)
         with mock.patch.object(host, "step", wraps=host.step) as step:
             outcome = self.run_report(cfg=cfg)
         sent = [
             (call.args[0], call.args[1])
             for call in step.call_args_list
             if call.args[1]["kind"] == "actionFinished"
-            and {"refusal", "refused"} & set(call.args[1]["result"])
+            # The refusals, not the publish result that says it refused nothing.
+            and ("refusal" in call.args[1]["result"] or call.args[1]["result"].get("refused"))
         ]
         return sent, outcome
 
@@ -1896,6 +1922,7 @@ class MergeConflictEngineTests(ReportCase):
             {"mergeable_state": "behind"},
         ):
             with self.subTest(**kwargs):
+                self.reopened(self.config())  # each report is the end of a round that started
                 self.gh.pulls[6].update(kwargs)
                 with mock.patch.object(host, "accept_answer", side_effect=host.Refused("No.")):
                     outcome = self.run_report(cfg=self.config())

@@ -2725,8 +2725,6 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
     if carried:
         row["carried"] = reviewed["carried"]
     _record(state, decision, row, agent or {}, review, checks)
-    # The checks this round's fix was asked to fix, before they are replaced.
-    before = (state.get("feedback") or {}).get("checks")
     state["feedback"] = {"head": head, "checks": recorded(checks), "review": review}
     run_id = os.environ.get("GITHUB_RUN_ID") or ""
     if checks is not None and run_id.isdigit():
@@ -2737,12 +2735,9 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
 
     # The publish job stored the round's agent and publish results before its checks ran. This
     # call finds them stored and sends nothing, or stores them when that job could not.
-    stored_round = False
     if action in ("implement", "fix"):
         try:
-            stored_round = round_published(
-                gh, cfg, decision, pr, head, agent, agent_ran, conflicting
-            )
+            round_published(gh, cfg, decision, pr, head, agent, agent_ran, conflicting)
         except Refused as error:
             why = autopilot.quoted(str(error), 300)
             print(f"::warning::The state of #{decision['issue']} does not hold the round: {why}")
@@ -2759,15 +2754,12 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             decision,
             pr,
             head,
-            state["auto_fixes"],
             checks,
-            before,
             given,
             recheck,
             ran=review_ran,
             now=now,
             write=True,
-            published=stored_round,
         )
         state["feedback"] = _with_repeated(state["feedback"], repeated)
         return found_end
@@ -2864,17 +2856,14 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
                 decision,
                 pr,
                 head,
-                state["auto_fixes"],
                 checks,
                 review,
                 recheck,
                 wait,
                 label,
-                before,
                 seen,
                 ran=review_ran,
                 write=True,
-                published=stored_round,
             )
         except Refused as error:
             ends, refused = "needs_human", error

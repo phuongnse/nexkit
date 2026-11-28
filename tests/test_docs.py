@@ -1760,6 +1760,24 @@ def retry_delays():
     )
 
 
+def install_delays():
+    """The retry delays of the failure handling row that starts with INSTALL_ROW, as (the
+    install's delays, its word for tries in all). Change tests/test_docs.py together with that row
+    when its wording changes."""
+    rows = [row for row in table(FAILURE_PAGE, FAILURE_HEADER) if row[0].startswith(INSTALL_ROW)]
+    assert len(rows) == 1, (
+        f"docs/failure-handling.md needs one row that starts with {INSTALL_ROW!r}; "
+        "change tests/test_docs.py with that row"
+    )
+    cell = " ".join(rows[0][1].split())
+    match = INSTALL_DELAYS.search(cell)
+    assert match, (
+        "the install row of docs/failure-handling.md must say 'Tries the install again after N and "
+        "N seconds, WORD tries in all'; change tests/test_docs.py with the row"
+    )
+    return numbers(match.group(1)), match.group(2)
+
+
 def numbers(text):
     """The numbers in `text`, as ints."""
     return [int(n) for n in re.findall(r"\d+", text)]
@@ -1979,8 +1997,9 @@ APPROVAL_OUTCOMES = re.compile(r"latest round ended (as .+?), merges it on the h
 # of Automatic merge. The text is searched with its whitespace collapsed, since the sentence wraps.
 MERGE_PAGE = DOCS / "merges-and-waits.md"
 MERGEABLE_LIST = re.compile(r"reports the pull request as mergeable \(([^)]*)\)")
-# The row of failure handling that gives the retry delays of `publish` and of every other GitHub API
-# call. Its first cell starts with PUBLISH_ROW; its second cell is the one the regexes read.
+# The rows of failure handling that give the retry delays of `publish`, of every other GitHub API
+# call and of the agent CLI's install. Each row's first cell starts with its ROW; its second cell is
+# the one the regexes read.
 FAILURE_PAGE = DOCS / "failure-handling.md"
 FAILURE_HEADER = "| What happened | NexKit does |"
 PUBLISH_ROW = "GitHub answers `publish`"
@@ -1998,6 +2017,10 @@ VOLATILE_SAMPLES = {
     "durations": "250ms",
     "other numbers": "42",
 }
+INSTALL_ROW = "Installing the agent's CLI fails"
+INSTALL_DELAYS = re.compile(
+    r"Tries the install again after ([\d, and]+?) seconds, (\w+) tries in all"
+)
 
 
 class LayoutTests(unittest.TestCase):
@@ -2218,6 +2241,7 @@ class StopJobsTests(unittest.TestCase):
 class RetryDelayTests(unittest.TestCase):
     def test_the_failure_table_lists_the_retry_delays_the_code_has(self):
         publish_delays, _, _, other_delays = retry_delays()
+        install_listed, _ = install_delays()
         waits = (
             ("publish", publish_delays, list(publish.WAITS), "publish.WAITS"),
             (
@@ -2225,6 +2249,12 @@ class RetryDelayTests(unittest.TestCase):
                 other_delays,
                 list(github.GitHub.waits),
                 "github.GitHub.waits",
+            ),
+            (
+                "the agent CLI's install",
+                install_listed,
+                list(cli.INSTALL_WAITS),
+                "cli.INSTALL_WAITS",
             ),
         )
         for calls, listed, code, name in waits:
@@ -2266,6 +2296,14 @@ class RetryDelayTests(unittest.TestCase):
             other_expected,
             f"docs/failure-handling.md says other GitHub API calls try {other_tries!r} more; "
             f"github.GitHub.waits allows {other_expected!r}",
+        )
+        _, install_tries = install_delays()
+        install_expected = NUMBERS[len(cli.INSTALL_WAITS) + 1]
+        self.assertEqual(
+            install_tries,
+            install_expected,
+            f"docs/failure-handling.md says the install of the agent's CLI makes {install_tries!r} "
+            f"tries in all; cli.INSTALL_WAITS allows {install_expected!r}",
         )
 
 

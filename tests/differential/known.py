@@ -519,6 +519,32 @@ KNOWN += [
 ]
 
 
+KNOWN += [
+    {
+        "name": "a pull request whose head GitHub does not name waits for a person",
+        "family": "released",
+        "by": "#716",
+        "why": (
+            "The engine decides the end of a hold on the item's stored state alone, and the "
+            "import of a pull request whose head has no commit cannot be stored or made in "
+            "memory, since the protocol needs a version. NexKit 6 decided on the markers and "
+            "reviewed the pull request at its unknown head. The item now waits for a person "
+            "with the engine's refusal as the reason. GitHub always names a head, so this is "
+            "reachable only by an unreadable answer. Only a step that waits for a person "
+            "with that reason, on a scenario with no head, is excused."
+        ),
+        "match": lambda sc, old, new: (
+            sc["head"] == "none"
+            and isinstance(new.get("step"), dict)
+            and new["step"].get("state") == "waits"
+            and new["step"].get("person") is True
+            and "The item has no state to decide on." in str(new["step"].get("reason"))
+            and set(old) == set(new) == {"step"}
+        ),
+    }
+]
+
+
 def _decided(record):
     """The action of the decision that `route` made in `record`, or None."""
     found = record.get("decision")
@@ -681,6 +707,50 @@ KNOWN += [
         "match": _only_refused_probes,
     }
 ]
+
+
+KNOWN += [
+    {
+        "name": "a held conflict round keeps the policies it started with",
+        "family": "conflict",
+        "by": "#716",
+        "why": (
+            "A round's stored state keeps the conflict policy and the conflict rounds' limit "
+            "that the round started with (`machine.KEPT`), and the end of a hold decides on "
+            "that stored state alone. NexKit 6 read `conflicts.auto_resolve` and "
+            "`conflicts.max_rounds` again when the label was gone, so a round held back "
+            "while they were turned off or lowered waited for a person. The round now starts "
+            "as the policies it kept allow. Only a record that differs in the sweeps after "
+            "the label's removal, whose first sweep starts that conflict round where "
+            "NexKit 6 waited for a person, is excused."
+        ),
+        "match": lambda sc, old, new: _held_round_keeps_its_policies(sc, old, new),
+    }
+]
+
+
+def _held_round_keeps_its_policies(sc, old, new):
+    """Whether `old` and `new`, the records of a held conflict round that its label's removal
+    released after `conflicts.auto_resolve` was turned off or `conflicts.max_rounds` lowered,
+    differ only in the sweeps after the label's removal, whose first sweep NexKit 6 ends with a
+    wait for a person and the engine with the conflict round that the stored policies allow."""
+    if sc["hold"] != "label" or sc["later"] == "same" or not sc["ap"]:
+        return False
+    before, after = old.get("step2"), new.get("step2")
+    if not (isinstance(before, dict) and isinstance(after, dict)):
+        return False
+    if before.get("state") != "waits" or not before.get("person"):
+        return False
+    started = (after.get("state"), after.get("command"), after.get("auto"))
+    if started != ("start", "fix", "conflicts"):
+        return False
+    return _before_the_sweeps(old) == _before_the_sweeps(new)
+
+
+def _before_the_sweeps(record):
+    """`record` without the parts that the sweeps after the label's removal recorded: the
+    keys that end in 2 or 3."""
+    return {key: value for key, value in record.items() if key[-1:] not in ("2", "3")}
 
 
 def _without_empty_reads(record):

@@ -1490,7 +1490,7 @@ def _pull_step(
         if step:
             return step
     if latest.get("outcome") == CI_WAITING:
-        return _ci_step(gh, cfg, issue, pull, latest, pull_comments, start, write)
+        return _ci_step(gh, cfg, issue, pull, latest, start, write)
     if latest.get("status") == FAILURE and (engine_round(latest) or latest.get("timed_out")):
         fields = {"pull": pull, "pull_comments": pull_comments}
         return _after_stop(gh, cfg, issue, latest, record, start, comments, write=write, **fields)
@@ -1524,7 +1524,7 @@ def _released(gh, cfg, issue, pull, comment, run, pull_comments, start, now, wri
     if back == "merge":
         try:
             # `_merge_step` reads the head, and reviews one that moved.
-            _held_end(gh, cfg, issue, pull, run, pull_comments, run.get("head"), write)
+            _held_end(gh, cfg, issue, pull, run, run.get("head"), write)
         except Refused as error:
             return _step(issue, "waits", refused_reason(error))
         step = _merge_step(gh, cfg, issue, pull, comment, run, start, now, write=write)
@@ -1538,7 +1538,7 @@ def _released(gh, cfg, issue, pull, comment, run, pull_comments, start, now, wri
     if back == "conflicts":
         return _conflicts_released(gh, cfg, issue, pull, run, pull_comments, start, details, write)
     try:
-        ends = _held_end(gh, cfg, issue, pull, run, pull_comments, head, write)
+        ends = _held_end(gh, cfg, issue, pull, run, head, write)
     except Refused as error:
         return _step(issue, "waits", refused_reason(error))
     if ends == "review":
@@ -1575,7 +1575,6 @@ def _conflicts_released(gh, cfg, issue, pull, run, pull_comments, start, details
             run,
             head,
             conflicts,
-            conflict_rounds_used(rounds),
             write=write,
         )
     except Refused as error:
@@ -1596,16 +1595,14 @@ def _conflicts_released(gh, cfg, issue, pull, run, pull_comments, start, details
     return _step(issue, "start", reason, command="fix", **fields)
 
 
-def _held_end(gh, cfg, issue, pull, run, pull_comments, head, write=False):
+def _held_end(gh, cfg, issue, pull, run, head, write=False):
     """What the engine answers once the label that held back the merge or the automatic fix
     round of `pull` is gone (`host.released`). `head` is the pull request's head now, which
     a held merge reads in `_merge_step` instead. With `write`, the answer is stored. Raises
     `host.Refused`."""
     from .host import released
 
-    _, state = read_state(pull_comments)
-    found = (state or {}).get("auto_fixes", 0)
-    return released(gh, cfg, issue["number"], pull, run, head, found, write=write)
+    return released(gh, cfg, issue["number"], pull, run, head, write=write)
 
 
 def _refused_step(gh, cfg, issue, pull, comment, run, write=False):
@@ -3703,7 +3700,7 @@ def ci_wait_over(gh, wait):
     return None
 
 
-def _ci_step(gh, cfg, issue, pull, run, pull_comments, start, write=False):
+def _ci_step(gh, cfg, issue, pull, run, start, write=False):
     """The step for a pull request whose round waits for a bug issue about the default
     branch: it waits while the wait lasts, then gets the automatic fix round it waited
     for, which merges the base branch and counts toward `fix.max_auto_rounds`, as the
@@ -3717,10 +3714,8 @@ def _ci_step(gh, cfg, issue, pull, run, pull_comments, start, write=False):
     if over is None:
         reason = f"pull request #{pull} {ci_wait_reason(wait)}"
         return _step(issue, "waits", reason, person=False, ci_bug=wait["bug"])
-    _, state = read_state(pull_comments)
     try:
-        found = (state or {}).get("auto_fixes", 0)
-        ends = base_passes(gh, cfg, issue["number"], pull, run, found, write=write)
+        ends = base_passes(gh, cfg, issue["number"], pull, run, write=write)
     except Refused as error:
         return _step(issue, "waits", refused_reason(error))
     if ends == "used_up":

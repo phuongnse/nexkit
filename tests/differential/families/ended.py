@@ -13,6 +13,7 @@ from unittest import mock
 
 from common import (
     HEAD,
+    IMPLEMENT_OUTPUT,
     TOK,
     WORKFLOW,
     Artifacts,
@@ -101,7 +102,7 @@ def run(sc):
     art = Artifacts()
     with mock.patch.object(report_module.time, "sleep", lambda s: None), quiet():
         if sc["path"] == "first":
-            art.agent({"status": "done", "tokens": TOK})
+            art.agent({"status": "done", "tokens": TOK, "output": IMPLEMENT_OUTPUT})
             art.checks(
                 [{"name": "test", "run": "make test", "exit_code": 0, "passed": True, "output": ""}]
             )

@@ -16,6 +16,8 @@ import json
 from common import (
     APPROVE,
     FAILED,
+    FIX_OUTPUT,
+    IMPLEMENT_OUTPUT,
     PAUSED,
     PAUSED_UNKNOWN,
     REQUEST_CHANGES,
@@ -67,6 +69,7 @@ REVIEWS = {
     "paused": PAUSED,
     "paused_unknown": PAUSED_UNKNOWN,
 }
+OLD = "b" * 40
 KINDS = {
     "implement": ("implement", {}),
     "fix_auto": ("fix", {"auto": True, "autopilot": "true"}),
@@ -106,10 +109,14 @@ def run(sc):
     gh.comment(5, render_run({"url": f"{runs}/2", **go}, "D."))
     own = sc["kind"] == "own"
     pr = 7 if own else 6
+    action, extra = KINDS[sc["kind"]]
+    # A fix round publishes a new head: the pull request is at the head the round started from
+    # until the round's stored state is taken, and at the published head after it.
+    started = OLD if action == "fix" else HEAD
     if own:
         gh.add_pull(7, 0, head_sha=HEAD, branch="feature/x")
     else:
-        gh.add_pull(6, 5, head_sha=HEAD)
+        gh.add_pull(6, 5, head_sha=started)
     state = {**empty_state(pr if own else 5), "auto_fixes": 1}
     if own:
         state["person"] = True
@@ -134,7 +141,6 @@ def run(sc):
         usage_limit={"resume": sc["resume"]},
         notify=["olivia"],
     )
-    action, extra = KINDS[sc["kind"]]
     implement = action == "implement"
     d = {
         "action": action,
@@ -143,7 +149,7 @@ def run(sc):
         "target": 5 if implement else pr,
         "branch": "feature/x" if own else "nexkit/issue-5",
         "base": "main",
-        "head": None if implement else HEAD,
+        "head": None if implement else started,
         "note": "",
         "auto": False,
         "run_id": 4242,
@@ -151,10 +157,9 @@ def run(sc):
     }
     if own:
         d["person"] = True
-    seed(gh, cfg)
     res = {}
     with quiet():
-        res["report"] = one_round(gh, cfg, d, sc["checks"], REVIEWS[sc["review"]], pr)
+        res["report"] = one_round(gh, cfg, d, sc["checks"], REVIEWS[sc["review"]], pr, first=True)
         res["route"] = walk(dispatch(gh, cfg, pr, "fix", "true"))
         res["after_report"] = snapshot(gh)
         after(gh, cfg, res)
@@ -188,11 +193,12 @@ def dispatch(gh, cfg, pr, command, auto):
         return f"EXC {type(exc).__name__}: {exc}"
 
 
-def one_round(gh, cfg, d, checks, review, pr):
+def one_round(gh, cfg, d, checks, review, pr, first=False):
     art = Artifacts()
     needs = {}
     if d["action"] != "review":
-        art.agent({"status": "done", "tokens": TOK, "output": {}})
+        fits = IMPLEMENT_OUTPUT if d["action"] == "implement" else FIX_OUTPUT
+        art.agent({"status": "done", "tokens": TOK, "output": fits})
         pub = {"published": True, "pr": pr, "head": HEAD}
         needs["publish"] = {"outputs": {"result": json.dumps(pub)}}
     art.checks(CHECKS[checks])
@@ -205,6 +211,11 @@ def one_round(gh, cfg, d, checks, review, pr):
     except Exception as exc:  # noqa: BLE001
         art.close()
         return f"EXC start {type(exc).__name__}: {exc}"
+    if first:
+        # Only the first round stores the import, as the item's group does once: the review
+        # that runs again is stored by its dispatch (`route`).
+        seed(gh, cfg)
+        gh.pulls[pr]["head"]["sha"] = HEAD
     found = attempt(
         report, gh, d, cfg, needs, art.path, workflow_ref=WORKFLOW, default_branch="main"
     )

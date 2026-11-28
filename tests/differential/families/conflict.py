@@ -12,12 +12,13 @@ import json
 from unittest import mock
 
 from common import (
+    FIX_OUTPUT,
+    IMPLEMENT_OUTPUT,
     TOK,
     WORKFLOW,
     Artifacts,
     after,
     attempt,
-    count_dispatched_round,
     quiet,
     seed,
     snapshot,
@@ -143,7 +144,8 @@ def run(sc):
     if "resumed" in kinds:
         d["resumed"] = True
     art = Artifacts()
-    art.agent({"status": "done", "tokens": TOK, "output": {}})
+    fits = IMPLEMENT_OUTPUT if implement else FIX_OUTPUT
+    art.agent({"status": "done", "tokens": TOK, "output": fits})
     pub = {"published": True, "pr": 6, "head": HEAD, "conflicts": ["a.py", "b.py"]}
     needs = {"publish": {"outputs": {"result": json.dumps(pub)}}}
     real_held = autopilot.held
@@ -153,21 +155,18 @@ def run(sc):
             raise GitHubError(502, "Bad gateway")
         return real_held(gh_, cfg_, number)
 
-    seed(gh, cfg)
-    if "conflicts" in kinds and "resumed" not in kinds:
-        # The run of the dispatch that started this round counted it before the round ran. A
-        # resumed round was counted when it started, and its comment is the one that counts.
-        count_dispatched_round(gh, 5)
     res = {}
+    with quiet():
+        try:
+            progress.start(gh, d)
+        except Exception as exc:  # noqa: BLE001
+            res["start"] = f"EXC {type(exc).__name__}: {exc}"
+        seed(gh, cfg)
     with (
         mock.patch.object(autopilot, "held", held),
         mock.patch.object(maintain.time, "sleep", lambda s: None),
         quiet(),
     ):
-        try:
-            progress.start(gh, d)
-        except Exception as exc:  # noqa: BLE001
-            res["start"] = f"EXC {type(exc).__name__}: {exc}"
         res["report"] = attempt(
             report, gh, d, cfg, needs, art.path, workflow_ref=WORKFLOW, default_branch="main"
         )

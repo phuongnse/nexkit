@@ -1261,7 +1261,7 @@ def decide_all(
     (`resync`), with `action`, (kind, stage), as the id of the pending action that an
     `actionFinished` or `actionLost` event answers (`pending_id`), or a list of them, one for
     each event of the row (None for one that answers no action), each read on the state that the
-    event before it gave, and with the id of the wait of
+    event before it gave, or a function of the row that gives either, and with the id of the wait of
     kind `wait` in the document that a `tick` names (`wait_id`). `built` may be a function of
     the stored document, which it reads on each try, so that a count comes from the state that
     is decided on (`_stored_count`), or None, which decides on the stored document alone: the caller
@@ -1297,7 +1297,8 @@ def decide_all(
         revision, state, answers, changed = base["revision"], base, [], False
         for index, event in enumerate(rows):
             sent = event
-            named = action[index] if isinstance(action, list) else action
+            names = action(rows) if callable(action) else action
+            named = names[index] if isinstance(names, list) else names
             if named is not None and event["kind"] in ("actionFinished", "actionLost"):
                 sent = {**sent, "action": pending_id(state, *named)}
             if wait is not None and event["kind"] == "tick":
@@ -2548,6 +2549,11 @@ def _branch_updated(gh, cfg, item, change, found, empty=False):
     pending = next((a for a in found["pending"] if a["kind"] == "updateChange"), None)
     if pending:
         old = pending["changeVersion"]
+    elif any(
+        a["kind"] == "runChecks" and a.get("changeVersion") == version for a in found["pending"]
+    ):
+        # A review that was lost stored the update (`lost_again`): the checks are pending.
+        return None
     else:
         row = _latest_round(gh, pull)
         if not row.get("updated_branch") or not row.get("head") or row["head"] == version:
@@ -4003,13 +4009,17 @@ def resumes(gh, cfg, run, number, now, label=None, write=False):
 
 def _pending_of(doc, stage):
     """The action of `doc`'s outbox that a lost command of `stage` was running, or None: its
-    `runAgent`, and for a review also `runChecks`, since a review runs its checks first."""
-    for found in doc.get("pending") or []:
-        if found["kind"] == "runAgent" and found.get("stage") == stage:
-            return found
-        if found["kind"] == "runChecks" and stage == "review":
-            return found
-    return None
+    `runAgent`, and for a review also `runChecks`, since a review runs its checks first. With
+    none of those, the one run that the outbox holds, whatever its stage: NexKit 6 starts a round
+    of a pull request again as a review or a fix, whichever stage the round's comment shows, and
+    an imported round on its way is stored as that stage."""
+    found = [one for one in doc.get("pending") or [] if one["kind"] in ("runAgent", "runChecks")]
+    for one in found:
+        if one["kind"] == "runAgent" and one.get("stage") == stage:
+            return one
+        if one["kind"] == "runChecks" and stage == "review":
+            return one
+    return found[0] if len(found) == 1 else None
 
 
 def lost_again(
@@ -4031,8 +4041,13 @@ def lost_again(
     of its wait when that wait is due already, both as one write. A stored state that counted
     the loss already, such as an import's `lost` with a `time` wait, gets only the tick of that
     wait once it is due, and before then the step says when autopilot starts the command again
-    and nothing is sent. A stored state that holds neither carries out its attention: an
-    `outage` waits for a person. The ids hold the stored count: `lost-<n>-<count>` and
+    and nothing is sent. The run that the loss answers is the command's own, or the only run
+    that the state holds. A review that a branch update started, whose update the state still
+    holds as pending, since only that review stores its result, gets the update's result first,
+    with the pull request's head now (`lost-updated-<pull>-<old head>`), so that the loss answers
+    the checks of the new head, and the review that starts again finds the update stored. A
+    stored state that holds none of these carries out its attention: an `outage` waits for a
+    person. The ids hold the stored count: `lost-<n>-<count>` and
     `lost-tick-<n>-<count>`, so that the sweep's preview and the step run send the same ones.
 
     The host gives the engine the waits of this loss (`lostWaits`): all of autopilot's, only the
@@ -4062,12 +4077,51 @@ def lost_again(
     again = doc.get("again") or {}
     wait = next((w for w in doc.get("waits") or [] if w["for"] == "time"), None)
     rest = (extra, person, label)
-    if pending is not None:
+    updating = None
+    if pending is None and pull is not None and stage == "review":
+        # The review that a branch update starts stores the update's result (`command`,
+        # `_branch_updated`), and the one that was lost never did: the stored state still holds
+        # the update, which the new head, that the review would check, ends.
+        updating = next((a for a in doc.get("pending") or [] if a["kind"] == "updateChange"), None)
+    if pending is not None or updating is not None:
         tries = again.get("lost", 0)
+        head = gh.pull(pull)["head"]["sha"] if updating else None
+        # The events of the row that was read last, and how many of them were answered.
+        sent = [0, []]
 
         def row(state):
             count = ((state or {}).get("again") or {}).get("lost", 0)
-            version = (_pending_of(state or {}, stage) or pending).get("changeVersion")
+            asked = _pending_of(state or {}, stage)
+            both = (state or {}).get("pending") or []
+            old = next((a for a in both if a["kind"] == "updateChange"), None)
+            updated = []
+            if asked is None and old is not None and head is not None:
+                # `lost-updated-<pull>-<old head>` is one update, whoever stores it first.
+                version = old["changeVersion"]
+                result = {
+                    "change": {"id": str(pull), "version": head},
+                    "refused": None,
+                    "observed": {
+                        "changeId": str(pull),
+                        "version": head,
+                        "conflicts": False,
+                        "merged": False,
+                        "empty": False,
+                    },
+                }
+                name = f"lost-updated-{pull}-{version}"
+                updated = [
+                    _event(
+                        "actionFinished",
+                        number,
+                        None,
+                        name,
+                        action=first_state.RUN_ID,
+                        changeVersion=version,
+                        result=result,
+                    )
+                ]
+            version = head if updated else (asked or pending or {}).get("changeVersion")
             lost = _event(
                 "actionLost",
                 number,
@@ -4081,16 +4135,34 @@ def lost_again(
             name = f"lost-tick-{number}-{count}"
             tick = _event("tick", number, usage.iso(now), name, wait="w1.1")
             held = [] if (state or {}).get("hold") else _hold_events(number, label)
-            return [*held, lost, tick]
+            sent[:] = [0, [*held, *updated, lost, tick]]
+            return sent[1]
+
+        def names(rows):
+            # An update's result names the update, and the loss then the checks of the new head.
+            ended = any(one["id"].startswith("lost-updated-") for one in rows)
+            kind = ("runChecks", None) if ended else action
+            return [
+                ("updateChange", None)
+                if one["id"].startswith("lost-updated-")
+                else kind
+                if one["kind"] == "actionLost"
+                else None
+                for one in rows
+            ]
 
         def due(acts):
-            # A wait that has ended goes on to its tick; any other answer ends the row.
+            # A wait that has ended goes on to its tick; any other answer ends the row, but that
+            # of an update's result, which only leaves the checks of the new head to be lost.
+            sent[0] += 1
+            if sent[1][sent[0] - 1]["id"].startswith("lost-updated-"):
+                return False
             return bool(acts) and not any(
                 a["kind"] == "wait" and autopilot.parse_iso(a["until"]) <= now for a in acts
             )
 
         kept = decide_all(
-            gh, cfg, number, row, None, action=action, wait="time", until=due, **options
+            gh, cfg, number, row, None, action=names, wait="time", until=due, **options
         )
     elif wait is not None and again.get("lost"):
         tries = again["lost"] - 1
@@ -4101,8 +4173,7 @@ def lost_again(
             gh, cfg, number, _hold_row(number, label, tick), None, wait="time", **options
         )
     else:
-        # The stored state holds nothing to send: it carries out what it holds. A pending run
-        # that is not the command's counts no loss, which would start the command for ever.
+        # The stored state holds nothing to send: it carries out what it holds.
         actions = _held(doc)
         if any(one["kind"] in ("runAgent", "runChecks") for one in actions):
             raise Refused(f"The item's stored state holds no pending run of {shown}.")

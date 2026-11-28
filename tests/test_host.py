@@ -5584,6 +5584,36 @@ class LostAgainTest(TestCase):
         self.assertEqual(stored["pending"][0]["kind"], "runChecks")
         self.assertEqual(requests[0][1]["changeVersion"], before["change"]["version"])
 
+    def test_a_review_that_a_branch_update_started_stores_the_update_before_its_loss(self):
+        gh = self.github()
+        head = gh.pull(6)["head"]["sha"]
+        old = "9" * 40
+        update = {"id": "a9.1", "kind": "updateChange", "next": None, "changeVersion": old}
+        self.stored(gh, "review")
+        restate(gh, 5, state="accepting", pending=[update], again={})
+        found, requests = self.lost("review", 6, gh=gh, unstored=True, write=True)
+        self.assertEqual((found["state"], found["command"]), ("start", "review"))
+        self.assertEqual([r[1]["kind"] for r in requests], ["actionFinished", "actionLost"])
+        state = item_state.read(gh, 5)[1]
+        self.assertEqual(state["again"]["lost"], 1)
+        self.assertEqual(state["rounds"]["updates"], 1)
+        self.assertEqual([a["kind"] for a in state["pending"]], ["runChecks"])
+        self.assertEqual(state["pending"][0]["changeVersion"], head)
+        # The review that starts again finds the update stored, and sends nothing for it.
+        change = {"id": "6", "version": head}
+        self.assertIsNone(host._branch_updated(gh, self.CFG, 5, change, state))
+
+    def test_the_one_run_that_the_state_holds_is_lost_whatever_its_stage(self):
+        # An imported round that its comment shows as an implement round is started again as a
+        # review, as NexKit 6 does for the round of a pull request.
+        gh = self.github()
+        self.stored(gh, "go")
+        found, requests = self.lost("review", 6, gh=gh, unstored=True, write=True)
+        self.assertEqual((found["state"], found["command"]), ("start", "review"))
+        self.assertEqual(found["remember"]["tries"], 1)
+        self.assertEqual(item_state.read(gh, 5)[1]["again"]["lost"], 1)
+        self.assertEqual([r[1]["kind"] for r in requests], ["actionLost"])
+
     def test_what_a_start_carried_stays(self):
         fields = {"auto": "autopilot", "note": "Mind the cache.", "remember": {"split_asked": 1}}
         found, _ = self.lost("go", 5, 0, fields=fields)

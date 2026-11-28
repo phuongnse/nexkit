@@ -407,10 +407,10 @@ def main():
         {**CONFIG["settings"], "checks": CHECKS, "review": {"checklist": CHECKLIST}}
     )
 
-    said = subprocess.run(
+    version_output = subprocess.run(
         [args.program, "--version"], capture_output=True, text=True, check=True
     ).stdout
-    version = re.search(r"\d+\.\d+\.\d+", said).group(0)
+    version = re.search(r"\d+\.\d+\.\d+", version_output).group(0)
     print(f"{args.runtime} {version}; NexKit pins {runtime.version}", flush=True)
     if version != runtime.version:
         raise SystemExit(f"The installed {args.runtime} is not the pinned version.")

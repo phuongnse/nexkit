@@ -14,7 +14,7 @@ class SchemaTests(unittest.TestCase):
         review = {
             **VERDICT,
             "verdict": "maybe",
-            "findings": [{"severity": "blocking", "file": "a.py", "line": "3", "body": "x"}],
+            "findings": [{"severity": "blocking", "location": 3, "body": "x"}],
         }
         del review["criteria"]
         self.assertEqual(
@@ -22,7 +22,7 @@ class SchemaTests(unittest.TestCase):
             [
                 "result.criteria is missing",
                 "result.verdict must be one of 'approve', 'request_changes'",
-                "result.findings[0].line must be an integer",
+                "result.findings[0].location must be a string",
             ],
         )
         self.assertEqual(problems([], SCHEMAS["plan"]), ["result must be an object"])

@@ -54,11 +54,8 @@
               "suggestion"
             ]
           },
-          "file": {
+          "location": {
             "type": "string"
-          },
-          "line": {
-            "type": "integer"
           },
           "body": {
             "type": "string"
@@ -66,8 +63,7 @@
         },
         "required": [
           "severity",
-          "file",
-          "line",
+          "location",
           "body"
         ]
       }

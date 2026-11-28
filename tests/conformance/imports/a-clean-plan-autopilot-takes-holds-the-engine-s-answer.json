@@ -32,7 +32,7 @@
     }
   },
   "state": {
-    "schemaVersion": 1,
+    "schemaVersion": 2,
     "revision": 1,
     "item": "42",
     "itemKind": "change",
@@ -91,7 +91,7 @@
       "criteria": 0,
       "noChange": false,
       "parts": 0,
-      "protectedPaths": [],
+      "protected": [],
       "questions": [],
       "split": [],
       "text": {

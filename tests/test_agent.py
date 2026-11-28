@@ -728,6 +728,29 @@ class InterpretTests(unittest.TestCase):
             )
             self.assertFalse(set(schema["required"]) & set(fields), stage)
 
+    def test_a_review_finding_of_a_file_and_a_line_is_read_at_its_location(self):
+        findings = [
+            {"severity": "blocking", "file": "a.py", "line": 3, "body": "x"},
+            {"severity": "suggestion", "file": "b.py", "line": 0, "body": "y"},
+            {"severity": "suggestion", "file": "", "line": 0, "body": "z"},
+            {"severity": "suggestion", "location": "form Customer", "body": "w"},
+        ]
+        given = {**VERDICT, "verdict": "request_changes", "findings": findings}
+        event = {"subtype": "success", "structured_output": given}
+        result = interpret_claude("review", event, schema=agent.SCHEMAS["review"])
+        self.assertEqual(result["status"], "done", result["error"])
+        self.assertEqual(
+            [item["location"] for item in result["output"]["findings"]],
+            ["a.py:3", "b.py", "", "form Customer"],
+        )
+        self.assertEqual(findings[0]["file"], "a.py")  # the result given is left as it was
+        # A file that is not a text, or a line that is not a number, is left for the schema.
+        odd = [{"severity": "blocking", "file": 4, "line": "x", "body": "x"}]
+        event = {"subtype": "success", "structured_output": {**VERDICT, "findings": odd}}
+        result = interpret_claude("review", event, schema=agent.SCHEMAS["review"])
+        self.assertEqual(result["status"], "error")
+        self.assertIn("location is missing", result["error"])
+
     def test_a_cli_that_ran_out_of_result_tries_is_unfit_with_what_it_said(self):
         call = {"type": "tool_use", "id": "s1", "name": "StructuredOutput", "input": {}}
         said = "Output does not match required schema: root: must have property 'testing'"

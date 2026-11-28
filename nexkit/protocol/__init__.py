@@ -78,14 +78,47 @@ def _normal(parts, ref):
     return out
 
 
+def finding_location(file, line):
+    """A review finding's `location` from the `file` and `line` that a version 1 document
+    and a host of files keep: `file:line`, `file` alone when the line is 0, and an empty
+    string when there is no file."""
+    if not file:
+        return ""
+    return f"{file}:{line}" if line else str(file)
+
+
+def _located(finding):
+    if not isinstance(finding, dict) or "location" in finding:
+        return finding
+    kept = {key: value for key, value in finding.items() if key not in ("file", "line")}
+    place = finding_location(finding.get("file"), finding.get("line"))
+    return {**kept, "location": place}
+
+
 def upgrade(state):
-    """A state document as the current protocol reads it. Before 1.0, one of schema version 1
-    may still hold `used.usd`, which NexKit no longer keeps: it is read without it. Any other
+    """A state document as the current protocol reads it. One of schema version 1 moves to
+    version 2: each finding of the last review has a `location` in place of `file` and `line`
+    (`finding_location`), and the plan's `protectedPaths` is `protected`. Before 1.0, one
+    that still holds `used.usd`, which NexKit no longer keeps, is read without it. Any other
     value comes back as it is, for `check` to refuse."""
-    used = state.get("used") if isinstance(state, dict) else None
-    if not isinstance(used, dict) or "usd" not in used:
+    if not isinstance(state, dict):
         return state
-    return {**state, "used": {key: value for key, value in used.items() if key != "usd"}}
+    used = state.get("used")
+    if isinstance(used, dict) and "usd" in used:
+        state = {**state, "used": {key: value for key, value in used.items() if key != "usd"}}
+    if state.get("schemaVersion") != 1:
+        return state
+    state = {**state, "schemaVersion": 2}
+    plan = state.get("plan")
+    if isinstance(plan, dict) and "protectedPaths" in plan:
+        kept = {key: value for key, value in plan.items() if key != "protectedPaths"}
+        state["plan"] = {**kept, "protected": plan["protectedPaths"]}
+    rounds = state.get("rounds")
+    review = rounds.get("lastReview") if isinstance(rounds, dict) else None
+    if isinstance(review, dict) and isinstance(review.get("findings"), list):
+        found = [_located(item) for item in review["findings"]]
+        state["rounds"] = {**rounds, "lastReview": {**review, "findings": found}}
+    return state
 
 
 def check(value, name, where="value"):

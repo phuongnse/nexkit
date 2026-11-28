@@ -1,11 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/phuongnse/nexkit/protocol/v1/state.schema.json",
-  "$comment": "One work item's state document, which the host stores and passes back. It holds decisions and the history that the prompts show, not other prose. As `protocol.size` measures it, JSON in UTF-8 with sorted keys and no spaces, it is at most 48,000 bytes, so that its base64 fits a text field of 65,536 characters. Each list the results and events fill has the most items it keeps (`maxItems`), and its texts are clipped as they come in. When a document would still pass the limit, the engine shortens the findings, the questions and options, the protected paths, the attention's text and the repeated checks' names, then the last review's findings, the fix records' texts and, last, the names and signatures of the checks and the conflicting files in them, to fit, and, if that is not enough, the oldest fix records leave out the checks that still failed after them.",
+  "$comment": "One work item's state document, which the host stores and passes back. It holds decisions and the history that the prompts show, not other prose. As `protocol.size` measures it, JSON in UTF-8 with sorted keys and no spaces, it is at most 48,000 bytes, so that its base64 fits a text field of 65,536 characters. Each list the results and events fill has the most items it keeps (`maxItems`), and its texts are clipped as they come in. When a document would still pass the limit, the engine shortens the findings, the questions and options, the protected list, the attention's text and the repeated checks' names, then the last review's findings, the fix records' texts and, last, the names and signatures of the checks and the conflicting files in them, to fit, and, if that is not enough, the oldest fix records leave out the checks that still failed after them.",
   "type": "object",
   "properties": {
     "schemaVersion": {
-      "const": 1
+      "const": 2
     },
     "revision": {
       "type": "integer"
@@ -281,7 +281,7 @@
             "noChange": {
               "type": "boolean"
             },
-            "protectedPaths": {
+            "protected": {
               "type": "array",
               "items": {
                 "type": "string"
@@ -328,7 +328,7 @@
             "tooLarge",
             "parts",
             "noChange",
-            "protectedPaths",
+            "protected",
             "approved",
             "split"
           ],
@@ -625,7 +625,7 @@
           "maxItems": 5
         },
         "lastReview": {
-          "$comment": "The latest review, as the next review and fix prompts show it: its round, the version it reviewed, its verdict and its findings with file, line and body (at most 1,500 characters). Up to 30 findings are kept: in the reviewer's order when there are no more, otherwise the blocking ones first, and `leftOut` counts those left out. Left out until the first review.",
+          "$comment": "The latest review, as the next review and fix prompts show it: its round, the version it reviewed, its verdict and its findings with severity, location and body (the location at most 300 characters, the body at most 1,500). A location is the host's text for where a finding points, kept as it came and empty when the finding points at nothing in particular. Up to 30 findings are kept: in the reviewer's order when there are no more, otherwise the blocking ones first, and `leftOut` counts those left out. Left out until the first review.",
           "type": "object",
           "properties": {
             "round": {
@@ -651,11 +651,8 @@
                       "suggestion"
                     ]
                   },
-                  "file": {
+                  "location": {
                     "type": "string"
-                  },
-                  "line": {
-                    "type": "integer"
                   },
                   "body": {
                     "type": "string"
@@ -663,8 +660,7 @@
                 },
                 "required": [
                   "severity",
-                  "file",
-                  "line",
+                  "location",
                   "body"
                 ],
                 "additionalProperties": false

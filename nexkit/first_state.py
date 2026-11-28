@@ -157,7 +157,7 @@ def failing(recorded):
 def empty(item):
     """The state document of an item before anything happened to it."""
     return {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "revision": REVISION,
         "item": item,
         "itemKind": "change",
@@ -566,7 +566,7 @@ class Item:
         ref = plan["text"]["ref"]
         if plan["questions"]:
             return self.be("planned", "awaitingApproval", "question", run, ref=ref)
-        if plan["protectedPaths"]:
+        if plan["protected"]:
             return self.be("planned", "awaitingApproval", "handMadeChange", run, ref=ref)
         return self.be("planned", "awaitingApproval", "approval", run, ref=ref)
 
@@ -1049,10 +1049,13 @@ def _last_review(item):
         "findings": [
             {
                 "severity": entry["severity"],
-                "file": clip(
-                    entry.get("file") if isinstance(entry.get("file"), str) else "", "path"
+                "location": clip(
+                    protocol.finding_location(
+                        entry["file"] if isinstance(entry.get("file"), str) else "",
+                        _number(entry.get("line")) or 0,
+                    ),
+                    "location",
                 ),
-                "line": _number(entry.get("line")) or 0,
                 "body": _text(entry.get("body"), "body"),
             }
             for entry in found[: MOST["findings"]]
@@ -1162,9 +1165,8 @@ def plan_of(comment, data, approved):
         "tooLarge": bool(data.get("too_large")),
         "parts": planned_parts(comment, data),
         "noChange": bool(filled(data.get("no_change"))),
-        "protectedPaths": [
-            clip(path, "path")
-            for path in (data.get("protected_paths") or [])[: MOST["protectedPaths"]]
+        "protected": [
+            clip(path, "path") for path in (data.get("protected_paths") or [])[: MOST["protected"]]
         ],
         "approved": approved,
         "split": [

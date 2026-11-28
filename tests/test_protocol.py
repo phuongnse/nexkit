@@ -28,7 +28,8 @@ spec.loader.exec_module(freeze)
 PAGES = [HERE.parent / "docs" / name for name in ("engine-states.md", "engine-hosts.md")]
 EXAMPLES = protocol.ROOT / "examples"
 # What NexKit 6.12.2 gave each stage's agent as its result schema, as `json.dumps` wrote it,
-# with no configuration and with profiles and a checklist.
+# with no configuration and with profiles and a checklist, except that a review finding
+# points at a `location` in place of a `file` and a `line`, as the golden's edit by hand says.
 GOLDEN = json.loads((HERE / "golden" / "agent-schemas.json").read_text())
 # The keywords of a schema that an agent receives: `schema.problems` reads them without a
 # reader of `$ref`s, and NexKit 6 sent no others.
@@ -155,6 +156,46 @@ class ProtocolTest(unittest.TestCase):
         for value in (state, None, [], "x", {"used": None}, {"used": []}):
             self.assertEqual(protocol.upgrade(value), value)
 
+    def test_a_version_1_state_document_is_read_at_version_2(self):
+        folder = HERE / "golden" / "state"
+        old = json.loads((folder / "v1" / "reviewing-with-findings.json").read_text())
+        self.assertIn("schemaVersion must be 2", " ".join(protocol.check(old, "state.schema.json")))
+        state = protocol.upgrade(old)
+        self.assertEqual(protocol.check(state, "state.schema.json"), [])
+        self.assertEqual(state["schemaVersion"], 2)
+        findings = state["rounds"]["lastReview"]["findings"]
+        # A line becomes `file:line`, line 0 leaves the file alone, and no file is empty.
+        self.assertEqual([item["location"] for item in findings], ["a.py:3", "b.py", ""])
+        self.assertEqual(
+            findings[0], {"severity": "blocking", "location": "a.py:3", "body": findings[0]["body"]}
+        )
+        # The plan's list of protected paths has its new name, and the document given is
+        # left as it was.
+        self.assertEqual(state["plan"]["protected"], old["plan"]["protectedPaths"])
+        self.assertNotIn("protectedPaths", state["plan"])
+        self.assertEqual(old["schemaVersion"], 1)
+        self.assertIn("file", old["rounds"]["lastReview"]["findings"][0])
+        golden = json.loads((folder / "v2" / "reviewing-with-findings.json").read_text())
+        self.assertEqual(state, golden)
+
+    def test_a_version_1_state_without_a_plan_or_a_review_is_read_at_version_2(self):
+        for name in ("new", "planning", "reviewing", "fixing"):
+            old = json.loads((HERE / "golden" / "state" / "v1" / f"{name}.json").read_text())
+            new = json.loads((HERE / "golden" / "state" / "v2" / f"{name}.json").read_text())
+            with self.subTest(name):
+                self.assertEqual(protocol.upgrade(old), new)
+        for value in (
+            {"schemaVersion": 1, "plan": "x", "rounds": []},
+            {"schemaVersion": 1, "rounds": {"lastReview": {"findings": ["x", {"severity": 1}]}}},
+        ):
+            self.assertEqual(protocol.upgrade(value)["schemaVersion"], 2)
+        # Findings that point nowhere or hold a location already are kept as they are.
+        kept = {"schemaVersion": 1, "rounds": {"lastReview": {"findings": [{"location": "x"}]}}}
+        found = protocol.upgrade(kept)["rounds"]["lastReview"]["findings"]
+        self.assertEqual(found, [{"location": "x"}])
+        self.assertEqual(protocol.finding_location("a.py", 0), "a.py")
+        self.assertEqual(protocol.finding_location("", 5), "")
+
     def test_a_sample_state_of_every_state_fits(self):
         states = protocol.load("common.schema.json")["$defs"]["state"]["enum"]
         samples = sorted(path.stem for path in (EXAMPLES / "state").glob("*.json"))
@@ -210,7 +251,7 @@ class ProtocolTest(unittest.TestCase):
                 {**new, "schemaVersion": True, "itemKind": "pull"},
                 "state.schema.json",
                 [
-                    "value.schemaVersion must be 1",
+                    "value.schemaVersion must be 2",
                     "value.itemKind must be one of 'change', 'reviewOnly'",
                 ],
             ),

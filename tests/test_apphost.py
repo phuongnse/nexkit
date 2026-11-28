@@ -124,6 +124,19 @@ class ApplicationHostTests(unittest.TestCase):
             host.stages[: reviews[0]], [(ITEM, "plan"), (ITEM, "implement"), (ITEM, "fix")]
         )
 
+    def test_a_finding_at_a_record_reaches_the_next_fix_prompt_as_it_was_written(self):
+        scripts = {**PLAN, **IMPLEMENT, (ITEM, "fix"): ["@fix"]}
+        scripts[(ITEM, "review")] = ["@reviewRecord", "@review"]
+        host = self.start(scripts, [True, True])
+        self.assert_ended(host, "accepted")
+        # The review's own prompt asks for a location in the application's form.
+        review = next(text for item, stage, text in host.prompts if stage == "review")
+        self.assertIn("record and its field, such as `form Customer › field Phone`", review)
+        fixes = [text for item, stage, text in host.prompts if stage == "fix"]
+        self.assertEqual(len(fixes), 1)
+        self.assertIn("`form Customer › field Phone`", fixes[0])
+        self.assertIn("The phone number is saved without its country code.", fixes[0])
+
     def test_each_stages_prompt_equals_its_golden(self):
         scripts = {**PLAN, **IMPLEMENT, (ITEM, "fix"): ["@fix"], **REVIEW}
         host = self.start(scripts, [False, True])

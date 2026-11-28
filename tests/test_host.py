@@ -974,7 +974,7 @@ class RefusedTest(HostCase):
 
     def test_an_unreadable_state_comment_leaves_its_item_to_a_person_and_holds_up_no_other(self):
         # A state document of a later schema, as an engine rolled back would find.
-        doc = {"schemaVersion": 2, "revision": 3, "item": "5", "newField": 1}
+        doc = {"schemaVersion": 3, "revision": 3, "item": "5", "newField": 1}
         data = base64.b64encode(json.dumps(doc).encode()).decode()
         self.gh.comment(5, f"### NexKit state\n\n{item_state.PREFIX}{data} -->")
         step = self.step(5)
@@ -4538,7 +4538,7 @@ class DispatchedTest(HostCase):
                 "cause": "",
             }
         ]
-        finding = {"severity": "blocking", "file": "a.py", "line": 1, "body": "x"}
+        finding = {"severity": "blocking", "location": "a.py:1", "body": "x"}
         review = {"round": 1, "version": self.HEAD, "verdict": "request_changes"}
         review["findings"] = [finding]
         doc = item_state.read(self.gh, 5)[1]

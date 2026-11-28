@@ -27,7 +27,7 @@ STATE_LIMIT = 48_000
 MOST = {
     "questions": 10,
     "options": 6,
-    "protectedPaths": 20,
+    "protected": 20,
     "split": 10,
     "findings": 30,
     "signatures": 30,
@@ -49,6 +49,7 @@ LONGEST = {
     "option": 500,
     "title": 256,
     "path": 300,
+    "location": 300,
     "finding": 300,
     "reason": 1000,
     "check": 40,
@@ -132,7 +133,7 @@ def _questions(state):
 
 
 def _paths(state):
-    paths = (state["plan"] or {}).get("protectedPaths") or []
+    paths = (state["plan"] or {}).get("protected") or []
     return [(paths, index) for index in range(len(paths))]
 
 
@@ -159,7 +160,7 @@ def _review(severity):
 
 def _review_files(state):
     review = state["rounds"].get("lastReview") or {}
-    return [(item, "file") for item in review.get("findings") or []]
+    return [(item, "location") for item in review.get("findings") or []]
 
 
 def _fix_texts(state):
@@ -193,7 +194,7 @@ def _fix_checks(state):
 # Findings go first, the suggestions before the blocking ones, since a fix round acts on the
 # blocking ones. The history that the prompts show comes after all of these: the last
 # review's findings, then the fix rounds' texts, then the checks of their records and, last,
-# the files of the last review's findings.
+# the locations of the last review's findings.
 SHORTENED = (
     _findings("suggestion"),
     _findings("blocking"),

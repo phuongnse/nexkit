@@ -1140,6 +1140,11 @@
           "$comment": "Where the agent reads the change, in the engine's notes that a version or a diff is not there, such as \"this draft's history\".",
           "type": "string",
           "maxLength": 500
+        },
+        "locationForm": {
+          "$comment": "How the agent writes where a review finding points, after \"`location` is\", such as \"the record and its field, such as `form Customer › field Phone`, or an empty string when it is about no record\". The engine keeps what the agent writes, clipped, and shows it to the next fix and review prompts without reading it.",
+          "type": "string",
+          "maxLength": 500
         }
       },
       "required": [
@@ -1168,7 +1173,8 @@
         "sideHistory",
         "sideNote",
         "otherVersions",
-        "workspaceName"
+        "workspaceName",
+        "locationForm"
       ]
     },
     "words": {

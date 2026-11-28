@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 2,
+  "revision": 7,
+  "item": "42",
+  "itemKind": "change",
+  "state": "failed",
+  "change": {
+    "id": "308",
+    "version": "5a54e2b"
+  },
+  "observed": {
+    "changeId": "308",
+    "version": "5a54e2b",
+    "conflicts": false,
+    "merged": false,
+    "empty": false
+  },
+  "attention": {
+    "reason": "failed",
+    "text": "The token budget ran out.",
+    "ref": null
+  },
+  "hold": false,
+  "waits": [],
+  "pending": [],
+  "actors": {
+    "plan": "engine",
+    "change": "engine",
+    "review": "engine"
+  },
+  "plan": {
+    "text": {
+      "name": "plan-1",
+      "ref": "issue-42/plan-1"
+    },
+    "questions": [],
+    "criteria": 1,
+    "tooLarge": false,
+    "parts": 0,
+    "noChange": false,
+    "protected": [],
+    "approved": true,
+    "split": []
+  },
+  "rounds": {
+    "started": 1,
+    "counted": 0,
+    "conflicts": 0,
+    "signatures": [],
+    "findings": [],
+    "criteria": [],
+    "checklist": []
+  },
+  "used": {
+    "tokens": {
+      "input": 2000000,
+      "cached": 0,
+      "output": 1000
+    },
+    "seconds": 640,
+    "since": "2026-11-23T15:01:11Z"
+  },
+  "asked": [],
+  "parts": [],
+  "policies": {},
+  "recentEvents": [
+    "d-1",
+    "d-2",
+    "d-3",
+    "d-4",
+    "d-5",
+    "d-6",
+    "d-7"
+  ]
+}

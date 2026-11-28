@@ -242,14 +242,12 @@
             "findings": [
               {
                 "severity": "suggestion",
-                "file": "a.py",
-                "line": 3,
+                "location": "a.py:3",
                 "body": "Name the helper after what it reads."
               },
               {
                 "severity": "blocking",
-                "file": "b.py",
-                "line": 9,
+                "location": "b.py:9",
                 "body": "The title is not read again after a 422."
               }
             ],
@@ -265,8 +263,7 @@
       "expect": {
         "rounds.lastReview.round": 2,
         "rounds.lastReview.verdict": "request_changes",
-        "rounds.lastReview.findings.1.file": "b.py",
-        "rounds.lastReview.findings.1.line": 9,
+        "rounds.lastReview.findings.1.location": "b.py:9",
         "rounds.lastReview.findings.1.body": "The title is not read again after a 422.",
         "rounds.fixRound": {
           "auto": true,
@@ -401,8 +398,7 @@
             "findings": [
               {
                 "severity": "suggestion",
-                "file": "c.py",
-                "line": 12,
+                "location": "c.py:12",
                 "body": "The comment repeats the name."
               }
             ],
@@ -421,8 +417,7 @@
         "rounds.lastReview.verdict": "approve",
         "rounds.lastReview.version": "v3",
         "rounds.lastReview.findings.0.severity": "suggestion",
-        "rounds.lastReview.findings.0.file": "c.py",
-        "rounds.lastReview.findings.0.line": 12,
+        "rounds.lastReview.findings.0.location": "c.py:12",
         "rounds.lastReview.findings.0.body": "The comment repeats the name.",
         "rounds.fixes.0.note": "Keep the header",
         "rounds.fixes.1.auto": true

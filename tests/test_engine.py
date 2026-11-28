@@ -49,6 +49,7 @@ ALLOWED = {
         "nexkit.engine.sweep",
     },
     "nexkit.engine.sweep": {"__future__", "nexkit.engine.machine"},
+    "nexkit.engine.__main__": {"nexkit.engine.cli"},
     # `importlib` only for `importlib.resources`, to read the prompts' own templates, which
     # ship inside the package as the schemas do; `nexkit.protocol` for the checklist stages;
     # `hashlib` to name the files of whole texts, so two ids never share one.

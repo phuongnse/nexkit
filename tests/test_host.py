@@ -9,11 +9,24 @@ import copy
 import io
 import json
 import os
+import subprocess
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import TestCase, mock
 
-from nexkit import agent, autopilot, cli, engine, first_state, host, item_state, maintain, progress
+from nexkit import (
+    agent,
+    autopilot,
+    cli,
+    engine,
+    first_state,
+    host,
+    item_state,
+    maintain,
+    program,
+    progress,
+)
 from nexkit import config as configuration
 from nexkit import report as reports
 from nexkit.checks import recorded
@@ -35,6 +48,7 @@ from nexkit.state import (
     render_state,
     run_comments,
 )
+from tests import engine_here
 from tests.support import (
     BOT_LOGIN,
     FakeGitHub,
@@ -59,7 +73,7 @@ from tests.test_report import (
 )
 
 # The engine's own answer, which a test that stands in for it calls.
-ANSWER = engine.answer
+ANSWER = program.call
 ASKED = {
     "question": "Keep the cache?",
     "options": ["Keep it", "Drop it", "Close the issue"],
@@ -122,7 +136,7 @@ def runs_of(doc):
 def asked_step(answer):
     """The `step` requests that a stand-in for the engine's answer got, in order: a sweep's
     `sweep` request, which the engine gets beside them, has no event."""
-    requests = [call.args[0] for call in answer.call_args_list]
+    requests = [call.args[1] for call in answer.call_args_list]
     return [request for request in requests if request["call"] == "step"]
 
 
@@ -157,7 +171,7 @@ class HostCase(AutopilotCase):
 
     def requests(self, number, cfg=None):
         """The requests the engine gets while the sweep reads issue `number`."""
-        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+        with mock.patch.object(host.program, "call", wraps=ANSWER) as answer:
             self.step(number, cfg)
         return asked_step(answer)
 
@@ -414,9 +428,9 @@ class EventIdTest(HostCase):
         decision = {"issue": 5, "pr": None, "action": "plan"}
         agent = {"output": {"questions": [ASKED]}}
         with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": "123"}):
-            with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+            with mock.patch.object(host.program, "call", wraps=ANSWER) as answer:
                 autopilot.carries_on(self.gh, cfg, decision, "planned", agent)
-        [reported] = [call.args[0]["event"]["id"] for call in answer.call_args_list]
+        [reported] = [call.args[1]["event"]["id"] for call in answer.call_args_list]
         self.plan(5, {"questions": [ASKED]}, url=url)
         [swept] = [request["event"]["id"] for request in self.requests(5)]
         self.assertEqual((reported, swept), ("run-123", "run-123"))
@@ -618,7 +632,7 @@ class TakeTest(TestCase):
         self.gh.label_event(42, "on-hold", "labeled", at=LATER)
         self.assertEqual(len(host.take(self.gh, self.CFG, 42)), 2)
         before = copy.deepcopy(self.gh.issue_comments[42])
-        with mock.patch.object(host.engine, "answer") as answer:
+        with mock.patch.object(host.program, "call") as answer:
             with mock.patch.object(self.gh, "update_comment") as update:
                 self.assertEqual(host.take(self.gh, self.CFG, 42), [])
         answer.assert_not_called()
@@ -792,16 +806,16 @@ class RefusedTest(HostCase):
     def test_an_issue_the_engine_refuses_waits_alone(self):
         refused = {"protocol": 1, "error": "The state document passes the limit."}
 
-        def answer(request):
+        def answer(name, request):
             item = (request.get("event") or {}).get("item")
-            return refused if item == "5" else ANSWER(request)
+            return refused if item == "5" else ANSWER(name, request)
 
         decision = {"issue": 5, "pr": None, "action": "plan"}
         agent = {"output": {"questions": [ASKED]}}
         cfg = pilot(answer="recommended")
         self.run_comment(5, "plan", status="running")
         self.assertTrue(autopilot.carries_on(self.gh, cfg, decision, "planned", agent))
-        with mock.patch.object(host.engine, "answer", side_effect=answer):
+        with mock.patch.object(host.program, "call", side_effect=answer):
             self.assertFalse(autopilot.carries_on(self.gh, cfg, decision, "planned", agent))
             self.plan(5)
             step = self.step(5)
@@ -1206,7 +1220,7 @@ class SweepTest(HostCase):
         )
 
     def sweeps(self, answer):
-        return [call.args[0] for call in answer.call_args_list if call.args[0]["call"] == "sweep"]
+        return [call.args[1] for call in answer.call_args_list if call.args[1]["call"] == "sweep"]
 
     def test_the_engine_gets_each_issue_with_its_labels_milestone_wave_and_awaited_pull_requests(
         self,
@@ -1220,7 +1234,7 @@ class SweepTest(HostCase):
         ]
         issues = {number: issue for number, issue in self.gh.issues.items()}
         where = autopilot.scope(self.gh, self.cfg)
-        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+        with mock.patch.object(host.program, "call", wraps=ANSWER) as answer:
             started = host.sweep(self.cfg, where, starts, issues, 2, {8: [10, 11]})
         [request] = self.sweeps(answer)
         self.assertEqual(
@@ -1292,12 +1306,12 @@ class SweepTest(HostCase):
         }
         before = {s["number"]: s for s in autopilot.preview(self.gh, cfg)[1]}
 
-        def answer(request):
+        def answer(name, request):
             if request["call"] == "sweep":
                 return {"protocol": 1, "error": "no sweep today"}
-            return ANSWER(request)
+            return ANSWER(name, request)
 
-        with mock.patch.object(host.engine, "answer", side_effect=answer):
+        with mock.patch.object(host.program, "call", side_effect=answer):
             steps = {s["number"]: s for s in autopilot.preview(self.gh, cfg)[1]}
         self.assertEqual((before[5]["state"], before[6]["state"]), ("start", "start"))
         for number in (5, 6):
@@ -1349,11 +1363,11 @@ class FirstPlanTest(HostCase):
         }
         for name, found in answers.items():
 
-            def answer(request, found=found):
+            def answer(name, request, found=found):
                 is_five = request["call"] == "step" and request["event"]["item"] == "5"
-                return found if is_five else ANSWER(request)
+                return found if is_five else ANSWER(name, request)
 
-            with self.subTest(name), mock.patch.object(host.engine, "answer", side_effect=answer):
+            with self.subTest(name), mock.patch.object(host.program, "call", side_effect=answer):
                 step = self.step(5)
                 self.assertEqual(step["state"], "waits")
                 self.assertTrue(step["person"])
@@ -1371,7 +1385,7 @@ class FirstPlanTest(HostCase):
         held = self.step(5, self.HOLD)
         self.assertEqual(held["state"], "held")
         self.assertEqual(self.step(6)["state"], "waits")
-        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+        with mock.patch.object(host.program, "call", wraps=ANSWER) as answer:
             autopilot.preview(self.gh, self.HOLD)
         asked = [request["event"]["item"] for request in asked_step(answer)]
         self.assertEqual(asked, ["7"])
@@ -1399,7 +1413,7 @@ class FirstPlanTest(HostCase):
     def test_the_engine_gets_the_stored_state_and_the_start_stores_its_plan_run(self):
         issue = self.issue(5)
         before = seed(self.gh, self.cfg, 5)[1]
-        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+        with mock.patch.object(host.program, "call", wraps=ANSWER) as answer:
             step = self.first_plan(issue, write=True)
         self.assertEqual((step["state"], step["command"]), ("start", "plan"))
         [request] = asked_step(answer)
@@ -1412,7 +1426,7 @@ class FirstPlanTest(HostCase):
 
     def test_a_start_decides_on_the_import_when_nothing_is_stored_and_stores_nothing(self):
         issue = self.issue(5)
-        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+        with mock.patch.object(host.program, "call", wraps=ANSWER) as answer:
             self.assertEqual(self.first_plan(issue)["state"], "start")
         [request] = asked_step(answer)
         self.assertEqual(request["state"], first_state.import_item(self.gh, self.cfg, 5, None))
@@ -1424,7 +1438,7 @@ class FirstPlanTest(HostCase):
         self.first_plan(issue, write=True)
         stored = item_state.read(self.gh, 5)[1]
         self.run_comment(5, "plan", status="failure", outcome="agent_error")
-        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+        with mock.patch.object(host.program, "call", wraps=ANSWER) as answer:
             step = self.first_plan(issue, write=True)
         self.assertEqual((step["state"], step["command"]), ("start", "plan"))
         self.assertEqual(asked_step(answer), [])
@@ -1437,19 +1451,19 @@ class FirstPlanTest(HostCase):
         restate(self.gh, 5, pending=[], waits=[])
         names = []
 
-        def answer(request):
+        def answer(name, request):
             if request["call"] == "step":
                 names.append(request["event"]["id"])
-            return ANSWER(request)
+            return ANSWER(name, request)
 
-        with mock.patch.object(host.engine, "answer", side_effect=answer):
+        with mock.patch.object(host.program, "call", side_effect=answer):
             with self.assertRaises(host.Refused):
                 self.first_plan(issue)
         self.assertEqual(names, ["start-5-3"])
 
     def test_a_first_plan_with_no_configuration_is_refused(self):
         issue = self.issue(5)
-        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+        with mock.patch.object(host.program, "call", wraps=ANSWER) as answer:
             with self.assertRaises(host.Refused):
                 host.first_plan(self.gh, None, issue, {}, {})
         self.assertEqual(asked_step(answer), [])
@@ -1500,7 +1514,7 @@ class VouchedTest(HostCase):
         issue, comment, run, vouch = self.stopped_go()
         before = seed(self.gh, self.cfg, 5)[1]
         self.assertEqual((before["state"], before["attention"]["reason"]), ("failed", "untrusted"))
-        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+        with mock.patch.object(host.program, "call", wraps=ANSWER) as answer:
             step = self.vouched(issue, comment, run, write=True)
         self.assertEqual((step["state"], step["command"]), ("start", "plan"))
         [request] = asked_step(answer)
@@ -1517,7 +1531,7 @@ class VouchedTest(HostCase):
         self.vouched(issue, comment, run, write=True)
         stored = item_state.read(self.gh, 5)[1]
         self.assertIn(f"comment-{vouch['id']}", stored["recentEvents"])
-        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+        with mock.patch.object(host.program, "call", wraps=ANSWER) as answer:
             step = self.vouched(issue, comment, run, write=True)
         self.assertEqual((step["state"], step["command"]), ("start", "plan"))
         self.assertEqual(asked_step(answer), [])
@@ -1533,7 +1547,7 @@ class VouchedTest(HostCase):
         stored = item_state.read(self.gh, 5)[1]
         self.assertEqual((stored["state"], runs_of(stored)), ("planning", ["plan"]))
         self.assertNotIn(f"comment-{vouch['id']}", stored["recentEvents"])
-        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+        with mock.patch.object(host.program, "call", wraps=ANSWER) as answer:
             step = self.vouched(issue, comment, run, write=True)
         self.assertEqual((step["state"], step["command"]), ("start", "plan"))
         self.assertEqual(asked_step(answer), [])
@@ -1559,7 +1573,7 @@ class VouchedTest(HostCase):
             stored = restate(self.gh, 5, **fields) if fields else taken
             with (
                 self.subTest(label),
-                mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer,
+                mock.patch.object(host.program, "call", wraps=ANSWER) as answer,
             ):
                 step = self.vouched(issue, comment, run, pull=9, write=True)
             self.assertEqual(asked_step(answer), [])
@@ -1580,7 +1594,7 @@ class VouchedTest(HostCase):
 
     def test_a_vouch_with_no_configuration_is_refused(self):
         issue, comment, run, _ = self.stopped_go()
-        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+        with mock.patch.object(host.program, "call", wraps=ANSWER) as answer:
             with self.assertRaises(host.Refused):
                 host.vouched(self.gh, None, issue, comment, run, {}, {})
         self.assertEqual(asked_step(answer), [])
@@ -1668,7 +1682,7 @@ class ClosingCommandTest(HostCase):
         # The engine closes only on an answer: `take` sends the command as one.
         self.assertEqual([event["kind"] for event, _ in taken], ["answered"])
         self.assertEqual(self.revision(), 2)
-        with mock.patch.object(host.engine, "answer", side_effect=AssertionError("asked again")):
+        with mock.patch.object(host.program, "call", side_effect=AssertionError("asked again")):
             decision = self.decide("/nexkit go Close the issue", said, taken)
         found = (decision["task"], decision["answer"], decision["asked"])
         self.assertEqual(found, ("close_answer", "Close the issue", self.asked["html_url"]))
@@ -1676,7 +1690,7 @@ class ClosingCommandTest(HostCase):
         self.assertEqual(self.revision(), 2)
 
     def test_a_closing_go_with_no_taken_event_only_previews_the_answer(self):
-        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+        with mock.patch.object(host.program, "call", wraps=ANSWER) as answer:
             decision = self.decide("/nexkit go Close the issue")
         self.assertEqual(decision["task"], "close_answer")
         self.assertEqual([r["event"]["kind"] for r in asked_step(answer)], ["answered"])
@@ -1698,7 +1712,7 @@ class ClosingCommandTest(HostCase):
         changed = {**read[1], "revision": 2, "title": "Stored, not built from markers"}
         self.assertTrue(item_state.write(self.gh, 5, changed, read))
         stored = item_state.read(self.gh, 5)[1]
-        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+        with mock.patch.object(host.program, "call", wraps=ANSWER) as answer:
             self.decide("/nexkit plan Keep it")
         [request] = asked_step(answer)
         self.assertEqual(request["state"], stored)
@@ -1726,7 +1740,7 @@ class NoConfigurationTest(HostCase):
 
     def test_command_refuses_without_the_configuration(self):
         self.issue(5)
-        with mock.patch.object(host.engine, "answer") as answer:
+        with mock.patch.object(host.program, "call") as answer:
             with self.assertRaises(host.Refused):
                 host.command(None, 5, "plan", gh=self.gh, source_id=7, by="alice")
             with self.assertRaises(host.Refused):
@@ -1736,7 +1750,7 @@ class NoConfigurationTest(HostCase):
     def test_closing_command_refuses_without_the_configuration(self):
         self.issue(5)
         self.plan(5, {"questions": [{**ASKED, "recommended": 0}]})
-        with mock.patch.object(host.engine, "answer") as answer:
+        with mock.patch.object(host.program, "call") as answer:
             with self.assertRaises(host.Refused):
                 host.closing_command(
                     self.gh,
@@ -2383,17 +2397,17 @@ class RoundClosingCommandTest(HostCase):
     def test_a_writer_s_closing_answer_to_a_round_is_the_engine_s_to_close(self):
         # As `nexkit route` stores the first state before it routes the item's first event.
         seed(self.gh, self.cfg, 5)
-        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+        with mock.patch.object(host.program, "call", wraps=ANSWER) as answer:
             decision = self.decide("/nexkit go 3")
         self.assertEqual(
             (decision["task"], decision["answer"]), ("close_answer", "Close the issue")
         )
         # The engine is asked only the answer that only closes the issue, and nothing is stored:
         # no `take` stored the command in this run.
-        kinds = [call.args[0]["event"]["kind"] for call in answer.call_args_list]
+        kinds = [call.args[1]["event"]["kind"] for call in answer.call_args_list]
         self.assertEqual(kinds, ["answered"])
         call = answer.call_args_list[-1]
-        self.assertEqual(call.args[0]["state"]["questions"]["ref"], str(self.asked["id"]))
+        self.assertEqual(call.args[1]["state"]["questions"]["ref"], str(self.asked["id"]))
         self.assertEqual(item_state.read(self.gh, 5)[1]["revision"], 1)
 
     def test_an_open_pull_request_keeps_the_issue_for_a_person(self):
@@ -2407,13 +2421,13 @@ class RoundClosingCommandTest(HostCase):
 
 class PlanWaitsForTest(HostCase):
     def test_a_plan_without_autopilot_waits_for_what_the_engine_names(self):
-        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+        with mock.patch.object(host.program, "call", wraps=ANSWER) as answer:
             reason = needs_person(
                 "planned", self.cfg, plan={"questions": [ASKED], "too_large": True}
             )
         self.assertEqual(reason, TOO_LARGE)
         [call] = answer.call_args_list
-        self.assertEqual(call.args[0]["policies"], {})
+        self.assertEqual(call.args[1]["policies"], {})
         found = {"questions": [ASKED], "protected_paths": ["a.yml"]}
         self.assertEqual(
             needs_person("planned", self.cfg, plan=found), autopilot.protected_reason(["a.yml"])
@@ -2435,10 +2449,10 @@ class AfterRoundTest(ReportCase):
 
     def test_the_engine_hears_the_checks_then_the_review(self):
         self.candidate(checks_pass=False)
-        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+        with mock.patch.object(host.program, "call", wraps=ANSWER) as answer:
             outcome = self.run_report()
         self.assertEqual(outcome["outcome"], "auto_fix")
-        first, second = [call.args[0] for call in answer.call_args_list]
+        first, second = [call.args[1] for call in answer.call_args_list]
         self.assertEqual(first["state"]["state"], "checking")
         self.assertEqual(first["event"]["result"]["checks"][0]["passed"], False)
         self.assertEqual(second["event"]["result"]["output"]["verdict"], "approve")
@@ -2491,10 +2505,10 @@ class StoppedTest(HostCase):
     def test_the_engine_answers_a_fix_round_on_its_change(self):
         cfg = pilot(answer="recommended")
         self.fix_stopped(5, 6, [{**ASKED, "closes": 0}])
-        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+        with mock.patch.object(host.program, "call", wraps=ANSWER) as answer:
             step = self.step(5, cfg)
         # The import of the item, which places this round too, asks the engine first.
-        request = answer.call_args_list[-1].args[0]
+        request = answer.call_args_list[-1].args[1]
         self.assertEqual(
             (request["state"]["state"], request["state"]["change"]["id"]), ("fixing", "6")
         )
@@ -2517,7 +2531,7 @@ class StoppedTest(HostCase):
         self.issue(5)
         self.plan(5)
         self.run_comment(5, "go", status="failure", outcome="agent_error", timed_out=True)
-        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+        with mock.patch.object(host.program, "call", wraps=ANSWER) as answer:
             step = self.step(5)
         # The import of the item, which places this round too, asks the engine first.
         request = asked_step(answer)[-1]
@@ -2987,14 +3001,14 @@ class ApprovedTest(TestCase):
         self.assertEqual(self.answer("ready", True, self.OTHER, decide=True), "none")
 
     def test_an_engine_that_refuses_gives_no_answer(self):
-        with mock.patch.object(engine, "answer", return_value={"error": "no"}):
+        with mock.patch.object(host.program, "call", return_value={"error": "no"}):
             with self.assertRaises(host.Refused):
                 self.answer("merge_refused", True)
 
     def test_the_engine_gets_the_stored_state_and_the_approval_stores_its_answer(self):
         gh, cfg, run = self.start("ready", True)
         before = item_state.read(gh, 5)[1]
-        with mock.patch.object(engine, "answer", wraps=ANSWER) as answer:
+        with mock.patch.object(host.program, "call", wraps=ANSWER) as answer:
             found = host.approved(gh, cfg, 5, 6, run, None, "olivia", write=True, review=9000)
         self.assertEqual(found, "merge")
         [request] = asked_step(answer)
@@ -3008,7 +3022,7 @@ class ApprovedTest(TestCase):
 
     def test_an_approval_with_no_review_is_named_after_the_pull_request_and_its_version(self):
         gh, cfg, run = self.start("ready", True)
-        with mock.patch.object(engine, "answer", wraps=ANSWER) as answer:
+        with mock.patch.object(host.program, "call", wraps=ANSWER) as answer:
             host.approved(gh, cfg, 5, 6, run, self.HEAD, "olivia")
         [request] = asked_step(answer)
         self.assertEqual(request["event"]["id"], f"approval-6-{self.HEAD}")
@@ -3017,7 +3031,7 @@ class ApprovedTest(TestCase):
     def test_an_approval_that_stored_state_took_carries_out_its_answer_without_the_engine(self):
         gh, cfg, run = self.start("ready", True)
         host.approved(gh, cfg, 5, 6, run, None, "olivia", write=True, review=9000)
-        with mock.patch.object(engine, "answer", wraps=ANSWER) as answer:
+        with mock.patch.object(host.program, "call", wraps=ANSWER) as answer:
             found = host.approved(gh, cfg, 5, 6, run, None, "olivia", write=True, review=9000)
         self.assertEqual(found, "merge")
         self.assertEqual(asked_step(answer), [])
@@ -3030,7 +3044,7 @@ class ApprovedTest(TestCase):
         )
         stored = item_state.read(gh, 5)[1]
         self.assertEqual(stored["attention"]["reason"], "accept")
-        with mock.patch.object(engine, "answer", wraps=ANSWER) as answer:
+        with mock.patch.object(host.program, "call", wraps=ANSWER) as answer:
             found = host.approved(gh, cfg, 5, 6, run, None, "olivia", write=True, review=9000)
             # The items are not a person's to decide in a round that has none.
             plain = {**run, "decide": None}
@@ -3042,14 +3056,14 @@ class ApprovedTest(TestCase):
         gh, cfg, run = self.start("ready", True)
         doc = item_state.read(gh, 5)[1]
         restate(gh, 5, recentEvents=[*doc["recentEvents"], "review-9000"])
-        with mock.patch.object(engine, "answer", wraps=ANSWER) as answer:
+        with mock.patch.object(host.program, "call", wraps=ANSWER) as answer:
             found = host.approved(gh, cfg, 5, 6, run, None, "olivia", write=True, review=9000)
         self.assertEqual(found, "none")
         self.assertEqual(asked_step(answer), [])
 
     def test_an_approval_with_no_configuration_or_no_state_is_refused(self):
         gh, cfg, run = self.start("ready", True)
-        with mock.patch.object(engine, "answer", wraps=ANSWER) as answer:
+        with mock.patch.object(host.program, "call", wraps=ANSWER) as answer:
             with self.assertRaises(host.Refused):
                 host.approved(gh, None, 5, 6, run, None, "olivia", review=9000)
             with mock.patch.object(host, "stored", return_value=(None, None)):
@@ -3479,9 +3493,9 @@ class RoundEndTest(ReportCase):
     and keeps the checks the engine finds repeated for the next automatic fix round."""
 
     def answers(self, **kw):
-        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+        with mock.patch.object(host.program, "call", wraps=ANSWER) as answer:
             outcome = self.run_report(**kw)
-        return outcome, [call.args[0] for call in answer.call_args_list]
+        return outcome, [call.args[1] for call in answer.call_args_list]
 
     def fix(self, **kw):
         return decision("fix", pr=6, target=6, head=HEAD, **kw)
@@ -3519,13 +3533,13 @@ class RoundEndTest(ReportCase):
         d = self.fix(retry=retry)
         self.answered = []
 
-        def answer(request):
-            self.answered.append(ANSWER(request))
+        def answer(name, request):
+            self.answered.append(ANSWER(name, request))
             return self.answered[-1]
 
-        with mock.patch.object(host.engine, "answer", side_effect=answer) as engine_answer:
+        with mock.patch.object(host.program, "call", side_effect=answer) as engine_answer:
             outcome = self.run_report(d=d, cfg=cfg or self.WAITS)
-        return outcome, [call.args[0] for call in engine_answer.call_args_list]
+        return outcome, [call.args[1] for call in engine_answer.call_args_list]
 
     def test_a_review_that_stopped_on_a_transient_error_runs_again_as_the_engine_answers(self):
         now = datetime.now(UTC)
@@ -3567,10 +3581,10 @@ class RoundEndTest(ReportCase):
     def test_a_review_that_ended_without_a_result_is_a_transient_stop_too(self):
         self.candidate(review=self.TRANSIENT)
         (self.artifacts / "nexkit-review" / "result.json").unlink()
-        with mock.patch.object(host.engine, "answer", side_effect=lambda r: ANSWER(r)) as answer:
+        with mock.patch.object(host.program, "call", side_effect=ANSWER) as answer:
             outcome = self.run_report(d=self.fix(), cfg=ONCE)
         self.assertEqual(outcome["outcome"], "retry")
-        self.assertTrue(answer.call_args.args[0]["event"]["result"]["transient"])
+        self.assertTrue(answer.call_args.args[1]["event"]["result"]["transient"])
 
     def test_a_review_the_engine_refuses_to_run_again_waits_for_a_person(self):
         self.candidate(review={**self.TRANSIENT, "tokens": TOKENS})
@@ -3702,11 +3716,11 @@ class ConflictingTest(ReportCase):
         for n in range(used):
             self.gh.round_comment(6, n + 1, "b" * 40, "failed", conflicts=True, base_sha="d" * 40)
         d = decision("fix", pr=6, target=6, head="b" * 40)
-        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+        with mock.patch.object(host.program, "call", wraps=ANSWER) as answer:
             found = report(
                 self.gh, d, cfg, needs, self.artifacts, workflow_ref=WORKFLOW, default_branch="main"
             )
-        return found, [call.args[0] for call in answer.call_args_list]
+        return found, [call.args[1] for call in answer.call_args_list]
 
     def test_the_engine_starts_the_conflict_round_or_leaves_it_to_a_person(self):
         cfg = make_config(conflicts={"auto_resolve": True, "max_rounds": 2})
@@ -3795,14 +3809,14 @@ class DiagnosisTest(HostCase):
         found = {}
         for auto in ("true", "conflicts", "false"):
             event = {"inputs": {"command": "fix", "number": "6", "note": "", "auto": auto}}
-            with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+            with mock.patch.object(host.program, "call", wraps=ANSWER) as answer:
                 found[auto] = route(
                     self.gh, "workflow_dispatch", event, event["inputs"], cfg=self.cfg
                 )
             # The command is the engine's to start. Only an automatic round then asks what it
             # diagnoses: a person's round and a conflict round diagnose nothing. A conflict
             # round is first counted from the observation that the head conflicts.
-            kinds = [call.args[0]["event"]["kind"] for call in answer.call_args_list]
+            kinds = [call.args[1]["event"]["kind"] for call in answer.call_args_list]
             self.assertEqual(len(kinds), 2 if auto == "true" else 1, kinds)
             self.assertEqual(kinds[0], "changeObserved" if auto == "conflicts" else "requested")
         self.assertEqual(found["true"]["diagnose"], ["test"])
@@ -4615,13 +4629,13 @@ class StageStopTest(ReportCase):
         self.write("nexkit-agent", "result.json", result)
         asked, answered = [], []
 
-        def answer(request):
+        def answer(name, request):
             asked.append(request)
-            found = ANSWER(request)
+            found = ANSWER(name, request)
             answered.append(found)
             return found
 
-        with mock.patch.object(host.engine, "answer", side_effect=answer):
+        with mock.patch.object(host.program, "call", side_effect=answer):
             outcome = self.run_report(d=d or decision("plan"), cfg=cfg, published=False, start=True)
         return outcome, asked, answered
 
@@ -4688,11 +4702,11 @@ class StageStopTest(ReportCase):
     def test_a_job_that_ended_without_a_result_is_a_transient_stop_of_the_agent(self):
         self.write("nexkit-agent", "result.json", {})
         (self.artifacts / "nexkit-agent" / "result.json").unlink()
-        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+        with mock.patch.object(host.program, "call", wraps=ANSWER) as answer:
             outcome = self.run_report(d=decision("plan"), cfg=ONCE, published=False, start=True)
         self.assertEqual(outcome["outcome"], "retry")
         [call] = answer.call_args_list
-        self.assertTrue(call.args[0]["event"]["result"]["transient"])
+        self.assertTrue(call.args[1]["event"]["result"]["transient"])
 
     def publish_stop(self, d, cfg):
         self.write("nexkit-agent", "result.json", {"status": "done", "output": {}})
@@ -4700,7 +4714,7 @@ class StageStopTest(ReportCase):
         result = {"published": False, "error": error, "transient": True}
         needs = {"publish": {"outputs": {"result": json.dumps(result)}}}
         progress.start(self.gh, d)
-        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+        with mock.patch.object(host.program, "call", wraps=ANSWER) as answer:
             outcome = report(
                 self.gh,
                 d,
@@ -4710,7 +4724,7 @@ class StageStopTest(ReportCase):
                 workflow_ref=WORKFLOW,
                 default_branch="main",
             )
-        return outcome, [call.args[0] for call in answer.call_args_list], error
+        return outcome, [call.args[1] for call in answer.call_args_list], error
 
     def test_a_stop_of_publish_goes_to_the_engine_as_a_transient_stop(self):
         outcome, [request], error = self.publish_stop(decision(), ONCE)
@@ -4796,9 +4810,9 @@ class ResumeTest(ReportCase):
         pause, as of `NOW`."""
         cfg = cfg or make_config()
         host.store_import(self.gh, cfg, 5, now=self.NOW)
-        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+        with mock.patch.object(host.program, "call", wraps=ANSWER) as answer:
             lines, _ = play_resume(self.gh, cfg, self.NOW)
-        return lines, [call.args[0] for call in answer.call_args_list]
+        return lines, [call.args[1] for call in answer.call_args_list]
 
     def test_a_run_paused_under_a_hold_starts_again_at_its_time(self):
         self.gh.issues[5].update(labels=[{"name": "on-hold"}], milestone={"number": 1})
@@ -4998,7 +5012,7 @@ class NoChangeFoundTest(ReportCase):
             lambda: host.no_change_found(self.gh, self.cfg, {"issue": 5}, "Fixed."),
             lambda: host.on_base_found(self.gh, self.cfg, {"issue": 5, "pr": 6, "head": HEAD}),
         ):
-            with mock.patch.object(engine, "answer", return_value={"error": "no"}):
+            with mock.patch.object(host.program, "call", return_value={"error": "no"}):
                 with self.assertRaises(host.Refused):
                     call()
 
@@ -5830,13 +5844,13 @@ class StoredStopsTest(HostCase):
         before = restate(self.gh, 5, rounds=rounds)
         fix = {"issue": 5, "pr": 6, "action": "fix", "head": HEAD}
         sent = []
-        real = host.engine.answer
+        real = host.program.call
 
-        def spy(request):
+        def spy(name, request):
             sent.append(request)
-            return real(request)
+            return real(name, request)
 
-        with mock.patch.object(host.engine, "answer", spy):
+        with mock.patch.object(host.program, "call", spy):
             state = host.stage_untrusted(self.gh, self.cfg, fix, "@bob edited it", write=True)
         # The engine hears the stored state and the run's untrusted result, once.
         [request] = sent
@@ -5908,11 +5922,11 @@ class StoredStopsTest(HostCase):
         self.stored()
         if not seeded_held:
             self.hold()
-        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+        with mock.patch.object(host.program, "call", wraps=ANSWER) as answer:
             host.stage_limited(
                 self.gh, self.cfg, self.PLAN, "2026-10-11T04:40:00Z", label="on-hold", write=True
             )
-        return [call.args[0]["event"]["kind"] for call in answer.call_args_list]
+        return [call.args[1]["event"]["kind"] for call in answer.call_args_list]
 
     def test_a_stored_state_that_is_held_gets_no_held_event_before_the_stop(self):
         self.assertEqual(self.hold_kinds(True), ["actionFinished"])
@@ -5920,3 +5934,115 @@ class StoredStopsTest(HostCase):
     def test_a_state_stored_before_the_label_came_gets_held_first(self):
         self.assertEqual(self.hold_kinds(False), ["held", "actionFinished"])
         self.assertTrue(self.read()[1]["hold"])
+
+
+class ProgramTransportTest(HostCase):
+    """`host.step` and the sweep reach the real `nexkit-engine` program (`nexkit/program.py`),
+    which the other tests stand in for in process (`tests/engine_here.py`); a program that fails
+    is a refusal."""
+
+    def setUp(self):
+        super().setUp()
+        real = mock.patch.object(program, "call", engine_here.REAL)
+        real.start()
+        self.addCleanup(real.stop)
+        self.gh.add_milestone(1)
+        self.cfg = pilot(scope=None, max_parallel=1, priority=[], labels={})
+
+    def command(self, *code):
+        """Patch the program's command for the block of the test: a Python that runs `code`."""
+        return mock.patch.object(program, "COMMAND", (sys.executable, "-c", *code))
+
+    def starts(self):
+        self.issue(5)
+        self.issue(6)
+        return [autopilot._step(issue, "start", "no plan yet") for issue in self.gh.issues.values()]
+
+    def swept(self):
+        starts = self.starts()
+        where = autopilot.scope(self.gh, self.cfg)
+        issues = dict(self.gh.issues)
+        started = host.sweep(self.cfg, where, starts, issues, 0, {})
+        return [one["number"] for one in started], starts
+
+    def test_step_runs_the_engine_program_and_gets_its_answer(self):
+        policies = host.policies(self.cfg)
+        request = {
+            "protocol": 1,
+            "call": "step",
+            "state": None,
+            "event": CREATED,
+            "policies": policies,
+        }
+        with mock.patch("subprocess.run", wraps=subprocess.run) as run:
+            found = host.step(None, CREATED, policies)
+        [call] = run.call_args_list
+        self.assertEqual(call.args[0][1:], ["-P", "-m", "nexkit.engine", "step"])
+        self.assertEqual(json.loads(call.kwargs["input"]), request)
+        self.assertEqual(found, engine.answer(request))
+
+    def test_the_program_gets_only_what_python_needs_and_none_of_the_jobs_secrets(self):
+        secrets = {
+            "NEXKIT_APP_KEY": "secret",
+            "GITHUB_TOKEN": "token",
+            "LANG": "C.UTF-8",
+            "PATH": os.environ.get("PATH", "/usr/bin"),
+        }
+        with (
+            mock.patch.dict(os.environ, secrets),
+            mock.patch("subprocess.run", wraps=subprocess.run) as run,
+        ):
+            host.step(None, CREATED, {})
+        [call] = run.call_args_list
+        self.assertEqual(set(call.kwargs["env"]), {"PATH", "PYTHONPATH", "LANG"})
+        self.assertEqual(call.kwargs["env"]["PYTHONPATH"], program.HOME)
+        self.assertTrue(Path(program.HOME, "nexkit", "program.py").is_file())
+
+    def test_the_sweep_gets_its_starts_and_waits_from_the_program(self):
+        with mock.patch("subprocess.run", wraps=subprocess.run) as run:
+            started, starts = self.swept()
+        [call] = run.call_args_list
+        self.assertEqual(call.args[0][1:], ["-P", "-m", "nexkit.engine", "sweep"])
+        with mock.patch.object(program, "call", engine_here.call):
+            here_started, here = self.swept()
+        self.assertEqual(started, [5])
+        self.assertEqual((started, starts), (here_started, here))
+        self.assertEqual(
+            (starts[1]["state"], starts[1]["person"], starts[1]["reason"]),
+            ("waits", False, "1 issues are in progress (max_parallel)"),
+        )
+
+    def test_a_program_that_is_missing_is_a_refusal_of_step(self):
+        with mock.patch.object(program, "COMMAND", ("/nonexistent/python",)):
+            with self.assertRaises(host.Refused) as refused:
+                host.step(None, CREATED, {})
+        self.assertIn("The engine program failed", str(refused.exception))
+
+    def test_a_program_that_exits_with_no_answer_is_a_refusal_of_step(self):
+        with self.command("import sys; print('Traceback: no'); sys.exit(3)"):
+            with self.assertRaises(host.Refused) as refused:
+                host.step(None, CREATED, {})
+        self.assertIn("exit 3", str(refused.exception))
+
+    def test_the_last_line_of_the_error_a_program_printed_is_clipped_not_logged(self):
+        with self.command("import sys; sys.stderr.write('x' * 5000); sys.exit(1)"):
+            found = program.call("step", {})
+        self.assertLess(len(found["error"]), 400)
+        self.assertTrue(found["error"].startswith("The engine program failed: exit 1: xxx"))
+
+    def test_a_program_that_runs_past_the_timeout_is_a_refusal_of_step(self):
+        with (
+            mock.patch.object(program, "TIMEOUT", 0.5),
+            self.command("import time; time.sleep(5)"),
+            self.assertRaises(host.Refused) as refused,
+        ):
+            host.step(None, CREATED, {})
+        self.assertIn("ran past", str(refused.exception))
+
+    def test_a_program_that_is_missing_leaves_each_start_waiting_for_a_person(self):
+        with mock.patch.object(program, "COMMAND", ("/nonexistent/python",)):
+            started, starts = self.swept()
+        self.assertEqual(started, [])
+        for one in starts:
+            self.assertEqual((one["state"], one["person"]), ("waits", True))
+            self.assertIn("The engine program failed", one["reason"])

@@ -373,7 +373,7 @@ class ApprovedMergeTests(ReportCase):
         self.assertIn("merge it", run["attention"])
 
     def test_an_approval_does_nothing_when_the_engine_refuses_to_answer(self):
-        refusing = mock.patch("nexkit.engine.answer", return_value={"error": "refused"})
+        refusing = mock.patch("nexkit.program.call", return_value={"error": "refused"})
         for merge_auto in (True, False):
             with self.subTest(merge_auto=merge_auto):
                 cfg = self.decided(merge_auto=merge_auto)
@@ -391,7 +391,7 @@ class ApprovedMergeTests(ReportCase):
 
     def test_an_approval_after_a_refused_merge_does_nothing_when_the_engine_refuses(self):
         before = self.world()
-        with mock.patch("nexkit.engine.answer", return_value={"error": "refused"}):
+        with mock.patch("nexkit.program.call", return_value={"error": "refused"}):
             [line] = self.approve()
             [sent] = self.send()
         self.assertIn("NexKit could not decide what the approval does", line + sent)

@@ -9,14 +9,14 @@ import tempfile
 from pathlib import Path
 from unittest import mock
 
-from nexkit import autopilot, engine, host
+from nexkit import autopilot, host, program
 from nexkit.report import report
 from nexkit.state import PLAN_MARKER
 from tests.test_autopilot import WORKFLOW, pilot
 from tests.test_host import ASKED, HostCase
 from tests.test_report import ReportCase
 
-ANSWER = engine.answer
+ANSWER = program.call
 # A valid `run.json`: the runner's result for a stage that spent these.
 RUN = {
     **host.AGENT,
@@ -44,12 +44,12 @@ def spending(event):
 def finished():
     """The `actionFinished` events the engine gets in the block, as a list filled at its end."""
     events = []
-    with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+    with mock.patch.object(host.program, "call", wraps=ANSWER) as answer:
         yield events
     events.extend(
-        call.args[0]["event"]
+        call.args[1]["event"]
         for call in answer.call_args_list
-        if call.args[0]["event"]["kind"] == "actionFinished"
+        if call.args[1]["event"]["kind"] == "actionFinished"
     )
 
 

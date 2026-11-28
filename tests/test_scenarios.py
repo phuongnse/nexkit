@@ -1137,7 +1137,7 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(item_state.read(pipe.gh, 5)[1]["state"], "failed")
         comment = pipe.gh.human_comment(5, "/nexkit trust", "olivia", "OWNER")
         comment["created_at"] = at(2)
-        with mock.patch.object(host.engine, "answer", wraps=host.engine.answer) as answer:
+        with mock.patch.object(host.program, "call", wraps=host.program.call) as answer:
             pipe.take_run(5)
             stored = item_state.read(pipe.gh, 5)[1]
             self.assertEqual(stored["state"], "planning")
@@ -1146,7 +1146,7 @@ class ScenarioTests(unittest.TestCase):
             played = pipe.play()
         self.assertEqual(played[2:], [("plan", 5), ("go", 5)])
         self.assertEqual(pipe.gh.issues[5]["state"], "closed")
-        events = [call.args[0].get("event") or {} for call in answer.call_args_list]
+        events = [call.args[1].get("event") or {} for call in answer.call_args_list]
         vouches = [e for e in events if e.get("kind") == "requested" and e.get("what") == "trust"]
         self.assertEqual(len(vouches), 1)
 
@@ -1516,7 +1516,7 @@ class ScenarioTests(unittest.TestCase):
             pipe.approve(at=submitted.strftime("%Y-%m-%dT%H:%M:%SZ")),
             ["#6: sent @olivia's approval to #5's queue."],
         )
-        with mock.patch.object(host.engine, "answer", wraps=host.engine.answer) as answer:
+        with mock.patch.object(host.program, "call", wraps=host.program.call) as answer:
             # The run takes the review before its step: the engine hears it here.
             pipe.take_run(5)
             stored = item_state.read(pipe.gh, 5)[1]
@@ -1530,17 +1530,17 @@ class ScenarioTests(unittest.TestCase):
             pipe.drain()
         self.assertEqual(len(pipe.gh.merged), 1)
         heard = [
-            call.args[0]["event"]["kind"]
+            call.args[1]["event"]["kind"]
             for call in answer.call_args_list
-            if call.args[0]["call"] == "step"
+            if call.args[1]["call"] == "step"
         ]
         self.assertEqual(heard.count("changeApproved"), 1)
         self.assertEqual(
             [
-                call.args[0]["event"]["id"]
+                call.args[1]["event"]["id"]
                 for call in answer.call_args_list
-                if call.args[0]["call"] == "step"
-                and call.args[0]["event"]["kind"] == "changeApproved"
+                if call.args[1]["call"] == "step"
+                and call.args[1]["event"]["kind"] == "changeApproved"
             ],
             ["review-9000"],
         )

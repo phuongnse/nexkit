@@ -14,3 +14,8 @@ for _name in list(os.environ):
         del os.environ[_name]
     elif _name.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")):
         del os.environ[_name]
+
+# The host's calls of the engine's program answer in this process (`tests/engine_here.py`).
+from tests import engine_here  # noqa: E402
+
+engine_here.install()

@@ -5025,21 +5025,21 @@ class StepDispatchTests(AutopilotCase):
 
     def test_a_start_the_engine_refuses_waits_for_a_person_and_starts_nothing(self):
         self.issue(5)
-        engine_answer = host.engine.answer
+        engine_answer = host.program.call
 
-        def answer(request):
-            if request["call"] == "sweep":
+        def answer(name, request):
+            if name == "sweep":
                 return {"protocol": 1, "error": "no sweep today"}
-            return engine_answer(request)
+            return engine_answer(name, request)
 
-        with mock.patch.object(host.engine, "answer", side_effect=answer):
+        with mock.patch.object(host.program, "call", side_effect=answer):
             lines = self.step(self.gh, 5)
         self.assertEqual(self.started(), [])
         self.assertTrue(any("engine refused" in line for line in lines), lines)
         [mention] = self.gh.comments_matching(5, "@olivia a person is needed")
         self.assertIn("no sweep today", mention["body"])
         # Once: the sweep sends no second step, and a second `step` run finds it mentioned.
-        with mock.patch.object(host.engine, "answer", side_effect=answer):
+        with mock.patch.object(host.program, "call", side_effect=answer):
             [found] = autopilot.preview(self.gh, self.cfg)[1]
             self.assertEqual((found["state"], found["mentioned"]), ("waits", True))
             self.assertFalse(autopilot.writes(self.cfg, found))

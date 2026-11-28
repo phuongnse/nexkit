@@ -3,7 +3,7 @@ import unittest
 from tests.answers import NAMED, real_sources, unanswered_writes
 
 # The part of `host` that every case shares: `step` is where an engine answer comes from.
-HOST = "from . import engine\ndef step(item):\n    return engine.answer(item)\n"
+HOST = "from . import program\ndef step(item):\n    return program.call('step', item)\n"
 
 
 def found(**modules):

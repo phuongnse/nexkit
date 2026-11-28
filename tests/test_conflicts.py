@@ -14,7 +14,7 @@ from unittest import mock
 
 from nexkit import agent, autopilot, cli, first_state, host, item_state
 from nexkit.github import GitHubError, run_url
-from nexkit.maintain import is_conflicting, maintain, resolve_conflicts
+from nexkit.maintain import is_conflicting, maintain, resolve_conflicts, start_conflict_round
 from nexkit.report import _not_up_to_date
 from nexkit.route import route, skip_unaffected
 from nexkit.state import (
@@ -91,6 +91,17 @@ class SweepTests(unittest.TestCase):
         host.store_import(self.gh, make_config(), 5)
         restate(self.gh, 5, rounds={**item_state.read(self.gh, 5)[1]["rounds"], "conflicts": 3})
         [line] = self.sweep()
+        self.assertIn("automatic conflict rounds are used up", line)
+        self.assertEqual(self.gh.dispatches, [])
+
+    def test_a_round_the_engine_leaves_out_says_the_limit_is_used_up_only_when_it_is(self):
+        host.store_import(self.gh, make_config(), 5)
+        found = {"left": False}
+        line = start_conflict_round(self.gh, 6, "main", "nexkit.yml", "main", 3, **found)
+        self.assertIn("so a person decides", line)
+        self.assertNotIn("used up", line)
+        restate(self.gh, 5, rounds={**item_state.read(self.gh, 5)[1]["rounds"], "conflicts": 3})
+        line = start_conflict_round(self.gh, 6, "main", "nexkit.yml", "main", 3, **found)
         self.assertIn("automatic conflict rounds are used up", line)
         self.assertEqual(self.gh.dispatches, [])
 
@@ -1203,6 +1214,22 @@ class MergeRefusalTests(ReportCase):
         self.assertEqual(outcome, "merge_refused")
         self.assertIn("refused to decide its next step", text)
         self.assertNotIn("refused to decide its next step", plain)
+
+    def test_an_implement_round_whose_review_failed_leaves_its_conflict_to_a_person(self):
+        # The engine starts no conflict round for a failed item, though no conflict round was
+        # used: the round's comment says a person decides, not that the rounds are used up.
+        os.environ["GITHUB_RUN_ID"] = "1"  # the id the next report runs as
+        self.gh.comment(5, render_run({"command": "go", "url": run_url(), "status": "running"}))
+        self.candidate(review={"status": "error", "error": "Claude stopped (error_max_turns)."})
+        self.gh.pulls[6]["mergeable"] = False
+        cfg = make_config(conflicts={"auto_resolve": True, "max_rounds": 3})
+        outcome = self.run_report(cfg=cfg)
+        self.assertEqual(outcome["outcome"], "review_failed")
+        self.assertEqual(rounds_started(self.gh), [])
+        text = self.gh.run_comments(6)[-1]["body"]
+        self.assertIn("It conflicts with `main`.", text)
+        self.assertIn("so a person decides", text)
+        self.assertNotIn("are used up", text)
 
     def test_an_implement_round_that_ends_with_a_conflict_starts_its_conflict_round(self):
         os.environ["GITHUB_RUN_ID"] = "1"  # the id the next report runs as

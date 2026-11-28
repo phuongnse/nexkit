@@ -7,7 +7,10 @@ the head lacks its tip × conflict rounds used (none, `conflicts.max_rounds`) ×
 `conflicts.max_rounds`) × `conflicts.max_rounds` 1 or 3 × a hold label on the issue. Records the
 command, GitHub after it, the preview, two sweeps and `nexkit status`. An implement round's
 report also plays a round whose review failed, so that the stored state it ends in is not
-only `ready`. A scenario drops the dimensions that its path and `mergeable` cannot reach."""
+only `ready`. A push or the schedule also plays a latest round that ended as it should, failed
+with `agent_error`, lost its run (with autopilot off, whose sweep otherwise ends it) or started
+a next round that never ran. A scenario drops the dimensions that its path and `mergeable`
+cannot reach."""
 
 import itertools
 import json
@@ -57,6 +60,7 @@ def scenarios():
         max_rounds=[1, 3],
         hold=[False, True],
         outcome=["ready", "review_failed"],
+        end=["ready", "agent_error", "lost", "stale"],
     )
     seen = set()
     for values in itertools.product(*dims.values()):
@@ -67,6 +71,11 @@ def scenarios():
         # An implement round's report and a merge look at no round of the pull request's own.
         if sc["path"] in ("merge", "implement"):
             sc["latest"] = "ended"
+        # How a round that ended ended matters only to a push or a schedule, which look at the
+        # pull request's own latest round: it may have failed, its run may have been lost, or it
+        # may have started the next round, which never ran.
+        if sc["path"] not in ("push", "schedule") or sc["latest"] != "ended":
+            sc["end"] = "ready"
         # Only a pull request that conflicts has conflict rounds to count, and only one that
         # does not conflict and is behind has updates.
         if sc["mergeable"] is True:
@@ -118,7 +127,9 @@ def run(sc):
     if sc["behind"]:
         gh.compares[(BASE, HEAD)] = {"behind_by": 1}
     cfg = make_config(
-        autopilot={"enabled": True, "labels": {"on-hold": {"hold": True}}},
+        # A round whose run was lost is the lost-run detection's under autopilot. Without it, the
+        # sweep for conflicts shows the round as ended itself, which is the case played.
+        autopilot={"enabled": sc["end"] != "lost", "labels": {"on-hold": {"hold": True}}},
         merge={"auto": False},
         conflicts={"auto_resolve": True, "max_rounds": sc["max_rounds"]},
         notify=["olivia"],
@@ -193,10 +204,23 @@ def run(sc):
             }
             if sc["latest"] == "ended":
                 row.update(status="success", outcome="ready")
+                if sc["end"] == "agent_error":
+                    row.update(status="failure", outcome="agent_error", trigger="fix (auto)")
+                    row.update(action="fix")
+                elif sc["end"] == "lost":
+                    # The run ended without a report, and the comment still says running.
+                    row.update(status="running")
+                    row.pop("outcome", None)
+                    gh.runs[ROUND_RUN] = {"status": "completed", "conclusion": "failure"}
+                elif sc["end"] == "stale":
+                    # The round started the next one, which has not posted for hours.
+                    row.update(outcome="auto_fix")
             else:
                 row.update(status="running")
                 in_job(gh, ROUND_RUN, "verify" if sc["latest"] == "checking" else "agent")
             gh.comment(6, render_run(row))
+            if sc["end"] == "stale":
+                gh.issue_comments[6][-1]["updated_at"] = "2020-01-01T00:00:00Z"
             # The base branch moved since the round published its head.
             gh.branches["main"] = BASE
             if sc["path"] == "push":

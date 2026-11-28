@@ -240,8 +240,9 @@ backstop, for workflows installed before the `item` job, whose runs may overlap:
 
 - A conflict round does not start while the implement round runs. When the implement
   round ends and the pull request conflicts, that round starts the conflict round, on the
-  branch as it left it: after a refused merge, or when it ends ready, with findings and no
-  automatic round left, or without a review.
+  branch as it left it: after a refused merge, or when it ends ready. One that ends with
+  findings and no automatic round left, with a failed review or waiting for CI starts none: a
+  person decides, or the fix round that is due merges the base branch itself.
 - A person's command or *Request changes* review on the pull request meanwhile gets a
   reply that the implement round still runs; comment it again once it ends.
 - The rounds that a run starts as it ends, such as an automatic fix round or the one more
@@ -252,7 +253,8 @@ backstop, for workflows installed before the `item` job, whose runs may overlap:
   command](work-without-a-command.md#work-without-a-command)). The one exception is a round in its checks, whose
   checks can no longer lead to a merge: NexKit stops it and starts the next round at once
   (see *Stopping a round in its checks* there).
-- A run whose workflow run ended without a report holds nothing up.
+- A run whose workflow run ended without a report is shown as ended by the next sweep. Until
+  then the item's stored state holds it on its way, and the conflict round waits for that.
 
 A hidden marker in each run comment holds the run's URL, so `report` edits the comment its
 own run started. If that comment was deleted, `report` posts a new one.

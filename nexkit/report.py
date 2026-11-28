@@ -2187,7 +2187,8 @@ def _skipped_conflicting(gh, cfg, decision, pr, head, files, row, workflow_ref, 
 
 
 # Outcomes of an implement round that leave its pull request as it is, with no round on
-# its way: a conflict round skipped while it ran starts when it ends.
+# its way. The engine decides from the stored state whether a conflict round skipped while it
+# ran starts when it ends: it does after `ready`, not after a failed or waiting item.
 IMPLEMENT_LEFT = {"ready", "needs_human", "review_failed", "retry_failed", autopilot.CI_WAITING}
 
 

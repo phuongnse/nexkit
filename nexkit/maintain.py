@@ -794,7 +794,8 @@ def is_conflicting(gh, number, tries=6, delay=5):
 
 def _queued(comment, run, now):
     """Whether the round `run` started the next one by itself, which has not posted its
-    comment yet. One that did not run within `autopilot.LOST` holds nothing up."""
+    comment yet. One that did not run within `autopilot.LOST` is no longer on its way here,
+    though the stored state holds it until the lost-run detection ends it."""
     if run.get("outcome") not in autopilot.CHAINED:
         return False
     at = parse_iso(comment.get("updated_at") or comment.get("created_at"))
@@ -827,6 +828,21 @@ def conflict_rounds_of(gh, number, row=None):
     return conflict_rounds_used([run for run in rounds if run.get("conflicts")])
 
 
+def _conflict_rounds_stored(gh, issue, tried):
+    """How many conflict rounds count against the limit by the item's stored `rounds`, which
+    is what the engine's answer rests on. The round comments' count `tried` stands in when
+    the state cannot be read."""
+    from . import item_state
+
+    try:
+        _, doc = item_state.read(gh, issue) if issue else (None, None)
+    except (item_state.StateError, item_state.Edited, GitHubError):
+        doc = None
+    if not doc:
+        return conflict_rounds_used(tried)
+    return int((doc.get("rounds") or {}).get("conflicts") or 0)
+
+
 def start_conflict_round(
     gh, number, base, workflow, ref, max_rounds, row=None, now=None, settle=False, left=None
 ):
@@ -840,10 +856,12 @@ def start_conflict_round(
     A start is recorded on the pull request's latest round (`conflicts_started`), so a
     sweep that looks before the new round posts its comment does not start it twice.
     With `settle`, when autopilot does not, a latest round whose run ended without a
-    report is shown as ended first, so it holds nothing up. With `left`, whether a conflict
-    round is left is the engine's answer (`host.conflicting`), not counted here. Returns a
-    line saying what happened, or "" when nothing was started for a known reason that needs
-    no line."""
+    report is shown as ended first (the stored state still holds it on its way until the
+    lost-run detection stores its end, and the engine decides on that). With `left`, whether
+    a conflict round is left is the engine's answer (`host.conflicting`), not counted here: a
+    round it does not leave says the limit is used up only when the stored `rounds.conflicts`
+    reached it, and otherwise that a person decides. Returns a line saying what happened, or
+    "" when nothing was started for a known reason that needs no line."""
     now = now or datetime.now(UTC)
     own = (row or {}).get("url")
     rounds = _rounds(gh, number)
@@ -877,9 +895,14 @@ def start_conflict_round(
         # this round with the branch as that round left it.
         return ""
     if (conflict_rounds_used(tried) >= max_rounds) if left is None else not left:
+        if left is None or _conflict_rounds_stored(gh, issue, tried) >= max_rounds:
+            return (
+                f"#{number} conflicts with `{base}`, but its {max_rounds} automatic "
+                "conflict rounds are used up."
+            )
         return (
-            f"#{number} conflicts with `{base}`, but its {max_rounds} automatic "
-            "conflict rounds are used up."
+            f"#{number} conflicts with `{base}`. NexKit starts no automatic round for it "
+            "now, so a person decides."
         )
     inputs = {"command": "fix", "number": str(number), "note": conflict_note(base)}
     inputs["auto"] = "conflicts"

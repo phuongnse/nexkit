@@ -4317,6 +4317,62 @@ class BaseMovedStoredTest(ReportCase):
         self.assertEqual(self.read()["rounds"]["conflicts"], 0)
 
 
+class NoConflictRoundAfterAFailedRoundTest(ReportCase):
+    """The deliberate differences from NexKit 6 that tests/differential/known.py lists for
+    #758: a base-branch move decides on the stored state alone, so a round that failed, one
+    whose run was lost and one that started a next round that never ran start no conflict
+    round, where NexKit 6's markers let the sweep start one."""
+
+    URL = "https://github.com/acme/app/actions/runs/40"
+
+    def setUp(self):
+        super().setUp()
+        self.cfg = make_config(
+            fix={"max_auto_rounds": 3}, conflicts={"auto_resolve": True, "max_rounds": 2}
+        )
+
+    def round(self, **fields):
+        """A round comment of pull request 6, as `report` leaves it, with `fields` over it."""
+        row = {
+            "round": 1,
+            "trigger": "implement (autopilot)",
+            "action": "implement",
+            "status": "success",
+            "url": self.URL,
+            "head": HEAD,
+            "checks": "passed",
+            "verdict": "approve",
+        }
+        self.gh.comment(6, render_run({**row, **fields}))
+
+    def moved(self):
+        """What the engine answers for a conflict on the stored import, and the conflict
+        rounds that the answer counted."""
+        seed(self.gh, self.cfg, 5)
+        answer = host.base_moved(self.gh, self.cfg, 5, 6, HEAD, True, False, write=True)
+        return answer, item_state.read(self.gh, 5)[1]["rounds"]["conflicts"]
+
+    def test_a_fix_round_that_failed_leaves_the_conflict_to_a_person(self):
+        self.round(status="failure", outcome="agent_error", action="fix", trigger="fix (auto)")
+        self.assertEqual(self.moved(), ("waits", 0))
+
+    def test_a_round_whose_run_was_lost_holds_the_conflict_round_back(self):
+        # Its comment still says running, so the stored state holds it on its way, until the
+        # sweep's lost-run detection stores its end.
+        self.round(status="running", checks="not run", verdict="not run")
+        self.gh.runs[40] = {"status": "completed", "conclusion": "failure"}
+        self.assertEqual(self.moved(), ("waits", 0))
+
+    def test_a_chained_round_that_never_ran_holds_the_conflict_round_back(self):
+        self.round(outcome="auto_fix")
+        self.gh.issue_comments[6][-1]["updated_at"] = "2020-01-01T00:00:00Z"
+        self.assertEqual(self.moved(), ("waits", 0))
+
+    def test_a_round_that_ended_ready_still_gets_its_conflict_round(self):
+        self.round(outcome="ready")
+        self.assertEqual(self.moved(), ("round", 1))
+
+
 class HeldConflictReleasedTest(HostCase):
     """A held conflict round released waits for a person by the read the engine decided on,
     though GitHub says otherwise a moment later while it works the conflict out again."""

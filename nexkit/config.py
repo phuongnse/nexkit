@@ -7,10 +7,10 @@ import json
 import re
 from pathlib import Path
 
-from .engine.textutil import checklist_item
 from .globs import GlobError, compile_globs
 from .runtimes import PROVIDERS, REMOVED, RUNTIMES, SECRET_SLOTS
 from .runtimes.base import SECRET_NAME, AgentConfigError
+from .textutil import checklist_item
 
 CONFIG_PATH = ".nexkit/config.json"
 STAGES = ("plan", "implement", "review")

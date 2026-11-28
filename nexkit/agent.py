@@ -20,15 +20,16 @@ from . import protocol
 from .checks import BASE_SHA, environment, known_base
 from .context import KEEPS, keep_texts
 from .engine import prompt as engine_prompt
-from .engine.textutil import checklist_item, person_decides
 from .first_state import agent_run
 from .gitutil import GitError, git, is_ancestor, merge_tree, names
+from .protocol.stages import COMMIT, MAX_DIFF
 from .redact import Redactor
 from .runlog import RunLog, add_tokens, one_line, summary, write_summary
 from .runtimes import PROVIDERS, RUNTIMES
 from .runtimes.base import ACCESS, AgentConfigError, Spec
 from .schema import filled, problems
 from .state import round_questions
+from .textutil import checklist_item, person_decides
 from .usage import schedule
 
 # The most time a session gets to give its result alone, after a run without one that fits.
@@ -175,7 +176,7 @@ def _since(repo, commit, base):
         return commit
 
 
-def _clipped(diff, limit=engine_prompt.MAX_DIFF):
+def _clipped(diff, limit=MAX_DIFF):
     """A diff cut to one character past what a prompt shows of it, which it then clips the
     same way: no more reaches the engine than a request may carry."""
     return diff[: limit + 1]
@@ -190,7 +191,7 @@ def since_review(repo, context, base):
     """The diff from the previously reviewed commit to HEAD, or None when the checkout does
     not have that commit or there was no previous review."""
     commit = context.get("previous_head") or ""
-    if not engine_prompt.COMMIT.fullmatch(commit):
+    if not COMMIT.fullmatch(commit):
         return None
     try:
         return _clipped(git(repo, "diff", _since(repo, commit, base), "HEAD"))
@@ -204,12 +205,12 @@ def merge_sides(repo, context):
     cannot show them or there was no such merge."""
     merged = context.get("merged") or {}
     head, commit, files = merged.get("head"), merged.get("base"), merged.get("conflicts")
-    if not files or not all(engine_prompt.COMMIT.fullmatch(c or "") for c in (head, commit)):
+    if not files or not all(COMMIT.fullmatch(c or "") for c in (head, commit)):
         return None
     try:
         fork = git(repo, "merge-base", head, commit).strip()
         sides = [git(repo, "diff", fork, side, "--", *files) for side in (commit, head)]
-        return [_clipped(side, engine_prompt.MAX_DIFF // 4) for side in sides]
+        return [_clipped(side, MAX_DIFF // 4) for side in sides]
     except GitError:
         return None
 

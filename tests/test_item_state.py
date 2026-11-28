@@ -318,7 +318,7 @@ def worst(characters):
 
 
 def clipped(characters):
-    """A text of the history as `engine.textutil.clip` keeps it at most: the limit, and the
+    """A text of the history as `textutil.clip` keeps it at most: the limit, and the
     line that ends a shortened text."""
     return worst(characters) + "\n[truncated]"
 

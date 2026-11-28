@@ -24,10 +24,11 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from nexkit import agent, engine, first_state, protocol
+from nexkit import agent, engine, first_state, protocol, textutil
 from nexkit.context import gather
-from nexkit.engine import cli, prompt, serve, textutil
-from nexkit.engine.machine import INPUTS
+from nexkit.engine import cli, prompt, serve
+from nexkit.protocol import stages
+from nexkit.protocol.stages import INPUTS
 from nexkit.publish import pull_body
 from nexkit.state import answers_marker, empty_state, profile_record, render_state
 from tests.support import (
@@ -1086,20 +1087,20 @@ class PromptInputTests(unittest.TestCase):
 
     def test_diffs_and_outputs_come_no_longer_than_a_prompt_shows(self):
         defs = self.defs
-        self.assertEqual(defs["diff"]["properties"]["text"]["maxLength"], prompt.MAX_DIFF + 1)
-        self.assertEqual(defs["diff"]["properties"]["since"]["maxLength"], prompt.MAX_DIFF + 1)
+        self.assertEqual(defs["diff"]["properties"]["text"]["maxLength"], stages.MAX_DIFF + 1)
+        self.assertEqual(defs["diff"]["properties"]["since"]["maxLength"], stages.MAX_DIFF + 1)
         sides = defs["diff"]["properties"]["sides"]["items"]["maxLength"]
-        self.assertEqual(sides, prompt.MAX_DIFF // 4 + 1)
+        self.assertEqual(sides, stages.MAX_DIFF // 4 + 1)
         self.assertEqual(defs["check"]["properties"]["output"]["maxLength"], textutil.OUTPUT_TAIL)
         request = self.request("review", self.needs("review"))
-        request["inputs"]["diff"] = {"base": "main", "text": "x" * (prompt.MAX_DIFF + 2)}
+        request["inputs"]["diff"] = {"base": "main", "text": "x" * (stages.MAX_DIFF + 2)}
         self.assertIn(
-            f"request.inputs.diff.text has more than {prompt.MAX_DIFF + 1} characters",
+            f"request.inputs.diff.text has more than {stages.MAX_DIFF + 1} characters",
             engine.answer(request)["error"],
         )
         # Clipped to that, the prompt is the one the whole diff gives.
-        whole = prompt.diff_text("x" * (prompt.MAX_DIFF + 2))
-        self.assertEqual(prompt.diff_text("x" * (prompt.MAX_DIFF + 1)), whole)
+        whole = prompt.diff_text("x" * (stages.MAX_DIFF + 2))
+        self.assertEqual(prompt.diff_text("x" * (stages.MAX_DIFF + 1)), whole)
 
     def test_a_prompt_request_may_be_larger_than_a_step_request(self):
         self.assertEqual(serve.MAX_BODY, 1 << 20)

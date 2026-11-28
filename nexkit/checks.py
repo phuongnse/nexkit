@@ -17,8 +17,6 @@ import xml.etree.ElementTree as ET
 from datetime import UTC, datetime
 from pathlib import Path
 
-# What a prompt shows of a check is the engine's, as the prompts are.
-from .engine.textutil import FAILURE_LINE, FAILURE_LINES, OUTPUT_TAIL, SHARD, failing_lines
 from .gitutil import GitError, git, has_commit, is_ancestor
 from .gitutil import names as file_names
 from .globs import unaffected
@@ -26,6 +24,9 @@ from .redact import Redactor
 from .runlog import NO_DATA, code, duration, fence, one_line, write_summary
 from .runtimes import NAMES_VAR, secret_names
 from .state import COMMIT, check_fingerprint
+
+# What a prompt shows of a check is the engine's, as the prompts are.
+from .textutil import FAILURE_LINE, FAILURE_LINES, OUTPUT_TAIL, SHARD, failing_lines
 from .usage import parse_iso
 
 # How long NexKit still reads a command's output after its shell exited or was killed,

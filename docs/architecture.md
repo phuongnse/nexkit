@@ -32,10 +32,10 @@ engine's calls as a program that reads JSON on standard input.
 | `maintain.py`, `usage.py`, `autopilot.py` | Work after other events; runs paused at a usage limit; autopilot sweeps |
 | `config.py`, `globs.py`, `scaffold.py`, `app.py` | Config schema and path globs; `nexkit init` and `doctor`; the GitHub App |
 | `status.py`, `snapshot.py`, `pin.py`, `github.py`, `gitutil.py` | `nexkit status` and its batched reads; the pinned release; REST, GraphQL and git helpers |
-| `schema.py`, `redact.py`, `runlog.py` | Result validation, secret removal, run log |
+| `schema.py`, `redact.py`, `runlog.py`, `textutil.py` | Result validation, secret removal, run log; the text limits and shortening that the host and the engine share |
 | `runtimes/` | Everything specific to one CLI or provider |
-| `protocol/` | The engine's protocol as JSON Schemas, with examples; `size.py` bounds its state document |
-| `engine/` | The engine: states and moves in `machine.py`; prompts in `prompt.py`, `textutil.py` and `prompts/`; `sweep.py` (starts); `cli.py` (`nexkit-engine`) and `serve.py` |
+| `protocol/` | The engine's protocol as JSON Schemas, with examples; `size.py` bounds its state document; `stages.py` holds each stage's run state, access, inputs and diff limit |
+| `engine/` | The engine: states and moves in `machine.py`; prompts in `prompt.py` and `prompts/`; `sweep.py` (starts); `cli.py` (`nexkit-engine`) and `serve.py` |
 | `templates/` | The caller workflow that `nexkit init` installs in a repository |
 
 `scripts/` holds the smoke test, the pin updates, the release notes, the docs audit, the

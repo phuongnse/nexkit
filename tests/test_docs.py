@@ -37,8 +37,9 @@ from nexkit import (
     scaffold,
     state,
     status,
+    textutil,
 )
-from nexkit.engine import machine, prompt, textutil
+from nexkit.engine import machine, prompt
 from nexkit.runtimes import claude_code
 from tests import walk
 from tests.support import make_config, with_claude

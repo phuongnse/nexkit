@@ -3,7 +3,7 @@ prompt of a stage, written from the texts the host fetched for it, with the limi
 keeps and the list of what was shortened or not read (docs/engine.md#the-engine).
 
 The host fetches; the engine writes. The inputs are named by kind, as `runAgent` names them
-(`machine.INPUTS`). Inside the engine they are snake_case, as NexKit's records are; the
+(`protocol.stages.INPUTS`). Inside the engine they are snake_case, as NexKit's records are; the
 protocol's call sends them in camelCase, and `answer` converts them. The earlier fix rounds and
 the last review are not an input: they come from the call's `state`, as `rounds.fixes` and
 `rounds.lastReview`.
@@ -27,7 +27,8 @@ from importlib import resources
 from string import Template
 
 from .. import protocol
-from .textutil import (
+from ..protocol.stages import COMMIT, MAX_DIFF
+from ..textutil import (
     MAX_PARTS,
     SHARD,
     TEXT_LIMIT,
@@ -56,7 +57,6 @@ REVIEW_FAILURE_LINES = 10
 # What a part's plan keeps of each earlier part's text and plan.
 EARLIER_BODY = 3_000
 EARLIER_PLAN = 6_000
-MAX_DIFF = 80_000
 NO_PLAN = "No plan was posted. Implement the issue as described."
 PERSON_PLAN = "None: a person wrote this pull request."
 NO_EARLIER_FIXES = "None. This is the first fix round of this pull request."
@@ -64,7 +64,6 @@ NO_EARLIER_FIXES = "None. This is the first fix round of this pull request."
 PERSON_MARK = "(a person decides)"
 # The stages whose prompts answer `review.checklist`: those with a checklist result.
 CHECKLIST_STAGES = tuple(protocol.load("results/checklist.schema.json")["$defs"])
-COMMIT = re.compile(r"[0-9a-f]{40}")
 # The inputs a stage's prompt cannot be written without; `plan` may be null.
 NEEDS = {
     "triage": ("item",),

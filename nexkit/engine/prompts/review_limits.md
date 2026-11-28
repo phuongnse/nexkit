@@ -1,1 +1,1 @@
-- Do not raise findings about things the implementation agent cannot change: the $change_kind_broken description, approvals, CI configuration or the protected paths $protected.
+- Do not raise findings about things the implementation agent cannot change: the $change_kind_broken description, approvals, $pipeline or the protected paths $protected.

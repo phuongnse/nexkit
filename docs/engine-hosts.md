@@ -72,6 +72,11 @@ policies of the engine, and each has its place:
   engine's templates hold the stage's contract and read these words in place of any host's own,
   and it refuses a stage prompt without them. An application might send "request R-42",
   "draft 3" and "in the app". See [The prompt](engine.md#the-prompt).
+- **Workspace text** is the `workspace` input's `text`: the host's sentences on how the agent
+  sees and edits the change, which the plan, implement and review prompts read in place of any
+  host's own, and the engine refuses a `workspace` without them. An application might send
+  "working through the application's tools", "the application's validation rules" and
+  "`settings/limits`". See [The prompt](engine.md#the-prompt).
 - **`maxParallel` and `priority`** are the `sweep` call's policies: the most items that run at
   once, and the tags that go first. Neither is in `policies.schema.json`, so no state document
   keeps them.
@@ -187,6 +192,7 @@ The GitHub host sets each policy and its own settings as follows. The first colu
 | Start | On a request, and by the sweep with autopilot |
 | Checklist (`checklist`) | `review.checklist` |
 | Words (`words`) | "GitHub issue #5" for the item, "pull request #6" for the change, "on GitHub" for where people write and read, and `/nexkit go`, `/nexkit fix` and "`/nexkit` commands" for its commands. It builds them from the numbers of the issue and the pull request and from fixed text, never from what anyone wrote. |
+| Workspace text (`workspace.text`) | "working in a checkout of the repository" for where the agent works, "CI configuration" and "workflows" for what runs the checks, "`.github/workflows/ci.yml`" for a protected path, and its other texts, as fixed strings, so its prompts read as they always did. It builds them from fixed text, never from what anyone wrote. |
 | `maxParallel` and `priority` | `autopilot.max_parallel` and `autopilot.priority` |
 | Usage limits (`limit`, `limited`) | `usage_limit.*` |
 | Item budget (`budgets.item`) | None |

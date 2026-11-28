@@ -300,6 +300,22 @@ class Host:
         inputs["workspace"] = {
             "checks": [{"name": "validate", "run": "validate"}],
             "protectedPaths": [],
+            "text": {
+                "location": "working through the application's tools on the request's records",
+                "reviewLocation": "The review sees the draft as it is now.",
+                "candidate": "the candidate draft",
+                "instructions": "(the application's style notes)",
+                "saving": "Do not publish the draft. The application saves your edits.",
+                "leftovers": "Leave no scratch records in the draft.",
+                "summaryUse": "the draft's note",
+                "checksOn": "run on this exact draft",
+                "diffHeading": "Changes against",
+                "pipeline": "the application's validation rules",
+                "pipelineFiles": "validation rules",
+                "pipelineFile": "a validation rule",
+                "protectedExample": "`settings/limits`",
+                "personChange": "in this draft",
+            },
         }
         if stage in ("implement", "fix", "review"):
             inputs["plan"] = self.plan_text(state)

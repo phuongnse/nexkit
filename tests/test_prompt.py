@@ -730,6 +730,47 @@ OTHER_WORDS = {
 }
 
 
+# The workspace texts of a host whose change is not files, which no word of git or GitHub is in.
+APP_TEXT = {
+    "location": "working through the application's tools on request R-12",
+    "reviewLocation": "The review sees draft 3 as it is now.",
+    "candidate": "the candidate draft",
+    "instructions": "(the application's style notes)",
+    "saving": "Do not publish the draft. The application saves your edits.",
+    "leftovers": "Leave no scratch records in the draft.",
+    "summaryUse": "the draft's note",
+    "checksOn": "run on this exact draft",
+    "diffHeading": "Changes against",
+    "pipeline": "the application's validation rules",
+    "pipelineFiles": "validation rules",
+    "pipelineFile": "a validation rule",
+    "protectedExample": "`settings/limits`",
+    "personChange": "in this draft",
+}
+# What each stage's prompt reads of `APP_TEXT`, by the text's name.
+APP_TEXT_READ = {
+    "plan": ("location", "candidate", "protectedExample"),
+    "implement": ("location", "instructions", "saving", "leftovers", "summaryUse"),
+    "review": ("reviewLocation", "checksOn", "diffHeading", "pipeline"),
+    "person": ("reviewLocation", "personChange", "pipeline", "pipelineFiles", "pipelineFile"),
+}
+# The findings that show no change is needed, which still say "commit", "branch", "CI" and
+# "workflow", whitespace-normalised. Part 4 of #864 moves them to the host, and then deletes
+# this list: it names only what that part owns.
+NO_CHANGE = (
+    "A commit on the default branch already fixed it",
+    "A commit on the base branch already fixed the failure",
+    "A CI failure came from outside the repository",
+    "The evidence of the CI runs above must name that outside cause, and *Since* must show a "
+    "newer run of the same workflow that passed on the default branch",
+    "the evidence that shows it: the commit,",
+    "such as the commit, log or test output lines",
+)
+# A word that belongs to git or GitHub, which a host of another kind of change never sends.
+GIT_WORD = re.compile(r"\b(?:checkout|checked out|commit|branch|git|workflow)", re.I)
+CI_WORD = re.compile(r"\bCI\b")
+
+
 def example():
     return json.loads((EXAMPLE / "prompt.json").read_text(encoding="utf-8"))
 
@@ -763,6 +804,11 @@ class PromptProgramTests(unittest.TestCase):
         request = example()
         del request["inputs"]["workspace"]
         self.assertEqual(engine.answer(request)["error"], "request.inputs.workspace is missing")
+        request = example()
+        del request["inputs"]["workspace"]["text"]
+        self.assertEqual(
+            engine.answer(request)["error"], "request.inputs.workspace.text is missing"
+        )
         for stage, needs in (
             ("implement", ["plan"]),
             ("fix", ["plan", "diff"]),
@@ -1080,12 +1126,15 @@ class PromptInputTests(unittest.TestCase):
     def test_a_word_with_a_space_breaks_where_githubs_does_and_one_without_does_not(self):
         inputs = self.needs("review")
         inputs["item"]["change"] = "3"
+        inputs["workspace"]["text"] = APP_TEXT
         text = engine.answer(self.request("review", inputs))["text"]
-        self.assertIn("Review draft 3, which implements request\nR-12. The repository", text)
+        self.assertIn(
+            "Review draft 3, which implements request\nR-12. " + APP_TEXT["reviewLocation"], text
+        )
         self.assertIn("the draft description, approvals", text)
         words = {**OTHER_WORDS, "item": "R-12", "changeKind": "pull request"}
         text = engine.answer(self.request("review", inputs, words=words))["text"]
-        self.assertIn("which implements R-12. The repository", text)
+        self.assertIn("which implements R-12. " + APP_TEXT["reviewLocation"], text)
         self.assertIn("the pull\n  request description", text)
 
     def test_a_stage_prompt_without_words_is_refused_and_names_what_is_missing(self):
@@ -1126,6 +1175,8 @@ class PromptInputTests(unittest.TestCase):
     def test_the_example_holds_words_that_fit_the_schema(self):
         request = example()
         self.assertEqual(set(request["words"]), set(self.defs["words"]["properties"]))
+        text = request["inputs"]["workspace"]["text"]
+        self.assertEqual(set(text), set(self.defs["workspaceText"]["properties"]))
         self.assertEqual(protocol.check(request, "calls/prompt.schema.json"), [])
         self.assertNotIn("GitHub", engine.answer(request)["text"])
 
@@ -1136,6 +1187,68 @@ class PromptInputTests(unittest.TestCase):
             kind: minimal(kinds[kind], self.defs)
             for kind in (prompt.camel(need) for need in prompt.NEEDS[stage])
         }
+
+    def test_a_host_gives_the_workspace_texts_its_prompts_hold(self):
+        cases = (("plan", False), ("implement", False), ("review", False), ("review", True))
+        for stage, person in cases:
+            with self.subTest(stage=stage, person=person):
+                inputs = self.needs(stage)
+                inputs["workspace"] = {
+                    "checks": [{"name": "validate", "run": "validate"}],
+                    "protectedPaths": ["settings/"],
+                    "text": APP_TEXT,
+                }
+                if stage == "review":
+                    inputs["item"]["change"] = "3"
+                inputs["item"]["person"] = person
+                text = engine.answer(self.request(stage, inputs))["text"]
+                flat = " ".join(text.split())
+                for name in APP_TEXT_READ["person" if person else stage]:
+                    self.assertIn(" ".join(APP_TEXT[name].split()), flat, name)
+                for phrase in NO_CHANGE:
+                    flat = flat.replace(phrase, "")
+                self.assertIsNone(GIT_WORD.search(flat), GIT_WORD.search(flat))
+                self.assertIsNone(CI_WORD.search(flat), CI_WORD.search(flat))
+
+    def test_a_prompt_without_the_workspace_texts_is_refused_and_names_what_is_missing(self):
+        fields = self.defs["workspaceText"]["required"]
+        for stage in ("plan", "implement", "review"):
+            with self.subTest(stage=stage):
+                request = self.request(stage, self.needs(stage))
+                del request["inputs"]["workspace"]["text"]
+                self.assertIn(
+                    "request.inputs.workspace.text is missing", engine.answer(request)["error"]
+                )
+                for field in fields:
+                    request = self.request(stage, self.needs(stage))
+                    request["inputs"]["workspace"]["text"] = {
+                        k: v for k, v in APP_TEXT.items() if k != field
+                    }
+                    self.assertIn(
+                        f"request.inputs.workspace.text.{field} is missing",
+                        engine.answer(request)["error"],
+                    )
+
+    def test_every_workspace_text_is_a_required_string_with_a_limit(self):
+        texts = self.defs["workspaceText"]
+        self.assertEqual(sorted(texts["required"]), sorted(texts["properties"]))
+        self.assertEqual(
+            set(prompt.snake(dict.fromkeys(texts["properties"]))), set(prompt.WORKSPACE_TEXTS)
+        )
+        self.assertEqual(set(APP_TEXT), set(texts["properties"]))
+        workspace = self.defs["workspace"]
+        self.assertEqual(workspace["properties"]["text"], {"$ref": "#/$defs/workspaceText"})
+        self.assertIn("text", workspace["required"])
+        page = (ROOT / "docs" / "engine.md").read_text(encoding="utf-8")
+        section = page.split("### The prompt", 1)[1].split("\n### ", 1)[0]
+        for name, field in texts["properties"].items():
+            with self.subTest(name):
+                self.assertEqual(field["type"], "string")
+                self.assertEqual(field["maxLength"], 500)
+                self.assertIn(f"`{name}`", section)
+        request = self.request("plan", self.needs("plan"))
+        request["inputs"]["workspace"]["text"] = {**APP_TEXT, "location": "x" * 501}
+        self.assertIn("request.inputs.workspace.text.location", engine.answer(request)["error"])
 
     def test_each_input_with_only_its_required_fields_gets_a_prompt(self):
         kinds = self.defs["inputs"]["properties"]
@@ -1169,7 +1282,7 @@ class PromptInputTests(unittest.TestCase):
         inputs = {
             "item": {"id": "/../../../home/runner/.bashrc#", "title": "x", "body": "B" * 70_000},
             "plan": None,
-            "workspace": {"checks": [], "protectedPaths": []},
+            "workspace": {"checks": [], "protectedPaths": [], "text": APP_TEXT},
         }
         answer = engine.answer(self.request("implement", inputs))
         [kept] = answer["files"]
@@ -1189,7 +1302,7 @@ class PromptInputTests(unittest.TestCase):
         inputs = {
             "item": {"id": id, "title": "x", "body": "B" * 70_000},
             "plan": None,
-            "workspace": {"checks": [], "protectedPaths": []},
+            "workspace": {"checks": [], "protectedPaths": [], "text": APP_TEXT},
         }
         answer = engine.answer({**self.request("implement", inputs), **request})
         self.assertNotIn("error", answer)

@@ -3,8 +3,9 @@
 Starting a Python process for each `step` call made the unit suite almost four times slower, so
 the tests answer in this process. It runs what the program runs: `engine.reply` on the request's
 JSON bytes, and `engine.text` for the answer, which it reads back, so its answers are the
-program's byte for byte. Only `ProgramTransportTest` in `tests/test_host.py` and the tests of
-`nexkit/program.py` reach the real program, which is `REAL`.
+program's byte for byte. Only `ProgramTransportTest` in `tests/test_host.py`,
+`EngineProgramTests` in `tests/test_agent.py` and the tests of `nexkit/program.py` reach the real
+program, which is `REAL`.
 """
 
 import json

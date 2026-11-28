@@ -13,7 +13,7 @@ from what the host read about the work item, and `finish`, from what its round a
 change's diff, the checks' results and the workspace. The GitHub host sends one `prompt` call
 for each prompt, from its agent step: the job that reads GitHub holds a token and fetches the
 inputs, and the agent job, with the checkout and no token, adds the diff, the checks and the
-workspace to them.
+workspace to them. The agent step sends the call to the `nexkit-engine` program.
 
 A text that a prompt keeps only the start of goes whole to a file in the host's folder for
 texts, which the agent reads: the engine names the file in the prompt and answers its path

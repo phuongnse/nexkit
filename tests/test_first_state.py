@@ -236,6 +236,77 @@ class ImportTest(unittest.TestCase):
                 self.assertEqual((found.get("again") or {}).get("transient"), count)
                 self.assertEqual(found["state"], "working")
 
+    def test_a_command_on_its_way_keeps_autopilot_s_count_of_lost_starts(self):
+        started = "2026-11-23T15:00:00Z"
+        later = datetime(2026, 11, 23, 16, 0, tzinfo=UTC)
+
+        def imported(**fields):
+            gh = FakeGitHub()
+            gh.add_issue(5)
+            record = {
+                "command": "go",
+                "basis": [0, 0],
+                "target": 5,
+                "note": "",
+                "at": started,
+                "url": "https://x/actions/runs/9",
+                **fields,
+            }
+            gh.comment(5, f"NexKit autopilot started a command.\n\n{record_marker(record)}")
+            return first_state.import_item(gh, make_config(), 5, now=later)
+
+        state = imported(tries=2, once=True)
+        self.assertEqual(state["state"], "working")
+        agents = [action for action in state["pending"] if action["kind"] == "runAgent"]
+        self.assertEqual([action["stage"] for action in agents], ["implement"])
+        self.assertEqual(state["again"], {"lost": 2, "once": True})
+        self.assertEqual(imported(tries=15)["again"], {"lost": 10})
+        for name, fields in (
+            ("no tries", {}),
+            ("a flag", {"tries": True}),
+            ("no count", {"tries": 0}),
+        ):
+            with self.subTest(name):
+                self.assertNotIn("again", imported(**fields))
+
+    def test_a_running_go_keeps_the_count_of_the_record_of_its_command(self):
+        started = "2026-11-23T15:00:00Z"
+        later = datetime(2026, 11, 23, 16, 0, tzinfo=UTC)
+
+        def imported(retry=None, **fields):
+            gh = FakeGitHub()
+            gh.add_issue(5)
+            record = {
+                "command": "go",
+                "basis": [0, 0],
+                "target": 5,
+                "note": "",
+                "at": started,
+                "url": "https://x/actions/runs/9",
+                **fields,
+            }
+            gh.comment(5, f"NexKit autopilot started a command.\n\n{record_marker(record)}")
+            run = {"command": "go", "status": "running", "url": "https://x/actions/runs/7"}
+            if retry:
+                run["retry"] = retry
+            gh.comment(5, render_run(run))
+            return first_state.import_item(gh, make_config(), 5, now=later)
+
+        state = imported(tries=3)
+        self.assertEqual(state["state"], "working")
+        self.assertEqual(state["again"], {"lost": 3})
+        self.assertEqual(imported(tries=15, once=True)["again"], {"lost": 10, "once": True})
+        for name, fields in (
+            ("a record older than six hours", {"tries": 3, "at": "2026-11-23T08:00:00Z"}),
+            ("a record of another command", {"tries": 3, "command": "plan"}),
+            ("a record of another target", {"tries": 3, "target": 6}),
+        ):
+            with self.subTest(name):
+                self.assertNotIn("again", imported(**fields))
+        # The count of runs again after a transient error stays beside the lost count.
+        self.assertEqual(imported(retry=2, tries=1)["again"], {"transient": 2, "lost": 1})
+        self.assertEqual(imported(retry=2)["again"], {"transient": 2})
+
     def test_a_fix_round_on_its_way_waits_on_the_pull_request_s_head(self):
         head = "b" * 40
         gh = FakeGitHub()

@@ -475,9 +475,11 @@ adapter's tests and the answers as what its adapter carries out.
   with `supersede`, so its split withdraws the pull request. A split that an issue above the
   item asked for is imported into `asked`, so a part that runs out of time again waits for a
   person. An issue autopilot does not take keeps a time-out in `failed` and a blocked fix round
-  waiting for answers. A NexKit 6 run on its way becomes the action the
-  engine waits for, keeping the count of its runs again after a transient error when it is one
-  (`again.transient`, as a paused one does), and an automatic fix round on its way, with a count, is marked
+  waiting for answers. A NexKit 6 run on its way, or a command that autopilot started and that
+  has not run yet, becomes the action the engine waits for. A run keeps the count of its runs again after a transient error when it is one
+  (`again.transient`, as a paused one does). Either keeps autopilot's count of lost starts
+  (`again.lost`, and `again.once` when the record says the start runs once more), from the record
+  of the same command and target started within six hours. An automatic fix round on its way, with a count, is marked
   `rounds.automatic`, so that a stop gives its count back. A run paused at a usage limit, or until
   it runs again after a transient stop, becomes a wait with its time, the second keeping the
   count of runs again, unless NexKit 6 would no longer resume it, which fails for a person; an automatic run that ended without a report waits

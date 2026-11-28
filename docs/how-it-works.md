@@ -444,7 +444,9 @@ item posts. It holds the engine's state document and its revision. The first run
 that document from NexKit 6's markers, as [the import](engine.md#getting-there) describes. The runs of the item take its comments, reviews and hold labels from after that
 comment, a hold label's adding only when autopilot takes the issue. Every decision that moves the item reads this document and stores the engine's answer in it.
 While no comment is stored, it decides on the import in memory, as [the engine's
-page](engine.md#getting-there) says. A comment of it that someone other than the App
+page](engine.md#getting-there) says. A state comment whose document no longer fits the current
+schema counts as none: the next run imports the item again, posts a new state comment, leaves the
+old one and reads the new one from then on. A comment of it that someone other than the App
 changed counts for nothing, and the item waits for a person ([troubleshooting](troubleshooting.md#a-comment-of-nexkit-was-changed-by-someone-else)).
 
 A writer edits the state comment, and autopilot's record comment, only while the comment still

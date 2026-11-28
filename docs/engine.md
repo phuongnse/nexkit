@@ -460,17 +460,17 @@ adapter's tests and the answers as what its adapter carries out.
 - **Integers carry no fraction.** A field the protocol types as an integer refuses `60.0`, though
   JSON Schema 2020-12 takes it as one: the engine and NexKit count and index with these values,
   and so does every check of `schema.problems`, the agents' results included.
-- **Two versions.** The protocol has a version, and the state document has a schema version of its
-  own. The engine moves an older state document to the current schema when it reads one, and
-  refuses one that is newer than it knows, so an engine rolled back never guesses. A document of
-  schema version 1 moves to version 2, which gives each finding of the last review a `location`
-  in place of its `file` and `line`, and names the plan's list of protected paths `protected`
-  in place of `protectedPaths`. The `workspace` input and the plan, implement and fix results
-  name that list `protected` too. A finding's location is its `file` and `line` as `file:line`, its
-  `file` alone when the line is 0, and an empty string when it has no file (`protocol.upgrade`).
-  Before 1.0, a document of schema version 1 that still holds `used.usd` is read without it.
-  `tests/golden/state/v<N>/` keeps a document of each state for each schema version, from 1, and
+- **Two versions.** The protocol has a version, and the state document has a schema version of
+  its own. Before NexKit 7.0 the state document has only schema version 1, which changes in
+  place ([D17](decisions/d17-the-state-document-changes-in-place-until-the-engine-is-stable.md)).
+  The engine reads a document as it is and refuses one its schema refuses, a newer one included,
+  so an engine rolled back never guesses. A host builds again the state of an item whose stored
+  document no longer fits: the GitHub host imports the item again and keeps the old comment. From
+  7.0 on, every change to the state document needs a new schema version and a step from the one
+  before. `tests/golden/state/v<N>/` keeps a document of each state for each schema version, and
   a test steps each one with a `tick`: the engine must read it and answer at the current version.
+  This rule serves only while the engine is built. The release of 7.0 removes it, and every note
+  about NexKit 6 or the time before 7.0, from the docs, the decisions and the code.
 - **Major and minor.** Every message carries the protocol's major version, `"protocol": 1`.
   Version 1 may change freely until NexKit 7.0 ships; at that release it is 1.0. From then on,
   each additive change raises the minor version, and every field it adds carries
@@ -500,8 +500,8 @@ adapter's tests and the answers as what its adapter carries out.
   engine still serves version 1 for one more NexKit major release, so hosts move on their own
   time.
 - **The state document is closed.** Only the engine writes it, so its schema refuses a field it
-  does not name, its copy of the policies included, and a new field is a new schema version of
-  the state document. The one part that stays open is `pending`: each entry is an action as the
+  does not name, its copy of the policies included, and, from 7.0 on, a new field is a new schema
+  version of the state document. The one part that stays open is `pending`: each entry is an action as the
   engine answered it, so it follows the action's schema, and a new optional field of an action
   is the protocol's change, not the state's.
 - **A host's first state document is the host's to build.** A host that had a loop of its own builds each open item's document from its records, within the protocol's schema and size (see [the state document](#the-state-document)). The engine then moves the item on from it as from any other.

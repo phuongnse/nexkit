@@ -61,7 +61,7 @@
     "tooLarge": false,
     "parts": 0,
     "noChange": false,
-    "protectedPaths": [],
+    "protected": [],
     "approved": true,
     "split": []
   },

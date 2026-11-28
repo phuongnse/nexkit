@@ -17,7 +17,10 @@ issue's commands and its pull request's rounds alike, so the check below only ca
 that misses. A person who may write to the repository can edit the App's comment, and it
 still has the App as its author: a state comment that someone else changed counts for nothing,
 and `find` raises `Edited` for it, so that nothing posts a second state comment over it and
-the item waits for a person. Every other marker counts only in a comment that
+the item waits for a person. A state comment of the App whose document the current schema no
+longer fits, of this schema version or an older one, counts as none, so that the host imports
+the item again and posts a new one (`find`); one of a later version stops the item. Every other
+marker counts only in a comment that
 `state.bot_record` accepts, as docs/security.md#comments-and-markers says.
 """
 
@@ -32,6 +35,8 @@ from . import protocol
 from .protocol.size import STATE_LIMIT, decoded, encoded, size
 from .state import TEXT_LIMIT, bot_record, by_bot, changed_by
 
+# The state document's schema version, which `_stale` compares a stored document's with.
+CURRENT = protocol.load("state.schema.json")["properties"]["schemaVersion"]["const"]
 PREFIX = "<!-- nexkit:item-state "
 # Only the marker that ends the comment.
 PATTERN = re.compile(r"<!-- nexkit:item-state ([A-Za-z0-9+/=]+) -->\s*\Z")
@@ -108,11 +113,21 @@ def _document(comment):
         state = decoded(base64.b64decode(match.group(1)))
     except ValueError as error:
         raise StateError(f"Comment {comment['id']} holds no state document: {error}") from None
-    state = protocol.upgrade(state)
     found = protocol.check(state, "state.schema.json", "state")
+    if found and _stale(state):
+        return None
     if found:
         raise StateError(f"Comment {comment['id']} holds a broken state document: {found[0]}")
     return state
+
+
+def _stale(state):
+    """Whether `state`, a document that the current schema refuses, is of this schema version
+    or an older one: it counts as none, and the host builds the item's state again. A document
+    of a later version, or one that is no object, is a document that this code cannot read,
+    which stops the item, so that a rolled-back engine never guesses at it."""
+    version = state.get("schemaVersion") if isinstance(state, dict) else None
+    return isinstance(version, int) and not isinstance(version, bool) and version <= CURRENT
 
 
 def since(comment):
@@ -140,8 +155,11 @@ def _edited(comment):
 
 def find(comments):
     """(comment, state) of the oldest state comment among `comments`, or (None, None). A
-    newer one can only be a first write that lost (see `write`). Raises `Edited` for a
-    state comment that someone other than the App changed."""
+    newer one can only be a first write that lost (see `write`). A state comment whose
+    document the current schema refuses, of this schema version or an older one, counts as
+    none: the next one counts, and the first write posts a new one. Raises `Edited` for a
+    state comment that someone other than the App changed, and `StateError` for a document
+    of a later schema version or one that does not decode."""
     for comment in comments:
         if _edited(comment):
             raise Edited(comment)

@@ -5,50 +5,51 @@ description: How the docs audit reads NexKit's docs, skills, README and AGENTS.m
 
 # NexKit's docs audit
 
-The rules that keep the docs true are in
-[how the docs stay correct](../../../docs/writing-docs.md#how-the-docs-stay-correct). The audit is
-its rule that a reading of the docs against the code finds what drifted. It changes no file: it
-opens issues, which NexKit takes.
+The audit applies
+[how the docs stay correct](../../../docs/writing-docs.md#how-the-docs-stay-correct): a reading of
+the docs against the code finds what drifted. It changes no file: it opens issues, which NexKit
+takes.
 
 ## A run of the workflow
 
 `scripts/docs_audit.py` does the steps that need no judgement, and `docs-audit.yml` runs it on
-`main` when NexKit starts it after its merges (`merge.after_workflows`):
+`main` when NexKit starts it after its merges (`merge.after_workflows`). The workflow runs these
+steps in order:
 
-1. `pages <run number>` picks the run's pages: every Markdown file that git tracks under `docs/`,
-   `skills/` and `.claude/skills/`, and `AGENTS.md` and `README.md`, in order, whose index modulo 4
-   is the run number's, so every page is read once in four runs.
-2. `links <out>` lists each link of an open issue to a file of this repository on `main` that no
-   longer exists, or to a heading it no longer has, with where git says the file went. A failure
-   of this step fails no run: every link stays as it is, and the pages are still read.
-3. `read <run number> <out>` reads each page in a session of its own, at most four at a time. It
-   runs as NexKit's review stage runs, with its agents and fallbacks, model, time and read-only
-   tools, and asks for the findings' schema in place of the review's. Each session follows
-   [reading a page](#reading-a-page). When a page's session fails, the step fails once every page
-   has been read.
-4. `homes <links> <out>` asks one session, with the same access, for the new home of each broken
+1. `links <out>` lists each link in an open issue to a file on `main` that no longer exists, or to
+   a heading it lacks, with where git says the file went. A failure of this step fails no run: every
+   link stays as it is, and the pages are still read.
+2. `read <run number> <out>` picks the run's pages: every Markdown file that git tracks under
+   `docs/`, `skills/` and `.claude/skills/`, and `AGENTS.md` and `README.md`, in order, whose index
+   modulo 4 is the run number's, as `pages_for` does, so every page is read once in four runs. It
+   reads each page in its own session, at most four at a time, with the review stage's agents,
+   fallbacks, model, time and read-only tools. Its answer uses the findings' schema. Each session
+   follows [reading a page](#reading-a-page). When a page's session fails, the step fails once every
+   page has been read.
+3. `homes <links> <out>` asks one session, with the same access, for the new home of each broken
    link, as [broken links](broken-links.md) says, and keeps a home only when its file and heading
    exist. It runs only when `links` succeeded. If it fails, no run fails, every link stays as it is,
    and the findings are still filed.
-5. `plan <findings> <homes> <run id>` adds what needs no judgement, groups the findings into
+4. `plan <findings> <homes> <run id>` adds what needs no judgement, groups the findings into
    issues, leaves out each that an open issue covers, and keeps at most ten. It prints each finding
    that the cap leaves out. The next audit finds again what the plan adds on its own, listed
-   below. A finding from reading a page comes back only when an audit reads that page again,
-   four runs later. What it adds on its own:
+   below. A page's findings come back only when an audit reads that page again, four runs later.
+   What it adds on its own:
    - each milestone whose close on GitHub disagrees with the [roadmap](../../../docs/roadmap.md):
      closed while its row is not under *Done*, open while it is, or with no row;
    - a `built` finding for each planned marker of any page whose issue is closed;
    - each doc under `docs/` past 10,000 words, the mark at which
      [structure](../../../docs/writing-docs.md#structure) splits a doc.
 
-   It also writes, for each issue with a broken link that has a home, its text as read and as it
-   reads with the link replaced. It reads the homes only when `homes` wrote them. Without them, it
-   replaces no link.
+   It also writes, for each issue with a broken link that has a home, its text as read and with the
+   link replaced. Without `homes`' output, it replaces no link.
+
+`pages <run number>` prints the same list, one page per line, for a person to see. The workflow
+does not run it.
 
 The job that reads holds no token that writes. Before anything is planned, the audit job checks
 every file its steps wrote for the agent's credential, which the agent's read-only tools could
-still read from the runner. It deletes any file that holds the credential and fails, so nothing is
-filed. A job that runs no model and no repository code opens the planned issues, and replaces an
+still read from the runner. It deletes any file holding it and fails, so nothing is filed. A job that runs no model and no repository code opens the planned issues, and replaces an
 issue's text only while it is still the one read, so a page or an issue that tries to steer the
 agent cannot write to the repository.
 

@@ -2331,8 +2331,8 @@ class StoppedTest(HostCase):
         self.fix_stopped(5, 6, [{**ASKED, "closes": 0}])
         with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
             step = self.step(5, cfg)
-        [call] = answer.call_args_list
-        request = call.args[0]
+        # The import of the item, which places this round too, asks the engine first.
+        request = answer.call_args_list[-1].args[0]
         self.assertEqual(
             (request["state"]["state"], request["state"]["change"]["id"]), ("fixing", "6")
         )
@@ -2357,11 +2357,15 @@ class StoppedTest(HostCase):
         self.run_comment(5, "go", status="failure", outcome="agent_error", timed_out=True)
         with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
             step = self.step(5)
-        [request] = asked_step(answer)
+        # The import of the item, which places this round too, asks the engine first.
+        request = asked_step(answer)[-1]
         self.assertTrue(request["event"]["result"]["timedOut"])
         self.assertEqual((step["command"], step["remember"]), ("plan", {"split_asked": True}))
         self.assertEqual(step["note"], autopilot.SPLIT_NOTE)
-        with mock.patch.object(host, "step", return_value={"actions": [], "state": {}}):
+        real, stub = host.step, {"actions": [], "state": {}}
+        # The import of the item, which places this round too, asks first and gets the real one.
+        answers = [lambda *args: real(*args), lambda *args: stub]
+        with mock.patch.object(host, "step", side_effect=lambda *a: answers.pop(0)(*a)):
             self.assertIn("refused to decide", self.step(5)["reason"])
 
     def test_a_part_whose_parent_asked_for_a_split_waits_for_a_person(self):
@@ -2372,7 +2376,7 @@ class StoppedTest(HostCase):
         self.gh.parents[5] = 4
         self.plan(5)
         self.run_comment(5, "go", status="failure", outcome="agent_error", timed_out=True)
-        [request] = self.requests(5)
+        request = self.requests(5)[-1]
         self.assertIn("split", request["state"]["asked"])
         self.assertIn("after #4 asked for a split", self.step(5)["reason"])
 
@@ -4350,63 +4354,102 @@ class ChangeSeenTest(ReportCase):
 
 class NoChangeFoundTest(ReportCase):
     """An implement round that finds no change is needed, and a fix round whose base branch
-    already holds its change, close only when the engine ends the item as `noChange`."""
+    already holds its change, close only when the engine ends the item as `noChange`. Both
+    decide on the item's stored state alone, which holds the round that is on its way."""
 
-    def test_a_valid_finding_ends_the_item_without_a_change(self):
-        cfg = make_config()
-        found = host.no_change_found(self.gh, cfg, {"issue": 5}, "Fixed by 8b9cb87.")
-        self.assertEqual(found, "noChange")
-        decision = {"issue": 5, "pr": 6, "head": "c" * 40}
-        self.assertEqual(host.on_base_found(self.gh, cfg, decision), "noChange")
+    def setUp(self):
+        super().setUp()
+        self.cfg = make_config()
 
-    def test_the_implement_round_sends_its_result_with_the_finding(self):
+    def start(self, action="implement"):
+        """Start the round and store the item's state, as a run in its group does. An implement
+        round runs only while no NexKit pull request is open, so pull request 6 is closed for
+        it."""
+        os.environ["GITHUB_RUN_ID"] = str(next(self.run_ids))
+        if action == "implement":
+            self.gh.pulls[6]["state"] = self.gh.issues[6]["state"] = "closed"
+            d = decision()
+        else:
+            d = decision("fix", pr=6, target=6, head=HEAD)
+        progress.start(self.gh, d)
+        return seed(self.gh, self.cfg, 5)[1], d
+
+    def implement(self):
+        doc, _ = self.start()
+        self.assertEqual(doc["state"], "working")
+        self.assertEqual([a["kind"] for a in doc["pending"]], ["runAgent"])
+        return doc
+
+    def fix(self):
+        doc, d = self.start("fix")
+        self.assertEqual(doc["state"], "fixing")
+        return doc, {"issue": 5, "pr": 6, "head": HEAD}
+
+    def test_the_implement_round_ends_the_item_on_the_stored_state(self):
+        doc = self.implement()
         with mock.patch.object(host, "step", wraps=host.step) as step:
-            host.no_change_found(self.gh, make_config(), {"issue": 5}, "Fixed by 8b9cb87.")
-        [event] = [call.args[1] for call in step.call_args_list]
+            found = host.no_change_found(
+                self.gh, self.cfg, {"issue": 5}, "Fixed by 8b9cb87.", write=True
+            )
+        self.assertEqual(found, "noChange")
+        [call] = step.call_args_list
+        self.assertEqual(call.args[0], doc)
+        event = call.args[1]
         self.assertEqual(event["kind"], "actionFinished")
         self.assertEqual(event["result"]["output"]["no_change"], "Fixed by 8b9cb87.")
+        stored = item_state.read(self.gh, 5)[1]
+        self.assertEqual((stored["revision"], stored["state"]), (doc["revision"] + 1, "noChange"))
+        self.assertIn("close", [action["kind"] for action in stored["pending"]])
 
-    def test_the_fix_round_sends_an_empty_change_while_its_agent_is_pending(self):
-        decision = {"issue": 5, "pr": 6, "head": "c" * 40}
+    def test_the_fix_round_ends_the_item_on_the_stored_state(self):
+        doc, decided = self.fix()
         with mock.patch.object(host, "step", wraps=host.step) as step:
-            host.on_base_found(self.gh, make_config(), decision)
+            self.assertEqual(host.on_base_found(self.gh, self.cfg, decided, write=True), "noChange")
         [call] = step.call_args_list
+        self.assertEqual(call.args[0], doc)
         self.assertEqual(call.args[0]["state"], "fixing")
         event = call.args[1]
         self.assertEqual(
             (event["kind"], event["changeId"], event["empty"], event["merged"]),
             ("changeObserved", "6", True, False),
         )
-
-    def stored(self):
-        self.assertEqual(seed(self.gh, make_config(), 5)[1]["revision"], 1)
-        return copy.deepcopy(self.gh.comments(5))
+        stored = item_state.read(self.gh, 5)[1]
+        self.assertEqual((stored["revision"], stored["state"]), (doc["revision"] + 1, "noChange"))
+        self.assertIn("close", [action["kind"] for action in stored["pending"]])
 
     def test_the_implement_round_stores_the_engine_s_answer_only_with_write(self):
-        before = self.stored()
-        host.no_change_found(self.gh, make_config(), {"issue": 5}, "Fixed by 8b9cb87.")
+        self.implement()
+        before = copy.deepcopy(self.gh.comments(5))
+        found = host.no_change_found(self.gh, self.cfg, {"issue": 5}, "Fixed by 8b9cb87.")
+        self.assertEqual(found, "noChange")
         self.assertEqual(self.gh.comments(5), before)
-        host.no_change_found(self.gh, make_config(), {"issue": 5}, "Fixed by 8b9cb87.", write=True)
-        _, doc = item_state.read(self.gh, 5)
-        self.assertEqual((doc["revision"], doc["state"]), (2, "noChange"))
 
     def test_the_fix_round_stores_the_engine_s_answer_only_with_write(self):
-        before = self.stored()
-        decision = {"issue": 5, "pr": 6, "head": "c" * 40}
-        host.on_base_found(self.gh, make_config(), decision)
+        _, decided = self.fix()
+        before = copy.deepcopy(self.gh.comments(5))
+        self.assertEqual(host.on_base_found(self.gh, self.cfg, decided), "noChange")
         self.assertEqual(self.gh.comments(5), before)
-        host.on_base_found(self.gh, make_config(), decision, write=True)
-        _, doc = item_state.read(self.gh, 5)
-        self.assertEqual((doc["revision"], doc["state"]), (2, "noChange"))
+
+    def test_no_configuration_is_refused_before_anything_is_written(self):
+        self.implement()
+        before = copy.deepcopy(self.gh.comments(5))
+        with self.assertRaises(host.Refused):
+            host.no_change_found(self.gh, None, {"issue": 5}, "Fixed.")
+        with self.assertRaises(host.Refused):
+            host.on_base_found(self.gh, None, {"issue": 5, "pr": 6, "head": HEAD})
+        self.assertEqual(self.gh.comments(5), before)
 
     def test_an_answer_that_ends_nothing_is_refused(self):
-        cfg = make_config()
+        self.implement()
         # An empty finding is no finding: the engine publishes the round's change.
         with self.assertRaises(host.Refused):
-            host.no_change_found(self.gh, cfg, {"issue": 5}, "")
+            host.no_change_found(self.gh, self.cfg, {"issue": 5}, "")
+
+    def test_an_answer_of_the_engine_that_is_no_end_is_refused(self):
+        self.implement()
         for call in (
-            lambda: host.no_change_found(self.gh, cfg, {"issue": 5}, "Fixed."),
-            lambda: host.on_base_found(self.gh, cfg, {"issue": 5, "pr": 6, "head": "c" * 40}),
+            lambda: host.no_change_found(self.gh, self.cfg, {"issue": 5}, "Fixed."),
+            lambda: host.on_base_found(self.gh, self.cfg, {"issue": 5, "pr": 6, "head": HEAD}),
         ):
             with mock.patch.object(engine, "answer", return_value={"error": "no"}):
                 with self.assertRaises(host.Refused):

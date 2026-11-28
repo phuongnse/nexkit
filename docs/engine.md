@@ -466,10 +466,16 @@ adapter's tests and the answers as what its adapter carries out.
   ones that only a new plan carries out kept, and a change that needs protected paths waits for a
   person whatever the round asks. A round with nothing to answer fails, one whose only question
   recommends closing with a finding that no change is needed ends in `noChange`, and one that the
-  engine refuses fails for a person. Answers that the engine would give leave the plan or round
-  they start waiting for the sweep to start it. The plan that autopilot asked for after a pull
-  request's round ran out of time is imported with `supersede`, so its split withdraws the pull
-  request. A NexKit 6 run on its way becomes the action the
+  engine refuses fails for a person. A fix round of an issue autopilot takes that stopped as
+  blocked is placed the same way, and so is a round, a `/nexkit go` or a fix round, that ran out
+  of time, which the engine answers with the plan that asks for a split, or with `failed` for a
+  part that is at the deepest level or whose issue already asked. Answers that the engine would
+  give, and that split plan, leave the plan or round they start waiting for the sweep to start
+  it. The plan that autopilot asked for after a pull request's round ran out of time is imported
+  with `supersede`, so its split withdraws the pull request. A split that an issue above the
+  item asked for is imported into `asked`, so a part that runs out of time again waits for a
+  person. An issue autopilot does not take keeps a time-out in `failed` and a blocked fix round
+  waiting for answers. A NexKit 6 run on its way becomes the action the
   engine waits for, keeping the count of its runs again after a transient error when it is one
   (`again.transient`, as a paused one does), and an automatic fix round on its way, with a count, is marked
   `rounds.automatic`, so that a stop gives its count back. A run paused at a usage limit, or until

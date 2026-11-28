@@ -360,6 +360,107 @@ class ImportTest(unittest.TestCase):
         self.assertEqual(answer["state"]["state"], "awaitingApproval")
         self.assertEqual(answer["state"]["attention"]["reason"], "splitDepth")
 
+    def part_with_a_timed_out_go(self, parent_asked, autopilot):
+        """A part (#2) whose `/nexkit go` ran out of time, under a parent (#1) whose autopilot
+        record says it asked for a split when `parent_asked`. The record of the parent is
+        `autopilot` is the configuration of autopilot, or None to leave it off."""
+        gh = FakeGitHub()
+        gh.add_issue(1)
+        gh.add_issue(2, user=BOT_LOGIN, body="<!-- nexkit:part 1 -->\nDo.")
+        gh.parents[2] = 1
+        if parent_asked:
+            gh.comment(1, f"Autopilot.\n\n{record_marker({'split_asked': True, 'at': NOW})}")
+        record = {"questions": [], "too_large": False}
+        plan = {"plan": {"criteria": ["It is done."], "record": record}}
+        gh.comment(2, body_of(plan))
+        for number, command, status in ((7, "plan", "success"), (8, "go", "failure")):
+            run = {"command": command, "status": status, "url": f"https://x/actions/runs/{number}"}
+            if command == "go":
+                run.update(outcome="agent_error", timed_out=True, attention="Out of time.")
+            gh.comment(2, render_run(run, "The run."))
+        return gh, make_config(**({"autopilot": autopilot} if autopilot else {}))
+
+    def test_a_split_an_issue_above_asked_for_is_in_asked_and_a_time_out_fails(self):
+        gh, cfg = self.part_with_a_timed_out_go(True, {"enabled": True, "scope": None})
+        state = first_state.import_item(gh, cfg, 2)
+        self.assertEqual(state["asked"], ["split"])
+        self.assertEqual(state["state"], "failed")
+        self.assertEqual(state["attention"]["reason"], "failed")
+        # Without the parent's record the same round asks for a split.
+        gh, cfg = self.part_with_a_timed_out_go(False, {"enabled": True, "scope": None})
+        state = first_state.import_item(gh, cfg, 2)
+        self.assertEqual((state["state"], state["asked"]), ("planning", ["split"]))
+        self.assertEqual(state["recentEvents"], ["run-8"])
+        self.assertEqual([wait["for"] for wait in state["waits"]], ["start"])
+
+    def test_a_split_asked_above_is_kept_for_an_issue_autopilot_does_not_take(self):
+        gh, cfg = self.part_with_a_timed_out_go(True, None)
+        state = first_state.import_item(gh, cfg, 2)
+        self.assertEqual((state["state"], state["asked"]), ("failed", ["split"]))
+        self.assertEqual(state["recentEvents"], [])
+        gh, cfg = self.part_with_a_timed_out_go(False, None)
+        state = first_state.import_item(gh, cfg, 2)
+        self.assertEqual((state["state"], state["asked"]), ("failed", []))
+        self.assertEqual(state["attention"]["reason"], "failed")
+
+    def test_a_fix_round_that_stopped_as_blocked_is_answered_where_the_engine_puts_it(self):
+        question = {"question": "Keep it?", "options": ["Yes", "No"], "recommended": "Yes"}
+        row = {
+            "round": 2,
+            "trigger": "fix",
+            "action": "fix",
+            "status": "failure",
+            "outcome": "agent_blocked",
+            "head": "a" * 40,
+            "url": "https://x/actions/runs/9",
+            "questions": [question],
+        }
+        given = {
+            "issue": {"number": 42},
+            "pull": {"number": 308, "head": "a" * 40},
+            "pullComments": [{"run": row}],
+        }
+        for answer, name, asked, events in (
+            ("recommended", "fixing", ["answers"], ["run-9"]),
+            ("never", "awaitingApproval", [], ["run-9"]),
+        ):
+            with self.subTest(answer):
+                cfg = {"autopilot": {"enabled": True, "answer": answer}}
+                case = {"nexkit6": given, "config": cfg}
+                kind, state = first_state.situation(**situation(case))
+                self.assertEqual((state["state"], state["asked"]), (name, asked))
+                self.assertEqual(state["recentEvents"], events)
+                if name == "fixing":
+                    self.assertEqual([wait["for"] for wait in state["waits"]], ["start"])
+                    self.assertEqual(state["pending"], [])
+        # An issue that autopilot does not take keeps asking.
+        state = first_state.imported(**situation({"nexkit6": given}))
+        self.assertEqual((state["state"], state["recentEvents"]), ("awaitingApproval", []))
+
+    def test_a_fix_round_that_ran_out_of_time_asks_for_a_split_and_a_withdrawal(self):
+        row = {
+            "round": 2,
+            "trigger": "fix",
+            "action": "fix",
+            "status": "failure",
+            "outcome": "agent_error",
+            "timed_out": True,
+            "head": "a" * 40,
+            "url": "https://x/actions/runs/9",
+        }
+        given = {
+            "issue": {"number": 42},
+            "pull": {"number": 308, "head": "a" * 40},
+            "pullComments": [{"run": row}],
+        }
+        case = {"nexkit6": given, "config": {"autopilot": {"enabled": True}}}
+        kind, state = first_state.situation(**situation(case))
+        self.assertEqual((kind, state["state"]), ("split asked", "planning"))
+        self.assertEqual(state["asked"], ["split", "supersede"])
+        self.assertEqual(state["recentEvents"], ["run-9"])
+        state = first_state.imported(**situation({"nexkit6": given}))
+        self.assertEqual((state["state"], state["asked"]), ("failed", []))
+
     def test_the_engine_s_answers_are_kept_only_for_the_run_they_started(self):
         plan = {"plan": {"record": {"questions": [], "too_large": False}}}
         ran = {"command": "plan", "status": "success", "outcome": "planned"}

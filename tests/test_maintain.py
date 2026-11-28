@@ -1,7 +1,8 @@
+import os
 import unittest
 from unittest import mock
 
-from nexkit import host, item_state
+from nexkit import host, item_state, progress
 from nexkit.github import GitHubError
 from nexkit.maintain import (
     BRANCH_KEPT,
@@ -412,6 +413,11 @@ class ParentAsksTheEngineTests(unittest.TestCase):
         from nexkit import report
 
         agent = {"output": {"no_change": "Fixed by 8b9cb87."}}
+        # The implement round is on its way, which the stored state holds.
+        implement = {"action": "implement", "issue": 5, "pr": None, "target": 5, "auto": False}
+        implement.update(branch="nexkit/issue-5", base="main", head=None, note="")
+        with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "acme/app", "GITHUB_RUN_ID": "7"}):
+            progress.start(self.gh, implement)
         with self.stays() as ended:
             report._no_change(self.gh, self.CFG, {"issue": 5}, agent)
         self.assertEqual(self.gh.issues[5]["state"], "closed")

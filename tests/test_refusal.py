@@ -265,6 +265,13 @@ class ApprovedMergeTests(ReportCase):
         taken, as a second approval of the same pull request is."""
         return {**APPROVED, "review": review}
 
+    def restore(self):
+        """Drop the item's state comment and store the import of what GitHub holds now, for a
+        test that changed the round's records after `setUp` stored the refusal."""
+        [comment] = [c for c in self.gh.issue_comments[5] if item_state.find([c]) != (None, None)]
+        self.gh.issue_comments[5].remove(comment)
+        return seed(self.gh, self.cfg, 5)[1]
+
     def send(self, cfg=None, **fields):
         """The run of an approval, which only sends a `step` into the issue's queue."""
         approval = {**APPROVAL, **fields}
@@ -299,6 +306,7 @@ class ApprovedMergeTests(ReportCase):
         self.gh.round_comment(6, 3, HEAD, "failed", outcome="needs_human")
         self.assertIn("its latest round is `needs_human`", self.send()[0])
         self.gh.comment(6, render_run({**row, "outcome": "ready"}, "Ready."))
+        self.restore()
         self.assertIn("it starts nothing", self.send(commit="f" * 40)[0])
         self.gh.comment(6, render_run({**row, "round": 4, "status": "running"}, "Running."))
         self.assertIn("its latest round is `running`", self.send()[0])
@@ -422,7 +430,7 @@ class ApprovedMergeTests(ReportCase):
 
     def test_an_approval_of_a_pull_request_a_person_merged_first_changes_nothing(self):
         # The owner approved and merged in the same minute; the merge closed the issue.
-        ready = seed(self.gh, self.cfg, 5)[1]
+        ready = item_state.read(self.gh, 5)[1]
         self.gh.pulls[6].update(state="closed", merged=True, merged_by={"login": "olivia"})
         self.gh.issues[5].update(state="closed", state_reason="completed")
         before = list(self.gh.comments(6))
@@ -446,9 +454,11 @@ class ApprovedMergeTests(ReportCase):
 
     def test_a_merge_a_person_or_a_sweep_made_while_nexkit_tried_mentions_nobody(self):
         merge = self.gh.merge
-        for login in ("olivia", "nexkit-acme[bot]"):
+        ready = item_state.read(self.gh, 5)[1]
+        for review, login in enumerate(("olivia", "nexkit-acme[bot]"), 1):
             with self.subTest(by=login):
                 self.gh.reopen(6, 5)
+                restate(self.gh, 5, **ready)
                 before = list(self.gh.comments(6))
 
                 def first(number, sha, method="squash", login=login):
@@ -459,7 +469,8 @@ class ApprovedMergeTests(ReportCase):
 
                 with mock.patch.object(self.gh, "merge", side_effect=first):
                     self.assertEqual(
-                        self.approve(), ["#6: pull_closed; its round stays as it was."]
+                        self.approve(approval=self.later(review)),
+                        ["#6: pull_closed; its round stays as it was."],
                     )
                 self.assertEqual(self.gh.comments(6), before)
 
@@ -479,7 +490,7 @@ class ApprovedMergeTests(ReportCase):
         self.assertEqual(self.gh.merged, [(6, HEAD, "squash")])
 
     def test_an_approval_merges_nothing_for_a_closed_issue_or_an_untrusted_edit(self):
-        ready = seed(self.gh, self.cfg, 5)[1]
+        ready = item_state.read(self.gh, 5)[1]
         self.gh.issues[5]["state"] = "closed"
         mentions = len(self.gh.comments_matching(6, "@owner"))
         self.assertEqual(self.approve(), ["#6: merge_issue_closed."])
@@ -510,7 +521,6 @@ class ApprovedMergeTests(ReportCase):
         )
         self.gh.add_milestone(1)
         self.gh.issues[5]["milestone"] = {"number": 1}
-        seed(self.gh, held, 5)
         self.assertEqual(
             self.approve(held), ["#6: #5 is on hold (`on-hold`), so NexKit does not merge it."]
         )

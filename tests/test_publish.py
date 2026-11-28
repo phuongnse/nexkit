@@ -8,11 +8,11 @@ from contextlib import redirect_stderr
 from pathlib import Path
 from unittest import mock
 
-from nexkit import agent, gitutil
+from nexkit import agent, cli, first_state, gitutil, host, item_state
 from nexkit.context import gather
 from nexkit.github import GitHubError
 from nexkit.gitutil import GitError, merge_tree
-from nexkit.publish import PublishError, identity, publish, pull_body, render_plan
+from nexkit.publish import PublishError, identity, publish, pull_body, render_plan, store_round
 from nexkit.state import latest_plan, plan_data, plan_profile, plan_text
 from tests.support import (
     CALC,
@@ -1076,6 +1076,120 @@ class MergePublishTests(unittest.TestCase):
                 self.repos.clone("publisher"),
                 self.out,
             )
+
+
+class StoreRoundTests(unittest.TestCase):
+    """The publish job stores an implement or fix round right after it pushes its commit
+    (`publish.store_round`), so that the state waits for the round's checks while they run."""
+
+    HEAD = "a" * 40
+    NEW = "e" * 40
+    RED = [{"name": "test", "passed": False, "output": "AssertionError"}]
+    REVIEW = ("done", {"verdict": "approve", "criteria": [], "findings": []})
+    OUTPUT = {"status": "done", "summary": "Fixed.", "checks_run": []}
+
+    def setUp(self):
+        self.gh = FakeGitHub()
+        self.gh.add_issue(5)
+        self.gh.add_pull(6, 5, head_sha=self.HEAD)
+        self.cfg = make_config(fix={"max_auto_rounds": 3})
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.found = decision("fix", pr=6, target=6, head=self.HEAD)
+        self.result = {"stage": "fix", "status": "done", "output": self.OUTPUT}
+        # An automatic fix round whose checks failed, as the report of an earlier round
+        # stored it: the stored state waits for its agent.
+        self.assertTrue(host.store_import(self.gh, self.cfg, 5))
+        args = (self.gh, self.cfg, self.found, 6, self.HEAD, 0, self.RED, None, self.REVIEW)
+        self.assertEqual(host.round_ended(*args, write=True)[0], "auto_fix")
+
+    def read(self):
+        return item_state.read(self.gh, 5)[1]
+
+    def store(self, outcome):
+        return store_round(self.gh, self.cfg, self.found, self.result, outcome, self.tmp.name)
+
+    def test_a_fix_round_leaves_the_state_in_its_checks_on_the_published_head(self):
+        self.assertEqual(self.read()["state"], "fixing")
+        # No report ran: the publish job alone stored the round.
+        self.assertTrue(self.store({"published": True, "pr": 6, "head": self.NEW}))
+        doc = self.read()
+        self.assertEqual(doc["state"], "checking")
+        self.assertEqual(doc["change"], {"id": "6", "version": self.NEW})
+        [checks] = doc["pending"]
+        self.assertEqual(checks["kind"], "runChecks")
+        self.assertEqual(checks["changeVersion"], self.NEW)
+        self.assertNotEqual(checks["id"], first_state.RUN_ID)
+        self.assertEqual(doc["rounds"]["fixed"], self.NEW)
+
+    def test_a_fix_round_that_changed_nothing_stores_the_head_it_checks_again(self):
+        again = {"published": False, "recheck": True, "pr": 6, "head": self.HEAD}
+        self.assertTrue(self.store(again))
+        doc = self.read()
+        self.assertEqual(doc["state"], "checking")
+        self.assertEqual([a["changeVersion"] for a in doc["pending"]], [self.HEAD])
+        self.assertEqual(doc["rounds"]["recheck"], self.HEAD)
+
+    def test_a_conflicting_commit_stores_only_the_agent_result(self):
+        outcome = {"published": True, "pr": 6, "head": self.NEW, "conflicts": ["a.py"]}
+        self.assertFalse(self.store(outcome))
+        doc = self.read()
+        self.assertEqual([a["kind"] for a in doc["pending"]], ["publish"])
+        self.assertFalse(any(name.startswith("publish-") for name in doc["recentEvents"]))
+
+    def test_a_round_that_published_nothing_stores_nothing(self):
+        before = self.read()
+        for outcome in ({"published": False}, {"published": False, "no_change": True}):
+            self.assertFalse(self.store(outcome))
+        self.assertFalse(
+            store_round(self.gh, self.cfg, decision("plan"), self.result, {"published": True}, "x")
+        )
+        self.assertEqual(self.read(), before)
+
+    def test_a_refusal_only_warns_and_leaves_the_state(self):
+        before = self.read()
+        outcome = {"published": True, "pr": 6, "head": self.NEW}
+        with (
+            mock.patch.object(host, "round_published", side_effect=host.Refused("no <way>")),
+            mock.patch("builtins.print") as printed,
+        ):
+            self.assertFalse(self.store(outcome))
+        warning = printed.call_args.args[0]
+        self.assertTrue(warning.startswith("::warning::The state of #5 does not hold the round: "))
+        self.assertIn("`no ‹way›`", warning)
+        self.assertEqual(self.read(), before)
+
+    def test_the_publish_command_stores_the_round_after_it_published(self):
+        out = Path(self.tmp.name)
+        out.joinpath("result.json").write_text(json.dumps(self.result))
+        out.joinpath("context.json").write_text("{}")
+        outcome = {"published": True, "pr": 6, "head": self.NEW}
+        env = {"NEXKIT_DECISION": json.dumps(self.found), "GITHUB_REPOSITORY": "acme/app"}
+        with (
+            mock.patch.dict(os.environ, env),
+            mock.patch("nexkit.cli._config", return_value=self.cfg),
+            mock.patch("nexkit.cli._gh", return_value=self.gh),
+            mock.patch("nexkit.cli._output") as output,
+            mock.patch("nexkit.publish.publish", return_value=outcome),
+            mock.patch("builtins.print"),
+        ):
+            cli.main(["publish", "--repo", self.tmp.name, "--artifacts", self.tmp.name])
+        self.assertEqual(self.read()["state"], "checking")
+        self.assertEqual(output.call_args.kwargs["head"], self.NEW)
+        # A publish that failed stores nothing.
+        before = self.read()
+        with (
+            mock.patch.dict(os.environ, env),
+            mock.patch("nexkit.cli._config", return_value=self.cfg),
+            mock.patch("nexkit.cli._gh", return_value=self.gh),
+            mock.patch("nexkit.cli._output"),
+            mock.patch("nexkit.publish.publish", side_effect=PublishError("no patch")),
+            mock.patch("nexkit.publish.store_round") as stored,
+            mock.patch("builtins.print"),
+        ):
+            cli.main(["publish", "--repo", self.tmp.name, "--artifacts", self.tmp.name])
+        stored.assert_not_called()
+        self.assertEqual(self.read(), before)
 
 
 if __name__ == "__main__":

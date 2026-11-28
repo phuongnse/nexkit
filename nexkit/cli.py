@@ -791,7 +791,7 @@ def cmd_cache(args):
 def cmd_publish(args):
     from .github import GitHubError
     from .gitutil import GitError
-    from .publish import WAITS, BranchMovedError, PublishError, publish
+    from .publish import WAITS, BranchMovedError, PublishError, publish, store_round
 
     decision = _decision()
     out = Path(args.artifacts)
@@ -799,8 +799,11 @@ def cmd_publish(args):
     context = json.loads((out / "context.json").read_text())
     gh = _gh()
     gh.waits = WAITS
+    cfg = _config()
+    stored = False
     try:
-        outcome = publish(gh, decision, result, context, _config(), args.repo, out)
+        outcome = publish(gh, decision, result, context, cfg, args.repo, out)
+        stored = True
     except (PublishError, GitError, GitHubError) as exc:
         outcome = {"published": False, "error": str(exc)}
         if isinstance(exc, BranchMovedError):
@@ -809,6 +812,9 @@ def cmd_publish(args):
             # Every try failed on a server error, a rate limit or a dropped connection.
             outcome["transient"] = True
     print(json.dumps(outcome, indent=2))
+    if stored:
+        # The commit is pushed: the state waits for its checks while they run.
+        store_round(gh, cfg, decision, result, outcome, out)
     # A head that conflicts with the base branch's tip cannot merge: no checks or review.
     conflicts = "true" if outcome.get("conflicts") else ""
     _output(

@@ -3764,6 +3764,9 @@ class CIWaitTests(AutopilotCase):
             ]
         self.gh.required = {"Unit tests"}
         self.gh.merge_error = GitHubError(405, 'Required status check "Unit tests" is failing.')
+        # Each item's first run stores its state (`cli._take`), which the merge answers.
+        for issue, _, _, _ in failing:
+            host.store_import(self.gh, self.cfg, issue)
         lines = self.sweep(self.cfg)
         self.assertIn("#10: ci_waiting.", lines)
         self.assertIn("#11: auto_fix.", lines)

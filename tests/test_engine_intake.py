@@ -57,7 +57,7 @@ class RestartTest(unittest.TestCase):
     def test_an_accept_that_starts_again_follows_a_conflict_observed_meanwhile(self):
         observed = {**example("accepting")["observed"], "conflicts": True}
         state = example("accepting", pending=[], waits=[], hold=True, observed=observed)
-        new, actions = step(state, {"kind": "released", "label": "on-hold"})
+        new, actions = step(state, {"kind": "released"})
         self.assertEqual((new["state"], actions), ("ready", ["needPerson"]))
         self.assertEqual(new["attention"]["reason"], "acceptRefused")
 

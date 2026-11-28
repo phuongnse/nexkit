@@ -123,6 +123,8 @@ available, leaves the accept to a person.
 | Accept | A squash merge | The application's own accept of the draft |
 | People who decide | `notify` | The person who sent the request |
 | Tells people | A mention | A notification |
+| Tags and group in the sweep | An issue's labels; the index of its milestone among the open milestones by due date | A request's team or release, as the application ranks them |
+| A hold's reason | The name of the hold label | The application's own reason |
 | Observed version | The head commit of the pull request's branch, read from the branch's ref; the pull request's `head.sha` once the branch is deleted, as after a merge, or for a fork | The draft's newest revision |
 | Observed conflict | `mergeable` is false (`mergeable_state` is `dirty`). While `mergeable` is null, as just after a push, the host reads again before it sends; a merged pull request keeps it null, and its observation says `conflicts` false | The draft no longer applies to the latest release of what it changes |
 | Observed merge | The pull request's `merged`, which needs no `mergeable` | The draft was published outside the engine |

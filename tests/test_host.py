@@ -735,7 +735,7 @@ class TakeTest(TestCase):
         self.assertEqual((sure["changeId"], sure["changeVersion"]), ("6", HEAD))
         note = by_id[f"review-{asked_changes['id']}"]["note"]
         self.assertEqual(note, {"name": "review", "ref": str(asked_changes["id"])})
-        self.assertEqual(by_id[f"issue-event-{held['id']}"]["label"], "on-hold")
+        self.assertEqual(by_id[f"issue-event-{held['id']}"]["reason"], "on-hold")
         # Each is the engine's to check, and each carries its time from the source.
         self.assertEqual({e["at"] for e in events}, {LATER})
 
@@ -820,7 +820,7 @@ class TakeTest(TestCase):
         asked = self.gh.human_comment(42, "/nexkit plan", at=LATER)
         host.take(self.gh, self.CFG, 42)
         read = item_state.read(self.gh, 42)
-        other, _, _ = engine_step(read[1], {**CREATED, "kind": "held", "id": "h1", "label": "x"})
+        other, _, _ = engine_step(read[1], {**CREATED, "kind": "held", "id": "h1", "reason": "x"})
         self.assertTrue(item_state.write(self.gh, 42, other, read))
         self.assertTrue(self.state()["hold"])
         self.assertEqual(self.cursor(), (LATER, f"comment-{asked['id']}"))
@@ -834,7 +834,7 @@ class TakeTest(TestCase):
         revision = self.state()["revision"]
         # The state moves on, as a plan that waits for a person would take the remark.
         read = item_state.read(self.gh, 42)
-        other, _, _ = engine_step(read[1], {**CREATED, "kind": "held", "id": "h1", "label": "x"})
+        other, _, _ = engine_step(read[1], {**CREATED, "kind": "held", "id": "h1", "reason": "x"})
         self.assertTrue(item_state.write(self.gh, 42, other, read))
         calls = []
         with mock.patch.object(host, "step", side_effect=lambda *a: calls.append(a)):
@@ -1044,7 +1044,7 @@ class StepGuardTest(HostCase):
         seed(self.gh, self.cfg, 5)
         made_up = {**first_state.empty("5"), "title": "made up"}
         before = len(VIOLATIONS)
-        event = host._event("held", 5, None, "held-5", label="on-hold")
+        event = host._event("held", 5, None, "held-5", reason="on-hold")
         try:
             with mock.patch.object(host, "stored", return_value=(None, made_up)):
                 with self.assertRaises(StepGuardError):
@@ -1059,7 +1059,7 @@ class StepGuardTest(HostCase):
         seed(self.gh, self.cfg, 5)
         made_up = {**first_state.empty("5"), "title": "made up"}
         before = len(VIOLATIONS)
-        event = host._event("held", 5, None, "held-5", label="on-hold")
+        event = host._event("held", 5, None, "held-5", reason="on-hold")
         try:
             with mock.patch.object(host, "stored", return_value=(None, made_up)):
                 try:
@@ -1074,7 +1074,7 @@ class StepGuardTest(HostCase):
         self.issue(5)
         doc = seed(self.gh, self.cfg, 5)[1]
         events = [
-            host._event("held", 5, None, "held-5", label="on-hold"),
+            host._event("held", 5, None, "held-5", reason="on-hold"),
             host._event("tick", 5, None, "tick-5", wait="w1.1"),
         ]
         before = len(VIOLATIONS)
@@ -1469,7 +1469,7 @@ class DecideTest(HostCase):
         self.assertTrue(item_state.write(self.gh, 5, stored, (comment, doc)))
         read = self.read()[1]["revision"]
         events = [
-            host._event("held", 5, None, "held-5", label="on-hold"),
+            host._event("held", 5, None, "held-5", reason="on-hold"),
             host._event("tick", 5, None, "tick-5", wait="w1.1"),
         ]
         seen, spy = self.spied()
@@ -1490,7 +1490,7 @@ class DecideTest(HostCase):
         self.assertEqual([sent["kind"] for sent, _ in answers], ["held"])
 
     def test_with_no_configuration_the_decision_is_refused_and_nothing_is_read(self):
-        event = host._event("held", 5, None, "held-5", label="on-hold")
+        event = host._event("held", 5, None, "held-5", reason="on-hold")
         gh = mock.Mock()
         with mock.patch.object(host, "step", side_effect=AssertionError("asked the engine")):
             with self.assertRaises(host.Refused) as refused:
@@ -1521,7 +1521,7 @@ class SweepTest(HostCase):
     def sweeps(self, answer):
         return [call.args[1] for call in answer.call_args_list if call.args[1]["call"] == "sweep"]
 
-    def test_the_engine_gets_each_issue_with_its_labels_milestone_wave_and_awaited_pull_requests(
+    def test_the_engine_gets_each_issue_with_its_tags_group_wave_and_awaited_pull_requests(
         self,
     ):
         self.issue(5, milestone=2, labels=["urgent"])
@@ -1541,32 +1541,32 @@ class SweepTest(HostCase):
             [
                 {
                     "item": "5",
-                    "labels": ["urgent"],
-                    "milestone": 1,
+                    "tags": ["urgent"],
+                    "group": 1,
                     "wave": 0,
                     "awaited": False,
                     "account": None,
                 },
                 {
                     "item": "6",
-                    "labels": ["docs"],
-                    "milestone": 0,
+                    "tags": ["docs"],
+                    "group": 0,
                     "wave": 2,
                     "awaited": False,
                     "account": None,
                 },
                 {
                     "item": "7",
-                    "labels": [],
-                    "milestone": None,
+                    "tags": [],
+                    "group": None,
                     "wave": 0,
                     "awaited": False,
                     "account": None,
                 },
                 {
                     "item": "8",
-                    "labels": ["journey"],
-                    "milestone": 0,
+                    "tags": ["journey"],
+                    "group": 0,
                     "wave": 1,
                     "awaited": True,
                     "account": None,

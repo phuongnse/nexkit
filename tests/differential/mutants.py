@@ -66,7 +66,7 @@ ENGINE = {
     "vouch-plans-nothing-for-an-item-with-no-change": ("vouch",),
     "vouch-starts-a-fix-for-a-stopped-merge": ("vouch",),
     "new-start-plans-nothing": ("new",),
-    "sweep-key-milestone-before-priority": ("start",),
+    "sweep-key-group-before-priority": ("start",),
     "sweep-awaited-waits-at-the-limit": ("start",),
     "behind-in-checks-ignores-the-updates-left": ("moved",),
     "approval-accepts-under-person": ("approvals",),

@@ -450,12 +450,12 @@ MUTANTS = {
         "old": """ or not self.waiting("start") or self.waiting("blocker"):""",
         "new": """ or not self.waiting("start"):""",
     },
-    # The sweep orders by milestone before priority, so an issue of a later milestone with a
-    # priority label no longer goes first (#437).
-    "sweep-key-milestone-before-priority": {
+    # The sweep orders by group before priority, so an item of a later group with a priority
+    # tag no longer goes first (#437).
+    "sweep-key-group-before-priority": {
         "path": SWEEP,
-        "old": "return (rank, milestone is None, milestone or 0, wave, position)",
-        "new": "return (milestone is None, milestone or 0, rank, wave, position)",
+        "old": "return (rank, group is None, group or 0, wave, position)",
+        "new": "return (group is None, group or 0, rank, wave, position)",
     },
     # An awaited item waits for a place at the limit like any other, so the bug issue that pull
     # requests wait for does not start beyond `max_parallel` (#437).

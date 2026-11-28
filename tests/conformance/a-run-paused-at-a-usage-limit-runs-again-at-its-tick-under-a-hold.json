@@ -32,8 +32,7 @@
     },
     {
       "event": {
-        "kind": "released",
-        "label": "on-hold"
+        "kind": "released"
       },
       "state": "reviewing",
       "changed": true,

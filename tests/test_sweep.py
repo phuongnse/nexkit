@@ -87,6 +87,30 @@ class SweepCallTests(unittest.TestCase):
         expected = json.loads((EXAMPLES / "sweep.answer.json").read_text(encoding="utf-8"))
         self.assertEqual(engine.answer(request), expected)
 
+    def test_tags_and_groups_order_the_starts(self):
+        items = [
+            {"item": "a", "tags": [], "group": None, "wave": 2},
+            {"item": "b", "tags": [], "group": 1, "wave": 0},
+            {"item": "c", "tags": ["second"], "group": None, "wave": 0},
+            {"item": "d", "tags": [], "group": 0, "wave": 3},
+            {"item": "e", "tags": ["first", "second"], "group": 2, "wave": 0},
+            {"item": "f", "tags": [], "group": 0, "wave": 1},
+            {"item": "g", "tags": [], "group": 0, "wave": 1},
+            {"item": "h", "tags": ["other"], "group": 1, "wave": 0},
+        ]
+        request = {
+            "protocol": 1,
+            "call": "sweep",
+            "policies": {"priority": ["first", "second"]},
+            "running": 0,
+            "items": items,
+        }
+        answer = engine.answer(request)
+        # `first` goes before `second`, then groups in rank with none last, a wave counting only
+        # within its group (`a` ignores its wave), and the listed order breaking ties.
+        self.assertEqual([s["item"] for s in answer["starts"]], list("ecfgdbha"))
+        self.assertEqual(answer["waits"], [])
+
     def test_describe_lists_the_sweep(self):
         answer = engine.answer({"protocol": 1, "call": "describe"})
         self.assertEqual(answer["calls"], ["describe", "step", "prompt", "sweep"])

@@ -347,7 +347,7 @@ Three things sit beside the state, never in place of it:
 | `actionLost` | An action the host started never reported, with any tokens it is known to have used |
 | `changeObserved` | The host read the change: its version, and whether it conflicts, was merged, became empty or, when it says so, is behind its base or acceptable |
 | `stopped` | The host stops the item, with the outcome |
-| `held`, `released` | A hold was set or taken off |
+| `held`, `released` | A hold was set, with the host's reason, which the engine keeps without reading it, or taken off |
 | `blockerClosed`, `partEnded` | Work that this item waits for ended |
 | `reopened` | A final item was opened again |
 | `tick` | The time of a wait came, naming the wait |

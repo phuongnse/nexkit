@@ -1,9 +1,8 @@
 {
-  "note": "The highest listed priority label goes first, then the others in the list's order, then the items with none, each group oldest first.",
+  "note": "The group's rank decides, an item with no group goes last and ignores its wave, and a priority item with no group goes first.",
   "policies": {
     "priority": [
-      "bug",
-      "security"
+      "bug"
     ]
   },
   "running": 0,
@@ -11,41 +10,45 @@
   "items": [
     {
       "item": "1",
-      "labels": []
+      "group": null,
+      "wave": 3
     },
     {
       "item": "2",
-      "labels": [
-        "security"
-      ]
+      "group": 2
     },
     {
       "item": "3",
-      "labels": [
-        "bug"
-      ]
+      "group": 0
     },
     {
       "item": "4",
-      "labels": [
-        "bug",
-        "security"
-      ]
+      "tags": [
+        "bug"
+      ],
+      "group": null
     },
     {
       "item": "5",
-      "labels": [
-        "docs"
-      ]
+      "group": 1
+    },
+    {
+      "item": "6",
+      "group": null,
+      "wave": 0
     }
   ],
   "starts": [
+    {
+      "item": "4",
+      "beyondLimit": false
+    },
     {
       "item": "3",
       "beyondLimit": false
     },
     {
-      "item": "4",
+      "item": "5",
       "beyondLimit": false
     },
     {
@@ -57,7 +60,7 @@
       "beyondLimit": false
     },
     {
-      "item": "5",
+      "item": "6",
       "beyondLimit": false
     }
   ],

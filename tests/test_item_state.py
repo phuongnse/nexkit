@@ -46,8 +46,8 @@ CREATED = event(
     change=None,
 )
 PLAN = event("requested", 2, what="plan", by=PERSON, note="", plan=None)
-HELD = event("held", 3, label="on-hold")
-RELEASED = event("released", 4, label="on-hold")
+HELD = event("held", 3, reason="on-hold")
+RELEASED = event("released", 4)
 
 
 def step(state, event):

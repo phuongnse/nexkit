@@ -1,0 +1,94 @@
+{
+  "note": "Tags and groups are the host's own words: the first priority tag goes first, then groups in rank with none last, then waves within a group, then the listed order.",
+  "policies": {
+    "priority": [
+      "urgent"
+    ]
+  },
+  "running": 0,
+  "limited": [],
+  "items": [
+    {
+      "item": "1",
+      "tags": [
+        "team-a"
+      ],
+      "group": 1,
+      "wave": 0
+    },
+    {
+      "item": "2",
+      "tags": [],
+      "group": 0,
+      "wave": 1
+    },
+    {
+      "item": "3",
+      "tags": [
+        "team-a"
+      ],
+      "group": null,
+      "wave": 0
+    },
+    {
+      "item": "4",
+      "tags": [],
+      "group": 0,
+      "wave": 0
+    },
+    {
+      "item": "5",
+      "tags": [
+        "urgent"
+      ],
+      "group": 1,
+      "wave": 2
+    },
+    {
+      "item": "6",
+      "tags": [
+        "urgent",
+        "team-a"
+      ],
+      "group": null,
+      "wave": 1
+    },
+    {
+      "item": "7",
+      "tags": [],
+      "group": 1,
+      "wave": 1
+    }
+  ],
+  "starts": [
+    {
+      "item": "5",
+      "beyondLimit": false
+    },
+    {
+      "item": "6",
+      "beyondLimit": false
+    },
+    {
+      "item": "4",
+      "beyondLimit": false
+    },
+    {
+      "item": "2",
+      "beyondLimit": false
+    },
+    {
+      "item": "1",
+      "beyondLimit": false
+    },
+    {
+      "item": "7",
+      "beyondLimit": false
+    },
+    {
+      "item": "3",
+      "beyondLimit": false
+    }
+  ],
+  "waits": []
+}

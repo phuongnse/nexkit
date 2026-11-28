@@ -162,8 +162,7 @@
   "steps": [
     {
       "event": {
-        "kind": "released",
-        "label": "on-hold"
+        "kind": "released"
       },
       "state": "accepting",
       "changed": true,

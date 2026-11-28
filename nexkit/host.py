@@ -291,10 +291,11 @@ refuses to answer leaves GitHub as it was.
 
 It decides which of the issues that may start do, and in what order, too (`sweep`, called by
 `autopilot.preview`): the start steps without a pull request go to the engine's `sweep` call, with
-the issues in progress as `running`, each issue's labels, the index of its milestone, its wave and
-whether pull requests wait for it as a bug issue about the default branch, and no account at a
-usage limit. The host says each wait in NexKit 6's words, and an engine that refuses the sweep
-leaves each issue that would start waiting for a person.
+the issues in progress as `running`, each issue's labels as its tags, its milestone's place in
+due-date order as its group, its wave and whether pull requests wait for it as a bug issue about
+the default branch, and no account at a usage limit. The host says each wait in NexKit 6's
+words, and an engine that refuses the sweep leaves each issue that would start waiting for a
+person.
 
 It decides whether a person's command starts its stage, too (`command`, called by
 `route._decide`): a `/nexkit` comment, a *Request changes* review and each dispatch of a
@@ -824,10 +825,10 @@ def _taken_event(gh, number, pull, comments, holds, one, taken=lambda: True):
     gives none: a comment of a bot, a review that is not a writer's approval or request for
     changes, any other event of an issue. `pull` is the item's change, `comments` the item's
     comments and `holds` the labels that hold. `taken` is a function that says whether autopilot
-    takes the issue: adding a hold label counts only then, as NexKit 6 reads one only then
-    (`autopilot.held`). Removing one always counts: the engine ignores `released` while the item is
-    not held, and without it a hold stored while autopilot took the issue could never end. What
-    each event does is the engine's to decide."""
+    takes the issue: adding a hold label counts only then, and its name is the event's reason, as
+    NexKit 6 reads one only then (`autopilot.held`). Removing one always counts: the engine ignores
+    `released` while the item is not held, and without it a hold stored while autopilot took the
+    issue could never end. What each event does is the engine's to decide."""
     raw, name, at = one.raw, one.name, one.at
     user = raw.get("user") or {}
     login = user.get("login") or ""
@@ -838,7 +839,7 @@ def _taken_event(gh, number, pull, comments, holds, one, taken=lambda: True):
         if raw["event"] == "labeled":
             if not taken():
                 return None
-            return _event("held", number, at, name, label=label)
+            return _event("held", number, at, name, reason=label)
         return _event("released", number, at, name)
     if user.get("type") == "Bot" or by_bot(raw):
         return None
@@ -1674,6 +1675,7 @@ def _vouch_held(doc):
 def sweep(cfg, where, starts, issues, running, awaited):
     """The start steps `starts` (no pull request, in `scope`'s order) that start, in the engine's
     order: its `sweep`, which orders them and keeps them within `autopilot.max_parallel`, with
+    each issue's labels as its tags and its milestone's place in due-date order as its group, and
     `running` issues in progress (`autopilot.preview`). The others become waits in NexKit 6's
     words. `issues` maps a number to its issue, and `awaited` a number to the pull requests that
     wait for it as a bug issue about the default branch. An engine that refuses the sweep leaves
@@ -1686,8 +1688,8 @@ def sweep(cfg, where, starts, issues, running, awaited):
         items.append(
             {
                 "item": str(one["number"]),
-                "labels": sorted(autopilot.labels_of(issue)),
-                "milestone": listed.index(number) if number in listed else None,
+                "tags": sorted(autopilot.labels_of(issue)),
+                "group": listed.index(number) if number in listed else None,
                 "wave": autopilot.wave(cfg, issue)[0],
                 "awaited": bool(awaited.get(one["number"])),
                 "account": None,
@@ -3671,12 +3673,13 @@ def _stage_version(decision):
 
 
 def _hold_events(number, label):
-    """The `held` event of a label that holds the item, if any. Its id holds the run, because
-    the engine drops an event whose id is among its last twenty: a hold of a later round, after
-    the label went and came again, is a new event and not a repeat of the earlier one."""
+    """The `held` event of a label that holds the item, if any, with the label's name as its
+    reason. Its id holds the run, because the engine drops an event whose id is among its last
+    twenty: a hold of a later round, after the label went and came again, is a new event and not a
+    repeat of the earlier one."""
     if not label:
         return []
-    return [_event("held", number, None, f"held-{number}-{_run_event_id()}", label=str(label))]
+    return [_event("held", number, None, f"held-{number}-{_run_event_id()}", reason=str(label))]
 
 
 def _hold_row(number, label, *rest):

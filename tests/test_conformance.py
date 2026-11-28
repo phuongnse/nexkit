@@ -67,7 +67,7 @@ DEFAULTS = {
     "dropRequested": {"by": PERSON, "reason": ""},
     "changeObserved": {"conflicts": False, "merged": False, "empty": False},
     "stopped": {"outcome": "keyRefused", "text": "The provider refused the key."},
-    "held": {"label": "on-hold"},
+    "held": {"reason": "on-hold"},
     "reopened": {"by": PERSON},
     "actionLost": {"tokens": None, "seconds": None},
 }

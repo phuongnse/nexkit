@@ -14,34 +14,34 @@
   "items": [
     {
       "item": "11",
-      "labels": [],
-      "milestone": 0,
+      "tags": [],
+      "group": 0,
       "wave": 0,
       "awaited": false,
       "account": null
     },
     {
       "item": "12",
-      "labels": [
+      "tags": [
         "bug"
       ],
-      "milestone": 1,
+      "group": 1,
       "wave": 0,
       "awaited": true,
       "account": null
     },
     {
       "item": "13",
-      "labels": [],
-      "milestone": 0,
+      "tags": [],
+      "group": 0,
       "wave": 1,
       "awaited": false,
       "account": null
     },
     {
       "item": "14",
-      "labels": [],
-      "milestone": null,
+      "tags": [],
+      "group": null,
       "wave": 0,
       "awaited": false,
       "account": "acme"

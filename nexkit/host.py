@@ -159,10 +159,20 @@ starts again (`vouched`).
 
 It decides what follows a command that autopilot started and lost, whose run GitHub never
 started, or that ended without a report, or that handed the work on to a run that never started
-(`autopilot._again`, called by `_reportless` and `_handed_on`): `lost_again` sends `actionLost`
-at the time of the last start, with autopilot's count of losses, and carries out the start
-again, the wait or the person. What counts as lost, and the six-hour window of the count, stay
-`autopilot`'s. A person's own lost command waits for that person.
+(`autopilot._again`, called by `_reportless` and `_handed_on`): `lost_again` decides on the
+stored state alone and counts the losses from its `again.lost`, never from autopilot's record.
+It sends `actionLost` at the time of the last start on the pending action that the stored state
+holds for the command (a `runAgent` of its stage, or `runChecks` for a review), and the tick of
+the wait that follows when that wait is due already, both as one write, and carries out the start
+again, the wait or the person. A loss that the stored state counted already, such as an import's
+`lost` with a `time` wait, sends only that wait's tick once it is due, and before then says when
+autopilot starts the command again and sends nothing. A stored state that holds neither carries
+out its attention, an `outage` that waits for a person. The ids hold the stored count
+(`lost-<n>-<count>`, `lost-tick-<n>-<count>`), so the sweep's preview and the step run send the
+same ones and the engine counts each loss once. The host gives the waits of each loss
+(`lostWaits`): the first only for a start that may run only once more (the record's `once`),
+none for a person's command, so that both wait for a person as in NexKit 6, with no tokens made
+up. What counts as lost stays `autopilot`'s, as does the choice of autopilot's record.
 
 The three results of a merge (`required_failed`, `accept_answer`, `update_failed`) decide on
 the stored state alone and pass no document of the markers. A result names the pending action
@@ -389,7 +399,7 @@ and `resumes`, which decide on the stored state alone, and neither do `command`,
 `checks_waited`, `refusal_cleared` and `change_seen`: the
 sweep's looks at a merge that waits for required checks or that GitHub refused, and what the
 merge finds. So do `required_failed`, `accept_answer` and `update_failed`. `first_plan` and
-`approved` pass none either, and neither does `vouched`.
+`approved` pass none either, and neither does `vouched`. Nor does `lost_again`.
 So do `released`, `base_passes` and `conflicts_released`: the end of a wait is the release of a
 stored hold (`_release_row`), autopilot's start for an import made after the label was gone, or,
 when `take` released the hold already, the stored pending action. `stopped_counts` too: whether a
@@ -414,9 +424,9 @@ item's own, and the `resume` run, which only sends the `step`. None of them is a
 item, so the conflict round that the push run, the schedule or a merge dispatches, the review
 after a branch update and the give-back of a stopped automatic fix round are stored by the run that
 they start in the item's group (`command`), so that the stored `counted`, `conflicts` and `updates`
-are current after such a stop. With no configuration, `lost_again` decides on the markers'
-document and reads and stores nothing, and `resumes` raises `Refused`. An item with no state
-comment stores nothing here, since only `store_import` posts the first one, and one whose state
+are current after such a stop. With no configuration, `lost_again` and `resumes` raise `Refused`,
+before they read or store anything. An item with no state comment stores nothing here, since only
+`store_import` posts the first one, and one whose state
 comment someone other than the App changed is refused (`autopilot.changed_comment`). `pending_id`
 names the action of the outbox that a result answers. A merge that waits for required checks keeps
 the time of its first wait in the stored document across the sweeps' previews. `accept_answer`
@@ -443,7 +453,6 @@ from . import config as configuration
 from .checks import failing_signatures
 from .github import TRUSTED_ASSOCIATIONS, GitHubError
 from .protocol.size import LONGEST, MOST
-from .protocol.stages import RUNS
 from .report import TOO_LARGE
 from .schema import filled
 from .state import (
@@ -2324,9 +2333,13 @@ def _carried(doc, what):
     """The first action of `doc`'s outbox that NexKit's own dispatch of the command `what`
     carries out, or None: one that `starts` as the stage the command runs. Never the action
     that the import gave to a NexKit 6 run already on its way (`first_state.RUN_ID`), which a
-    dispatch decides as a new request, as NexKit 6 did."""
+    dispatch decides as a new request, as NexKit 6 did. A review that lost its agent run, which
+    `lost_again` counted, is a `runAgent` of the review stage: `/nexkit review` carries it out."""
     for action in (doc or {}).get("pending") or []:
-        if action["id"] != first_state.RUN_ID and starts([action]) == DISPATCHED[what]:
+        if action["id"] == first_state.RUN_ID:
+            continue
+        reviews = action["kind"] == "runAgent" and action.get("stage") == "review"
+        if (starts([action]) or ("review" if reviews else None)) == DISPATCHED[what]:
             return action
     return None
 
@@ -2466,7 +2479,7 @@ def command(
         if action:
             if carried is not None:
                 carried.append(action)
-            return starts([action])
+            return starts([action]) or DISPATCHED[what]
         if observe_conflict and what == "fix" and change:
             return _conflict_round(gh, cfg, item, change, found)
         request = {**request, "id": _dispatch_id(found)}
@@ -3789,22 +3802,6 @@ RESUMED = {"plan": "plan", "go": "implement", "fix": "fix", "review": "review"}
 MOST_AGAIN = 10
 
 
-def _stage_doc(stage, item, change, retry):
-    """(document, change version) of `item` while the agent of `stage` runs on `change` (a
-    pull request's id and version, or None), with `retry` runs again after a transient error
-    counted, as `first_state` imports a run that waits to run again."""
-    doc = first_state.empty(str(item))
-    doc["state"] = RUNS[stage]
-    version = None
-    if change:
-        version = str(change["version"])
-        doc["change"] = {"id": str(change["id"]), "version": version}
-    doc["pending"] = [first_state.agent_run(stage, version)]
-    if retry > 0:
-        doc["again"] = {"transient": min(retry, MOST_AGAIN)}
-    return doc, version
-
-
 def _stage_version(decision):
     """The version of the change that the stage of `decision` runs on: a fix round's pull
     request head, or None for a plan and an implement round, which have no change yet."""
@@ -4004,6 +4001,17 @@ def resumes(gh, cfg, run, number, now, label=None, write=False):
 # -- a command that autopilot started again after it was lost -------------------------------
 
 
+def _pending_of(doc, stage):
+    """The action of `doc`'s outbox that a lost command of `stage` was running, or None: its
+    `runAgent`, and for a review also `runChecks`, since a review runs its checks first."""
+    for found in doc.get("pending") or []:
+        if found["kind"] == "runAgent" and found.get("stage") == stage:
+            return found
+        if found["kind"] == "runChecks" and stage == "review":
+            return found
+    return None
+
+
 def lost_again(
     gh, cfg, issue, record, now, what, fields, extra=None, person=False, label=None, write=False
 ):
@@ -4013,72 +4021,121 @@ def lost_again(
     the command's start, `record` autopilot's record of its last start, or {} when none counts,
     and `extra` what the step carries besides. With `person`, the command is a person's, which
     waits for them. With `write`, which the `step` run of the item's group passes, the answer is
-    stored (`decide_all`), the due tick of a wait that has already ended as a second answer.
-    Raises `Refused`.
+    stored (`decide_all`). Raises `Refused` with no `cfg`, before it reads anything, and for an
+    item with no state to decide on.
 
-    The loss is sent at the time of the last start, as the engine measures a wait from the loss
-    and NexKit 6 from that start, and the host keeps nothing that a later sweep could count
-    from. The agent's tokens are not sent: the record's `once` says that the agent ran."""
+    It decides on the stored state alone, and counts the losses from its `again.lost`, never
+    from autopilot's record. A stored state that holds the command's pending action, a `runAgent`
+    of its stage or `runChecks` for a review, gets `actionLost` at the time of the last start,
+    as the engine measures a wait from the loss and NexKit 6 from that start, and then the tick
+    of its wait when that wait is due already, both as one write. A stored state that counted
+    the loss already, such as an import's `lost` with a `time` wait, gets only the tick of that
+    wait once it is due, and before then the step says when autopilot starts the command again
+    and nothing is sent. A stored state that holds neither carries out its attention: an
+    `outage` waits for a person. The ids hold the stored count: `lost-<n>-<count>` and
+    `lost-tick-<n>-<count>`, so that the sweep's preview and the step run send the same ones.
+
+    The host gives the engine the waits of this loss (`lostWaits`): all of autopilot's, only the
+    first for a start that may run only once more (the record's `once`), none for a person's
+    command, so that both wait for a person as in NexKit 6. The agent's tokens are not sent."""
+    if cfg is None:
+        raise Refused("The configuration did not load, so there is no state to decide a loss on.")
     extra = extra or {}
     command = str(fields["command"])
     if command not in RESUMED:
         raise Refused(f"NexKit writes no start of the command `{command}`.")
     number, shown = issue["number"], f"`/nexkit {command}`"
-    tries = autopilot._tries(record)
-    doc, version = _lost_doc(RESUMED[command], number, fields["target"])
-    if person:
-        doc["pending"][0]["by"] = "person"
-    if tries >= 1:
-        doc["again"] = {"lost": min(tries, MOST_AGAIN)}
-    if record.get("once"):
-        doc.setdefault("again", {})["once"] = True
-    found = {
-        **(policies(cfg) if cfg else {}),
-        "lostWaits": [int(wait.total_seconds() // 60) for wait in autopilot.AGAIN],
-    }
-    lost = _event(
-        "actionLost",
-        number,
-        _time(record.get("at")) or usage.iso(now),
-        f"lost-{number}-{tries}",
-        action=first_state.RUN_ID,
-        changeVersion=version,
-        tokens=None,
-        seconds=None,
-    )
     # The pull request that the command runs on; a start that names the issue itself has none.
     target = int(fields["target"]) if str(fields["target"]).isdigit() else number
     pull = target if command in ("fix", "review") and target != number else None
     stage = RESUMED[command]
-    action = ("runChecks", None) if stage == "review" else ("runAgent", stage)
+    doc = stored(gh, cfg, number, pull)[1]
+    if doc is None:
+        raise Refused("The item has no state to decide on.")
+    waits = [int(wait.total_seconds() // 60) for wait in autopilot.AGAIN]
+    waits = [] if person else waits[:1] if record.get("once") else waits
+    found = {**policies(cfg), "lostWaits": waits}
     options = {"pull": pull, "found_policies": found, "write": write}
-    state, answers = decide_all(
-        gh, cfg, number, [*_hold_events(number, label), lost], doc, action=action, **options
-    )
-    actions = [item for _, found_actions in answers for item in found_actions]
-    kinds = {action["kind"]: action for action in actions}
-    if "wait" in kinds:
-        due = autopilot.parse_iso(kinds["wait"]["until"])
-        if due > now:
-            reason = (
-                f"{what}; autopilot starts {shown} again after {due:%H:%M} UTC, since GitHub "
-                "may not start runs for a while"
+    at = _time(record.get("at")) or usage.iso(now)
+    pending = _pending_of(doc, stage)
+    action = (pending["kind"], pending.get("stage")) if pending else None
+    again = doc.get("again") or {}
+    wait = next((w for w in doc.get("waits") or [] if w["for"] == "time"), None)
+    rest = (extra, person, label)
+    if pending is not None:
+        tries = again.get("lost", 0)
+
+        def row(state):
+            count = ((state or {}).get("again") or {}).get("lost", 0)
+            version = (_pending_of(state or {}, stage) or pending).get("changeVersion")
+            lost = _event(
+                "actionLost",
+                number,
+                at,
+                f"lost-{number}-{count}",
+                action=first_state.RUN_ID,
+                changeVersion=version,
+                tokens=None,
+                seconds=None,
             )
-            return autopilot._step(issue, "active", reason, **extra)
-        name, wait = f"lost-tick-{number}-{tries}", kinds["wait"]["wait"]
-        tick = _event("tick", number, usage.iso(now), name, wait=wait)
-        state, answers = decide_all(gh, cfg, number, [tick], state, **options)
-        actions = [item for _, found_actions in answers for item in found_actions]
-        kinds = {action["kind"]: action for action in actions}
-    if "runAgent" in kinds or "runChecks" in kinds:
+            name = f"lost-tick-{number}-{count}"
+            tick = _event("tick", number, usage.iso(now), name, wait="w1.1")
+            held = [] if (state or {}).get("hold") else _hold_events(number, label)
+            return [*held, lost, tick]
+
+        def due(acts):
+            # A wait that has ended goes on to its tick; any other answer ends the row.
+            return bool(acts) and not any(
+                a["kind"] == "wait" and autopilot.parse_iso(a["until"]) <= now for a in acts
+            )
+
+        kept = decide_all(
+            gh, cfg, number, row, None, action=action, wait="time", until=due, **options
+        )
+    elif wait is not None and again.get("lost"):
+        tries = again["lost"] - 1
+        if autopilot.parse_iso(wait["until"]) > now:
+            return _lost_waits(issue, shown, what, autopilot.parse_iso(wait["until"]), extra)
+        tick = _event("tick", number, usage.iso(now), f"lost-tick-{number}-{tries}", wait="w1.1")
+        kept = decide_all(
+            gh, cfg, number, _hold_row(number, label, tick), None, wait="time", **options
+        )
+    else:
+        # The stored state holds nothing to send: it carries out what it holds. A pending run
+        # that is not the command's counts no loss, which would start the command for ever.
+        actions = _held(doc)
+        if any(one["kind"] in ("runAgent", "runChecks") for one in actions):
+            raise Refused(f"The item's stored state holds no pending run of {shown}.")
+        return _lost_attention(issue, actions, again.get("lost", 0), what, shown, record, *rest)
+    state, answers = kept
+    actions = [item for _, found_actions in answers for item in found_actions]
+    late = [
+        autopilot.parse_iso(one["until"])
+        for one in actions
+        if one["kind"] == "wait" and autopilot.parse_iso(one["until"]) > now
+    ]
+    if late:
+        return _lost_waits(issue, shown, what, late[0], extra)
+    if any(one["kind"] in ("runAgent", "runChecks") for one in actions):
         again = state["again"]
+        # The record's `once` carries on to the start that the engine asked for, whatever the
+        # engine kept: it learns that an agent ran only from tokens, which the host never sends.
+        once = again.get("once") or record.get("once")
         remember = {
             **fields.get("remember", {}),
             "tries": again["lost"],
-            **({"once": True} if again.get("once") else {}),
+            **({"once": True} if once else {}),
         }
         reason = f"{what}, so autopilot starts {shown} {'again' if tries else 'once more'}"
         return autopilot._step(issue, "start", reason, **{**fields, "remember": remember}, **extra)
+    return _lost_attention(issue, actions, tries, what, shown, record, *rest)
+
+
+def _lost_attention(issue, actions, tries, what, shown, record, extra, person, label):
+    """The step for a lost command that the engine starts no run for, as `actions` say, after
+    `tries` losses counted before this one: a person is needed after an outage, the label holds
+    the start back, or the engine answered something that it cannot (`Refused`)."""
+    kinds = {action["kind"]: action for action in actions}
     if (kinds.get("needPerson") or {}).get("reason") == "outage":
         if person:
             if not extra:
@@ -4102,19 +4159,11 @@ def lost_again(
     raise Refused(f"The engine answers {sorted(kinds)} after a lost run, which it cannot do.")
 
 
-def _lost_doc(stage, number, target):
-    """(document, change version) of `number` while the run of `stage` on `target`, the pull
-    request of a fix round or a review, runs: the document that a lost run waits in."""
-    if stage not in ("fix", "review"):
-        return _stage_doc(stage, number, None, 0)
-    change = {"id": target, "version": target}
-    if stage == "fix":
-        return _stage_doc(stage, number, change, 0)
-    doc = first_state.empty(str(number))
-    version = str(target)
-    doc["state"] = "checking"
-    doc["change"] = {"id": version, "version": version}
-    doc["pending"] = [
-        {"id": first_state.RUN_ID, "next": None, "kind": "runChecks", "changeVersion": version}
-    ]
-    return doc, version
+def _lost_waits(issue, shown, what, due, extra):
+    """The step of a lost command whose wait ends at `due`, which is after the sweep's time:
+    autopilot starts the command again then."""
+    reason = (
+        f"{what}; autopilot starts {shown} again after {due:%H:%M} UTC, since GitHub "
+        "may not start runs for a while"
+    )
+    return autopilot._step(issue, "active", reason, **extra)

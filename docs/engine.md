@@ -510,7 +510,8 @@ adapter's tests and the answers as what its adapter carries out.
   since is in the observation, so the engine checks it before it goes on. A run that waits to run again runs its own command again, and a lost round
   runs a fix round's command or a review, as NexKit 6 does; autopilot's record of tries counts
   only for the same command and target within six hours, and allows one start more once the
-  agent ran. Each imported item is one the engine moves on from: a case in
+  agent ran. Once stored, the count is the state's `again.lost`: a later loss counts from it, and
+  the six-hour window only selects which record the import reads. Each imported item is one the engine moves on from: a case in
   `tests/conformance/imports/` takes a NexKit 6 situation in, gives the state document out, and
   sends the events that carry the item on from there.
 
@@ -520,7 +521,7 @@ adapter's tests and the answers as what its adapter carries out.
    decision of the loop is now its own. Most of the GitHub host's decisions still build the
    item's document from NexKit 6's markers, as its import reads them. The ones that follow a plan,
    start a new issue's first plan, follow a merge and its refusals,
-   answer a lost command, and end a pull request's round, a conflict or a wait read the stored
+   and end a pull request's round, a conflict or a wait read the stored
    document, which they use only where it says what the markers say, and store the engine's answer
    in the item's group, a row of events as one write. A blocked or failed `/nexkit go`, a fix round
    that stopped as blocked and a round that ran out of time decide on the stored document alone
@@ -528,7 +529,9 @@ adapter's tests and the answers as what its adapter carries out.
    waits for the round's agent run, and the sweep sends it only while the state still waits for
    that run and does not hold the result, and otherwise carries out what the state holds.
    A usage limit, a transient error and a resume that comes due decide on the stored document
-   alone: its pending agent run, its count of runs again and its wait. So does a writer's vouch
+   alone: its pending agent run, its count of runs again and its wait. So does a lost command:
+   it counts the losses from the stored `again.lost`, sends only the tick of a wait that the
+   stored state holds already, and carries out an `outage` that waits for a person. So does a writer's vouch
    after an untrusted edit: when the item's own run already took it, the step carries out what
    the stored state holds, and a plan that an untrusted edit stopped, which never reached the
    engine, starts again. A command that NexKit
@@ -560,8 +563,8 @@ adapter's tests and the answers as what its adapter carries out.
    What the host observes stays with it, since only GitHub shows it. The engine decides from
    these facts, and the host gives them as they are:
 
-   - Which reset a usage limit gives, and what counts as a lost run, with the six-hour window of
-     autopilot's count of tries.
+   - Which reset a usage limit gives, and what counts as a lost run, with the six-hour window that
+     selects autopilot's record for the import; the count after it is the stored one.
    - A pull request's `mergeable_state`: `acceptable` for `clean`, `unstable` or `has_hooks`,
      `behind` and `dirty`.
    - A hold label, a fork, a writer's vouch, an edit after a vouch, a person's own pull request

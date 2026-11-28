@@ -736,6 +736,48 @@ KNOWN += [
 ]
 
 
+def _held_conflict_on_a_round_in_its_checks(sc, old, new):
+    """For the `chains` family: whether every step before the first one that differs is equal,
+    and that step ends a round whose commit conflicts while a label holds the issue (or NexKit
+    cannot read one), where NexKit 6 held the conflict round back and the engine left the round to
+    a person. What follows is not compared: the round did not end as NexKit 6's."""
+    for one, other in zip(old.get("steps", []), new.get("steps", []), strict=False):
+        if one == other:
+            continue
+        was, now = one.get("outcome"), other.get("outcome")
+        if not (isinstance(was, dict) and isinstance(now, dict)):
+            return False
+        return (
+            was.get("outcome") == "held"
+            and now.get("outcome") == "needs_human"
+            and "after a conflict, which the host cannot do" in str(now.get("attention"))
+        )
+    return False
+
+
+KNOWN += [
+    {
+        "name": "a hold on the conflict round of a round that the stored state holds in its checks",
+        "family": "chains",
+        "by": "#759",
+        "why": (
+            "This family stores the import of a pull request with no round report once, before its "
+            "first round, so the stored state holds that round in its checks, with no `publish` "
+            "pending, and the rounds after it end on whatever state the one before left, as the "
+            "family dispatches them in any order. A conflicting commit of such a round is decided "
+            "on the stored state alone: the conflict goes as an observation of the head, and "
+            "while a label holds the issue the engine cancels the checks that it finds running, "
+            "or answers nothing when no conflict round is left, so the host leaves the round to "
+            "a person with the engine's reason, where NexKit 6 held the conflict round back. "
+            "On GitHub only a NexKit 6 round that was in flight at the upgrade meets this, since "
+            "a round of NexKit 7 stores its `publish` before it ends. Only a record whose first "
+            "difference is such a held conflict is excused."
+        ),
+        "match": _held_conflict_on_a_round_in_its_checks,
+    }
+]
+
+
 KNOWN += [
     {
         "name": "a held conflict round keeps the policies it started with",

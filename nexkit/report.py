@@ -20,7 +20,6 @@ from .maintain import (
     close_or_find_closed,
     close_parents_safely,
     closed_line,
-    conflict_rounds_of,
     delete_head_branch,
     is_conflicting,
     reach,
@@ -2160,9 +2159,7 @@ def _skipped_conflicting(gh, cfg, decision, pr, head, files, row, workflow_ref, 
 
     label = _held(gh, cfg, decision["issue"])
     try:
-        # A hold keeps the round back whatever rounds are left, so they are read only without.
-        used = 0 if label else conflict_rounds_of(gh, pr, row)
-        ends = conflicting(gh, cfg, decision, pr, head, label, used, write=True)
+        ends = conflicting(gh, cfg, decision, pr, head, label, write=True)
         if ends == "held":
             row["held_back"] = "conflicts"
             later = "starts the round that resolves it"

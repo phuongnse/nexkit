@@ -818,16 +818,6 @@ def _rounds(gh, number):
     return [(c, run) for c, run in run_comments(gh.comments(number)) if "round" in run]
 
 
-def conflict_rounds_of(gh, number, row=None):
-    """How many conflict rounds of the pull request `number` count against
-    `conflicts.max_rounds`, with `row`, the round that reports, among them."""
-    own = (row or {}).get("url")
-    rounds = [run for _, run in _rounds(gh, number)]
-    if own and not any(run.get("url") == own for run in rounds):
-        rounds.append(row)
-    return conflict_rounds_used([run for run in rounds if run.get("conflicts")])
-
-
 def _conflict_rounds_stored(gh, issue, tried):
     """How many conflict rounds count against the limit by the item's stored `rounds`, which
     is what the engine's answer rests on. The round comments' count `tried` stands in when

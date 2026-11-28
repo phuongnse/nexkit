@@ -282,6 +282,9 @@ when a list of what the code defines misses an entry. These rules close each of 
      words.
    - `test_each_rule_links_a_doc_section`: each rule of [AGENTS.md](../AGENTS.md) links a section of
      a page under `docs/`.
+   - `test_the_code_names_no_milestone_issue_or_pull_request`: no comment or docstring of the Python
+     files of `nexkit/`, `scripts/` and `bin/` names a milestone, an issue or a pull request, as
+     [References in the code](#references-in-the-code) says.
    - `test_the_supported_versions_table_gives_the_pins_of_the_code`: the supported versions table of
      [the README](../README.md#supported-versions) matches the pins in `nexkit/__init__.py`.
    - `test_every_runner_the_readme_names_is_the_pinned_runner`: each `ubuntu-NN.NN` in [the

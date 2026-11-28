@@ -14,7 +14,7 @@ the families that play a round's report. The engine's mutation check reads nothi
 ```sh
 git worktree add --detach ../nexkit-v6 8bf5190
 python3 tests/differential/harness.py --v6 ../nexkit-v6               # every scenario
-python3 tests/differential/harness.py --v6 ../nexkit-v6 --sample 400  # what CI plays
+python3 tests/differential/harness.py --v6 ../nexkit-v6 --sample 400  # what check.sh plays
 ```
 
 `harness.py` plays every family of `families/` on NexKit 6, which must be a checkout of

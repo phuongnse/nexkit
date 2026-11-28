@@ -44,20 +44,19 @@ jobs:
       - name: Validate plugin
         run: claude plugin validate --strict .
 
-  differential:
-    # The engine against NexKit 6 at harness.V6 (docs/testing.md#moving-decisions-into-the-engine):
-    # a fixed sample of the differential check, and random walks of the engine.
+  walks:
+    # The engine's random walks against its invariants (docs/testing.md), as NexKit's walks
+    # check runs them.
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0 # the check reads NexKit 6 from this history
           persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - run: tests/differential/check.sh # as NexKit's differential check runs it
+      - run: python tests/walk.py --walks 1000
 
   cache-save:
     # Saves a cache as docs/configuration.md#caches tells a repository's own CI to.

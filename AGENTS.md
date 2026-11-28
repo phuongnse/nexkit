@@ -82,7 +82,7 @@ job holds, and the plugin are described in [Architecture](docs/architecture.md).
 ```sh
 python3 -m unittest discover -s tests -t .
 scripts/lint.sh                            # ruff and actionlint at their pins
-tests/differential/check.sh                # the engine against NexKit 6, as CI runs it
+python3 tests/walk.py --walks 1000         # the engine's random walks, as CI runs them
 claude plugin validate --strict .
 python3 scripts/smoke.py [--program PATH]  # real Claude Code: docs/testing.md#the-smoke-test says when
 ```

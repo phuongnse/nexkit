@@ -17,7 +17,6 @@ if [ -z "$dir" ]; then
     git -C "$dir" checkout --quiet --detach "$v6"
   fi
 fi
-# Each part that moves a host function to the stored state alone adds its own --forbid.
 python3 "$root/tests/differential/harness.py" --v6 "$dir" --sample "${NEXKIT_DIFF_SAMPLE:-400}" \
   --fallbacks --forbid nexkit.host.close_done --forbid nexkit.host.stage_limited \
   --forbid nexkit.host.stage_transient --forbid nexkit.host.resumes --forbid nexkit.host.command \
@@ -33,5 +32,5 @@ python3 "$root/tests/differential/harness.py" --v6 "$dir" --sample "${NEXKIT_DIF
   --forbid nexkit.host.after_go --forbid nexkit.host.round_carried_on \
   --forbid nexkit.host.no_change_found --forbid nexkit.host.on_base_found \
   --forbid nexkit.host.stage_untrusted --forbid nexkit.host.base_moved \
-  --forbid nexkit.host.stopped --forbid nexkit.host.stop_carried_on
+  --forbid nexkit.host.stopped --forbid nexkit.host.stop_carried_on --forbid nexkit.host.lost_again
 python3 "$root/tests/walk.py" --walks "${NEXKIT_DIFF_WALKS:-1000}"

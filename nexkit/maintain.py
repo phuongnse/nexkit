@@ -1191,7 +1191,8 @@ def resolve_conflicts(
     with it, unless a label holds its issue (see `autopilot.held`; `cfg` is the
     configuration). A round that runs only its checks on a head that can no longer merge
     stops first (see `stop_superseded`). With `settle`, a latest round whose run ended
-    without a report holds nothing up (see `start_conflict_round`). Returns lines for a log
+    without a report is shown as ended first and then counts as failed, so no conflict round
+    follows and a person decides (see `start_conflict_round`). Returns lines for a log
     or comment."""
     lines, rules = [], []
 

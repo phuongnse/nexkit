@@ -255,6 +255,9 @@ backstop, for workflows installed before the `item` job, whose runs may overlap:
   (see *Stopping a round in its checks* there).
 - A run whose workflow run ended without a report is shown as ended by the next sweep. Until
   then the item's stored state holds it on its way, and the conflict round waits for that.
+  Once the sweep shows it as ended, the round counts as failed. With autopilot off, nothing
+  starts the conflict round after that, and a person decides. With autopilot, its start of the
+  command again comes first.
 
 A hidden marker in each run comment holds the run's URL, so `report` edits the comment its
 own run started. If that comment was deleted, `report` posts a new one.

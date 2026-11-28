@@ -3,12 +3,13 @@ import io
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from nexkit import agent, first_state, protocol, runlog
+from nexkit import agent, first_state, program, protocol, runlog
 from nexkit.checks import kept_output
 from nexkit.engine import prompt as engine_prompt
 from nexkit.evidence import EVIDENCE_LIMIT
@@ -17,6 +18,7 @@ from nexkit.report import apply_criteria
 from nexkit.runtimes import RUNTIMES
 from nexkit.runtimes.claude_code import ClaudeReader
 from nexkit.textutil import TEXT_LIMIT
+from tests import engine_here
 from tests.support import (
     CALC,
     MUL,
@@ -827,8 +829,12 @@ class PromptCallTests(StageCase):
     def test_a_request_the_engine_refuses_ends_the_round_with_an_error_and_no_agent(self):
         self.claude.configure(result=DONE)
         broken = {**CONTEXT, "inputs": {**CONTEXT["inputs"], "item": {"id": "five"}}}
-        with self.assertRaisesRegex(RuntimeError, "The engine wrote no prompt: request"):
-            self.run_stage("implement", context=broken)
+        result = self.run_stage("implement", context=broken)
+        self.assertEqual(result["status"], "error")
+        self.assertTrue(result["error"].startswith("The engine wrote no prompt: request"))
+        self.assertNotIn("transient", result)
+        saved = json.loads((self.out / "result.json").read_text())
+        self.assertEqual(saved["status"], "error")
         self.assertFalse(self.claude.log.exists())
         self.assertFalse((self.out / "prompt.md").exists())
 
@@ -840,6 +846,75 @@ class PromptCallTests(StageCase):
         text = (self.out / "prompt.md").read_text()
         self.assertEqual(text, self.claude.call()["prompt"])
         self.assertIn("Change add to return a + b.", text)
+
+
+FAILS = (sys.executable, "-c", "import sys; sys.exit(1)")
+
+
+class EngineProgramTests(StageCase):
+    """The agent step gets each prompt from the real `nexkit-engine` program."""
+
+    def setUp(self):
+        super().setUp()
+        patch = mock.patch.object(program, "call", engine_here.REAL)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_the_prompt_comes_from_a_process_that_holds_no_secret(self):
+        secrets = {
+            "ANTHROPIC_API_KEY": "sk-secret-1",
+            "CLAUDE_CODE_OAUTH_TOKEN": "oauth-secret-2",
+            "GITHUB_TOKEN": "ghs-secret-3",
+            "NEXKIT_AGENT_SECRET_1": "agent-secret-4",
+        }
+        self.claude.configure(result=DONE, write={"calc.py": "x\n"})
+        with (
+            mock.patch.dict(os.environ, secrets),
+            mock.patch("subprocess.run", wraps=subprocess.run) as run,
+        ):
+            self.run_stage("implement")
+        tail = [*program.COMMAND, "prompt"]
+        calls = [c for c in run.call_args_list if list(c.args[0])[-len(tail) :] == tail]
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(list(calls[0].args[0][1:3]), ["-P", "-m"])
+        env = calls[0].kwargs["env"]
+        self.assertLessEqual(set(env), {"PATH", "PYTHONPATH", "LANG"})
+        for value in secrets.values():
+            self.assertNotIn(value, env.values())
+        text = (self.out / "prompt.md").read_text()
+        self.assertEqual(text, self.claude.call()["prompt"])
+        self.assertIn("Change add to return a + b.", text)
+
+    def test_a_program_that_exits_with_no_answer_ends_the_round_with_an_error_and_no_agent(self):
+        self.claude.configure(result=DONE)
+        with mock.patch.object(program, "COMMAND", FAILS):
+            result = self.run_stage("implement")
+        self.assertEqual(result["status"], "error")
+        self.assertIn("The engine wrote no prompt", result["error"])
+        self.assertIn("The engine program failed", result["error"])
+        self.assertNotIn("transient", result)
+        self.assertEqual(json.loads((self.out / "result.json").read_text())["status"], "error")
+        self.assertFalse((self.out / "prompt.md").exists())
+        self.assertFalse(self.claude.log.exists())
+
+    def test_triage_falls_back_when_the_program_fails(self):
+        self.claude.configure(result={"profile": "hard", "reason": "x"})
+        with mock.patch.object(program, "COMMAND", FAILS):
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                result = agent.run_triage(
+                    CONTEXT, profile_config(), "hard", self.out, program=str(self.claude.path)
+                )
+        self.assertEqual(result["status"], "error")
+        self.assertIn("The engine wrote no prompt", result["error"])
+        self.assertEqual((result["profile"], result["chosen_by"]), ("hard", "previous"))
+        with mock.patch.object(program, "COMMAND", FAILS):
+            with contextlib.redirect_stdout(io.StringIO()):
+                result = agent.run_triage(
+                    CONTEXT, profile_config(), None, self.out, program=str(self.claude.path)
+                )
+        self.assertEqual((result["profile"], result["chosen_by"]), ("standard", "default"))
+        self.assertFalse(self.claude.log.exists())
 
 
 class RunStageTests(StageCase):

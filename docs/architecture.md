@@ -28,7 +28,7 @@ engine's calls as a program that reads JSON on standard input.
 | `progress.py` | Each run in its own comment, posted where the run started |
 | `refusal.py` | Why GitHub refused a merge, and what a person does about it |
 | `item_state.py`, `first_state.py` | Work items' state documents, in App comments, with the cursor of what the host took; the first one, from NexKit 6's markers |
-| `host.py`, `program.py` | The GitHub host's calls of the engine's `step` and `sweep`, and its taking of an item's events from their sources; the client that runs the engine program for them |
+| `host.py`, `program.py` | The GitHub host's calls of the engine's `step` and `sweep`, and its taking of an item's events from their sources; the client that runs the engine program for them and for the agent step's `prompt` |
 | `maintain.py`, `usage.py`, `autopilot.py` | Work after other events; runs paused at a usage limit; autopilot sweeps |
 | `config.py`, `globs.py`, `scaffold.py`, `app.py` | Config schema and path globs; `nexkit init` and `doctor`; the GitHub App |
 | `status.py`, `snapshot.py`, `pin.py`, `github.py`, `gitutil.py` | `nexkit status` and its batched reads; the pinned release; REST, GraphQL and git helpers |
@@ -175,8 +175,7 @@ flowchart LR
     Agents["Agent CLIs, such as Claude Code"]
     Suite["Conformance suite: tests/conformance/"]
 
-    GitHub -->|"step and sweep, as JSON on standard input"| Program
-    GitHub -->|"prompt, in the same process"| Engine
+    GitHub -->|"step, sweep and prompt, as JSON on standard input"| Program
     Program -->|"the same calls, as JSON"| Engine
     Engine -->|"answers follow its schemas"| Protocol
     Suite -->|"checks the answers of"| Engine
@@ -189,23 +188,24 @@ engine speaks, the engine's version and its calls. [Versions](engine.md#versions
 numbers. `step` decides what happens to one work item, `prompt` writes a stage's prompt from the
 texts the host fetched, and `sweep` chooses which waiting items start. [The
 engine](engine.md#the-engine) defines each call. The GitHub host does not call `describe`. It gets
-its `step` and `sweep` answers from the engine program. `host.step` and the sweep send one JSON
-request through `nexkit/program.py`, which runs `python -P -m nexkit.engine <call>` with the host's
-own Python and the same installed package. The program's environment holds only `PATH`,
-`PYTHONPATH` and `LANG`, so no token or secret of the job reaches it. `-P` keeps the working folder,
-which may hold a repository's code, off its import path. A program that is missing, crashes or runs
-past its timeout counts as an engine refusal: the item waits for a person, as it does when the
-engine itself refuses. The GitHub host still calls `prompt` in the same process, as a Python
-function. It sends only some of its decisions to `step`, and
-[getting there](engine.md#getting-there) lists them.
+its `step`, `sweep` and `prompt` answers from the engine program. `host.step`, the sweep and the
+agent step's `prompt` send one JSON request each through `nexkit/program.py`, which runs
+`python -P -m nexkit.engine <call>` with the host's own Python and the same installed package. The program's
+environment holds only `PATH`, `PYTHONPATH` and `LANG`, so no token or secret of the job reaches it.
+`-P` keeps the working folder, which may hold a repository's code, off its import path. A program
+that is missing, crashes or runs past its timeout counts as an engine refusal: the item waits for a
+person, as it does when the engine itself refuses. When the program gives no prompt, the round ends
+with an error result and runs no agent, and triage falls back to its previous or default profile.
+The GitHub host sends only some of its decisions to `step`, and [getting
+there](engine.md#getting-there) lists them.
 
 The `nexkit-engine` program runs the same calls for a host that reads JSON, one request on standard
 input and one answer on standard output. `nexkit-engine serve` answers the same calls over HTTP. The
-GitHub host runs only the program, and only for `step` and `sweep`. The protocol, in `nexkit/protocol/`, holds the JSON Schemas of the events,
-actions and state that pass between a host and the engine. The conformance suite in
-`tests/conformance/` holds cases, each an event with the answers it must give, and checks the engine
-against them. `scripts/conformance.py` can also write the suite as one file for other engines and
-hosts, as [Conformance](engine.md#conformance) says.
+GitHub host runs only the program, for `step`, `sweep` and `prompt`. The protocol, in
+`nexkit/protocol/`, holds the JSON Schemas of the events, actions and state that pass between a host
+and the engine. The conformance suite in `tests/conformance/` holds cases, each an event with the
+answers it must give, and checks the engine against them. `scripts/conformance.py` can also write
+the suite as one file for other engines and hosts, as [Conformance](engine.md#conformance) says.
 
 A runner runs one agent session for one stage. For agent CLIs such as Claude Code, the runner is
 `agent.run_action` in `nexkit/agent.py`.

@@ -423,25 +423,29 @@ class ImportsOutsideTheEngineTest(unittest.TestCase):
             found = imports(module, path.read_text()) & banned
             self.assertFalse(found, f"{module} imports {sorted(found)}")
 
-    def test_the_context_step_imports_nothing_from_the_engine(self):
-        source = (ROOT / "nexkit" / "context.py").read_text()
-        found = {
-            name
-            for name in imports("nexkit.context", source)
-            if name == "nexkit.engine" or name.startswith("nexkit.engine.")
-        }
-        self.assertFalse(found, f"nexkit.context imports {sorted(found)}")
+    def test_the_context_and_agent_steps_import_nothing_from_the_engine(self):
+        for name in ("context", "agent"):
+            source = (ROOT / "nexkit" / f"{name}.py").read_text()
+            found = {
+                n
+                for n in imports(f"nexkit.{name}", source)
+                if n == "nexkit.engine" or n.startswith("nexkit.engine.")
+            }
+            self.assertFalse(found, f"nexkit.{name} imports {sorted(found)}")
 
-    def test_an_import_of_the_engine_puts_the_context_step_in_the_test(self):
-        for line in (
-            "from .engine import prompt",
-            "from nexkit.engine import prompt",
-            "import nexkit.engine",
-        ):
-            found = imports("nexkit.context", f"{line}\n")
-            self.assertTrue(
-                any(n == "nexkit.engine" or n.startswith("nexkit.engine.") for n in found), line
-            )
+    def test_an_import_of_the_engine_puts_the_context_or_agent_step_in_the_test(self):
+        for module in ("nexkit.context", "nexkit.agent"):
+            for line in (
+                "from .engine import prompt",
+                "from . import engine, protocol",
+                "from nexkit.engine import prompt",
+                "import nexkit.engine",
+            ):
+                found = imports(module, f"{line}\n")
+                self.assertTrue(
+                    any(n == "nexkit.engine" or n.startswith("nexkit.engine.") for n in found),
+                    f"{module}: {line}",
+                )
 
     def test_an_import_of_the_engine_s_text_helpers_fails_the_test(self):
         source = "from .engine.textutil import fence\n"

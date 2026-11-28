@@ -16,7 +16,8 @@ from dataclasses import replace
 from pathlib import Path
 
 from . import config as configuration
-from . import engine, protocol
+from . import program as engine_program
+from . import protocol
 from .checks import BASE_SHA, environment, known_base
 from .context import keep_texts
 from .first_state import agent_run
@@ -542,13 +543,15 @@ def prompt_request(stage, context, added, cfg, folder):
 
 
 def prompt_call(request):
-    """The engine's answer to a `prompt` request: {text, shortened, notRead, files}. It is
-    answered in this process for now; a request the engine refuses ends the round with an
-    error result, which nothing retries."""
-    answer = engine.answer(json.loads(json.dumps(request)))
-    if "error" in answer:
-        raise RuntimeError(f"The engine wrote no prompt: {answer['error']}")
-    return answer
+    """The answer of the `nexkit-engine` program to a `prompt` request: {text, shortened,
+    notRead, files}, or {error} when the program cannot start, crashes, times out or refuses
+    the request. Each caller handles `error`: nothing retries it."""
+    return engine_program.call("prompt", request)
+
+
+def no_prompt(answer):
+    """The error of a round that got no prompt."""
+    return f"The engine wrote no prompt: {answer['error']}"
 
 
 def stage_schema(stage, cfg):
@@ -838,7 +841,7 @@ def _run_one(
                 )
                 folder = out / "result-again"
                 folder.mkdir(exist_ok=True)
-                text = prompt_call(
+                again_prompt = prompt_call(
                     {
                         "protocol": protocol.VERSION,
                         "call": "prompt",
@@ -848,19 +851,27 @@ def _run_one(
                         "policies": {},
                         "unfit": redact(result["unfit"]),
                     }
-                )["text"]
-                (folder / "prompt.md").write_text(text, encoding="utf-8")
-                again = RunLog(
-                    redact,
-                    reader=runtime.reader(),
-                    title=f"{title} ({name}, asked for its result)",
-                    speaker=runtime.label,
-                    tool_output=cfg["log"]["tool_output"],
-                    transcript_dir=folder if cfg["transcript"] else None,
                 )
-                second = launch_once(replace(spec, resume=True), text, again, left)
-                result = asked_again(result, second)
-                calls = calls + again.calls
+                if "error" in again_prompt:
+                    # No second run: the result stays as the first run left it.
+                    print(
+                        f"! {no_prompt(again_prompt)} to ask {runtime.label} again.",
+                        flush=True,
+                    )
+                else:
+                    text = again_prompt["text"]
+                    (folder / "prompt.md").write_text(text, encoding="utf-8")
+                    again = RunLog(
+                        redact,
+                        reader=runtime.reader(),
+                        title=f"{title} ({name}, asked for its result)",
+                        speaker=runtime.label,
+                        tool_output=cfg["log"]["tool_output"],
+                        transcript_dir=folder if cfg["transcript"] else None,
+                    )
+                    second = launch_once(replace(spec, resume=True), text, again, left)
+                    result = asked_again(result, second)
+                    calls = calls + again.calls
             if unfit(result):
                 # Another run may pass where this session did not: the stage's command runs
                 # again, as after a transient error.
@@ -1036,22 +1047,26 @@ def run_triage(context, cfg, previous, out_dir, *, program=None):
     folder = (Path(out_dir) / "texts").resolve()
     added = {"previous_plan": {"profile": previous}}
     answer = prompt_call(prompt_request("triage", context, added, cfg, folder))
-    keep_texts(answer["files"], folder)
-    text = answer["text"]
-    (out / "prompt.md").write_text(text, encoding="utf-8")
     redact = Redactor()
-    # An empty directory, so the repository's agent settings and instructions do not load.
-    with tempfile.TemporaryDirectory() as empty:
-        result, calls = run_agent(
-            "triage",
-            text,
-            cfg,
-            cwd=empty,
-            redact=redact,
-            out=out,
-            title="NexKit triage",
-            program=program,
-        )
+    if "error" in answer:
+        # No prompt, so no agent: the plan falls back like after any triage error.
+        result, calls = {"stage": "triage", "status": "error", "error": no_prompt(answer)}, []
+    else:
+        keep_texts(answer["files"], folder)
+        text = answer["text"]
+        (out / "prompt.md").write_text(text, encoding="utf-8")
+        # An empty directory, so the repository's agent settings and instructions do not load.
+        with tempfile.TemporaryDirectory() as empty:
+            result, calls = run_agent(
+                "triage",
+                text,
+                cfg,
+                cwd=empty,
+                redact=redact,
+                out=out,
+                title="NexKit triage",
+                program=program,
+            )
     output = result.pop("output", None) or {}
     result.pop("summary", None)
     name = output.get("profile")
@@ -1116,6 +1131,10 @@ def run_stage(
     # keeps them.
     folder = (out / "texts").resolve()
     answer = prompt_call(prompt_request(stage, context, inputs, cfg, folder))
+    if "error" in answer:
+        # No prompt, so no agent. Nothing retries it.
+        result = {"stage": stage, "status": "error", "error": no_prompt(answer)}
+        return _save(result, out, Redactor(), [], start=start, merged=merged, conflicts=conflicts)
     keep_texts(answer["files"], folder)
     text = answer["text"]
     (out / "prompt.md").write_text(text, encoding="utf-8")

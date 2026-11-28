@@ -21,7 +21,7 @@ engine's calls as a program that reads JSON on standard input.
 | `cli.py` | Every command, local and pipeline |
 | `route.py` | `route`: event → action, authorization, `verified_sha` |
 | `context.py`, `evidence.py`, `agent.py` | `agent` and `review`: prompt texts, CI evidence, agent run, patch |
-| `publish.py` | `publish`: plan comment, commit, push, pull request |
+| `publish.py` | `publish`: plan comment, commit, push, pull request, and the store of a round's results in the item's state |
 | `checks.py`, `cache.py` | Setup and checks; the keys of cache restore |
 | `report.py` | `report`: statuses, reviews, run and state comments, and what happens next |
 | `state.py` | Pipeline state, kept in comments that the App writes |

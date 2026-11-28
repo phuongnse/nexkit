@@ -249,6 +249,36 @@ class ImportTest(unittest.TestCase):
         self.assertEqual(agents[0]["changeVersion"], head)
         self.assertEqual(host.pending_id(state, "runAgent", "fix"), agents[0]["id"])
 
+    def test_a_round_whose_run_is_in_its_check_jobs_waits_for_its_checks_on_the_head(self):
+        head = "b" * 40
+
+        def imported(job):
+            gh = FakeGitHub()
+            gh.add_issue(5)
+            gh.add_pull(6, 5, head_sha=head)
+            # NexKit 6's state comment counts one automatic fix round, which this round is.
+            gh.comment(6, render_state({"issue": 5, "auto_fixes": 1}))
+            running = {"round": 2, "trigger": "fix (auto)", "action": "fix", "status": "running"}
+            url = "https://github.com/acme/app/actions/runs/77"
+            gh.comment(6, render_run({**running, "url": url, "head": head}))
+            gh.runs[77] = {"status": "in_progress", "run_attempt": 1}
+            gh.jobs[77] = [{"name": f"nexkit / {job}", "status": "in_progress"}]
+            return first_state.import_item(gh, make_config(), 5, 6)
+
+        for job in ("verify (unit)", "shards", "combine"):
+            with self.subTest(job):
+                state = imported(job)
+                self.assertEqual(state["state"], "checking")
+                [action] = state["pending"]
+                self.assertEqual((action["kind"], action["changeVersion"]), ("runChecks", head))
+                self.assertTrue(state["rounds"]["automatic"])
+                self.assertEqual(state["rounds"]["counted"], 1)
+        # In the agent job, the round still waits for its agent.
+        state = imported("agent")
+        self.assertEqual(state["state"], "fixing")
+        self.assertEqual([action["kind"] for action in state["pending"]], ["runAgent"])
+        self.assertTrue(state["rounds"]["automatic"])
+
     def test_an_issue_autopilot_does_not_take_gets_no_automatic_answers(self):
         given = json.loads((CASES / "go-answered-by-autopilot-runs-again.json").read_text())
         cfg = make_config(autopilot={**given["config"]["autopilot"], "scope": None})

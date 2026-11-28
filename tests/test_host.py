@@ -3625,7 +3625,7 @@ class RoundPublishedTest(HostCase):
             self.assertFalse(self.publish(HEAD, found=review))
         self.assertEqual(self.read()[1]["revision"], 1)
 
-    def test_a_fix_round_stores_its_results_in_one_write_and_a_report_that_runs_again_none(self):
+    def test_a_fix_round_stores_its_results_in_one_write_and_a_call_after_it_sends_none(self):
         seed(self.gh, self.cfg, 5)
         self.fail_the_checks()
         before = self.read()[1]
@@ -3638,9 +3638,14 @@ class RoundPublishedTest(HostCase):
         self.assertEqual(doc["pending"][0]["changeVersion"], self.NEW)
         self.assertEqual(doc["rounds"]["fixed"], self.NEW)
         self.assertNotIn("recheck", doc["rounds"])
-        # The same report again: nothing waits for the agent, so nothing is sent.
+        # The report after the publish job: the round waits for its checks on the head that the
+        # engine gave an id, so it is found stored and nothing is sent.
         with mock.patch.object(host, "step", side_effect=AssertionError("step was called")):
-            self.assertFalse(self.publish(self.NEW))
+            self.assertTrue(self.publish(self.NEW))
+            # A conflicting commit is never found stored: `conflicting` sends its result.
+            self.assertFalse(self.publish(self.NEW, conflicts=True))
+            # Nor is a round whose checks wait on another head.
+            self.assertFalse(self.publish("f" * 40))
         self.assertEqual(self.read()[1], doc)
 
     def test_a_fix_round_that_changed_nothing_stores_the_head_it_checks_again(self):

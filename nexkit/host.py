@@ -190,13 +190,15 @@ stored state holds and the dispatch carries out, with no event and no read. A ro
 conflicts with its base branch starts the round that resolves it, within
 `conflicts.max_rounds`, unless a label holds the issue, which keeps it back until the sweep
 finds the label gone (`conflicting`, `conflicts_released`). When an implement or fix round
-ends, its `report` first stores the agent's result and then the publish result in one write
-(`round_published`), each only while the stored state has that action pending, except the
-publish result of a commit that conflicts, which `conflicting` sends. The stored state then
-waits for the round's checks on the published head, and a fix round's record of the head it
-changed and of changing nothing is in it. The checks are then decided on that state alone. A
-round that the import already placed in its checks, and a report that runs again, store nothing
-new, and decide on the markers' document as before.
+ends, its publish job stores the agent's result and then the publish result in one write
+right after it pushes the commit (`publish.store_round`, `round_published`), each only while the
+stored state has that action pending, except the publish result of a commit that conflicts,
+which `conflicting` sends. The stored state then waits for the round's checks on the published
+head while they run, and a fix round's record of the head it changed and of changing nothing is
+in it. The `report` finds the round stored and sends nothing again, or stores it when the
+publish job could not, and the checks are decided on that state alone. A round that the import
+already placed in its checks stores nothing new, and decides on the markers' document as
+before. The import places a NexKit 6 round whose run is in its check jobs there too.
 
 It decides the start of the first plan of a new issue too (`first_plan`, called by
 `autopilot._first_plan`): it decides on the item's stored document (`decide`), or on the import in
@@ -2551,11 +2553,14 @@ def round_published(gh, cfg, decision, pr, head, agent, ran, conflicts):
     agent's result (`agent`, the stage's checked result; `ran`, what its session spent), and
     when the commit does not `conflict` with its base branch, the publish result, in one write.
     A conflicting commit gets only the agent's result, since `conflicting` sends its publish
-    result. Each is sent only while the stored state has that action pending, so that a round
-    the import already placed in its checks, and a report that runs again, send nothing. True
-    when the stored state then has `runChecks` pending on `head`: the checks and the review
-    decide on it alone (`round_ended`). False when nothing was sent, or the engine did not
-    answer so, which warns and lets the round go on as NexKit 6 decides it. Raises `Refused`."""
+    result. The publish job calls it first, right after it pushes the commit. The report's call
+    then finds the round stored and sends nothing: the stored state waits for the round's
+    checks on `head`, with one `runChecks` that the engine gave an id. Each result is sent only
+    while the stored state has that action pending, so that a round the import already placed
+    in its checks sends nothing, and the report decides it on the markers' document. True when
+    the stored state then has `runChecks` pending on `head`: the checks and the review decide on
+    it alone (`round_ended`). False when nothing was sent, or the engine did not answer so,
+    which warns and lets the round go on as NexKit 6 decides it. Raises `Refused`."""
     if cfg is None or decision.get("action") not in ("implement", "fix"):
         return False
     if not isinstance(agent, dict) or not isinstance(agent.get("output"), dict):
@@ -2571,7 +2576,15 @@ def round_published(gh, cfg, decision, pr, head, agent, ran, conflicts):
         if action["kind"] == "runAgent" and action.get("stage") == stage
     ]
     if not running:
-        return False
+        # The publish job stored the round already: one `runChecks` on `head` that the engine
+        # gave an id, not the import's.
+        checks = [a for a in doc.get("pending") or [] if a["kind"] == "runChecks"]
+        return (
+            not conflicts
+            and len(checks) == 1
+            and checks[0].get("changeVersion") == head
+            and checks[0].get("id") != first_state.RUN_ID
+        )
     run = _run_event_id()
     result = {**spent(ran), "changeVersion": head, "output": agent["output"]}
     events = [

@@ -31,7 +31,7 @@ from nexkit import autopilot, cli, first_state, host, item_state, progress, stat
 from nexkit.checks import check_matrix
 from nexkit.github import GitHubError
 from nexkit.maintain import maintain, paused_runs, within_reach
-from nexkit.publish import issue_closed, publish_plan
+from nexkit.publish import issue_closed, publish_plan, store_round
 from nexkit.report import report
 from nexkit.route import auto_kinds, issue_from_branch, queue_item, route, skip_unaffected
 from nexkit.state import (
@@ -533,6 +533,10 @@ class Pipeline:
             elif self.gh.strict:
                 self.gh.pulls[published["pr"]]["mergeable_state"] = "behind"
         needs["publish"] = {"outputs": {"result": json.dumps(published)}}
+        if decision["action"] in ("implement", "fix") and agent and agent["status"] == "done":
+            # The publish job stores the round right after it pushes its commit, so the stored
+            # state waits for the round's checks while they run.
+            store_round(self.gh, self.cfg, decision, written, published, artifacts / "nexkit-agent")
         # A head that conflicts with the base branch's tip gets no checks or review.
         reviewing = decision["action"] == "review" or (
             published.get("head") and not published.get("conflicts")
@@ -2800,6 +2804,65 @@ class ScenarioTests(unittest.TestCase):
         self.assertNotIn("nexkit.host.round_ended", fallbacks)
         self.assertEqual(pipe.gh.issues[5]["state"], "closed")
 
+    def test_a_go_round_s_publish_stores_it_and_its_report_sends_nothing_again(self):
+        waiting, agent_run = [], []
+
+        def working(pipe):
+            doc = item_state.read(pipe.gh, 5)[1]
+            agent_run.append(host.pending_id(doc, "runAgent", "implement"))
+
+        def checking(pipe, pull):
+            # The round's checks run: the publish job stored the round, and no report has yet.
+            doc = item_state.read(pipe.gh, 5)[1]
+            head = pipe.gh.pulls[pull]["head"]["sha"]
+            waiting.append((doc["state"], doc["change"], [dict(a) for a in doc["pending"]], head))
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            return {**done(), "working": working, "checking": checking}
+
+        sent, reporting, fallbacks = [], [], []
+        real_step, real_report = host.step, report
+
+        def step(state, event, *args, **kwargs):
+            if reporting:
+                sent.append(event)
+            return real_step(state, event, *args, **kwargs)
+
+        def watched(*args, **kwargs):
+            reporting.append(True)
+            try:
+                return real_report(*args, **kwargs)
+            finally:
+                reporting.pop()
+
+        for patch in (
+            mock.patch.object(host, "step", step),
+            mock.patch(f"{__name__}.report", watched),
+            mock.patch.object(host, "on_fallback", lambda origin, why: fallbacks.append(origin)),
+        ):
+            patch.start()
+            self.addCleanup(patch.stop)
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        pipe.take_run(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
+        [(state, change, pending, head)] = waiting
+        self.assertEqual(state, "checking")
+        self.assertEqual(change, {"id": "6", "version": head})
+        [checks] = [a for a in pending if a["kind"] == "runChecks"]
+        self.assertEqual((checks["kind"], checks["changeVersion"]), ("runChecks", head))
+        self.assertNotEqual(checks["id"], first_state.RUN_ID)
+        # The report found the round stored: no publish result, and no result of the agent.
+        ids = [event["id"] for event in sent]
+        self.assertTrue(ids)
+        self.assertFalse([name for name in ids if name.startswith("publish-")], ids)
+        answers = [event["id"] for event in sent if event.get("action") == agent_run[0]]
+        self.assertEqual(answers, [])
+        self.assertNotIn("nexkit.host.round_ended", fallbacks)
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+
     def test_a_fix_round_that_changed_nothing_is_stored_with_its_head_before_its_checks(self):
         outside = {"cause": "The registry failed.", "cause_outside": True}
 
@@ -4075,7 +4138,12 @@ class ScenarioTests(unittest.TestCase):
         plain, played, seen = built(0)
         # The import, then each round: its agent's and publish results in one write
         # (`host.round_published`), and its checks and its review, each as its own revision.
-        self.assertEqual(seen["revisions"], [1, 4, 7, 10])
+        # The publish job stores a round's results before its checks run, so a fix round's
+        # checks see them already: one revision more than when the report stored them. The go
+        # round's checks hook stores the item's import again at revision 1 after its publish
+        # stored the round, and that import is in its checks already, so the report stores
+        # nothing for it either, and its own checks see revision 1.
+        self.assertEqual(seen["revisions"], [1, 5, 8, 11])
         first, head = seen["events"][1], seen["heads"][0]
         self.assertTrue(any(name.startswith(f"publish-6-{head}") for name in first), first)
         self.assertTrue(any(name.startswith(f"checks-6-{head}") for name in first), first)
@@ -4525,7 +4593,7 @@ class DispatchedFixRoundsTest(unittest.TestCase):
 
     def publish_the_fix(self, run):
         """The fix round of the workflow run `run` ends: its agent's and publish results reach
-        the state, as `report` stores them, and the next checks follow."""
+        the state, as the publish job stores them, and the next checks follow."""
         found = {"action": "fix", "issue": 5, "pr": 6, "target": 6, "head": self.HEAD}
         output = {"status": "done", "summary": "Fixed.", "checks_run": []}
         agent = {"status": "done", "output": output}
@@ -4613,8 +4681,8 @@ class ConflictRoundsStoredTest(unittest.TestCase):
             return route(self.gh, "workflow_dispatch", event, dispatched["inputs"], cfg=self.cfg)
 
     def end_round(self, number, sha):
-        """The round merged the base branch into a new head, and its checks and review ended
-        as `report` stores them."""
+        """The round merged the base branch into a new head: its results reached the state as
+        the publish job stores them, and its checks and review ended as `report` stores them."""
         head = f"{number:x}" * 40
         found = {"action": "fix", "issue": 5, "pr": 6, "target": 6, "head": self.head}
         output = {"status": "done", "summary": "Merged.", "checks_run": []}

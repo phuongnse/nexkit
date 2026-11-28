@@ -519,6 +519,40 @@ def publish(gh, decision, result, context, cfg, repo, out_dir):
     return {"published": True, "pr": pr, "head": head, **found}
 
 
+def store_round(gh, cfg, decision, result, outcome, out_dir):
+    """Store the end of an implement or fix round that `publish` carried out in the item's
+    state, so that the state waits for the round's checks while they run
+    (`host.round_published`): the agent's `result` and the publish result `outcome`, which
+    the report then finds stored. True when the state then waits for the checks. False when
+    there is nothing to store (no commit, no recheck, no configuration) or the state could
+    not hold the round, which only warns: the commit is pushed, and the report stores the
+    round itself. It runs no repository code and reads the state only through `item_state`."""
+    import json
+
+    from . import autopilot, item_state
+    from .host import Refused, round_published
+
+    if cfg is None or decision.get("action") not in ("implement", "fix"):
+        return False
+    if not (outcome.get("published") or outcome.get("recheck")):
+        return False
+    pr, head = outcome.get("pr"), outcome.get("head")
+    if not pr or not head:
+        return False
+    try:
+        ran = json.loads((Path(out_dir) / "run.json").read_text())
+    except (OSError, ValueError, RecursionError):
+        ran = None
+    try:
+        return round_published(
+            gh, cfg, decision, int(pr), head, result, ran, bool(outcome.get("conflicts"))
+        )
+    except (Refused, GitHubError, item_state.StateError, item_state.Moved) as error:
+        why = autopilot.quoted(str(error), 300)
+        print(f"::warning::The state of #{decision['issue']} does not hold the round: {why}")
+        return False
+
+
 def open_pull(gh, title, branch, base, body):
     """Open the pull request of `branch`. GitHub may open it and still answer a try with a
     server error, so the client's next try is refused as a duplicate (422): then the open

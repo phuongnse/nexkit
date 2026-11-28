@@ -238,7 +238,7 @@ The protocol is built for delivery at least once, in any order a host's queues g
   The GitHub host names each event by its source on GitHub (`host.event_id`): `comment-<id>`
   for a comment, whether it is a remark, an answer or a command, `review-<id>`,
   `issue-event-<id>` from the issue events API, `dispatch-<run id>`, and `run-<run id>` for an
-  agent's result, so the report job and the sweep give one result the same id. An id is built
+  agent's result, so the publish job, the report job and the sweep give one result the same id. An id is built
   only from GitHub's number, never from a text, and its kind keeps a comment and a review with
   one number apart.
   The state comment also keeps the host's own cursor, a hidden line before the state marker with the
@@ -499,8 +499,11 @@ adapter's tests and the answers as what its adapter carries out.
   state comment are imported with NexKit 6's round numbers, which count every run on the pull
   request, so the engine numbers the rounds after them from the next number. The version a fix
   round published
-  (`rounds.fixed`) is not imported, since every imported fix round still publishes and the
-  engine sets it then.
+  (`rounds.fixed`) is not imported, since every imported fix round in its agent still publishes
+  and the engine sets it then. A round whose run is in its check jobs (`shards`, `verify`,
+  `combine`) is imported waiting for its checks on the pull request's head, and its report
+  decides it on the markers' document; a counted automatic fix round of it is marked automatic
+  (`rounds.automatic`), so that a stop gives its count back.
   What a round decided on its head keeps that head as the change's version, and a head pushed
   since is in the observation, so the engine checks it before it goes on. A run that waits to run again runs its own command again, and a lost round
   runs a fix round's command or a review, as NexKit 6 does; autopilot's record of tries counts
@@ -526,10 +529,11 @@ adapter's tests and the answers as what its adapter carries out.
    NexKit 6's only when no state can be read. The run of a conflict round that the push run, the
    schedule or another item's merge dispatches counts it before the round starts. The review that
    follows a branch update stores the update, and the run that the push run starts after it stopped
-   a counted automatic fix round's checks gives that round's count back. The `report` of an
-   implement or fix round first stores the agent's result and the publish result of a commit that
-   does not conflict, in one write, so that the round's checks and review then decide on the
-   stored state alone. A decision that
+   a counted automatic fix round's checks gives that round's count back. The publish
+   job of an implement or fix round stores the agent's result and the publish result of a commit
+   that does not conflict, in one write, right after it pushes, so that the state waits for the
+   round's checks while they run, and the round's checks and review then decide on the stored
+   state alone. The `report` finds the round stored, and stores it only when that job could not. A decision that
    still falls back to the markers' document keeps the stored counts, so that no budget starts
    again. The host sends the event that GitHub shows, and carries out the answer in NexKit 6's words,
    comments and statuses. A start, a merge, a branch update, a close,

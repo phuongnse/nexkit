@@ -8,7 +8,9 @@ only where it ends the comment, so a person's or an agent's text sets none of it
 changes nothing on GitHub.
 
 A `/nexkit go` that stopped as blocked is placed where the engine puts the round's result, under
-the GitHub host's policies (`Item.after_go`).
+the GitHub host's policies (`Item.after_go`). So is a round that ran out of time, and a fix round
+that stopped as blocked, for an issue that autopilot takes (`Item.after_stop`). A split that an
+issue above the item asked for is in its `asked`.
 
 Each place the import can put an item is one of KINDS, and a case in
 `tests/conformance/imports/` imports each.
@@ -119,8 +121,12 @@ KINDS = {
         "for a person."
     ),
     "answered": (
-        "A round or plan that the engine's answers to a blocked `/nexkit go` start waits for "
-        "the sweep to start it."
+        "A round or plan that the engine's answers to a blocked `/nexkit go`, or to a blocked "
+        "fix round, start waits for the sweep to start it."
+    ),
+    "split asked": (
+        "A round that ran out of time waits for the sweep to start the split plan that "
+        "autopilot asks for."
     ),
     "failed": "A run or a round that failed waits for a person.",
     "no round yet": "A pull request whose first round has not reported is in its checks.",
@@ -192,6 +198,7 @@ def situation(
     depth=0,
     waves=(),
     taken=None,
+    split_above=False,
 ):
     """(kind, document): where the import puts `issue`, a GitHub issue, or a person's pull
     request for a review-only item, and its first state document. It reads the item's
@@ -200,7 +207,8 @@ def situation(
     `held`; how many levels of parts the issue is below the issue first split, `depth`, as
     `autopilot.depth` gives it; the numbers of the open issues of a lower wave that it waits for,
     `waves`; the configuration `cfg`; the time `now`, and whether autopilot takes the issue,
-    `taken`, where None means `autopilot.takes(cfg)`."""
+    `taken`, where None means `autopilot.takes(cfg)`; and whether an issue above it asked for a
+    split, `split_above`, which a part inherits (`autopilot.split_refused`)."""
     doc = empty(str(issue["number"]))
     if issue.get("title") is not None:
         doc["title"] = str(issue["title"])[: LONGEST["title"]]
@@ -216,7 +224,7 @@ def situation(
         doc["change"] = {"id": str(pull["number"]), "version": pull["head"]["sha"]}
         doc["observed"] = observed(pull)
     taken = autopilot.takes(cfg) if taken is None else taken
-    item = Item(doc, issue, list(comments), pull, list(pull_comments), cfg, now, taken)
+    item = Item(doc, issue, list(comments), pull, list(pull_comments), cfg, now, taken, split_above)
     item.place(list(parts), list(blockers), list(waves))
     if doc["state"] in ANSWERING and "answers" not in doc["asked"] and item.answered():
         doc["asked"].append("answers")
@@ -253,9 +261,11 @@ def imported(*args, **fields):
 class Item:
     """One item's NexKit 6 comments, read once, and the document that the import fills."""
 
-    def __init__(self, doc, issue, comments, pull, pull_comments, cfg, now, taken):
+    def __init__(
+        self, doc, issue, comments, pull, pull_comments, cfg, now, taken, split_above=False
+    ):
         self.doc, self.issue, self.pull, self.cfg, self.now = doc, issue, pull, cfg, now
-        self.comments, self.taken = comments, taken
+        self.comments, self.pull_comments, self.taken = comments, pull_comments, taken
         self.kind = None
         review_only = doc["itemKind"] == "reviewOnly"
         self.runs = [] if review_only else [r for r in run_comments(comments) if "command" in r[1]]
@@ -276,6 +286,10 @@ class Item:
             approved = any(c["id"] > self.plan["id"] for c in after)
             doc["plan"] = plan_of(self.plan, self.data, approved)
         doc["asked"] = [name for key, name in ASKED.items() if self.record.get(key)]
+        if split_above and "split" not in doc["asked"]:
+            # An issue above the item asked for a split: a part that runs out of time again
+            # waits for a person, as the engine decides from `asked`.
+            doc["asked"].append("split")
         if (
             pull
             and not review_only
@@ -390,7 +404,8 @@ class Item:
     def after_go(self, comment, run):
         """Place an item whose latest run is a `/nexkit go` that did not end in a pull request.
         A round that stopped as blocked or failed on an error records its result (`seen`), as
-        the import decided on it."""
+        the import decided on it; so does a time-out of an issue that autopilot takes
+        (`after_stop`)."""
         outcome = run.get("outcome")
         if run.get("status") == SUCCESS and outcome in ("no_change", "already_on_base"):
             return self.be("no change", "noChange")
@@ -404,12 +419,16 @@ class Item:
             # An untrusted edit's stop is `untrusted`: a comment does not plan it again, as in
             # NexKit 6, and a writer's vouch after it starts the next command.
             return self.be("failed", "failed", "untrusted", run)
+        if self.taken and run.get("timed_out") and run.get("status") == FAILURE:
+            # NexKit 6's sweep asks once for a split: the engine decides it from the result.
+            return self.after_stop(comment, run, "implement")
         if run.get("status") == FAILURE and outcome != "issue_closed" and not run.get("timed_out"):
             # A round that failed on an error: NexKit 6 plans again after a comment.
             self.seen(_round_result(self.issue["number"], comment, run), run)
             return self.be("failed", "failed", "roundFailed", run)
-        # A time-out and an issue that closed with its round are `failed`, so that a comment
-        # does not plan them again under `afterFailure`: NexKit 6 waits for a person.
+        # A time-out of an issue autopilot does not take and an issue that closed with its round
+        # are `failed`, so that a comment does not plan them again under `afterFailure`: NexKit 6
+        # waits for a person.
         return self.be("failed", "failed", "failed", run)
 
     def seen(self, event, run):
@@ -423,17 +442,37 @@ class Item:
             self.doc["recentEvents"].append(event["id"])
 
     def after_blocked(self, comment, run):
-        """A `/nexkit go` that stopped as blocked, in the state where the engine puts the
-        round's result under the GitHub host's policies. Autopilot's answers apply only to an
-        issue it takes. The questions and the attention name the run's comment, as a person's
-        answer on GitHub does."""
+        """A `/nexkit go` that stopped as blocked (`after_stop`)."""
+        return self.after_stop(comment, run, "implement")
+
+    def after_stop(self, comment, run, stage):
+        """A round of `stage`, 'implement' for a `/nexkit go` or 'fix' for a fix round of the
+        pull request, that stopped as blocked or ran out of time, in the state where the engine
+        puts the round's result under the GitHub host's policies. Autopilot's answers and its
+        split apply only to an issue it takes. The questions and the attention name the run's
+        comment, as a person's answer on GitHub does."""
         from . import host  # host imports this module
 
-        doc = _working(copy.deepcopy(self.doc), autopilot.asked_again(self.comments))
+        timed_out = bool(run.get("timed_out"))
+        doc = copy.deepcopy(self.doc)
+        if stage == "fix":
+            # The fix round on the head it checked, as `host._round_doc` has it.
+            doc["state"] = "fixing"
+            doc["pending"] = [agent_run("fix", doc["change"]["version"])]
+            if not timed_out and autopilot.asked_again(self.pull_comments, self.comments):
+                doc["asked"].append("answers")
+        else:
+            again = not timed_out and autopilot.asked_again(self.comments)
+            doc = _working(doc, again)
         policies = host.policies(self.cfg)
         if not self.taken:
             policies["planApproval"] = "person"
-        event = _round_result(self.issue["number"], comment, run)
+        if stage == "implement" and not timed_out:
+            event = _round_result(self.issue["number"], comment, run)
+        else:
+            output = host.fix_output(run) if stage == "fix" else host.round_output(run)
+            name = host._run_event_id(run.get("url"))
+            event = host._stop_event(self.issue["number"], name, doc, output, timed_out)
         self.seen(event, run)
         try:
             found = host.step(doc, event, policies)["state"]
@@ -450,16 +489,22 @@ class Item:
             attention = found["attention"]
             return self.be("asks", name, attention["reason"], run, text=attention["text"], ref=ref)
         if name == "failed":
-            return self.be("failed", "failed", "blocked", run)
+            return self.be("failed", "failed", "failed" if timed_out else "blocked", run)
         if name == "noChange":
             self.doc["waits"] = []
             return self.be("no change", name)
-        if name in ("planning", "working"):
-            # The engine's answers start this stage again: the sweep carries that out.
+        if name in ANSWERING:
+            # The engine's answer starts a stage again, or the split plan of a round that ran
+            # out of time: the sweep carries that out. The engine counted the answered fix
+            # round when it issued it, and the start that follows counts nothing again.
             self.doc["asked"] = list(found["asked"])
+            if name == "fixing":
+                self.doc["rounds"] = copy.deepcopy(found["rounds"])
             self.wait("start")
+            if timed_out:
+                return self.be("split asked", name)
             return self.be("answered", name)
-        raise item_state.StateError(f"The engine put a blocked `/nexkit go` in {name!r}.")
+        raise item_state.StateError(f"The engine put a stopped round in {name!r}.")
 
     def after_plan(self, run):
         plan = self.doc["plan"]
@@ -542,6 +587,13 @@ class Item:
                 if latest["refused_clean"] == version:
                     self.doc["refusedAcceptable"] = version
             return self.be("needs a person", "ready", named[outcome], latest)
+        if (
+            self.taken
+            and status == FAILURE
+            and (autopilot.engine_round(latest) or latest.get("timed_out"))
+        ):
+            # What NexKit 6's sweep sends to the engine (`autopilot._pull_step`).
+            return self.after_stop(comment, latest, "fix")
         if outcome == "agent_blocked" and latest.get("questions"):
             stage = "implement" if latest.get("action") == "implement" else "fix"
             return self.asks(comment, latest, stage)
@@ -1036,6 +1088,11 @@ def import_item(gh, cfg, number, pull=None, now=None):
     if "pull_request" in issue:
         return imported(issue, comments, cfg, now, gh.pull(number))
     taken = autopilot.takes(cfg) and autopilot.taken(gh, cfg, issue)
+    above = autopilot.lineage(gh, issue)
+    split_above = any(
+        autopilot.find_record(gh.comments(parent["number"]))[1].get("split_asked")
+        for parent in above
+    )
     details = gh.pull(pull) if pull else None
     pull_comments = gh.comments(pull) if pull else []
     blockers = [found for found in gh.blocked_by(number) if found.get("state") == "open"]
@@ -1052,7 +1109,8 @@ def import_item(gh, cfg, number, pull=None, now=None):
         gh.sub_issues(number),
         blockers,
         bool(autopilot.hold_label(cfg, issue)),
-        autopilot.depth(issue, autopilot.lineage(gh, issue)),
+        autopilot.depth(issue, above),
         (waited[2] or []) if waited else [],
         taken,
+        split_above,
     )

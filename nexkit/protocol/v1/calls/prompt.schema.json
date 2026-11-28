@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/phuongnse/nexkit/protocol/v1/calls/prompt.schema.json",
-  "$comment": "A prompt call: the prompt of one stage, written from the texts the host fetched for it, by the kinds runAgent names. `texts` is the absolute path, POSIX or Windows, of the folder outside the working tree where the host keeps the whole texts a prompt shortens, which the agent reads; null when it reads no files. With `unfit`, why a session's result did not fit its schema, the answer is the prompt that asks the same session for its result alone. `words` are the host's own words for the work item, the change and where people read, which a stage's prompt needs. Beside the host's policies, `checklist` and `profiles` feed the prompts.",
+  "$comment": "A prompt call: the prompt of one stage, written from the texts the host fetched for it, by the kinds runAgent names. `texts` is the absolute path, POSIX or Windows, of the folder outside the working tree where the host keeps the whole texts a prompt shortens, which the agent reads; null when it reads no files. With `unfit`, why a session's result did not fit its schema, the answer is the prompt that asks the same session for its result alone. `words` are the host's own words for the work item, the change and where people read, which a stage's prompt needs. Beside the host's policies, `checklist`, `profiles` and `noChange` feed the prompts. The host also describes the evidence it fetched in its own words (`evidence`).",
   "type": "object",
   "required": [
     "protocol",
@@ -36,7 +36,7 @@
       "$ref": "#/$defs/inputs"
     },
     "policies": {
-      "$comment": "The host's policies, as every call has them, and two that only the prompts read: `checklist`, the items the plan and the review answer, and `profiles`, the profiles triage chooses from, each name with an object whose `when` is a string. A plan needs `budgets.implement.seconds` as an integer, the implement stage's time, which its prompt names; the engine refuses a plan without it, and a profile without a string `when`.",
+      "$comment": "The host's policies, as every call has them, and three that only the prompts read: `checklist`, the items the plan and the review answer, `noChange`, the host's findings that show a plan or implement stage no change is needed (one to five, each a text whose line breaks the engine keeps and whose bullet it writes; the engine refuses a plan or implement call without them), and `profiles`, the profiles triage chooses from, each name with an object whose `when` is a string. A plan needs `budgets.implement.seconds` as an integer, the implement stage's time, which its prompt names; the engine refuses a plan without it, and a profile without a string `when`.",
       "$ref": "../policies.schema.json",
       "properties": {
         "checklist": {
@@ -62,6 +62,15 @@
               }
             ]
           }
+        },
+        "noChange": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 1000
+          },
+          "minItems": 1,
+          "maxItems": 5
         },
         "profiles": {
           "type": "object"
@@ -323,7 +332,7 @@
       ]
     },
     "required": {
-      "$comment": "A required check of the host's CI that failed, so the accept was refused.",
+      "$comment": "A required check of the host's CI that failed, so the accept was refused. `refused` is why it was refused, the end of the heading \"Required check `name` failed, so …\", and `about` says what the check is, in the host's words, both outside the `<untrusted>` tags; the engine refuses a check without them.",
       "type": "object",
       "properties": {
         "name": {
@@ -343,9 +352,20 @@
           "items": {
             "type": "string"
           }
+        },
+        "refused": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "about": {
+          "type": "string",
+          "maxLength": 1000
         }
       },
-      "required": []
+      "required": [
+        "refused",
+        "about"
+      ]
     },
     "checks": {
       "$comment": "The results of the checks: in a fix round the last recorded, in a review this round's. `diagnose` holds the checks a diagnosis round looks into.",
@@ -637,35 +657,10 @@
             "type": "string"
           }
         },
-        "workflow": {
-          "type": "string"
-        },
-        "branch": {
-          "type": "string"
-        },
-        "passedSince": {
-          "anyOf": [
-            {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "$ref": "#/$defs/number"
-                },
-                "sha": {
-                  "type": "string"
-                },
-                "url": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "id"
-              ]
-            },
-            {
-              "type": "null"
-            }
-          ]
+        "since": {
+          "$comment": "The host's words on whether a newer run of the same kind passed since, shown as the run's Since line; left out when it has none.",
+          "type": "string",
+          "maxLength": 1000
         }
       },
       "required": [
@@ -676,11 +671,18 @@
       ]
     },
     "ciEvidence": {
-      "$comment": "What the CI runs the item names left, downloaded outside the working tree.",
+      "$comment": "What the runs the item names left, downloaded outside the working tree, in the host's own description: `name` is what the heading calls them (\"the CI runs\" becomes \"Evidence from the CI runs this issue names\"), and `about` is a paragraph, outside the `<untrusted>` tags, that says where the files are and what they hold. The engine writes no word about the evidence's kind.",
       "type": "object",
       "properties": {
-        "folder": {
-          "type": "string"
+        "name": {
+          "$comment": "What the heading calls the evidence, such as \"the CI runs\".",
+          "type": "string",
+          "maxLength": 200
+        },
+        "about": {
+          "$comment": "The host's paragraph on where the files are and what they hold.",
+          "type": "string",
+          "maxLength": 2000
         },
         "runs": {
           "type": "array",
@@ -706,13 +708,14 @@
         }
       },
       "required": [
-        "folder",
+        "name",
+        "about",
         "runs",
         "keeps"
       ]
     },
     "resultsEvidence": {
-      "$comment": "The result files the failing checks kept, downloaded outside the working tree.",
+      "$comment": "The result files the failing checks kept, downloaded outside the working tree. `limit` is the host's sentence on how much its checks keep of them, shown after the number of files left out.",
       "type": "object",
       "properties": {
         "folder": {
@@ -766,27 +769,15 @@
             ]
           }
         },
-        "keeps": {
-          "$comment": "The most bytes of result files one check job keeps, and each of several.",
-          "type": "object",
-          "properties": {
-            "one": {
-              "type": "integer"
-            },
-            "several": {
-              "type": "integer"
-            }
-          },
-          "required": [
-            "one",
-            "several"
-          ]
+        "limit": {
+          "type": "string",
+          "maxLength": 500
         }
       },
       "required": [
         "folder",
         "checks",
-        "keeps"
+        "limit"
       ]
     },
     "evidence": {

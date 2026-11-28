@@ -44,7 +44,6 @@ from ..textutil import (
     output_text,
     person_decides,
     shown_command,
-    since_text,
 )
 
 MAX_COMMENTS = 30
@@ -327,13 +326,11 @@ def earlier_fixes(fixes):
 
 def _required_text(item):
     """A required check that failed, so the host refused the accept, after NexKit's own
-    checks and review passed: its job's failed commands and the tests it names."""
+    checks and review passed: why the host refused and what the check is, in the host's
+    words, then its job's failed commands and the tests it names."""
     name = item.get("name") or "a required check"
-    lines = [f"### Required check `{name}` failed, so GitHub refused the merge", ""]
-    lines.append(
-        "NexKit's own checks and review passed on this commit, but this check of the "
-        "repository's CI, which branch protection requires, failed."
-    )
+    lines = [f"### Required check `{name}` failed, so {item['refused']}", ""]
+    lines.append(item["about"])
     if item.get("url"):
         lines.append(f"Its job: {item['url']}")
     commands = [f"`{clip(command, 300)}`" for command in item.get("commands") or []]
@@ -612,7 +609,7 @@ def texts(stage, inputs, shelf, state=None, words=None):
             shelf,
         )
         results = evidence.get("results")
-        context["evidence"] = _without_keeps(results) if results else None
+        context["evidence"] = results or None
         context["earlier_fixes"] = earlier_fixes(fixes)
         context["diagnose"] = list(checks.get("diagnose") or [])
         # The fix prompt shows the feedback rather than the discussion, so it names nothing
@@ -909,9 +906,9 @@ def _megabytes(size):
     return size // 1_000_000
 
 
-def evidence_text(found, keeps):
+def evidence_text(found):
     """The fix prompt's section about the failing checks' result files, or "" without any.
-    `keeps` is what one check job keeps of them, and one of several."""
+    `found["limit"]` is the host's sentence on how much its checks keep of them."""
     if not found:
         return ""
     lines = []
@@ -925,11 +922,7 @@ def evidence_text(found, keeps):
             else:
                 lines.append(f"  - `{item['path']}`: a file")
         if check.get("left_out"):
-            lines.append(
-                f"  - {check['left_out']} more files were left out: a check job keeps at most "
-                f"{_megabytes(keeps['one'])} MB of result files, "
-                f"{_megabytes(keeps['several'])} MB when the checks run in several jobs."
-            )
+            lines.append(f"  - {check['left_out']} more files were left out: {found['limit']}.")
     text = Template(template("fix_evidence")).safe_substitute(
         folder=found["folder"], checks="\n".join(lines)
     )
@@ -952,15 +945,21 @@ def ci_evidence_text(found, keeps, words=None):
             else:
                 lines.append(f"  - `{item['path']}`")
         lines += [f"  - Missing: {reason}." for reason in run["missing"]]
-        if run.get("workflow"):
-            lines.append(f"  - Since: {since_text(run)}.")
+        if run.get("since"):
+            lines.append(f"  - Since: {run['since']}.")
     if found.get("left_out"):
         lines.append(
             f"- Left out, past the {_megabytes(keeps)} MB a round keeps: "
             + "; ".join(found["left_out"])
         )
     lines += [f"- Not collected: {reason}." for reason in found.get("skipped") or []]
-    text = fill(template("ci_evidence"), words, folder=found["folder"], runs="\n".join(lines))
+    text = fill(
+        template("ci_evidence"),
+        words,
+        name=found["name"],
+        about=found["about"],
+        runs="\n".join(lines),
+    )
     return text + "\n"
 
 
@@ -1015,19 +1014,16 @@ def extras(
     """The texts of a stage's prompt that come from the round itself: the evidence, a fix
     round's merge of `base` (`merging`, {commit, files}), and a review's `diff`, its diff
     `since` the previous review, the `sides` of a merge in the fix round and the `checks`'
-    results, whose whole outputs go to `shelf`. `keeps` says what the host keeps of evidence:
-    {ci, results: {one, several}}."""
-    keeps = keeps or {}
+    results, whose whole outputs go to `shelf`. `keeps` is the most bytes the host keeps of the
+    CI runs."""
     extra = {}
     if stage in ("plan", "implement", "fix"):
-        extra["ci_evidence"] = ci_evidence_text(
-            context.get("ci_evidence"), keeps.get("ci"), context
-        )
+        extra["ci_evidence"] = ci_evidence_text(context.get("ci_evidence"), keeps, context)
     if stage == "fix":
         merging = merging or {}
         files = merging.get("files") or []
         extra["conflicts"] = conflicts_text(base, merging.get("commit"), files, context)
-        extra["evidence"] = evidence_text(context.get("evidence"), keeps.get("results"))
+        extra["evidence"] = evidence_text(context.get("evidence"))
         extra["earlier_fixes"] = context.get("earlier_fixes") or fill(NO_EARLIER_FIXES, context)
         extra["diagnosis"] = diagnosis_text(context.get("diagnose"))
     if stage == "plan":
@@ -1077,12 +1073,34 @@ def build(stage, context, settings, extra=None):
         "person": fill(template("review_person"), context, **text) if person else "",
         "implement_minutes": settings.get("implement_minutes"),
         "checklist": checklist_text(stage, settings.get("checklist"), context),
+        "no_change_findings": no_change_text(
+            settings.get("no_change") or [], "  " if stage == "implement" else ""
+        ),
+        "no_change_count": COUNTS[len(settings.get("no_change") or [1]) - 1],
         "earlier_parts": earlier_parts_text(context),
         "linked": linked_text(context, stage),
         "max_parts": MAX_PARTS,
         **(extra or {}),
     }
     return Template(template(stage)).safe_substitute({k: str(v) for k, v in values.items()})
+
+
+# The sentence before the implement prompt's list of the host's findings, by their number.
+COUNTS = (
+    "One finding counts",
+    "Two findings count",
+    "Three findings count",
+    "Four findings count",
+    "Five findings count",
+)
+
+
+def no_change_text(findings, indent=""):
+    """The host's findings that show a stage no change is needed, as a bullet list indented
+    by `indent`. Each finding keeps its own line breaks, which continue under its bullet."""
+    return "\n".join(
+        indent + "- " + ("\n" + indent + "  ").join(finding.split("\n")) for finding in findings
+    )
 
 
 def result_prompt(stage, wrong):
@@ -1098,6 +1116,9 @@ def refusals(stage, inputs, policies, words=None):
     if words is None:
         found.insert(0, "request.words is missing")
     seconds = _implement_seconds(policies)
+    if stage in ("plan", "implement") and not policies.get("noChange"):
+        # The schema holds it to at most `len(COUNTS)` findings.
+        found.append("request.policies.noChange is missing")
     if stage == "plan" and (not isinstance(seconds, int) or isinstance(seconds, bool)):
         found.append("request.policies.budgets.implement.seconds must be an integer for a plan")
     profiles = policies.get("profiles")
@@ -1118,7 +1139,7 @@ def _implement_seconds(policies):
 
 def settings(inputs, policies):
     """What `build` reads beside the texts: the workspace's `checks`, `protected_paths` and
-    `text`, the implement stage's time and the host's `checklist`."""
+    `text`, the implement stage's time, the host's `checklist` and its `no_change` findings."""
     workspace = inputs.get("workspace") or {}
     seconds = _implement_seconds(policies)
     return {
@@ -1127,23 +1148,21 @@ def settings(inputs, policies):
         "text": dict(workspace.get("text") or {}),
         "implement_minutes": seconds // 60 if seconds is not None else None,
         "checklist": policies.get("checklist") or [],
+        "no_change": policies.get("noChange") or [],
     }
 
 
 def _keeps(inputs):
-    evidence = inputs.get("evidence") or {}
-    return {
-        "ci": (evidence.get("ci") or {}).get("keeps"),
-        "results": (evidence.get("results") or {}).get("keeps"),
-    }
+    """The most bytes the host keeps of the CI runs, as its evidence says."""
+    return ((inputs.get("evidence") or {}).get("ci") or {}).get("keeps")
 
 
 def finish(stage, context, inputs, policies, folder=None, keeps=None):
     """The prompt of `stage` from what `texts` wrote, `context`, and what its round adds in
     `inputs`: the `diff`, a review's `checks` and the `workspace`, with the `policies`.
     {text, shortened, not_read, files}: `files` are the whole outputs of the checks a review
-    shows part of. `keeps` says what the host keeps of evidence, by default as its inputs
-    say."""
+    shows part of. `keeps` is the most bytes the host keeps of the CI runs, by default as its
+    inputs say."""
     shelf = Shelf(folder)
     if stage == "triage":
         previous = (inputs.get("previous_plan") or {}).get("profile")

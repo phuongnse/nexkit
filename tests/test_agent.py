@@ -11,8 +11,9 @@ from unittest import mock
 
 from nexkit import agent, first_state, program, protocol, runlog
 from nexkit.checks import kept_output
+from nexkit.context import ci_input
 from nexkit.engine import prompt as engine_prompt
-from nexkit.evidence import EVIDENCE_LIMIT
+from nexkit.evidence import since_text
 from nexkit.redact import Redactor
 from nexkit.report import apply_criteria
 from nexkit.runtimes import RUNTIMES
@@ -1245,9 +1246,7 @@ class RunStageTests(StageCase):
         }
         finding = "The download host answered 409; run 61 passed since."
         self.claude.configure(result={**PLAN, "no_change": finding})
-        context = context_with(
-            {"evidence": {"ci": {**found, "keeps": EVIDENCE_LIMIT}}}, ci_evidence=found
-        )
+        context = context_with({"evidence": {"ci": ci_input(found)}}, ci_evidence=found)
         result = self.run_stage("plan", context=context)
         call = self.claude.call()
         self.assertEqual(call["args"][call["args"].index("--add-dir") + 1], str(folder))
@@ -1257,6 +1256,40 @@ class RunStageTests(StageCase):
         )
         self.assertIn("NexKit's agents may not change these paths: `.github/`", call["prompt"])
         self.assertEqual(result["passed_since"][0]["id"], 61)
+
+    def test_a_github_plan_request_sends_the_since_text_and_githubs_findings(self):
+        found = {
+            "folder": "/out/ci",
+            "runs": [
+                {
+                    "id": 50,
+                    "url": "",
+                    "files": [{"path": "run-50/attempt-1/build.log"}],
+                    "missing": [],
+                    "workflow": "ci.yml",
+                    "branch": "main",
+                    "passed_since": {"id": 61, "sha": "c" * 40, "url": ""},
+                }
+            ],
+            "skipped": [],
+            "left_out": [],
+        }
+        cfg = make_config()
+        context = context_with({"evidence": {"ci": ci_input(found)}}, ci_evidence=found)
+        added = {"workspace": agent.workspace(cfg)}
+        request = agent.prompt_request("plan", context, added, cfg, self.out / "texts")
+        run = request["inputs"]["evidence"]["ci"]["runs"][0]
+        self.assertEqual(run["since"], since_text(found["runs"][0]))
+        for gone in ("workflow", "branch", "passedSince", "passed_since"):
+            self.assertNotIn(gone, run)
+        self.assertEqual(request["policies"]["noChange"], agent.NO_CHANGE["plan"])
+        implement = agent.prompt_request("implement", context, added, cfg, self.out / "texts")
+        self.assertEqual(implement["policies"]["noChange"], agent.NO_CHANGE["implement"])
+        review = agent.prompt_request("review", context, added, cfg, "")
+        self.assertNotIn("noChange", review["policies"])
+        self.assertEqual(protocol.check(request, "calls/prompt.schema.json", "request"), [])
+        # The record keeps the raw run, so the round still records the run that passed.
+        self.assertEqual(found["runs"][0]["passed_since"]["id"], 61)
 
     def test_an_agent_reads_the_texts_its_prompt_shortened_outside_the_checkout(self):
         folder = Path(self.tmp.name) / "out" / "texts"

@@ -50,7 +50,24 @@
       ]
     },
     "evidence": {
-      "ci": null
+      "ci": {
+        "name": "the failed checks",
+        "about": "The application kept what these checks left, before this session, in `/runner/evidence`,\noutside your working area: the end of each failed check's log. For each check, *Since*\nsays whether a newer run of it has passed. You cannot reach the checks themselves, so\nthis folder is all there is of them.",
+        "runs": [
+          {
+            "id": "K-7",
+            "url": "",
+            "files": [
+              {
+                "path": "K-7/log.txt"
+              }
+            ],
+            "missing": [],
+            "since": "check K-8 of the same kind passed since"
+          }
+        ],
+        "keeps": 1000000
+      }
     },
     "workspace": {
       "checks": [
@@ -81,7 +98,12 @@
       }
     }
   },
-  "policies": {},
+  "policies": {
+    "noChange": [
+      "The request's records already hold what it asks for.",
+      "The request asks for what the application's own rules forbid, and nothing in its records could change that."
+    ]
+  },
   "words": {
     "item": "request R-42",
     "itemHeading": "Request R-42",

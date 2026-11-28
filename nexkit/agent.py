@@ -532,15 +532,42 @@ def workspace(cfg):
     }
 
 
-def policies(cfg):
+# The findings that show a plan or implement stage on GitHub that no change is needed, as the
+# prompt call's `policies.noChange`: fixed text, each finding with its own line breaks and
+# without the indent the engine gives its bullet. The two stages wrap them differently.
+NO_CHANGE = {
+    "plan": [
+        "A commit on the default branch already fixed it, and the code shows that.",
+        "A CI failure came from outside the repository, such as a download host, a package\n"
+        "registry or a service that failed, or a runner that was lost, and nothing in the\n"
+        "repository caused it or could prevent it. The evidence of the CI runs above must name\n"
+        "that outside cause, and *Since* must show a newer run of the same workflow that passed\n"
+        "on the default branch.",
+    ],
+    "implement": [
+        "A commit on the base branch already fixed the failure.",
+        "A CI failure came from outside the repository, such as a download host, a package\n"
+        "registry or a service that failed, or a runner that was lost, and nothing in the\n"
+        "repository caused it or could prevent it. The evidence of the CI runs above must name\n"
+        "that outside cause, and *Since* must show a newer run of the same workflow that\n"
+        "passed on the default branch.",
+    ],
+}
+
+
+def policies(cfg, stage=None):
     """The policies a prompt reads: `review.checklist`, the profiles triage chooses from,
-    and the implement stage's time, which the plan prompt names."""
+    the implement stage's time, which the plan prompt names, and for a plan or implement
+    `stage` the findings that show no change is needed."""
     minutes = cfg["stages"]["implement"]["timeout_minutes"]
-    return {
+    found = {
         "checklist": cfg["review"]["checklist"],
         "profiles": {name: {"when": profile["when"]} for name, profile in cfg["profiles"].items()},
         "budgets": {"implement": {"seconds": minutes * 60}},
     }
+    if stage in NO_CHANGE:
+        found["noChange"] = list(NO_CHANGE[stage])
+    return found
 
 
 def prompt_words(issue, pr=None):
@@ -580,7 +607,7 @@ def prompt_request(stage, context, added, cfg, folder):
         "state": context.get("state"),
         "stage": stage,
         "inputs": inputs,
-        "policies": policies(cfg),
+        "policies": policies(cfg, stage),
         "words": camel(prompt_words(item.get("id"), item.get("change"))),
         "texts": str(folder),
     }

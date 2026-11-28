@@ -730,6 +730,13 @@ OTHER_WORDS = {
 }
 
 
+# The findings of a host that is not GitHub, which show a plan or implement stage that no change
+# is needed.
+OTHER_FINDINGS = [
+    "The app's records already hold what the request asks for.",
+    "A service outside the app failed,\nand a newer job of the same kind passed since.",
+]
+
 # The workspace texts of a host whose change is not files, which no word of git or GitHub is in.
 APP_TEXT = {
     "location": "working through the application's tools on request R-12",
@@ -754,15 +761,10 @@ APP_TEXT_READ = {
     "review": ("reviewLocation", "checksOn", "diffHeading", "pipeline"),
     "person": ("reviewLocation", "personChange", "pipeline", "pipelineFiles", "pipelineFile"),
 }
-# The findings that show no change is needed, which still say "commit", "branch", "CI" and
-# "workflow", whitespace-normalised. Part 4 of #864 moves them to the host, and then deletes
-# this list: it names only what that part owns.
+# What the prompts still say of git and CI outside the host's input, in the descriptions of the
+# `no_change` field, whitespace-normalised. Part 5 of #864 moves them, and then deletes this
+# list.
 NO_CHANGE = (
-    "A commit on the default branch already fixed it",
-    "A commit on the base branch already fixed the failure",
-    "A CI failure came from outside the repository",
-    "The evidence of the CI runs above must name that outside cause, and *Since* must show a "
-    "newer run of the same workflow that passed on the default branch",
     "the evidence that shows it: the commit,",
     "such as the commit, log or test output lines",
 )
@@ -833,6 +835,8 @@ class PromptProgramTests(unittest.TestCase):
             "request.policies.budgets.implement.seconds must be an integer for a plan",
         )
         request["policies"] = {"budgets": {"implement": {"seconds": 2700}}}
+        self.assertEqual(engine.answer(request)["error"], "request.policies.noChange is missing")
+        request["policies"]["noChange"] = OTHER_FINDINGS
         self.assertIn("45 minutes", engine.answer(request)["text"])
         triage = {**example(), "stage": "triage", "inputs": {"notes": "x"}}
         self.assertEqual(engine.answer(triage)["error"], "request.inputs.item is missing")
@@ -851,14 +855,18 @@ class PromptProgramTests(unittest.TestCase):
         )
         for budgets, words in cases:
             with self.subTest(budgets=budgets):
-                request = {**example(), "stage": "plan", "policies": {"budgets": budgets}}
+                policies = {"budgets": budgets, "noChange": OTHER_FINDINGS}
+                request = {**example(), "stage": "plan", "policies": policies}
                 self.assertEqual(
                     engine.answer(request)["error"],
                     f"request.policies.budgets.implement.seconds {words}",
                 )
         # Other stages read no time, so a null one is no matter.
         request = example()
-        request["policies"] = {"budgets": {"implement": {"seconds": None}}}
+        request["policies"] = {
+            "budgets": {"implement": {"seconds": None}},
+            "noChange": OTHER_FINDINGS,
+        }
         self.assertNotIn("error", engine.answer(request))
 
     def test_a_profile_triage_cannot_read_is_refused(self):
@@ -923,7 +931,7 @@ class PromptInputTests(unittest.TestCase):
         self.defs = self.schema["$defs"]
 
     def request(self, stage, inputs, state=None, words=OTHER_WORDS):
-        policies = {"budgets": {"implement": {"seconds": 2700}}}
+        policies = {"budgets": {"implement": {"seconds": 2700}}, "noChange": OTHER_FINDINGS}
         request = {
             "protocol": 1,
             "call": "prompt",
@@ -1114,6 +1122,149 @@ class PromptInputTests(unittest.TestCase):
         flat = " ".join(engine.answer(self.request("plan", inputs))["text"].split())
         self.assertIn("this request", flat)
         self.assertNotIn("issue", flat)
+
+    def evidence_request(self, stage):
+        """A `stage` call of a host that is not GitHub, with its own description of its
+        evidence, its `since` text, its findings, the words of a required check and its note
+        on what its checks keep."""
+        inputs = self.needs(stage)
+        inputs["evidence"] = {
+            "ci": {
+                "name": "the failed jobs of the app",
+                "about": "The app kept what these jobs left in `/runner/evidence`:\n"
+                "the end of each job's log. *Since* says whether a newer job passed.",
+                "runs": [
+                    {
+                        "id": "J-1",
+                        "url": "",
+                        "files": [{"path": "J-1/log.txt"}],
+                        "missing": [],
+                        "since": "job J-2 of the same kind passed since",
+                    }
+                ],
+                "keeps": 1_000_000,
+            }
+        }
+        request = self.request(stage, inputs)
+        if stage == "fix":
+            inputs["checks"] = {
+                "results": [],
+                "required": [
+                    {
+                        "name": "audit",
+                        "refused": "the app refused the release",
+                        "about": "The app's own checks passed, but the audit of the app failed.",
+                    }
+                ],
+            }
+            inputs["evidence"]["results"] = {
+                "folder": "/runner/results",
+                "checks": [
+                    {
+                        "name": "validate",
+                        "run": "validate",
+                        "folder": "/runner/results/validate",
+                        "paths": [{"path": "trace.txt", "folder": False, "files": 1}],
+                        "leftOut": 2,
+                    }
+                ],
+                "limit": "a validation keeps at most 7 MB of its result files",
+            }
+        return request
+
+    def test_a_host_with_other_evidence_words_gets_them_and_no_ci_or_github(self):
+        said = (
+            "the failed jobs of the app",
+            "The app kept what these jobs left in `/runner/evidence`: "
+            "the end of each job's log. *Since* says whether a newer job passed.",
+            "Since: job J-2 of the same kind passed since.",
+            "`J-1/log.txt`",
+        )
+        for stage in ("plan", "implement", "fix"):
+            with self.subTest(stage):
+                request = self.evidence_request(stage)
+                text = engine.answer(request)["text"]
+                if stage == "plan":
+                    # The protected path's example is part 2's (#873) to move out of the
+                    # engine. Remove this line with it, whichever of the two parts merges second.
+                    text = text.replace("`.github/workflows/ci.yml`", "")
+                flat = " ".join(text.split())
+                for word in said:
+                    self.assertIn(word, flat)
+                if stage != "fix":
+                    for finding in OTHER_FINDINGS:
+                        self.assertIn(" ".join(finding.split()), flat)
+                else:
+                    self.assertIn(
+                        "Required check `audit` failed, so the app refused the release", flat
+                    )
+                    self.assertIn("the audit of the app failed.", flat)
+                    self.assertIn(
+                        "2 more files were left out: a validation keeps at most 7 MB", flat
+                    )
+                for word in ("workflow", "CI", "GitHub"):
+                    self.assertNotIn(word, flat)
+        # The implement prompt counts its findings, and the plan prompt writes no count.
+        implement = engine.answer(self.evidence_request("implement"))["text"]
+        self.assertIn("Two findings count:\n  - The app's records already hold", implement)
+        self.assertIn("  - A service outside the app failed,\n    and a newer job", implement)
+        request = self.evidence_request("implement")
+        request["policies"]["noChange"] = OTHER_FINDINGS[:1]
+        self.assertIn("One finding counts:", engine.answer(request)["text"])
+
+    def test_a_plan_or_implement_call_without_findings_or_a_refusal_word_is_refused(self):
+        for stage in ("plan", "implement"):
+            with self.subTest(stage):
+                request = self.request(stage, self.needs(stage))
+                del request["policies"]["noChange"]
+                self.assertEqual(
+                    engine.answer(request)["error"], "request.policies.noChange is missing"
+                )
+                # An empty list is no finding either.
+                request["policies"]["noChange"] = []
+                self.assertEqual(
+                    engine.answer(request)["error"], "request.policies.noChange is missing"
+                )
+                request["policies"]["noChange"] = OTHER_FINDINGS * 3
+                self.assertEqual(
+                    engine.answer(request)["error"],
+                    "request.policies.noChange must hold at most 5 items",
+                )
+        # The other stages show no such findings.
+        request = self.request("review", self.needs("review"))
+        del request["policies"]["noChange"]
+        self.assertNotIn("error", engine.answer(request))
+        request = self.evidence_request("fix")
+        del request["inputs"]["checks"]["required"][0]["refused"]
+        error = engine.answer(request)["error"]
+        self.assertIn("request.inputs.checks.required[0].refused is missing", error)
+
+    def test_the_schema_holds_the_evidence_as_the_host_describes_it(self):
+        run = self.defs["run"]
+        for gone in ("workflow", "branch", "passedSince"):
+            self.assertNotIn(gone, run["properties"])
+        self.assertEqual(run["properties"]["since"]["type"], "string")
+        self.assertNotIn("since", run["required"])
+        ci, results, required = (
+            self.defs["ciEvidence"],
+            self.defs["resultsEvidence"],
+            self.defs["required"],
+        )
+        self.assertNotIn("folder", ci["properties"])
+        self.assertNotIn("keeps", results["properties"])
+        for schema, names in (
+            (ci, ("name", "about")),
+            (results, ("limit",)),
+            (required, ("refused", "about")),
+        ):
+            for name in names:
+                with self.subTest(name):
+                    self.assertEqual(schema["properties"][name]["type"], "string")
+                    self.assertIn("maxLength", schema["properties"][name])
+                    self.assertIn(name, schema["required"])
+        no_change = self.schema["properties"]["policies"]["properties"]["noChange"]
+        self.assertEqual((no_change["minItems"], no_change["maxItems"]), (1, 5))
+        self.assertEqual(no_change["items"]["type"], "string")
 
     def test_the_words_come_from_the_host_alone(self):
         words = {**OTHER_WORDS, "itemKind": "ticket", "itemKinds": "tickets", "item": "ticket 1"}

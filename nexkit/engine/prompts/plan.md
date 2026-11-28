@@ -43,12 +43,7 @@ $item_kind as well. When the change must modify a protected path, list it in
 Return a finding in `no_change`, instead of planning a change, only when the evidence
 shows that the $item_kind needs none:
 
-- A commit on the default branch already fixed it, and the code shows that.
-- A CI failure came from outside the repository, such as a download host, a package
-  registry or a service that failed, or a runner that was lost, and nothing in the
-  repository caused it or could prevent it. The evidence of the CI runs above must name
-  that outside cause, and *Since* must show a newer run of the same workflow that passed
-  on the default branch.
+$no_change_findings
 
 $writing
 ## What to return

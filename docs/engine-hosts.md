@@ -59,14 +59,19 @@ shapes, and a host shows them in its own words.
 ## What a host decides
 
 A host gives the engine its policies in its configuration. Each has a default, and the
-protocol's `policies.schema.json` names it, as the first column does below. Five settings are not
+protocol's `policies.schema.json` names it, as the first column does below. Seven settings are not
 policies of the engine, and each has its place:
 
 - **Start** is the host's. It sends `requested` when a person or its sweep starts an item, and calls
   `sweep` only when it starts items by itself.
 - **Checklist and profiles** are the `prompt` call's policies. `checklist` is the items the plan and
   the review answer, and `profiles` the profiles triage chooses from. The plan prompt also names the
-  implement stage's time from `budgets`.
+  implement stage's time from `budgets`. `noChange` is the findings that show a plan or implement
+  stage that no change is needed, which the engine refuses a plan or implement call without.
+- **Evidence and required checks** arrive in the host's words: the evidence's name and
+  description, each run's `since` text, the note on what its checks keep of result files, and
+  for each required check why the host refused and what the check is. See
+  [The prompt](engine.md#the-prompt).
 - **Words** are the `prompt` call's `words`: how the host names its work item, its change, the
   places where people write and read, and its commands, in the prompts of every stage. The
   engine's templates hold the stage's contract and read these words in place of any host's own,
@@ -191,6 +196,8 @@ The GitHub host sets each policy and its own settings as follows. The first colu
 | After a failure (`afterFailure`) | `person`; `replan` with autopilot |
 | Start | On a request, and by the sweep with autopilot |
 | Checklist (`checklist`) | `review.checklist` |
+| No-change findings (`noChange`) | A commit on the default branch that already fixed it, and a failure of CI from outside the repository that a newer run passed since |
+| Evidence and required checks | The text of its CI runs (`the CI runs`, the folder the agent job downloaded them to, and no GitHub access in the session), a *Since* text that says whether a newer run of the workflow passed on the default branch, "GitHub refused the merge" with the sentence on branch protection, and "a check job keeps at most 50 MB of result files". It builds them from fixed text, numbers and the runner's own folder, never from what anyone wrote, and the prompts read as they always did. |
 | Words (`words`) | "GitHub issue #5" for the item, "pull request #6" for the change, "on GitHub" for where people write and read, and `/nexkit go`, `/nexkit fix` and "`/nexkit` commands" for its commands. It builds them from the numbers of the issue and the pull request and from fixed text, never from what anyone wrote. |
 | Workspace text (`workspace.text`) | "working in a checkout of the repository" for where the agent works, "CI configuration" and "workflows" for what runs the checks, "`.github/workflows/ci.yml`" for a protected path, and its other texts, as fixed strings, so its prompts read as they always did. It builds them from fixed text, never from what anyone wrote. |
 | `maxParallel` and `priority` | `autopilot.max_parallel` and `autopilot.priority` |

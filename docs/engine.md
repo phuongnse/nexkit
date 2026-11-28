@@ -126,9 +126,9 @@ events and actions](engine-states.md). The runners, the policies a host decides 
 | `discussion` | The comments on the item and on its change, oldest first, each a person's comment, a note on a command or the answers a policy gave, and what people said on the change's version: their reviews and their comments on a line. The host leaves out what nobody it trusts wrote |
 | `notes` | The note of the request that started the stage |
 | `plan`, `previousPlan` | The approved plan; for a new plan, the latest one, where it falls in the discussion and the profile it used |
-| `checks` | The checks' results, with the end of each output, the required checks that refused an accept, and the checks a diagnosis round looks into, each with the failure it repeated |
+| `checks` | The checks' results, with the end of each output, the required checks that refused an accept, each with the host's words for why it refused and what the check is, and the checks a diagnosis round looks into, each with the failure it repeated |
 | `linked` | The texts the item links to, the items it was split from with their discussions, and each link not read, with why in the host's words. The host bounds how many it lists |
-| `evidence` | What the CI runs the item names left, and the result files of failing checks, with what the host keeps of each |
+| `evidence` | What the host kept of the runs the item names, with the host's own description: its `name` for the heading ("the CI runs") and a paragraph on where the files are and what they hold, each run's files, what is missing from it and its `since` text, which says whether a newer run passed, and the most bytes the host keeps; and the result files of failing checks, with the host's note on how much its checks keep of them. The engine writes no word about the kind of evidence |
 | `parts` | The earlier parts of the same split that a part relies on |
 | `diff` | The change against its base, since the last review, the merge of the base that the newest fix record made, and the files a merge conflicted in |
 | `workspace` | The checks the agent can run, the paths only a person changes, and the host's texts on how the agent sees and edits the change |
@@ -186,10 +186,13 @@ events and actions](engine-states.md). The runners, the policies a host decides 
   that writes them first checks that each path is inside its `texts` folder, and writes none
   when one is not.
 - **Policies.** Beside the host's policies, the call reads two of its own, as its schema names
-  them: `checklist`, the items the plan and the review answer; and
-  `profiles`, the profiles triage chooses from, each with its `when` as a string. A plan needs
-  `budgets.implement.seconds` as an integer, from the protocol's `budgets` policy, and the engine
-  refuses one without it.
+  them: `checklist`, the items the plan and the review answer; `noChange`, the findings that
+  show a plan or implement stage that no change is needed, one to five texts, each with its own
+  line breaks, under a bullet that the engine writes and, for the implement stage, after a count
+  that it writes ("Two findings count"); and `profiles`, the profiles triage chooses from, each
+  with its `when` as a string. A plan needs `budgets.implement.seconds` as an integer, from the
+  protocol's `budgets` policy, and the engine refuses one without it. It also refuses a plan or
+  implement call without `noChange`, as in `request.policies.noChange is missing`.
 - **A result that did not fit.** With `unfit`, why a session's result did not fit its schema, the
   call writes the prompt that asks the same session for its result alone.
 

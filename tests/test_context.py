@@ -8,7 +8,13 @@ from pathlib import Path
 
 from nexkit.agent import prompt_words, shortened_folders
 from nexkit.checks import run_checks
-from nexkit.context import MAX_LINKED, MAX_LINKED_ISSUES, gather, keep_texts
+from nexkit.context import (
+    MAX_LINKED,
+    MAX_LINKED_ISSUES,
+    RESULTS_LIMIT_TEXT,
+    gather,
+    keep_texts,
+)
 from nexkit.engine.prompt import (
     NO_PLAN,
     PERSON_PLAN,
@@ -1104,6 +1110,7 @@ class EvidenceTests(unittest.TestCase):
                         "left_out": 2,
                     }
                 ],
+                "limit": RESULTS_LIMIT_TEXT,
             },
         )
         self.assertIn(f"Result files of the failing checks are in {root}.", log)

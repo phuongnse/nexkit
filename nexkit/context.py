@@ -23,7 +23,7 @@ from .autopilot import (
 )
 from .checks import RESULTS_DIR, failing_signatures, results_limit
 from .config import NAME
-from .evidence import EVIDENCE_LIMIT, collect, named_runs, summary_lines
+from .evidence import EVIDENCE_LIMIT, collect, named_runs, since_text, summary_lines
 from .github import TRUSTED_ASSOCIATIONS, GitHubError
 from .redact import Redactor
 from .route import parse_command
@@ -43,12 +43,68 @@ from .state import (
 OUTSIDE_PLAN = re.compile(r"^## Outside the plan\n(.*?)(?=^## |^---$|\Z)", re.M | re.S)
 
 
-# What the GitHub host keeps of evidence, which the prompts name: of the CI runs an issue
-# names, and of the result files of failing checks in one check job and in each of several.
-KEEPS = {
-    "ci": EVIDENCE_LIMIT,
-    "results": {"one": results_limit(1), "several": results_limit(2)},
+# What the GitHub host keeps of the CI runs an issue names, which the prompt reads.
+KEEPS = {"ci": EVIDENCE_LIMIT}
+
+# The GitHub host's words about its evidence and its required checks, for the prompts. They
+# sit outside the prompt's `<untrusted>` tags, so they hold only fixed text, numbers and the
+# runner's own folder, never what anyone wrote on GitHub.
+CI_NAME = "the CI runs"
+RESULTS_LIMIT_TEXT = (
+    f"a check job keeps at most {results_limit(1) // 1_000_000} MB of result files, "
+    f"{results_limit(2) // 1_000_000} MB when the checks run in several jobs"
+)
+REQUIRED_WORDS = {
+    "refused": "GitHub refused the merge",
+    "about": (
+        "NexKit's own checks and review passed on this commit, but this check of the "
+        "repository's CI, which branch protection requires, failed."
+    ),
 }
+
+
+def ci_about(folder):
+    """The GitHub host's paragraph on the CI runs' evidence: where its files are and what
+    they hold."""
+    return (
+        "NexKit downloaded what these runs of this repository left, before this session, to\n"
+        f"`{folder}`, outside the working tree: the end of each failed job's log, its error\n"
+        "annotations, and the artifacts that the configuration lists. For each run, *Since* says\n"
+        "whether a newer run of the same workflow has passed on the default branch. You have no\n"
+        "GitHub access in this session, so this folder is all there is of those runs; never ask a\n"
+        "person to download them."
+    )
+
+
+def ci_input(found):
+    """The CI evidence as the prompt call takes it: the GitHub host's description, and for
+    each run one `since` text in place of its workflow, branch and later passing run."""
+    runs = [
+        {
+            "id": run["id"],
+            "url": run["url"],
+            "files": run["files"],
+            "missing": run["missing"],
+            **({"since": since_text(run)} if run.get("workflow") else {}),
+        }
+        for run in found["runs"]
+    ]
+    return {
+        "name": CI_NAME,
+        "about": ci_about(found["folder"]),
+        "runs": runs,
+        "left_out": found["left_out"],
+        "skipped": found["skipped"],
+        "keeps": KEEPS["ci"],
+    }
+
+
+def required_input(items):
+    """The required checks that refused an accept, each with the GitHub host's words for the
+    refusal and for what the check is; None stays None."""
+    if items is None:
+        return None
+    return [{**item, **REQUIRED_WORDS} for item in items]
 
 
 def _trusted(item):
@@ -600,7 +656,8 @@ def fetch(gh, decision, stage, fix_result=None, results=None, ci=None, cfg=None,
     evidence_found = {}
     if stage in ("plan", "implement", "fix") and ci and cfg:
         found = ci_evidence(gh, cfg, issue, comments, ci, workflow)
-        evidence_found["ci"] = {**found, "keeps": KEEPS["ci"]} if found else None
+        evidence_found["ci"] = ci_input(found) if found else None
+        host["ci"] = found
     if reads:
         pull = [decision["pr"]] if decision.get("pr") else []
         # Links to the issue's own comments that its discussion shows are not read again.
@@ -639,11 +696,14 @@ def fetch(gh, decision, stage, fix_result=None, results=None, ci=None, cfg=None,
         pr_comments = gh.comments(decision["pr"])
         saved = _saved_feedback(pr_comments)
         _, state = read_state(pr_comments)
-        inputs["checks"] = {"results": saved.get("checks"), "required": saved.get("required")}
+        inputs["checks"] = {
+            "results": saved.get("checks"),
+            "required": required_input(saved.get("required")),
+        }
         inputs["discussion"]["said"] = people(gh, decision)
         host["merge_moved_base"] = _after_failed_checks(decision, pr_comments)
         kept = evidence(saved, decision, results)
-        evidence_found["results"] = {**kept, "keeps": KEEPS["results"]} if kept else None
+        evidence_found["results"] = {**kept, "limit": RESULTS_LIMIT_TEXT} if kept else None
         change = {
             "id": str(decision["pr"]),
             "version": str(saved.get("head") or decision.get("head") or ""),
@@ -716,14 +776,10 @@ def record(stage, inputs, host):
         found["merge_moved_base"] = host["merge_moved_base"]
     if "read" in host:
         found["linked"] = {"read": host["read"]}
-    evidence = inputs.get("evidence") or {}
-    if stage in ("plan", "implement", "fix") and "ci" in evidence:
-        ci = evidence["ci"]
-        found["ci_evidence"] = (
-            {key: value for key, value in ci.items() if key != "keeps"}
-            if isinstance(ci, dict)
-            else ci
-        )
+    if stage in ("plan", "implement", "fix") and "ci" in host:
+        # The raw record, with each run's `passed_since` and the folder, which the agent and
+        # publish steps read; the prompt gets `ci_input` of it.
+        found["ci_evidence"] = host["ci"]
     if stage == "fix":
         found["diagnose"] = list((inputs.get("checks") or {}).get("diagnose") or [])
     last = ((state or {}).get("rounds") or {}).get("lastReview")

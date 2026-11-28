@@ -80,6 +80,9 @@ def prompt_texts(
         context.keep_texts(
             ({"path": path, "text": text} for path, text in shelf.files.items()), shelf.folder
         )
+    if "ci_evidence" in record:
+        # As the host keeps it, not as the prompt call takes it (`context.ci_input`).
+        out["ci_evidence"] = record["ci_evidence"]
     if record.get("untrusted"):
         out["untrusted"] = record["untrusted"]
     if out.get("linked") is not None:
@@ -95,7 +98,7 @@ def build_prompt(stage, texts, cfg, extra=None):
     inputs = {"workspace": agent.workspace(cfg)}
     words = prompt.template_words(agent.prompt_words(texts.get("issue"), texts.get("pr")))
     return prompt.build(
-        stage, {**words, **texts}, prompt.settings(inputs, agent.policies(cfg)), extra
+        stage, {**words, **texts}, prompt.settings(inputs, agent.policies(cfg, stage)), extra
     )
 
 
@@ -106,12 +109,14 @@ def previous_round(repo, texts, base):
 
 def evidence_text(found):
     """The fix prompt's section about the failing checks' result files."""
-    return prompt.evidence_text(found, context.KEEPS["results"])
+    return prompt.evidence_text({**found, "limit": context.RESULTS_LIMIT_TEXT} if found else found)
 
 
 def ci_evidence_text(found):
     """The plan, implement and fix prompts' section about the CI runs the issue names."""
-    return prompt.ci_evidence_text(found, context.KEEPS["ci"], agent.prompt_words(None))
+    return prompt.ci_evidence_text(
+        context.ci_input(found) if found else found, context.KEEPS["ci"], agent.prompt_words(None)
+    )
 
 
 def feedback(gh, decision, comments):
@@ -119,7 +124,12 @@ def feedback(gh, decision, comments):
     collaborators said on its head."""
     saved = context._saved_feedback(comments)
     people = context.people(gh, decision)
-    return prompt.feedback(saved.get("checks"), saved.get("required"), saved.get("review"), people)
+    return prompt.feedback(
+        saved.get("checks"),
+        context.required_input(saved.get("required")),
+        saved.get("review"),
+        people,
+    )
 
 
 def outside_plan(pull):

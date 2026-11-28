@@ -22,3 +22,4 @@ superseded decision is listed and when a change needs one.
 | [D13](decisions/d13-the-pipeline-writes-as-the-app-and-maintenance-jobs-with-the-actions-token.md) | The pipeline writes as the App, and maintenance jobs with the Actions token | Agreed |
 | [D14](decisions/d14-every-pin-has-one-source.md) | Every pin has one source | Proposed |
 | [D15](decisions/d15-agent-errors-and-blocked-results-never-retry-automatically.md) | Agent errors and blocked results never retry automatically | Proposed |
+| [D16](decisions/d16-the-engine-assumes-no-host-and-no-kind-of-change.md) | The engine assumes no host and no kind of change | Agreed |

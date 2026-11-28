@@ -433,13 +433,12 @@ a cancel or a rerun that none comes before.
 from __future__ import annotations
 
 import copy
-import json
 import os
 import re
 import sys
 import time
 
-from . import autopilot, engine, first_state, item_state, protocol, usage
+from . import autopilot, first_state, item_state, program, protocol, usage
 from . import config as configuration
 from .checks import failing_signatures
 from .github import TRUSTED_ASSOCIATIONS, GitHubError
@@ -563,8 +562,9 @@ def policies(cfg, profile=None):
 
 
 def step(state, event, found_policies):
-    """The engine's answer to `event` on `state`, sent and read as JSON, as `nexkit-engine`
-    would; `Refused` when the engine refuses it."""
+    """The engine's answer to `event` on `state`, from the `nexkit-engine` program, which reads
+    the request as JSON on standard input; `Refused` when the engine refuses it or the program
+    fails."""
     request = {
         "protocol": 1,
         "call": "step",
@@ -572,7 +572,7 @@ def step(state, event, found_policies):
         "event": event,
         "policies": found_policies,
     }
-    found = engine.answer(json.loads(json.dumps(request)))
+    found = program.call("step", request)
     if "error" in found:
         raise Refused(found["error"])
     return found
@@ -1775,7 +1775,7 @@ def sweep(cfg, where, starts, issues, running, awaited):
         "limited": [],
         "items": items,
     }
-    found = engine.answer(json.loads(json.dumps(request)))
+    found = program.call("sweep", request)
     if "error" in found:
         for one in starts:
             one.update(state="waits", reason=refused_reason(found["error"]), person=True)

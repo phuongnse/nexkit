@@ -301,10 +301,10 @@ class ClosingAnswerTests(unittest.TestCase):
     def test_a_closing_command_is_the_engines_to_close_on_the_stored_state(self):
         # The engine is asked once, with the answer, and the stored state is not changed.
         before = item_state.read(self.gh, 5)
-        with mock.patch("nexkit.host.engine.answer", wraps=host.engine.answer) as answer:
+        with mock.patch("nexkit.host.program.call", wraps=host.program.call) as answer:
             decision = self.decide(f"/nexkit go {NOT_REPRODUCED}")
         self.assertEqual(decision["task"], "close_answer")
-        asked = [call.args[0] for call in answer.call_args_list if call.args[0]["call"] == "step"]
+        asked = [call.args[1] for call in answer.call_args_list if call.args[1]["call"] == "step"]
         self.assertEqual([request["event"]["kind"] for request in asked], ["answered"])
         self.assertEqual(asked[0]["state"], before[1])
         self.assertEqual(item_state.read(self.gh, 5)[1]["revision"], 1)
@@ -969,7 +969,7 @@ class NoConfigurationTests(unittest.TestCase):
         self.gh = FakeGitHub()
         self.gh.add_issue(5)
         self.gh.add_pull(6, 5)
-        patched = mock.patch.object(host.engine, "answer", mock.Mock())
+        patched = mock.patch.object(host.program, "call", mock.Mock())
         self.answer = patched.start()
         self.addCleanup(patched.stop)
 

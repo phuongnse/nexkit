@@ -125,7 +125,7 @@ today.
 
 The engine's state lives only for one call of the host while the GitHub host builds each
 item's document from NexKit 6's markers, apart from the decisions after a plan, for a first
-plan, after a writer's vouch, for a lost command, the end of a part in
+plan, for a lost command, the end of a part in
 its parent's state and about a pull request's rounds, which store their answer in the item's
 state comment but decide from the markers' document wherever it differs from the stored one. The
 decisions after a blocked or failed `/nexkit go`, after a fix round that stopped as blocked or a
@@ -134,7 +134,7 @@ whose change is on the base branch, a usage limit, a transient error and a resum
 decide on the stored state alone, and so do a person's command, NexKit's own dispatch of one and
 a closing command (`command`, `_on_base`, `closing_command`); `check.sh` fails if any of them
 (`after_go`, `round_carried_on`, `stopped`, `stop_carried_on`, `no_change_found`,
-`on_base_found`), the usage limit,
+`on_base_found`), a writer's vouch (`vouched`), the usage limit,
 the transient error, the resume, a command or a closing command falls back. So do the sweep's
 looks at a merge that waits for required checks or that GitHub refused, and what the merge finds
 (`checks_waited`, `refusal_cleared`, `change_seen`): they read the start of the wait and the head

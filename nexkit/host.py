@@ -154,7 +154,8 @@ or a fix command before its agent started (`stage_untrusted`, called by `report.
 the host sends the stop, which only it sees from who edited the issue, as an `untrusted` result of
 the round's pending agent run, and the engine answers `failed` with attention `untrusted`, giving
 an automatic fix round's count back. It decides on the stored state alone. A plan's untrusted stop
-does not reach the engine.
+does not reach the engine, so the stored state still holds its plan run, which a writer's vouch
+starts again (`vouched`).
 
 It decides what follows a command that autopilot started and lost, whose run GitHub never
 started, or that ended without a report, or that handed the work on to a run that never started
@@ -244,14 +245,17 @@ asked. NexKit 6's checks of a hold, trust, blockers and waves come first, so the
 asked for a held or blocked issue.
 
 It decides what follows a writer's vouch after an untrusted edit stopped a round or a merge
-(`vouched`, called by `autopilot._vouched`): the host builds the document that the import
-builds, `failed` with attention `untrusted` or, for a merge, `ready`, decides it on the stored
-document (`decide`), sends the writer's newer
+(`vouched`, called by `autopilot._vouched`): it decides on the item's stored state alone, which
+the import gives as `failed` with attention `untrusted` or, for a merge, `ready`, or on the import
+in memory when none is stored, and refuses with no configuration. It sends the writer's newer
 `/nexkit trust` as a `requested` `trust`, and starts a plan, an automatic fix round that counts,
-or the checks and review, as the engine answers. A pull request with no automatic fix round left
-waits for a person, where NexKit 6 started a counted round anyway
-(`tests/differential/known.py`). Every start that autopilot makes follows an answer of the
-engine (`tests/test_autopilot.py` and `tests/test_answers.py`).
+or the checks and review, as the engine answers. When the item's own run already took the vouch
+(`take` stored it), it carries out what the state holds instead of sending it again, and it
+starts the plan run that a stored state still holds after a plan that an untrusted edit stopped,
+as NexKit 6 plans again. A pull request with no automatic fix round left waits for a person,
+where NexKit 6 started a counted round anyway (`tests/differential/known.py`). Every start that
+autopilot makes follows an answer of the engine (`tests/test_autopilot.py` and
+`tests/test_answers.py`).
 
 It decides what a writer's approval of a NexKit pull request does too (`approved`, called by
 `maintain.send_approval` and `maintain.merge_approved`): it sends the approval as a
@@ -385,7 +389,7 @@ and `resumes`, which decide on the stored state alone, and neither do `command`,
 `checks_waited`, `refusal_cleared` and `change_seen`: the
 sweep's looks at a merge that waits for required checks or that GitHub refused, and what the
 merge finds. So do `required_failed`, `accept_answer` and `update_failed`. `first_plan` and
-`approved` pass none either; `vouched` still goes through it.
+`approved` pass none either, and neither does `vouched`.
 So do `released`, `base_passes` and `conflicts_released`: the end of a wait is the release of a
 stored hold (`_release_row`), autopilot's start for an import made after the label was gone, or,
 when `take` released the hold already, the stored pending action. `stopped_counts` too: whether a
@@ -1672,40 +1676,28 @@ VOUCHED = "a writer vouched for it again"
 def vouched(gh, cfg, issue, comment, run, record, start, pull=None, write=False):
     """The step after a writer vouched for `issue` again once an untrusted edit stopped the
     round whose run comment `comment` holds the marker `run` (`autopilot._vouched_again`), as
-    the engine decides it: the item is `failed` with attention `untrusted` for a round that
-    stopped, or `ready` for a merge that did (`merge_untrusted`), with its pull request `pull`
-    as the change, and the writer's newer vouch (`autopilot.vouch`) is a `requested` `trust`
-    with role `writer`. A plan, an automatic fix round that counts, or the checks and review
-    start only when the engine answers with them; a pull request with no automatic round left
-    waits for a person. With `write`, the engine's answer is stored (`decide`). Raises
-    `Refused`."""
+    the engine decides it on the item's stored state alone (`stored`, `decide`): the state is
+    `failed` with attention `untrusted` for a round that stopped, or `ready` for a merge that
+    did, as the import gives it, and the writer's newer vouch (`autopilot.vouch`) is a
+    `requested` `trust` with role `writer`, named `comment-<id>` as `take` names it. When the
+    item's own run already took that vouch (its name is among the stored recent events), nothing
+    is sent: the step carries out what the state holds (`_vouch_held`), a plan, an automatic fix
+    round that counts, the checks and review, or the wait for a person. So does an issue whose
+    stored state still holds its plan run, since an untrusted edit's stop of a plan never
+    reaches the engine and the engine ignores a vouch there: the plan starts again, as NexKit 6
+    plans again. A plan, a fix round or the checks and review start only when the state or the
+    engine's answer holds them; a pull request with no automatic round left waits for a person.
+    `record` is autopilot's record, which this decision no longer reads. With `write`, the
+    engine's answer is stored (`decide`). Raises `Refused`, with no configuration or no state to
+    decide on."""
     number = issue["number"]
     found = autopilot.vouch(gh, issue)
     if found is None or found["id"] <= comment["id"]:
         raise Refused("No writer vouched for the issue after the round that stopped.")
-    said = str(run.get("attention") or "").strip()
-    attention = {
-        "reason": "untrusted",
-        "text": first_state.clip(said, "reason") if said else first_state.SAYS["untrusted"],
-        "ref": None,
-    }
-    if pull is None:
-        doc = _plan_doc(issue, record, gh.comments(number))
-        doc["state"] = "failed"
-        if doc["plan"]:
-            doc["plan"]["approved"] = True
-    else:
-        _, kept = autopilot.read_state(gh.comments(pull))
-        merge = run.get("outcome") == autopilot.UNTRUSTED_MERGE
-        auto_fixes = (kept or {}).get("auto_fixes", 0)
-        name = "ready" if merge else "failed"
-        doc = _pull_doc(None, number, pull, run.get("head"), name, auto_fixes)
-    doc["attention"] = attention
-    login = (found.get("user") or {}).get("login") or ""
-    fields = {"what": "trust", "by": _person(login, "writer"), "note": "", "plan": None}
-    at, name = found.get("created_at"), event_id("comment", found)
-    event = _event("requested", number, at, name, **fields)
-    _, actions = decide(gh, cfg, number, event, doc, pull=pull, write=write)
+    doc = stored(gh, cfg, number, pull)[1] if cfg is not None else None
+    if doc is None:
+        raise Refused("The item has no state to decide on.")
+    actions = _vouch_actions(gh, cfg, number, found, doc, pull, write)
     kinds = {action["kind"]: action for action in actions}
     agent = kinds.get("runAgent")
     if agent and agent["stage"] == "plan" and pull is None:
@@ -1721,6 +1713,32 @@ def vouched(gh, cfg, issue, comment, run, record, start, pull=None, write=False)
         why = f"{VOUCHED}, but it has no automatic fix rounds left"
         return autopilot._step(issue, "waits", autopilot.person(do, why))
     raise Refused("The engine starts nothing after a writer vouched for the item again.")
+
+
+def _vouch_actions(gh, cfg, number, found, doc, pull, write):
+    """The engine's actions for the writer's vouch `found` on the item's stored state `doc`: what
+    `_vouch_held` says when the vouch is taken already or the state holds the issue's plan run,
+    otherwise the answer to the vouch as a `requested` `trust` (`decide`)."""
+    name = event_id("comment", found)
+    pending = any(a["kind"] == "runAgent" and a.get("stage") == "plan" for a in doc["pending"])
+    if name in doc["recentEvents"] or (pull is None and pending):
+        return _vouch_held(doc)
+    login = (found.get("user") or {}).get("login") or ""
+    fields = {"what": "trust", "by": _person(login, "writer"), "note": "", "plan": None}
+    event = _event("requested", number, found.get("created_at"), name, **fields)
+    return decide(gh, cfg, number, event, None, pull=pull, write=write)[1]
+
+
+def _vouch_held(doc):
+    """What the stored state `doc` holds for a writer's vouch to carry out, as the engine's
+    actions: its first pending run (a plan or a fix) or checks, otherwise the wait for a person
+    that its attention names, otherwise nothing."""
+    for action in doc["pending"]:
+        if action["kind"] in ("runAgent", "runChecks"):
+            return [action]
+    if doc["attention"]:
+        return [{"kind": "needPerson", "reason": doc["attention"]["reason"]}]
+    return []
 
 
 def sweep(cfg, where, starts, issues, running, awaited):
@@ -1819,11 +1837,6 @@ def round_output(run):
         "reviewer_notes": [],
         "no_change": run.get("no_change") or "",
     }
-
-
-def _plan_doc(issue, record, comments):
-    plan = latest_plan(comments)
-    return _document(issue, record, plan, plan_data(plan)) if plan else _document(issue, record)
 
 
 def after_go(gh, cfg, issue, comment, run, record, start, comments, write=False):

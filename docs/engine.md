@@ -519,12 +519,15 @@ adapter's tests and the answers as what its adapter carries out.
 1. The engine grew inside NexKit 6: decisions moved behind the protocol one by one, and every
    decision of the loop is now its own. Most of the GitHub host's decisions still build the
    item's document from NexKit 6's markers, as its import reads them. The ones that follow a plan,
-   start a new issue's first plan, follow a writer's vouch, follow a merge and its refusals,
+   start a new issue's first plan, follow a merge and its refusals,
    follow a blocked or stopped round, answer a lost command, and end a pull request's round, a
    conflict or a wait read the stored document, which they use only where it says what the
    markers say, and store the engine's answer in the item's group, a row of events as one write.
    A usage limit, a transient error and a resume that comes due decide on the stored document
-   alone: its pending agent run, its count of runs again and its wait. A command that NexKit
+   alone: its pending agent run, its count of runs again and its wait. So does a writer's vouch
+   after an untrusted edit: when the item's own run already took it, the step carries out what
+   the stored state holds, and a plan that an untrusted edit stopped, which never reached the
+   engine, starts again. A command that NexKit
    dispatches carries out the action that the stored state has pending for it, and takes its
    diagnosed checks from that action; with nothing pending it is a new request, `dispatch-<run id>`, which for an
    automatic fix round says so, so that the engine counts it as its own round.

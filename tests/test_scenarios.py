@@ -1113,6 +1113,43 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(state["revision"], during[1] + 1)
         self.assertEqual(pipe.gh.pulls, {})
 
+    def test_a_writers_vouch_after_an_untrusted_stop_is_taken_and_the_plan_runs_once(self):
+        def at(days):
+            return (datetime.now(UTC) + timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        def working(pipe):
+            pipe.gh.edits[5] = [("bob", at(1))]
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            if not pipe.gh.edits.get(5):
+                agent = {"status": "untrusted", "error": "@bob edited it"}
+                return {"agent": agent, "working": working}
+            return done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5, user="bob")
+        pipe.gh.human_comment(5, "/nexkit trust", "olivia", "OWNER")
+        pipe.take_run(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
+        self.assertEqual(pipe.played[-1][2], "agent_untrusted")
+        self.assertEqual(item_state.read(pipe.gh, 5)[1]["state"], "failed")
+        comment = pipe.gh.human_comment(5, "/nexkit trust", "olivia", "OWNER")
+        comment["created_at"] = at(2)
+        with mock.patch.object(host.engine, "answer", wraps=host.engine.answer) as answer:
+            pipe.take_run(5)
+            stored = item_state.read(pipe.gh, 5)[1]
+            self.assertEqual(stored["state"], "planning")
+            stages = [a["stage"] for a in stored["pending"] if a["kind"] == "runAgent"]
+            self.assertEqual(stages, ["plan"])
+            played = pipe.play()
+        self.assertEqual(played[2:], [("plan", 5), ("go", 5)])
+        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+        events = [call.args[0].get("event") or {} for call in answer.call_args_list]
+        vouches = [e for e in events if e.get("kind") == "requested" and e.get("what") == "trust"]
+        self.assertEqual(len(vouches), 1)
+
     def test_an_untrusted_edit_that_stops_a_merge_is_stored_as_ready_for_a_person(self):
         def at(days):
             return (datetime.now(UTC) + timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")

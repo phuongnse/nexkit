@@ -388,6 +388,10 @@ class Item:
             return self.lost(last, last["command"], self.issue["number"])
         if self.pull and (handed_on or last is None or last["command"] != "plan"):
             return self.round(latest_comment, latest)
+        if not self.pull and last and last.get("outcome") == autopilot.UNTRUSTED_ROUND:
+            # An untrusted edit stopped the latest run, a first plan included: autopilot checks
+            # it before the first plan, and a writer's vouch plans or starts again.
+            return self.be("failed", "failed", "untrusted", last)
         if last is None or self.plan is None:
             self.wait("start")
             return self.be("new", "new")

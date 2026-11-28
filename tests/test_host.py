@@ -1455,6 +1455,140 @@ class FirstPlanTest(HostCase):
         self.assertEqual(asked_step(answer), [])
 
 
+class VouchedTest(HostCase):
+    """A writer's vouch after an untrusted edit stopped a round decides on the stored state."""
+
+    AFTER = "2026-01-03T00:00:00Z"
+
+    def stopped_go(self, before=None, command="go"):
+        """Issue 5 of `bob`, whose `/nexkit` `command` (`go`, or `plan`, which leaves no plan) an
+        untrusted edit stopped, and a writer's newer vouch. `before` runs on the new issue, as the
+        item's first events would. Gives the issue, the stopped run's comment and its marker, and
+        the vouch."""
+        self.issue(5, user="bob")
+        if before:
+            before(self.gh.issues[5])
+        if command == "go":
+            self.plan(5)
+        self.gh.human_comment(5, "/nexkit trust", "alice")
+        self.gh.edits[5] = [("bob", "2026-01-02T00:00:00Z")]
+        self.run_comment(5, command, status="failure", outcome="agent_untrusted")
+        vouch = self.gh.human_comment(5, "/nexkit trust", "alice")
+        vouch["created_at"] = self.AFTER
+        comment, run = list(run_comments(self.gh.comments(5)))[-1]
+        return self.gh.issues[5], comment, run, vouch
+
+    def stopped_round(self, outcome="agent_untrusted"):
+        """Pull request 9 of issue 5, whose round an untrusted edit stopped, and a newer vouch."""
+        self.issue(5, user="bob")
+        self.gh.human_comment(5, "/nexkit trust", "alice")
+        self.gh.edits[5] = [("bob", "2026-01-02T00:00:00Z")]
+        self.gh.add_pull(9, 5)
+        self.gh.comment(9, render_state({**empty_state(5), "auto_fixes": 1}))
+        run = {"round": 2, "trigger": "fix (auto)", "status": "failure", "url": "u"}
+        self.gh.comment(9, render_run({**run, "outcome": outcome, "attention": "Read it"}))
+        vouch = self.gh.human_comment(5, "/nexkit trust", "alice")
+        vouch["created_at"] = self.AFTER
+        comment, found = list(run_comments(self.gh.comments(9)))[-1]
+        return self.gh.issues[5], comment, found, vouch
+
+    def vouched(self, issue, comment, run, pull=None, write=False):
+        args = (self.gh, self.cfg, issue, comment, run, {}, {})
+        return host.vouched(*args, pull=pull, write=write)
+
+    def test_the_engine_gets_the_stored_state_and_the_vouch_stores_its_plan_run(self):
+        issue, comment, run, vouch = self.stopped_go()
+        before = seed(self.gh, self.cfg, 5)[1]
+        self.assertEqual((before["state"], before["attention"]["reason"]), ("failed", "untrusted"))
+        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+            step = self.vouched(issue, comment, run, write=True)
+        self.assertEqual((step["state"], step["command"]), ("start", "plan"))
+        [request] = asked_step(answer)
+        self.assertEqual(request["state"], before)
+        self.assertEqual(request["event"]["id"], f"comment-{vouch['id']}")
+        self.assertEqual(request["event"]["what"], "trust")
+        stored = item_state.read(self.gh, 5)[1]
+        self.assertEqual(stored["revision"], 2)
+        self.assertEqual(runs_of(stored), ["plan"])
+
+    def test_a_vouch_the_item_s_run_took_starts_the_stored_plan_without_the_engine(self):
+        issue, comment, run, vouch = self.stopped_go()
+        seed(self.gh, self.cfg, 5)
+        self.vouched(issue, comment, run, write=True)
+        stored = item_state.read(self.gh, 5)[1]
+        self.assertIn(f"comment-{vouch['id']}", stored["recentEvents"])
+        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+            step = self.vouched(issue, comment, run, write=True)
+        self.assertEqual((step["state"], step["command"]), ("start", "plan"))
+        self.assertEqual(asked_step(answer), [])
+        self.assertEqual(item_state.read(self.gh, 5)[1], stored)
+
+    def test_a_stored_plan_run_starts_again_when_the_engine_never_heard_the_stop(self):
+        def first(issue):
+            seed(self.gh, self.cfg, 5)
+            host.first_plan(self.gh, self.cfg, issue, {}, {}, write=True)
+
+        # An untrusted stop of a plan never reached the engine: the state holds the plan run.
+        issue, comment, run, vouch = self.stopped_go(before=first, command="plan")
+        stored = item_state.read(self.gh, 5)[1]
+        self.assertEqual((stored["state"], runs_of(stored)), ("planning", ["plan"]))
+        self.assertNotIn(f"comment-{vouch['id']}", stored["recentEvents"])
+        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+            step = self.vouched(issue, comment, run, write=True)
+        self.assertEqual((step["state"], step["command"]), ("start", "plan"))
+        self.assertEqual(asked_step(answer), [])
+        self.assertEqual(item_state.read(self.gh, 5)[1], stored)
+
+    def test_a_vouch_taken_already_carries_out_the_stored_fix_review_or_wait(self):
+        issue, comment, run, vouch = self.stopped_round()
+        seed(self.gh, self.cfg, 5)
+        self.vouched(issue, comment, run, pull=9, write=True)
+        taken = item_state.read(self.gh, 5)[1]
+        name = f"comment-{vouch['id']}"
+        self.assertIn(name, taken["recentEvents"])
+        self.assertEqual(runs_of(taken), ["fix"])
+        head = taken["change"]["version"]
+        checks = {"id": "a3.1", "next": None, "kind": "runChecks", "changeVersion": head}
+        used = {"reason": "roundsUsedUp", "text": "No round is left.", "ref": None}
+        cases = {
+            "fix": ({}, "fix"),
+            "review": ({"pending": [checks]}, "review"),
+            "wait": ({"pending": [], "attention": used}, None),
+        }
+        for label, (fields, command) in cases.items():
+            stored = restate(self.gh, 5, **fields) if fields else taken
+            with (
+                self.subTest(label),
+                mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer,
+            ):
+                step = self.vouched(issue, comment, run, pull=9, write=True)
+            self.assertEqual(asked_step(answer), [])
+            self.assertEqual(item_state.read(self.gh, 5)[1], stored)
+            if command:
+                self.assertEqual((step["state"], step["command"]), ("start", command))
+                self.assertEqual(bool(step.get("count")), command == "fix")
+            else:
+                self.assertEqual(step["state"], "waits")
+                self.assertIn("no automatic fix rounds left", step["reason"])
+
+    def test_a_vouch_with_nothing_held_waits_for_a_person_with_the_engine_s_reason(self):
+        issue, comment, run, vouch = self.stopped_round()
+        seed(self.gh, self.cfg, 5)
+        restate(self.gh, 5, recentEvents=[f"comment-{vouch['id']}"], pending=[], attention=None)
+        with self.assertRaises(host.Refused):
+            self.vouched(issue, comment, run, pull=9)
+
+    def test_a_vouch_with_no_configuration_is_refused(self):
+        issue, comment, run, _ = self.stopped_go()
+        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+            with self.assertRaises(host.Refused):
+                host.vouched(self.gh, None, issue, comment, run, {}, {})
+        self.assertEqual(asked_step(answer), [])
+
+    def test_no_document_is_built_from_the_markers_for_a_vouch(self):
+        self.assertFalse(hasattr(host, "_plan_doc"))
+
+
 class CarriesOnTest(HostCase):
     def carries_on(self, number, output, cfg):
         decision = {"issue": number, "pr": None, "action": "plan"}

@@ -62,7 +62,7 @@ Actions tab, as an error on the `route` job.
 **"github_app is not set".** Run `nexkit init`, which creates the App, or follow
 [Moving to the GitHub App](configuration.md#moving-to-the-github-app).
 
-**"publish.push_token_secret is gone".** NexKit no longer uses a push token. Remove `publish`
+**"publish.push_token_secret is gone".** `publish` is not a setting: NexKit writes on GitHub as its App. Remove `publish`
 and follow [Moving to the GitHub App](configuration.md#moving-to-the-github-app).
 
 **"NexKit could not get a token from its GitHub App".** One of these:
@@ -137,8 +137,8 @@ and the review found; the round's comment gives the whole message. Correct the f
 `nexkit doctor` on the branch, push, and comment `/nexkit review` again. "NexKit could not
 read .nexkit/config.json" means GitHub did not answer: comment `/nexkit review` again.
 
-**Setup failed.** The `setup` commands must work on a fresh `ubuntu-24.04` runner without
-secrets. Run them in a clean container to reproduce.
+**Setup failed.** The `setup` commands must work on a fresh runner of the image NexKit pins
+(`RUNNER` in `nexkit/__init__.py`) without secrets. Run them in a clean container to reproduce.
 
 ## Commands and runs
 
@@ -162,8 +162,8 @@ and statuses are still set, without that stage's results. See
 
 **"Artifact not found" on *Download check results* in the `agent` job.** A fix round
 downloads the `nexkit-checks` artifact of the run whose failing checks kept
-[result files](checks.md#result-files-of-failing-checks). Artifacts expire after 14
-days, so a round started later runs without those files; the step does not fail the round,
+[result files](checks.md#result-files-of-failing-checks). Artifacts expire (see [how long NexKit
+keeps them](how-it-works.md#logs-summary-and-artifacts)), so a round started later runs without those files; the step does not fail the round,
 and the *Collect issue context* log says that the prompt has no section about them.
 
 ## Agents
@@ -218,11 +218,9 @@ access, `max_parallel`, or a question without a recommended option. Every issue 
 waits for a person is also listed under *Needs a person*, and does not count toward
 `max_parallel`. With the default `autopilot.scope`, an issue outside the earliest open
 milestone is not in scope; `null` takes every open issue. A command that
-autopilot started but that never ran starts again: once more as soon as its workflow run
-ended, or after `autopilot.lost_after_minutes` (30 by default) when that run cannot be
-read, then 30, 60 and 120 minutes after its last start; when the fifth does not run
-either, the issue waits for you (see [A command or round did not
-start](#a-command-or-round-did-not-start)). To sweep again at once:
+autopilot started but that never ran starts again a few times, and then the issue waits for
+you (see [A command or round did not start](#a-command-or-round-did-not-start)). To sweep
+again at once:
 `gh workflow run nexkit.yml -f command=autopilot -f number=autopilot`.
 
 **⏸️ "The agent stopped at the account's usage limit" or "Every agent stopped at its usage
@@ -290,8 +288,8 @@ and the `route` job's summary and notices say the same. A check that should have
 means its list names a path the check reads: take that path out, and comment
 `/nexkit review`, which runs every check. A check runs in full in implement and fix
 rounds, in a `/nexkit review` that a person comments, in its first round after its `run`
-or `setup` changed or after an upgrade, after a force-push, and when the update changed
-300 files or more.
+or `setup` changed or after an upgrade, after a force-push, and when the update changed as many files as
+GitHub's comparison of two commits can list, or more (`COMPARE_FILES` in `nexkit/route.py`).
 
 **A pull request waits for a bug issue and starts no fix round.** Its checks fail only in
 commands that also fail on the default branch, in a workflow of `merge.after_workflows`
@@ -326,7 +324,8 @@ check that failed, at the first try or while the merge waits, gets an automatic 
 within `fix.max_auto_rounds`, and while the merge waits, a new commit on the branch gets
 `/nexkit review`. What is left
 is a rule that needs a person, such as a required approval, required checks that neither
-passed nor failed within six hours, or a required check that failed with no automatic fix
+passed nor failed within the time that [Autopilot](autopilot.md#autopilot) gives them, or a
+required check that failed with no automatic fix
 round left. Merge the pull request yourself, comment `/nexkit fix` on it, or change the
 rule (see [Automatic merge](merges-and-waits.md#automatic-merge)).
 
@@ -359,7 +358,7 @@ commit of `main` and each round of the pull request that ended since; while GitH
 not worked out mergeability yet, the next sweep asks again (see *Resolving conflicts*
 under [Work NexKit starts by itself](work-without-a-command.md#work-without-a-command)). So a conflict that stays
 has one of these reasons: the latest round is blocked on a conflict that needs your
-decision, which you answer with `/nexkit fix`; `conflicts.max_rounds` (3 by default)
+decision, which you answer with `/nexkit fix`; `conflicts.max_rounds`
 rounds are used up; or the conflict needs a manual merge (below). The `maintain` job's
 log lists what each check did.
 
@@ -379,7 +378,7 @@ log, a trace or a result file shows it.
 
 Every mention, and every reason under *Needs a person* in `nexkit status`, says three
 things: what to do, why NexKit does not do it itself, and where to look. The mention for
-each outcome of a run is:
+each outcome of a run, and for an engine refusal, is:
 
 | Outcome | `@owner a person is needed: …` | It also names |
 |---|---|---|
@@ -408,14 +407,15 @@ each outcome of a run is:
 | `pull_closed`, reopened | approve the pull request, which NexKit then merges, or comment `/nexkit review` on it. It was closed when its round was to merge it, and reopening it starts nothing by itself. A pull request that stays merged or closed needs nobody | |
 | `agent_untrusted` | read the issue, and comment `/nexkit trust` on it if you trust it. Someone without write access edited it after a writer vouched for it, so NexKit does not act on its text | |
 | `merge_untrusted` | read the issue, and comment `/nexkit trust` on it if you trust it. Someone without write access edited it after a writer vouched for it, so NexKit does not merge its pull request | |
-| `close_failed` | close the issue yourself. No change is needed, but GitHub refused NexKit's close, or NexKit's engine refused to decide the end | the error, or the engine's refusal |
-| `on_base_failed` | close the pull request and its issue yourself. The base branch already holds this change, but GitHub refused NexKit's close, or NexKit's engine refused to decide the end | the engine's refusal, when it refused |
+| `close_failed` | close the issue yourself. No change is needed, but GitHub refused NexKit's close (when NexKit's engine refused to decide the end, the mention gives [its refusal](#nexkits-engine-refused-to-decide-the-next-step) instead) | the error |
+| `on_base_failed` | close the pull request and its issue yourself. The base branch already holds this change, but GitHub refused NexKit's close (when NexKit's engine refused to decide the end, the mention gives [its refusal](#nexkits-engine-refused-to-decide-the-next-step) instead) | |
+| NexKit's engine refused to decide | read why below, then carry the issue on with `/nexkit plan` or `/nexkit go`. NexKit's engine refused to decide its next step: see [below](#nexkits-engine-refused-to-decide-the-next-step) | the engine's refusal |
 | `paused`, not resumed | post the command again once the usage limit has reset. The agent hit its usage limit, and NexKit does not resume this run | |
 | `retry_waiting`, long past its time | post the command again, and check that NexKit's workflow has its `schedule` trigger. It was to run again after a transient error, and no run started it | the time it was to run |
 
 Questions, checklist items to decide and criteria to confirm follow as a list, each whole,
 as the run's or round's comment lists them, so that a person decides from the mention
-alone. Only a list longer than 12,000 characters ends early, at the end of a word, and the
+alone. Only a list longer than `LISTED_LIMIT` (`nexkit/report.py`) characters ends early, at the end of a word, and the
 mention then says that NexKit cut it to fit GitHub's limit on a comment and which comment
 has it whole. `nexkit status` gives the same reason, with each item of a list on a line of
 its own.
@@ -471,8 +471,8 @@ missing](#evidence-from-a-ci-run-is-missing).
 
 ### A run kept stopping on a transient error
 
-NexKit already ran the command again after each wait of `retry.wait_minutes` (by default
-15, 30 and 60 minutes), and the comment lists every error. Read them and the run logs.
+NexKit already ran the command again after each wait of
+[`retry.wait_minutes`](merges-and-waits.md#transient-errors), and the comment lists every error. Read them and the run logs.
 When the cause has passed, for example the service answers again, post the same command
 again. Otherwise wait until it has: another run now stops the same way. When the stops
 were results that did not fit the schema, the cause is the model, not a service: post the
@@ -564,17 +564,18 @@ When they show why the round did not finish, comment
 `/nexkit plan <the cause, with the evidence, and the smallest change that removes it>`.
 When they show no cause, find it first, for example by running the slow check locally;
 then split the issue by hand with the `request` skill, or comment a smaller plan. NexKit
-does not split an issue three levels of parts deep again; split it by hand.
+does not split an issue again once it is at the deepest level of parts that
+[Autopilot](autopilot.md#autopilot) allows; split it by hand.
 
 ### A plan is too large again
 
 Autopilot already planned once more after a plan that was too large and suggested no
-parts, suggested parts titled like the issue, or suggested more than ten parts (see
-[Autopilot](autopilot.md#autopilot)), and the second plan did the same; or the issue is three levels of parts deep, where
-NexKit splits no further. Read the plan: its *What changes* and implementation notes
+parts, suggested parts titled like the issue, or suggested more parts than a plan may suggest (see
+[Autopilot](autopilot.md#autopilot)), and the second plan did the same; or the issue is at the
+deepest level of parts that Autopilot allows, where NexKit splits no further. Read the plan: its *What changes* and implementation notes
 usually show the steps. Split the issue by hand into parts that each fit one session, with
 the [`request` skill](../skills/request/SKILL.md), or make the issue smaller and comment
-the change on it, which with autopilot plans it again. At three levels deep the scope
+the change on it, which with autopilot plans it again. At that deepest level the scope
 was set levels above, so split it by hand, or implement it yourself. File each part as a
 sub-issue of the issue: it reads every issue above it, as NexKit's parts do, so link
 rather than copy the rules they hold.
@@ -668,7 +669,8 @@ either. It waits for a person only:
 
 - when a required check failed and no automatic fix round is left: see [No automatic fix
   rounds left](#no-automatic-fix-rounds-left);
-- when the checks neither passed nor failed within six hours: find out why from their
+- when the checks neither passed nor failed within the time that
+  [Autopilot](autopilot.md#autopilot) gives them: find out why from their
   runs, for example a workflow that never started on the branch, start it again, and
   comment `/nexkit review` once they can pass;
 - when its issue left autopilot's scope, since only sweeps try the merge again: merge it
@@ -708,29 +710,37 @@ diff and the check results, then merges.
 
 ### A run kept ending without a report
 
-A sweep marked the run as ended without a report and started it again, at once and then
-30, 60 and 120 minutes after the last start, or once more only when its agent had run to
-its end, and each run ended the same way; or it was
-a person's command, which NexKit never starts again (see [Runs that never
+A sweep marked the run as ended without a report and started it again, as
+[Runs that never end](work-without-a-command.md#autopilot) says, and each run ended the same
+way; or it was a person's command, which NexKit never starts again (see [Runs that never
 end](work-without-a-command.md#autopilot)). Read the workflow runs for why they ended, such as
 cancelled runs, lost runners or jobs that GitHub never created, and check
 [githubstatus.com](https://www.githubstatus.com) for an outage of GitHub Actions. Once
 Actions works again, post the same command once more. When it ends without a report
 again, find the cause in the Actions run before you try again.
 
+### NexKit's engine refused to decide the next step
+
+NexKit's engine decides what an issue or pull request does next. When it refuses to decide,
+NexKit gives this reason: "read why below, then carry the issue on with `/nexkit plan` or
+`/nexkit go`. NexKit's engine refused to decide its next step: `…`". The reason shows in
+mentions, and in `nexkit status` under *Needs a person*, for issues and their pull requests.
+
+Read the quoted refusal. When it names a NexKit comment that someone else changed, see
+[A comment of NexKit was changed by someone else](#a-comment-of-nexkit-was-changed-by-someone-else).
+Otherwise comment `/nexkit plan` to plan the issue again, or `/nexkit go` when its plan still
+holds. If that command stops on the same refusal, report a NexKit issue with the refusal, as
+for "NexKit stopped on <exception>" above.
+
 ### A command or round did not start
 
-Autopilot starts a command that never ran again: at once when its workflow run ended, or
-after `autopilot.lost_after_minutes` when that run cannot be read, then 30, 60 and 120
-minutes after its last start. These starts cost no agent time when GitHub creates no job.
-When the fifth start does not run either, the issue waits for a person, with a reason
-that says GitHub created no job or ended the runs without a report, as in an outage of
-GitHub Actions (see ["Autopilot does not start an issue"](#agents)). A continued run, and
-an automatic round that a round started, whose run has not started after
-`lost_after_minutes`, start once more, and wait for a person when that one does not start
-either; a round from before NexKit recorded what it started waits six hours (see [Runs
-that never end](work-without-a-command.md#autopilot)). Read the dispatched run in the Actions tab,
-or the reply on the issue or pull request, for why it did not run, such as a refusal by
+Autopilot starts again a command that never ran, and a run that a round started, as *A command
+starts once* and *Runs that never end* under [Autopilot](work-without-a-command.md#autopilot)
+say. These starts cost no agent time when GitHub creates no job. When the last start does not
+run either, the issue waits for a person, with a reason that says GitHub created no job or
+ended the runs without a report, as in an outage of GitHub Actions (see ["Autopilot does not
+start an issue"](#agents)). Read the dispatched run in the Actions tab, or the reply on the
+issue or pull request, for why it did not run, such as a refusal by
 `route`, a run cancelled in the queue, or [an outage](https://www.githubstatus.com). Once
 the cause is gone, post the command yourself, once.
 
@@ -815,7 +825,7 @@ open new parts for what is left.
 
 Autopilot split the parent, but its latest plan lists more parts than it has sub-issues:
 a split that stopped partway, such as when GitHub refused to create a part, a split that an
-older release filed cut to ten parts, or a part a person unlinked. NexKit leaves the
+older release filed cut to the most parts a plan may suggest, or a part a person unlinked. NexKit leaves the
 parent open, with a comment of both counts, so it never closes with work left out. Compare
 the plan's *Suggested split* with the sub-issues. Open each part that is missing as a
 sub-issue of the parent, with the [`request` skill](../skills/request/SKILL.md), or close
@@ -834,7 +844,7 @@ protected.
 
 ### A CI issue holds records of several failures
 
-An issue for a run whose failures would open more than five issues, or one from an older
+An issue for a run whose failures would open more issues than autopilot opens for one run, or one from an older
 release that holds every failure of a workflow, can hold records of several failures
 while its plan and pull request cover only some (see [Flaky
 runs](autopilot.md#autopilot)). Before it closes, account for every record as one of:

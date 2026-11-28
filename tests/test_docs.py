@@ -795,6 +795,9 @@ def mention_texts():
         "`review_failed`, cannot sign in": (
             report.needs_person("review_failed", cfg, found={"error": "401"}).rsplit(": `", 1)[0],
         ),
+        "NexKit's engine refused to decide": (
+            host.refused_reason(host.Refused("x")).rsplit(": `", 1)[0],
+        ),
     }
     return texts
 

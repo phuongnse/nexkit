@@ -81,7 +81,7 @@ policies of the engine, and each has its place:
   the review answer, and `profiles` the profiles triage chooses from. The plan prompt also names the
   implement stage's time from `budgets`. GitHub's `review.checklist` gives the checklist.
 - **`maxParallel` and `priority`** are the `sweep` call's policies: the most items that run at
-  once, and the labels that go first. Neither is in `policies.schema.json`, so no state document
+  once, and the tags that go first. Neither is in `policies.schema.json`, so no state document
   keeps them.
 - **Usage limits** are in the `runAgent` result's `limit` with its `reset`, which is null when the
   host does not resume, and in the `sweep` call's `limited`. GitHub's `usage_limit.*` gives them.

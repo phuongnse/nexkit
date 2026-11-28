@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/phuongnse/nexkit/protocol/v1/events/held.schema.json",
-  "$comment": "A hold was set, with the host's reason for it, which the engine keeps and does not read.",
+  "$comment": "A hold was set, with the host's reason for it, which the engine neither reads nor keeps.",
   "type": "object",
   "properties": {
     "protocol": {

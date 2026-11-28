@@ -303,7 +303,7 @@ and its comment lists every error the command's runs stopped on.
   `nexkit/checks` and `nexkit/review` stay as the round left them, except that a review
   that waits to run again is pending. `nexkit status` lists the issue or pull request as
   `retrying`, with that time, not under *Needs a person*. The run that starts the command
-  is shown as `(retry N)`.
+  is shown as `(retry N)`. Once it starts, the run's comment shows ⏭️ `continued`.
 - A wait holds no agent runner. NexKit starts the run that waits for paused commands,
   which uses no agent and no repository code and also resumes runs paused at the [usage
   limit](#usage-limits); it may wait as long as the longest of these waits. The hourly

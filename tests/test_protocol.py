@@ -13,7 +13,7 @@ import tomllib
 import unittest
 from pathlib import Path
 
-from nexkit import agent, engine, protocol
+from nexkit import agent, engine, host, protocol
 from nexkit.schema import problems
 from tests.support import make_config, profile_config
 from tests.test_agent import CHECKLIST
@@ -52,6 +52,18 @@ def table_names(heading, every_row=False):
     if not every_row:
         rows = [row for row in rows if row.startswith("| `")]
     return sorted({name for row in rows for name in re.findall(r"`(\w+)`", row.split("|")[1])})
+
+
+def first_cells(text):
+    """The first cell of each row of the first table in `text`, after its header and separator."""
+    cells, started = [], False
+    for line in text.splitlines():
+        if line.startswith("| "):
+            started = True
+            cells.append(line.split("|")[1].strip())
+        elif started:
+            break
+    return cells[2:]
 
 
 def bullet_names(heading, start):
@@ -443,6 +455,20 @@ class ProtocolTest(unittest.TestCase):
         self.assertEqual(table_names("What a host decides", every_row=True), sorted(policies))
         for name, policy in policies.items():
             self.assertEqual(problems(policy["default"], policy), [], name)
+
+    def test_the_github_host_sets_each_policy(self):
+        # The GitHub table under "Hosts" names each policy in the same first cell as the table
+        # under "What a host decides", and the names in those cells are the policies the GitHub
+        # host gives the engine. The test above ties that table to policies.schema.json.
+        sentence = "The GitHub host sets each policy and its own settings as follows."
+        parts = section("Hosts").split(sentence, 1)
+        self.assertEqual(len(parts), 2, "the sentence above the GitHub table changed")
+        github = first_cells(parts[1])
+        decided = first_cells(section("What a host decides"))
+        rows = [cell for cell in github if cell in decided]
+        self.assertEqual(sorted(rows), sorted(decided))
+        names = sorted({name for cell in rows for name in re.findall(r"`(\w+)`", cell)})
+        self.assertEqual(names, sorted(host.parent_policies(make_config())))
 
 
 class AgentSchemaTest(unittest.TestCase):

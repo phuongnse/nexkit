@@ -574,6 +574,13 @@ def policies(cfg, profile=None):
     }
 
 
+def parent_policies(cfg):
+    """`policies` with `parentEnd`, which only a split parent's decision reads: `whenPartAccepted`
+    with `close_parent_issues`, else `person` (docs/engine-hosts.md#hosts)."""
+    end = "whenPartAccepted" if cfg["close_parent_issues"] else "person"
+    return {**policies(cfg), "parentEnd": end}
+
+
 def step(state, event, found_policies):
     """The engine's answer to `event` on `state`, from the `nexkit-engine` program, which reads
     the request as JSON on standard input; `Refused` when the engine refuses it or the program
@@ -3610,8 +3617,7 @@ def part_ended(gh, cfg, parent, subs, part, state, write=False):
         events.append(_event("partEnded", parent, None, name, part=own, state=state))
         return events
 
-    end = "whenPartAccepted" if cfg["close_parent_issues"] else "person"
-    found = {**policies(cfg), "parentEnd": end}
+    found = parent_policies(cfg)
     after, answers = decide_all(gh, cfg, parent, row, found_policies=found, write=write)
     kinds = {action["kind"] for _, actions in answers for action in actions}
     if "close" in kinds or after["state"] == "accepted":

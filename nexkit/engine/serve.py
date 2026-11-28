@@ -19,8 +19,9 @@ from . import CALLS, error_answer, reply, text
 
 HOST = "127.0.0.1"
 PORT = 8080
-# A step request carries one state document, which the protocol keeps small enough for one
-# GitHub comment, with one event and the policies: far below MAX_BODY. A prompt request
+# A step request carries one state document, which the protocol bounds to `STATE_LIMIT` bytes
+# (`nexkit/protocol/size.py`, docs/engine.md#the-state-document), with one event and the
+# policies: far below MAX_BODY. A prompt request
 # carries the texts a stage reads, each kept whole since a prompt names the file that holds
 # it; its diffs and outputs come clipped to what the prompt shows (`calls/prompt.schema.json`).
 MAX_BODY = 1 << 20

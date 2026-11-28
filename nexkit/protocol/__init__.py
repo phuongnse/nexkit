@@ -6,7 +6,7 @@ The schemas are the contract every host and runner reads, so they live as JSON f
 (`$schema`) and its URI (`$id`, under `BASE`), so that a standard validator in any language
 resolves their relative `$ref`s; `$comment` keys explain a schema to people, and `x-since` names
 the minor version that added a field; a new value is a new major (docs/engine.md#versions).
-`load` leaves these out, so a schema given to an agent is the one NexKit 6 gave.
+`load` leaves these out, so an agent gets only the keywords that check its result.
 """
 
 from __future__ import annotations

@@ -1,18 +1,17 @@
 """The largest state document (docs/engine.md#the-state-document), and how what comes in is
 kept within it.
 
-A host keeps the document where its work lives, and the GitHub host keeps it as base64 in
-one comment, which GitHub refuses past 65,536 characters. The protocol therefore bounds the
-document as `encoded` writes it. What results and events bring is bounded as it comes in:
-each list to the most items `state.schema.json` allows (MOST), each text to the most
-characters NexKit 6 keeps of it (LONGEST), and a failure signature, which rounds compare, is
-never cut but named by its hash when it is long. The history that the prompts show, the fix
+A host keeps the document where its work lives. The protocol bounds it, as `encoded` writes
+it, so that a host can keep it as base64 in a text field of 65,536 characters. What results
+and events bring is bounded as it comes in: each list to the most items `state.schema.json`
+allows (MOST), each text to the most characters that is enough for what a person reads
+(LONGEST), and a failure signature, which rounds compare, is never cut but named by its hash
+when it is long. The history that the prompts show, the fix
 rounds' notes, summaries and causes and the last review's findings, is clipped as the prompts
 clip it (HISTORY). The texts that a person reads in full where the host keeps them are
 shortened further only when a document would still pass the limit (`fit`), the history after
 the others, and the lists of failing checks in the fix records last of all. The engine never
-answers a larger document, and a host that builds a first one, as an import does, keeps it the
-same way.
+answers a larger document, and a host that builds a first one keeps it the same way.
 """
 
 from __future__ import annotations
@@ -21,7 +20,7 @@ import hashlib
 import json
 
 # The most bytes of a state document as `encoded` writes it. Its base64 takes 64,000
-# characters, which leaves room in a GitHub comment for the words around it.
+# characters, which leaves room in a text of 65,536 characters for the words around it.
 STATE_LIMIT = 48_000
 # The most of each list that a state document keeps, as `maxItems` in `state.schema.json`.
 # A split of more parts keeps none of them, and its count says how many it named.
@@ -38,14 +37,13 @@ MOST = {
     "repeated": 150,
     "criteria": 50,
     "checklist": 50,
-    # The fix rounds' records (NexKit 6's `report.MAX_FIXES`), and the checks that still
-    # failed after one.
+    # The fix rounds' records, of which the fix prompt shows the latest five, and the checks
+    # that still failed after one.
     "fixes": 5,
     "fixFailing": 30,
 }
-# The most characters of each text that comes in: NexKit 6's own (`state.questions`,
-# `state.plan_data_record`), for a reason a person reads, enough to say it, and for a check's
-# name, which rounds compare failures by, as long as NexKit's own may be (`config.NAME`).
+# The most characters of each text that comes in: long enough for a question, an option or a
+# reason that a person must read, and for a check's name, which rounds compare failures by.
 LONGEST = {
     "question": 1500,
     "option": 500,
@@ -55,13 +53,13 @@ LONGEST = {
     "reason": 1000,
     "check": 40,
 }
-# The most characters of each text of the history, as the prompts clip it
-# (`textutil.clip`, which ends a shortened text with a line of its own): a fix round's
+# The most characters of each text of the history, as the prompts clip it, ending a shortened
+# text with a line of its own: a fix round's
 # note, summary and cause, a finding's body, and the failure signature that a fix record shows.
 HISTORY = {"note": 2000, "summary": 4000, "cause": 2000, "body": 1500, "signature": 200}
 # The most bytes of a failure signature as JSON writes it; a longer one is named by its hash.
 SIGNATURE = 80
-# The most checks a diagnosis round looks into (NexKit 6's `state.MAX_QUESTIONS`).
+# The most checks a diagnosis round looks into, so that its prompt stays focused.
 DIAGNOSES = 10
 # The hex digits of a failing check's digest (`failure_key`).
 KEY = 12
@@ -178,8 +176,8 @@ def _fix_texts(state):
 
 def _fix_checks(state):
     """The names and failure signatures that a fix record shows of the checks that still
-    failed after it, and the files of an imported record's conflicts. Only for display:
-    `rounds.signatures` and `rounds.failing` decide."""
+    failed after it, and the files of the conflicts in a record of a host's first document.
+    Only for display: `rounds.signatures` and `rounds.failing` decide."""
     found = []
     for record in state["rounds"].get("fixes") or []:
         for entry in record.get("failing") or []:
@@ -192,8 +190,8 @@ def _fix_checks(state):
 # What is shortened, in this order, while a document does not fit: texts that a person reads
 # in full where the host keeps them, never a count, a status, an id, a list's length, a split
 # part's title, which names the part it files, or a failure signature, which rounds compare.
-# Findings go first, the suggestions before the blocking ones, as NexKit 6's state comment
-# shortens them first. The history that the prompts show comes after all of these: the last
+# Findings go first, the suggestions before the blocking ones, since a fix round acts on the
+# blocking ones. The history that the prompts show comes after all of these: the last
 # review's findings, then the fix rounds' texts, then the checks of their records and, last,
 # the files of the last review's findings.
 SHORTENED = (

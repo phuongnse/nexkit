@@ -1,6 +1,6 @@
 """The facts about each stage that the host and the engine must agree on: the state that runs
 it, its access, the texts its prompt is written from, and the limits of a diff and a commit.
-Standard library only, as `nexkit.textutil` is."""
+Standard library only (D8)."""
 
 from __future__ import annotations
 

@@ -29,6 +29,7 @@ python3 "$root/tests/differential/harness.py" --v6 "$dir" --sample "${NEXKIT_DIF
   --forbid nexkit.host.refusal_cleared --forbid nexkit.host.change_seen \
   --forbid nexkit.host.part_ended --forbid nexkit.host.stopped_counts \
   --forbid nexkit.host.first_plan --forbid nexkit.host.approved \
+  --forbid nexkit.host.vouched \
   --forbid nexkit.host.after_go --forbid nexkit.host.round_carried_on \
   --forbid nexkit.host.no_change_found --forbid nexkit.host.on_base_found \
   --forbid nexkit.host.stage_untrusted --forbid nexkit.host.base_moved

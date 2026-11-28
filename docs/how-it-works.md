@@ -215,9 +215,9 @@ When a sub-issue closes, its `issues: closed` run, in the part's own group, send
 dispatch into its parent's group, `nexkit-<parent>`, with `part N` as its note. That run
 reads the part back from GitHub, checks that it is a closed sub-issue of the parent, decides
 the part's end on the parent's stored state and stores the answer there. It writes nothing
-else on GitHub. The part's run still closes the parent, or leaves its note for a person, by
-the same rules as before: it only previews the parent's answer and never writes the parent's
-state. A parent with no state comment stores nothing. The `step` is sent only when the check
+else on GitHub. With `close_parent_issues`, the part's run also closes the parent, or leaves its note for a
+person, by the rules of [Parent issues](merges-and-waits.md#parent-issues). It only previews the
+parent's answer and never writes the parent's state. A parent with no state comment stores nothing. The `step` is sent only when the check
 of parents runs, which needs `close_parent_issues` or autopilot. GitHub keeps one waiting
 run per group, so this `step` can replace a command that waits in the parent's group: the
 part's end then reaches the parent's stored state at the parent's next decision.
@@ -434,16 +434,17 @@ shortened
 output still compares as before, and the fix prompt says that NexKit kept less of the
 output. With autopilot, each issue
 it worked on has one record comment, edited in place, that names the command it started
-last. Apart from those artifacts, nothing else is stored, so there is nothing to migrate or repair.
+last. Apart from those artifacts, nothing else is stored. When NexKit writes the state of a pull request
+that has an older-format state comment, it leaves that comment as it is, posts a new one in the
+current format and reads that one from then on.
 
 On each open issue, and on each person's pull request that gets a non-approving review or a
 `/nexkit` command, the App also keeps one `### NexKit state` comment, which the first run of the
-item posts. It holds the engine's state document, imported from the markers above, and its
-revision. The runs of the item take its comments, reviews and hold labels from after that
-comment, a hold label's adding only when autopilot takes the issue. The decisions that [the engine's page](engine.md#getting-there) lists read the document
-and store the engine's answer in it: those after a plan, those about commands and approvals, and
-those about a round of a stage or of a pull request. The others read the markers above and do not
-use the document, so it can fall behind them. A comment of it that someone other than the App
+item posts. It holds the engine's state document and its revision. The first run of an open item builds
+that document from NexKit 6's markers, as [the import](engine.md#versions) describes. The runs of the item take its comments, reviews and hold labels from after that
+comment, a hold label's adding only when autopilot takes the issue. Every decision that moves the item reads this document and stores the engine's answer in it.
+While no comment is stored, it decides on the import in memory, as [the engine's
+page](engine.md#getting-there) says. A comment of it that someone other than the App
 changed counts for nothing, and the item waits for a person ([troubleshooting](troubleshooting.md#a-comment-of-nexkit-was-changed-by-someone-else)).
 
 A writer edits the state comment, and autopilot's record comment, only while the comment still

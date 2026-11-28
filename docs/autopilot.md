@@ -26,7 +26,7 @@ every open issue in scope, in order, and starts the one command that moves it on
 |---|---|
 | Ready, with no plan yet | Starts `/nexkit plan`. |
 | Its latest plan has no questions and is not too large | Starts `/nexkit go`. |
-| Its latest plan's change needs protected paths (`protected_paths` in the plan) | Nothing: the plan comment says a person makes that change by hand, and `notify` is mentioned. `/nexkit go` would only stop when NexKit rejects the change. |
+| Its latest plan's change needs protected paths (`protected` in the plan's result) | Nothing: the plan comment says a person makes that change by hand, and `notify` is mentioned. `/nexkit go` would only stop when NexKit rejects the change. |
 | Its latest plan finds that no change is needed (`no_change` in the plan), such as an outside failure that has passed since | Closes the issue as completed, with a comment that holds the plan's finding and the run that passed since. |
 | Collaborators commented after the latest plan | Starts `/nexkit plan` again, so the plan holds their changes before `/nexkit go`. |
 | Its plan is too large and suggests a split | Creates each part as a sub-issue, in order, with the issue's milestone and labels, marks each part *blocked by* the earlier parts it needs, closes the issue's open NexKit pull request as superseded, and plans the parts that need no other part. |
@@ -171,7 +171,7 @@ every open issue in scope, in order, and starts the one command that moves it on
   prompts never recommend an option that needs a person to act outside NexKit, such as
   downloading files or granting access, so such a question waits for a person at once.
   The code does not rest on that alone: a plan or blocked round whose change needs
-  protected paths names them (`protected_paths`), only paths that really are protected
+  protected paths names them (`protected`), only paths that really are protected
   count, and autopilot then answers nothing and starts no `/nexkit go`.
   When a blocked `/nexkit go` found that no change is needed (its `no_change` finding)
   and its one question recommends the option that closes the issue (the question's

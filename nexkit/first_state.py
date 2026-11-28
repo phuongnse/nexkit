@@ -45,6 +45,7 @@ from .state import (
     latest_plan,
     plan_data,
     planned_parts,
+    protected_of,
     questions,
     read_state,
     run_action,
@@ -1165,9 +1166,7 @@ def plan_of(comment, data, approved):
         "tooLarge": bool(data.get("too_large")),
         "parts": planned_parts(comment, data),
         "noChange": bool(filled(data.get("no_change"))),
-        "protected": [
-            clip(path, "path") for path in (data.get("protected_paths") or [])[: MOST["protected"]]
-        ],
+        "protected": [clip(path, "path") for path in protected_of(data)[: MOST["protected"]]],
         "approved": approved,
         "split": [
             {

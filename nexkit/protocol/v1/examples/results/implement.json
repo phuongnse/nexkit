@@ -6,7 +6,7 @@
   "checks_run": [
     "python3 -m unittest"
   ],
-  "protected_paths": [],
+  "protected": [],
   "changes": [
     "report.py reads the issue again."
   ],

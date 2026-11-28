@@ -44,6 +44,7 @@ from .state import (
     option_marks,
     passed_checks,
     passed_lines,
+    protected_of,
     questions,
     read_state,
     round_questions,
@@ -684,7 +685,7 @@ def _autopilot_fields(agent):
 def protected_paths(agent):
     """The protected paths a plan or round says its change needs, as the agent job kept
     them: only paths that are protected."""
-    found = ((agent or {}).get("output") or {}).get("protected_paths") or []
+    found = protected_of((agent or {}).get("output"))
     return [clip(path, 300) for path in found if isinstance(path, str)][:20]
 
 
@@ -992,7 +993,7 @@ def _planned(plan, gh=None, cfg=None, number=None):
     if reason == "approval" and filled(plan.get("no_change")):
         return NO_CHANGE_PLAN
     if reason == "handMadeChange":
-        return autopilot.protected_reason(plan["protected_paths"])
+        return autopilot.protected_reason(protected_of(plan))
     if reason != "question":
         return None
     why = "the plan asks for decisions that are the owner's to make"

@@ -58,7 +58,7 @@
         "type": "string"
       }
     },
-    "protected_paths": {
+    "protected": {
       "type": "array",
       "items": {
         "type": "string"

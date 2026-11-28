@@ -708,6 +708,12 @@ class PublishTests(unittest.TestCase):
             plan_data(self.posted(body))["protected_paths"], [".github/workflows/ci.yml"]
         )
 
+    def test_a_plan_with_protected_gives_the_comment_of_one_with_protected_paths(self):
+        paths = [".github/workflows/ci.yml"]
+        body = render_plan({**PLAN, "protected": paths})
+        self.assertEqual(body, render_plan({**PLAN, "protected_paths": paths}))
+        self.assertEqual(plan_data(self.posted(body))["protected_paths"], paths)
+
     def test_a_plan_that_finds_no_change_is_needed_shows_the_run_that_passed_since(self):
         passed = [
             {

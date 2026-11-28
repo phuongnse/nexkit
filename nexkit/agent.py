@@ -29,7 +29,7 @@ from .runlog import RunLog, add_tokens, one_line, summary, write_summary
 from .runtimes import PROVIDERS, RUNTIMES
 from .runtimes.base import ACCESS, AgentConfigError, Spec
 from .schema import filled, problems
-from .state import conflict_names, round_questions
+from .state import conflict_names, protected_of, round_questions
 from .textutil import checklist_item, person_decides
 from .usage import schedule
 
@@ -64,13 +64,13 @@ OPTIONAL = {
         "questions": [],
         "too_large": False,
         "split": [],
-        "protected_paths": [],
+        "protected": [],
         "no_change": "",
     },
     "implement": {
         "blocker": "",
         "questions": [],
-        "protected_paths": [],
+        "protected": [],
         "outside_plan": [],
         "reviewer_notes": [],
         "no_change": "",
@@ -78,7 +78,7 @@ OPTIONAL = {
     "fix": {
         "blocker": "",
         "questions": [],
-        "protected_paths": [],
+        "protected": [],
         "cause": "",
         "cause_outside": False,
         "open_conflicts": [],
@@ -99,10 +99,16 @@ def with_location(finding):
 
 
 def with_defaults(output, stage):
-    """`output` with the empty value of each optional field it left out, and, for a review,
-    each finding at a `location` and, for a fix, each open conflict at a `location` too."""
+    """`output` with the empty value of each optional field it left out, for a review each
+    finding at a `location`, for a fix each open conflict at a `location` too, and for a
+    plan, implement or fix round what only a person changes as `protected`, which the
+    results of an earlier NexKit name `protected_paths`."""
     if not isinstance(output, dict):
         return output
+    if stage in ("plan", "implement", "fix") and "protected" not in output:
+        if "protected_paths" in output:
+            kept = {key: value for key, value in output.items() if key != "protected_paths"}
+            output = {**kept, "protected": output["protected_paths"]}
     missing = {key: value for key, value in OPTIONAL.get(stage, {}).items() if key not in output}
     output = {**output, **copy.deepcopy(missing)}
     if stage == "review" and isinstance(output.get("findings"), list):
@@ -436,7 +442,7 @@ def check_replans(output):
 def needed_protected(result, cfg):
     """The protected paths that a result says its change needs: only those that are
     protected, each once. The agent's list alone decides nothing."""
-    found = (result.get("output") or {}).get("protected_paths")
+    found = protected_of(result.get("output"))
     paths = [str(p).strip().lstrip("/") for p in found if isinstance(p, str)] if found else []
     return list(dict.fromkeys(p for p in paths if p and configuration.is_protected(p, cfg)))[:20]
 
@@ -566,7 +572,7 @@ def workspace(cfg):
             }
             for check in cfg["checks"]
         ],
-        "protected_paths": list(cfg["protected_paths"]),
+        "protected": list(cfg["protected_paths"]),
         "text": dict(WORKSPACE_TEXT),
     }
 
@@ -1346,7 +1352,8 @@ def run_stage(
         check_replans(result["output"])
     if stage in ("plan", "implement", "fix") and result.get("output"):
         # Only paths that are protected count, so a person is asked only for those.
-        result["output"]["protected_paths"] = needed_protected(result, cfg)
+        result["output"].pop("protected_paths", None)
+        result["output"]["protected"] = needed_protected(result, cfg)
         if stage in ("plan", "implement") and no_change(result):
             result["passed_since"] = passed_runs(found)
     if triage:

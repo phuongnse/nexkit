@@ -24,7 +24,7 @@
       "started_over": false,
       "changes": []
     },
-    "protected_paths": [],
+    "protected": [],
     "no_change": ""
   },
   "planQuestions": {
@@ -62,7 +62,7 @@
       "started_over": false,
       "changes": []
     },
-    "protected_paths": [],
+    "protected": [],
     "no_change": ""
   },
   "planNoChange": {
@@ -90,7 +90,7 @@
       "started_over": false,
       "changes": []
     },
-    "protected_paths": [],
+    "protected": [],
     "no_change": "The base branch already does this, as run 5 shows."
   },
   "planSplit": {
@@ -131,7 +131,7 @@
       "started_over": false,
       "changes": []
     },
-    "protected_paths": [],
+    "protected": [],
     "no_change": ""
   },
   "planProtected": {
@@ -159,8 +159,38 @@
       "started_over": false,
       "changes": []
     },
-    "protected_paths": [
+    "protected": [
       ".github/workflows/ci.yml"
+    ],
+    "no_change": ""
+  },
+  "planSettings": {
+    "summary": "Close an issue that GitHub closed at the same moment.",
+    "changes": [
+      "Read the issue again after a failed close."
+    ],
+    "decisions": [
+      {
+        "decision": "Read once more, not in a loop",
+        "reason": "GitHub's close is done when it answers."
+      }
+    ],
+    "risks": [],
+    "acceptance_criteria": [
+      "A test shows the round says the issue is closed."
+    ],
+    "implementation_notes": [
+      "nexkit/report.py"
+    ],
+    "questions": [],
+    "too_large": false,
+    "split": [],
+    "revision": {
+      "started_over": false,
+      "changes": []
+    },
+    "protected": [
+      "settings/limits"
     ],
     "no_change": ""
   },
@@ -172,7 +202,7 @@
     "checks_run": [
       "python3 -m unittest"
     ],
-    "protected_paths": [],
+    "protected": [],
     "changes": [
       "report.py reads the issue again."
     ],
@@ -200,7 +230,7 @@
     "checks_run": [
       "python3 -m unittest"
     ],
-    "protected_paths": [],
+    "protected": [],
     "changes": [
       "report.py reads the issue again."
     ],
@@ -217,7 +247,7 @@
     "checks_run": [
       "python3 -m unittest"
     ],
-    "protected_paths": [],
+    "protected": [],
     "changes": [
       "report.py reads the issue again."
     ],
@@ -234,7 +264,7 @@
     "checks_run": [
       "python3 -m unittest"
     ],
-    "protected_paths": [],
+    "protected": [],
     "changes": [
       "report.py reads the issue again."
     ],
@@ -251,7 +281,7 @@
     "checks_run": [
       "python3 -m unittest"
     ],
-    "protected_paths": [],
+    "protected": [],
     "cause": "The test read a stale fake issue.",
     "cause_outside": false,
     "open_conflicts": []
@@ -274,7 +304,7 @@
     "checks_run": [
       "python3 -m unittest"
     ],
-    "protected_paths": [],
+    "protected": [],
     "cause": "The test read a stale fake issue.",
     "cause_outside": false,
     "open_conflicts": []
@@ -287,7 +317,7 @@
     "checks_run": [
       "python3 -m unittest"
     ],
-    "protected_paths": [],
+    "protected": [],
     "cause": "The test read a stale fake issue.",
     "cause_outside": false,
     "open_conflicts": []
@@ -421,7 +451,7 @@
       "started_over": false,
       "changes": []
     },
-    "protected_paths": [],
+    "protected": [],
     "no_change": ""
   },
   "planCloseRecommended": {
@@ -460,7 +490,7 @@
       "started_over": false,
       "changes": []
     },
-    "protected_paths": [],
+    "protected": [],
     "no_change": ""
   },
   "planNoParts": {
@@ -488,7 +518,7 @@
       "started_over": false,
       "changes": []
     },
-    "protected_paths": [],
+    "protected": [],
     "no_change": ""
   },
   "planManyParts": {
@@ -592,7 +622,7 @@
       "started_over": false,
       "changes": []
     },
-    "protected_paths": [],
+    "protected": [],
     "no_change": ""
   },
   "planSplitNoChange": {
@@ -633,7 +663,7 @@
       "started_over": false,
       "changes": []
     },
-    "protected_paths": [],
+    "protected": [],
     "no_change": "The base branch does it."
   },
   "implementRecommended": {
@@ -655,7 +685,7 @@
     "checks_run": [
       "python3 -m unittest"
     ],
-    "protected_paths": [],
+    "protected": [],
     "changes": [
       "report.py reads the issue again."
     ],
@@ -683,7 +713,7 @@
     "checks_run": [
       "python3 -m unittest"
     ],
-    "protected_paths": [],
+    "protected": [],
     "changes": [
       "report.py reads the issue again."
     ],
@@ -711,7 +741,7 @@
     "checks_run": [
       "python3 -m unittest"
     ],
-    "protected_paths": [],
+    "protected": [],
     "changes": [
       "report.py reads the issue again."
     ],
@@ -741,7 +771,7 @@
     "checks_run": [
       "python3 -m unittest"
     ],
-    "protected_paths": [],
+    "protected": [],
     "changes": [
       "report.py reads the issue again."
     ],
@@ -773,7 +803,7 @@
     "checks_run": [
       "python3 -m unittest"
     ],
-    "protected_paths": [],
+    "protected": [],
     "changes": [
       "report.py reads the issue again."
     ],
@@ -801,7 +831,7 @@
     "checks_run": [
       "python3 -m unittest"
     ],
-    "protected_paths": [
+    "protected": [
       ".github/workflows/ci.yml"
     ],
     "changes": [
@@ -832,7 +862,7 @@
     "checks_run": [
       "python3 -m unittest"
     ],
-    "protected_paths": [],
+    "protected": [],
     "cause": "The test read a stale fake issue.",
     "cause_outside": false,
     "open_conflicts": []
@@ -855,7 +885,7 @@
     "checks_run": [
       "python3 -m unittest"
     ],
-    "protected_paths": [],
+    "protected": [],
     "cause": "The test read a stale fake issue.",
     "cause_outside": false,
     "open_conflicts": []
@@ -879,7 +909,7 @@
     "checks_run": [
       "python3 -m unittest"
     ],
-    "protected_paths": [],
+    "protected": [],
     "cause": "The test read a stale fake issue.",
     "cause_outside": false,
     "open_conflicts": [],
@@ -996,7 +1026,7 @@
       "started_over": false,
       "changes": []
     },
-    "protected_paths": [],
+    "protected": [],
     "no_change": ""
   },
   "planNoChangeProtected": {
@@ -1024,7 +1054,7 @@
       "started_over": false,
       "changes": []
     },
-    "protected_paths": [
+    "protected": [
       ".github/workflows/ci.yml"
     ],
     "no_change": "The base branch already does this, as run 5 shows."
@@ -1048,7 +1078,7 @@
     "checks_run": [
       "python3 -m unittest"
     ],
-    "protected_paths": [],
+    "protected": [],
     "changes": [
       "report.py reads the issue again."
     ],
@@ -1115,7 +1145,7 @@
       "started_over": false,
       "changes": []
     },
-    "protected_paths": [],
+    "protected": [],
     "no_change": ""
   },
   "planSecondCloseRecommended": {
@@ -1164,7 +1194,7 @@
       "started_over": false,
       "changes": []
     },
-    "protected_paths": [],
+    "protected": [],
     "no_change": ""
   },
   "planProtectedQuestions": {
@@ -1203,7 +1233,7 @@
       "started_over": false,
       "changes": []
     },
-    "protected_paths": [
+    "protected": [
       ".github/workflows/ci.yml"
     ],
     "no_change": ""

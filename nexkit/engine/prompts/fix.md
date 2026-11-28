@@ -54,7 +54,7 @@ $round_checks
 - Never skip, delete or weaken tests or checks to make them pass.
 - If you cannot make progress, stop and return `status: blocked` with the reason in `blocker`.
 - When the change must modify a protected path, do not change it. Return
-  `status: blocked`, give the reason in `blocker` and list the paths in `protected_paths`: a
+  `status: blocked`, give the reason in `blocker` and list the paths in `protected`: a
   person makes that change by hand.
 - When a check failed for a cause outside the repository's code, such as a package
   registry, a service or the network that failed while it ran, and no change to the code
@@ -93,7 +93,7 @@ $writing
   An option that waits for other work names the open $item_kind that holds it; when no $item_kind
   holds that work yet, the option changes the scope and belongs here.
 - `checks_run`: the commands you ran and whether each passed.
-- `protected_paths`: the protected paths that the change must modify and that you left
+- `protected`: the protected paths that the change must modify and that you left
   unchanged, each as a path in the repository. Otherwise an empty list.
 - `open_conflicts`: only when you stop because conflicts with the $base_kind need a
   person's decision; otherwise an empty list. One entry for each open conflict:

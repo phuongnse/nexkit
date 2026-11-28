@@ -52,7 +52,7 @@ runs](checks.md#evidence-from-ci-runs) as the implement round: the end of the
 failed jobs' logs, their annotations, and whether a newer run of the workflow passed on
 the default branch since. So the plan starts from the cause the logs show. The plan
 prompt lists the protected paths: a plan whose change must modify them lists them in
-`protected_paths`, and only paths that really are protected count. The comment then says
+`protected`, and only paths that really are protected count. The comment then says
 that a person makes that change by hand, and autopilot starts no `/nexkit go` (see
 [Troubleshooting](troubleshooting.md#the-plans-change-is-in-protected-paths)). A plan
 that finds no change is needed, such as for a failure from outside the repository that
@@ -123,7 +123,7 @@ comment shows the finding (outcome `no_change`). Otherwise it returns `blocked` 
 question whose recommended option is to close the issue, and names that option in the
 question's `closes`, which [autopilot](work-without-a-command.md#autopilot) answers by
 closing it. An implement or fix agent whose change must modify a protected path leaves it
-unchanged and stops as `blocked` with the paths in `protected_paths`. Autopilot answers none
+unchanged and stops as `blocked` with the paths in `protected`. Autopilot answers none
 of its questions, and a person decides. A round blocked for any other reason leaves
 `no_change` empty. A round that changed files and returned `done` is a change, whatever
 `no_change` holds: NexKit publishes it as usual, adds the text to the pull request's *Notes for the reviewer*, shows

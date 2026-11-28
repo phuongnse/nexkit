@@ -991,7 +991,8 @@
             ]
           }
         },
-        "protectedPaths": {
+        "protected": {
+          "$comment": "The host's text for what only a person changes, one string for each, which the engine keeps without reading it.",
           "type": "array",
           "items": {
             "type": "string"
@@ -1003,7 +1004,7 @@
       },
       "required": [
         "checks",
-        "protectedPaths",
+        "protected",
         "text"
       ]
     },

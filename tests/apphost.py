@@ -301,7 +301,7 @@ class Host:
         }
         inputs["workspace"] = {
             "checks": [{"name": "validate", "run": "validate"}],
-            "protectedPaths": ["settings/limits"],
+            "protected": ["settings/limits"],
             "text": {
                 "location": (
                     "reading and editing the request's records with the application's tools"

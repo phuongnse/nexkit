@@ -6,7 +6,7 @@
   "checks_run": [
     "python3 -m unittest"
   ],
-  "protected_paths": [],
+  "protected": [],
   "cause": "The test read a stale fake issue.",
   "cause_outside": false,
   "open_conflicts": []

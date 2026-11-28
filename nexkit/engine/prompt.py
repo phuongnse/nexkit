@@ -1094,9 +1094,9 @@ def triage_extras(context, profiles, previous):
 
 def build(stage, context, settings, extra=None):
     """The prompt of `stage` from its texts. `settings` holds the workspace's `checks`,
-    `protected_paths`, `text` and `implement_minutes`, and the host's `checklist`."""
+    `protected`, `text` and `implement_minutes`, and the host's `checklist`."""
     text = {key: str(value) for key, value in (settings.get("text") or {}).items()}
-    protected = ", ".join(f"`{p}`" for p in settings.get("protected_paths") or [])
+    protected = ", ".join(f"`{p}`" for p in settings.get("protected") or [])
     person = bool(context.get("person"))
     limits = template("review_limits_person" if person else "review_limits")
     checks = settings.get("checks") or []
@@ -1176,13 +1176,13 @@ def _implement_seconds(policies):
 
 
 def settings(inputs, policies):
-    """What `build` reads beside the texts: the workspace's `checks`, `protected_paths` and
+    """What `build` reads beside the texts: the workspace's `checks`, `protected` and
     `text`, the implement stage's time, the host's `checklist` and its `no_change` findings."""
     workspace = inputs.get("workspace") or {}
     seconds = _implement_seconds(policies)
     return {
         "checks": workspace.get("checks") or [],
-        "protected_paths": workspace.get("protected_paths") or [],
+        "protected": workspace.get("protected") or [],
         "text": dict(workspace.get("text") or {}),
         "implement_minutes": seconds // 60 if seconds is not None else None,
         "checklist": policies.get("checklist") or [],

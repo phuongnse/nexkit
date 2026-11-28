@@ -187,8 +187,10 @@ only restores, so your CI starts warm there too. For NexKit to find what it save
 - With the checkout in a folder, name it with `repo:`. A run on a schedule may not say which
   branch is the default one; give it with `base: main`, or it only restores.
 
-`nexkit doctor` warns when `cache` is set and no workflow uses the action. A hand-written
-`actions/cache` step that repeats an entry exactly also works, and the action can replace it.
+`nexkit doctor` reports a ✗ when `cache` is set and no workflow saves the caches, since every
+run then starts cold. A hand-written `actions/cache` step that repeats an entry exactly also
+works. When a workflow has a key that starts with `nexkit-<runner.os>-`, doctor passes it and
+suggests the action instead.
 
 **A miss is not a failure.** A missing cache, or a restore that fails, never fails a run.
 The *Restore caches* step in the job log lists each entry as restored, restored from an
@@ -525,7 +527,7 @@ instead.
    other repositories as they are.
 
 An organization can set both as organization secrets once, then run `nexkit init --app-slug
-SLUG` in each repository. When the repository can read neither, that command stops before it
+SLUG` in each repository. When the repository lacks either secret, that command stops before it
 writes anything, also for an organization, and prints the two links and the command above.
 When GitHub cannot say, it goes on, and `nexkit doctor` checks the secrets later.
 

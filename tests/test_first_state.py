@@ -107,10 +107,15 @@ def working(state):
 
 def kinds_in_code():
     """The kinds that `first_state` puts an item in: the first argument of each `be` and
-    `running` call."""
+    `running` call, and each text that `self.kind` is set to."""
     tree = ast.parse(Path(first_state.__file__).read_text())
     found = set()
     for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant):
+            for target in node.targets:
+                named = isinstance(target, ast.Attribute) and target.attr == "kind"
+                if named and isinstance(node.value.value, str):
+                    found.add(node.value.value)
         call = isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
         if call and node.func.attr in ("be", "running") and node.args:
             if isinstance(node.args[0], ast.Constant):
@@ -325,6 +330,37 @@ class ImportTest(unittest.TestCase):
         # The count of runs again after a transient error stays beside the lost count.
         self.assertEqual(imported(retry=2, tries=1)["again"], {"transient": 2, "lost": 1})
         self.assertEqual(imported(retry=2)["again"], {"transient": 2})
+
+    def test_a_run_that_handed_on_waits_for_the_command_it_recorded(self):
+        # A continued go that recorded a plan as its next run waits for that plan's run, which
+        # autopilot starts again when it does not come (`autopilot._handed_on`).
+        run = {"command": "go", "status": "continued", "outcome": "retry", "url": "u"}
+        run["next"] = {"command": "plan", "number": "5", "note": "", "auto": "true"}
+        given = {"issue": {"number": 5}, "comments": [{"run": run}]}
+        state = first_state.imported(**situation({"nexkit6": given}))
+        self.assertEqual(state["state"], "planning")
+        self.assertEqual([action["stage"] for action in working(state)], ["plan"])
+        # One that recorded no command waits for its own.
+        del run["next"]
+        state = first_state.imported(**situation({"nexkit6": given}))
+        self.assertEqual(state["state"], "working")
+
+    def test_a_round_that_started_a_review_next_waits_for_the_review(self):
+        head = "b" * 40
+        row = {"round": 2, "trigger": "fix (auto)", "action": "fix", "head": head, "url": "u"}
+        row.update(status="success", outcome="auto_fix", kinds=["auto"])
+        nexts = {"review": "checking", "fix": "fixing", None: "fixing"}
+        for command, name in nexts.items():
+            with self.subTest(command=command):
+                found = {"command": command, "number": "6", "note": "", "auto": "true"}
+                given = {
+                    "issue": {"number": 5},
+                    "comments": [{"run": {"command": "go", "status": "success", "url": "u"}}],
+                    "pull": {"number": 6, "head": head},
+                    "pullComments": [{"run": {**row, **({"next": found} if command else {})}}],
+                }
+                state = first_state.imported(**situation({"nexkit6": given}))
+                self.assertEqual(state["state"], name)
 
     def test_a_fix_round_on_its_way_waits_on_the_pull_request_s_head(self):
         head = "b" * 40
@@ -820,6 +856,53 @@ class ImportTest(unittest.TestCase):
         }
         state = first_state.imported(**situation({"nexkit6": given}))
         self.assertTrue(state["rounds"]["signatures"][0].startswith("sha256:"))
+
+    def test_a_finished_clean_plan_is_played_only_when_autopilot_takes_the_issue(self):
+        record = {"questions": [], "too_large": False}
+        url = "https://github.com/acme/app/actions/runs/1"
+        plan = {"command": "plan", "status": "success", "outcome": "planned", "url": url}
+        comments = [{"plan": {"criteria": ["It works."], "record": record}}, {"run": plan}]
+        given = {"issue": {"number": 42}, "comments": comments}
+        taken = {"nexkit6": given, "config": {"autopilot": {"enabled": True}}}
+        kind, state = first_state.situation(**situation(taken))
+        self.assertEqual((kind, state["state"], state["revision"]), ("plan answered", "working", 1))
+        self.assertEqual([a["stage"] for a in working(state)], ["implement"])
+        self.assertEqual(state["recentEvents"], ["run-1"])
+        self.assertTrue(state["plan"]["approved"])
+        self.assertEqual(state["asked"], [])
+        # A collaborator commented after the plan: it waits for what the comment asks.
+        after = {**given, "comments": [*comments, {"person": "Please also add a test."}]}
+        kind, state = first_state.situation(**situation({**taken, "nexkit6": after}))
+        self.assertEqual((kind, state["state"]), ("planned", "awaitingApproval"))
+        self.assertEqual(state["attention"]["reason"], "approval")
+        self.assertEqual((state["pending"], state["recentEvents"]), ([], []))
+        # Autopilot does not take the issue.
+        kind, state = first_state.situation(**situation({"nexkit6": given}))
+        self.assertEqual((kind, state["state"]), ("planned", "awaitingApproval"))
+        self.assertEqual(state["attention"]["reason"], "approval")
+        self.assertEqual((state["pending"], state["recentEvents"]), ([], []))
+
+    def test_a_plan_that_names_no_workflow_run_is_not_played(self):
+        record = {"questions": [], "too_large": False}
+        plan = {"command": "plan", "status": "success", "outcome": "planned", "url": "https://x/1"}
+        comments = [{"plan": {"record": record}}, {"run": plan}]
+        given = {"issue": {"number": 42}, "comments": comments}
+        found = {"nexkit6": given, "config": {"autopilot": {"enabled": True}}}
+        kind, state = first_state.situation(**situation(found))
+        self.assertEqual((kind, state["state"]), ("planned", "awaitingApproval"))
+
+    def test_a_plan_the_engine_refuses_is_placed_as_it_waits(self):
+        record = {"questions": [], "too_large": False}
+        url = "https://github.com/acme/app/actions/runs/1"
+        plan = {"command": "plan", "status": "success", "outcome": "planned", "url": url}
+        comments = [{"plan": {"record": record}}, {"run": plan}]
+        found = {
+            "nexkit6": {"issue": {"number": 42}, "comments": comments},
+            "config": {"autopilot": {"enabled": True}},
+        }
+        with mock.patch.object(host, "step", side_effect=host.Refused("no")):
+            kind, state = first_state.situation(**situation(found))
+        self.assertEqual((kind, state["state"]), ("planned", "awaitingApproval"))
 
 
 if __name__ == "__main__":

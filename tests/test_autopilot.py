@@ -23,7 +23,15 @@ from nexkit.state import ACTIONS_BOT, PLAN_MARKER, render_run
 from nexkit.status import collect, render
 from nexkit.textutil import TEXT_LIMIT
 from tests.answers import NOT_ANSWERS, STEPS, _before, _calls
-from tests.support import BOT_LOGIN, FakeGitHub, make_config, play_steps, play_sweep, prompt_texts
+from tests.support import (
+    BOT_LOGIN,
+    FakeGitHub,
+    make_config,
+    plan_running,
+    play_steps,
+    play_sweep,
+    prompt_texts,
+)
 
 WORKFLOW = "acme/app/.github/workflows/nexkit.yml@refs/heads/main"
 PARENTS = make_config(close_parent_issues=True)
@@ -676,7 +684,10 @@ class SweepTests(AutopilotCase):
         step = autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {5: 6}, now=soon)
         self.assertEqual(step["state"], "active")
         late = datetime(2026, 1, 1, 0, 31, tzinfo=UTC)
-        step = autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {5: 6}, now=late)
+        # The item's state is stored, as the run in its group does, and the step run that starts
+        # the command counts the loss in it.
+        self.assertTrue(host.store_import(self.gh, self.cfg, 5, now=soon))
+        step = autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {5: 6}, now=late, write=True)
         self.assertEqual((step["state"], step["command"], step["target"]), ("start", "review", 6))
         self.assertEqual(step["auto"], "true,retry,autopilot")
         self.assertIn("did not start within 30 minutes", step["reason"])
@@ -984,6 +995,7 @@ class TriggerTests(AutopilotCase):
 class ReportTests(AutopilotCase):
     def test_a_plan_that_needs_nobody_leads_to_go(self):
         self.issue(5)
+        plan_running(self.gh, self.cfg, 5)
         self.report_plan(self.cfg, {"questions": [], "too_large": False})
         [inputs] = [d["inputs"] for d in self.gh.dispatches]
         self.assertEqual(inputs, autopilot.SWEEP)
@@ -1435,10 +1447,12 @@ class AnswerTests(AnswerAndSplitCase):
     def test_report_mentions_nobody_when_autopilot_answers(self):
         cfg = make_config(autopilot={"enabled": True, "answer": "recommended"}, notify=["olivia"])
         self.issue(5)
+        plan_running(self.gh, cfg, 5)
         result = self.report_plan(cfg, plan_output(questions=[QUESTION]))
         self.assertIsNone(result.get("attention"))
         self.assertIn("NexKit autopilot carries on from here.", result["summary"])
         self.assertFalse(self.gh.comments_matching(5, "@olivia"))
+        plan_running(self.gh, cfg, 5)
         self.report_plan(cfg, plan_output(questions=[{**QUESTION, "recommended": 0}]))
         self.assertTrue(self.gh.comments_matching(5, "@olivia a person is needed"))
         # Outside the scope, autopilot answers nothing, so a person is needed.
@@ -1711,6 +1725,7 @@ class SplitTests(AnswerAndSplitCase):
         self.posted_plan(5, too_large=True, split=parts)
         decision = {"action": "plan", "issue": 5}
         agent = {"output": {"too_large": True, "split": parts}}
+        plan_running(self.gh, self.cfg, 5)
         self.assertTrue(autopilot.carries_on(self.gh, self.cfg, decision, "planned", agent))
         self.sweep()
         self.assertEqual(self.started(), [("plan", 5)])
@@ -1719,6 +1734,7 @@ class SplitTests(AnswerAndSplitCase):
         self.assertEqual(note, autopilot.TITLE_NOTE.format(titles='"Issue 5."'))
         # The new plan repeats the title again: a person decides, and nothing loops.
         self.posted_plan(5, too_large=True, split=parts)
+        plan_running(self.gh, self.cfg, 5, asked=["titles"])
         self.assertFalse(autopilot.carries_on(self.gh, self.cfg, decision, "planned", agent))
         self.sweep()
         self.assertEqual((self.started(), sorted(self.gh.issues)), ([("plan", 5)], [5]))
@@ -1738,6 +1754,7 @@ class SplitTests(AnswerAndSplitCase):
         self.posted_plan(5, too_large=True)
         decision = {"action": "plan", "issue": 5}
         agent = {"output": {"too_large": True, "split": []}}
+        plan_running(self.gh, self.cfg, 5)
         self.assertTrue(autopilot.carries_on(self.gh, self.cfg, decision, "planned", agent))
         self.sweep(pilot())  # without autopilot.answer too
         self.assertEqual(self.started(), [("plan", 5)])
@@ -1746,6 +1763,7 @@ class SplitTests(AnswerAndSplitCase):
         self.assertEqual(self.started(), [("plan", 5)])
         # The new plan suggests no parts again: a person decides, and nothing loops.
         self.posted_plan(5, too_large=True)
+        plan_running(self.gh, self.cfg, 5, asked=["parts"])
         self.assertFalse(autopilot.carries_on(self.gh, self.cfg, decision, "planned", agent))
         self.sweep()
         self.assertEqual(self.started(), [("plan", 5)])
@@ -1769,12 +1787,14 @@ class SplitTests(AnswerAndSplitCase):
         self.posted_plan(5, too_large=True, split=many)
         decision = {"action": "plan", "issue": 5}
         agent = {"output": {"too_large": True, "split": many}}
+        plan_running(self.gh, self.cfg, 5)
         self.assertTrue(autopilot.carries_on(self.gh, self.cfg, decision, "planned", agent))
         self.sweep()
         self.assertEqual((self.started(), sorted(self.gh.issues)), ([("plan", 5)], [5]))
         note = autopilot.FEWER_NOTE.format(parts=len(many), most=state.MAX_PARTS)
         self.assertEqual(self.gh.dispatches[0]["inputs"]["note"], note)
         self.posted_plan(5, too_large=True, split=many)
+        plan_running(self.gh, self.cfg, 5, asked=["fewer"])
         self.assertFalse(autopilot.carries_on(self.gh, self.cfg, decision, "planned", agent))
         self.sweep()
         self.assertEqual((self.started(), sorted(self.gh.issues)), ([("plan", 5)], [5]))

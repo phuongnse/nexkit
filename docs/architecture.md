@@ -38,8 +38,19 @@ engine's calls as a program that reads JSON on standard input.
 | `engine/` | The engine: states and moves in `machine.py`; prompts in `prompt.py` and `prompts/`; `sweep.py` (starts); `cli.py` and `__main__.py` (`nexkit-engine`) and `serve.py` |
 | `templates/` | The caller workflow that `nexkit init` installs in a repository |
 
-`scripts/` holds the smoke test, the pin updates, the release notes, the docs audit, the
-conformance file, the script that freezes the protocol's schemas for a test, and `lint.sh`.
+`scripts/` holds the scripts that maintain NexKit itself:
+
+| Script | Purpose |
+|---|---|
+| `smoke.py` | The smoke test: every agent stage against a real agent runtime |
+| `agent_version.py` | Shows or updates the pin of each agent runtime, for `update-agents.yml` |
+| `image_digest.py` | Shows or updates the pin of the image's base, for `update-image.yml` |
+| `release_notes.py` | Prints a version's release notes |
+| `docs_audit.py` | The docs audit: reads the docs against the code and turns findings into issues |
+| `conformance.py` | Writes the engine's conformance suite as one file, and plays it against an engine |
+| `protocol_freeze.py` | Copies the protocol's schemas to `tests/golden/protocol/`, for a test |
+| `lint.sh` | ruff and actionlint at their pins |
+
 `tests/` holds the checks that [Testing](testing.md) describes.
 
 The reasons for the package's use of the standard library only are in

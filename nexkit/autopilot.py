@@ -1292,8 +1292,9 @@ def _again(gh, cfg, issue, record, now, what, fields, extra=None, person=False, 
     start that `record` names `once` was the one more start of a round that started the
     next by itself, which waits for a person when it does not run either. With `person`,
     the command is a person's, which waits for them. The engine decides each of these
-    (`host.lost_again`), and with `write`, which only the step run of the item's group
-    passes, stores its answer."""
+    (`host.lost_again`) on the item's stored state, which counts the losses, and with `write`,
+    which only the step run of the item's group passes, stores its answer. `record` only says
+    whether the start may run once more."""
     from .host import Refused, lost_again, refused_reason
 
     try:

@@ -9,8 +9,10 @@ changes nothing on GitHub.
 
 A `/nexkit go` that stopped as blocked is placed where the engine puts the round's result, under
 the GitHub host's policies (`Item.after_go`). So is a round that ran out of time, and a fix round
-that stopped as blocked, for an issue that autopilot takes (`Item.after_stop`). A split that an
-issue above the item asked for is in its `asked`.
+that stopped as blocked, for an issue that autopilot takes (`Item.after_stop`). So is a finished
+plan of an issue that autopilot takes, when no collaborator commented after it: the plan's result
+is played through the engine, which keeps its answer and the plan run among the events seen
+(`Item.play_plan`). A split that an issue above the item asked for is in its `asked`.
 
 Each place the import can put an item is one of KINDS, and a case in
 `tests/conformance/imports/` imports each.
@@ -124,6 +126,9 @@ KINDS = {
     "answered": (
         "A round or plan that the engine's answers to a blocked `/nexkit go`, or to a blocked "
         "fix round, start waits for the sweep to start it."
+    ),
+    "plan answered": (
+        "A finished plan of an issue that autopilot takes holds the engine's answer to it."
     ),
     "split asked": (
         "A round that ran out of time waits for the sweep to start the split plan that "
@@ -243,7 +248,9 @@ def situation(
         checking,
     )
     item.place(list(parts), list(blockers), list(waves))
-    if doc["state"] in ANSWERING and "answers" not in doc["asked"] and item.answered():
+    # A played plan holds the `asked` that the engine set.
+    answering = doc["state"] in ANSWERING and item.kind != "plan answered"
+    if answering and "answers" not in doc["asked"] and item.answered():
         doc["asked"].append("answers")
     if fit(doc) is None:
         raise item_state.StateError(f"The state of #{issue['number']} does not fit its limit.")
@@ -383,7 +390,13 @@ class Item:
             self.keep_losses(self.record["command"], target)
             return self.running("started", OF_COMMAND.get(self.record["command"], "planning"))
         if last and not handed_on and last.get("status") in autopilot.ACTIVE:
-            return self.active(last_comment, last, OF_COMMAND.get(last["command"], "planning"))
+            command = last["command"]
+            # A continued run that recorded the command it started (`next`) waits for that
+            # command's run, which `autopilot._handed_on` starts again when it does not come.
+            found = last.get("next") if last.get("status") == autopilot.CONTINUED else None
+            if isinstance(found, dict) and found.get("command") in ("plan", "go"):
+                command = found["command"]
+            return self.active(last_comment, last, OF_COMMAND.get(command, "planning"))
         if last and not handed_on and last.get("outcome") == "lost":
             return self.lost(last, last["command"], self.issue["number"])
         if self.pull and (handed_on or last is None or last["command"] != "plan"):
@@ -545,6 +558,9 @@ class Item:
         plan = self.doc["plan"]
         if run.get("status") != SUCCESS or plan is None:
             return self.be("failed", "failed", "failed", run)
+        played = self.play_plan(run)
+        if played:
+            return played
         if plan["noChange"]:
             return self.be("no change", "noChange")
         ref = plan["text"]["ref"]
@@ -553,6 +569,45 @@ class Item:
         if plan["protectedPaths"]:
             return self.be("planned", "awaitingApproval", "handMadeChange", run, ref=ref)
         return self.be("planned", "awaitingApproval", "approval", run, ref=ref)
+
+    def play_plan(self, run):
+        """The kind of the finished plan of `run`, played through the engine, or None when it is
+        not played. It is played for an issue that autopilot takes, when the run's link names a
+        workflow run, and when no collaborator commented after the plan (a comment on a pull
+        request is not read, as `host.after_plan` reads none). The document is the one while the
+        plan runs (`host._planning`) and the event the plan's result, under the item's own
+        policies. The engine's answer replaces the document at revision 1, with the plan's run
+        among the events seen. When the engine refuses it, or changes nothing, the plan is
+        placed as it waits."""
+        from . import host  # host imports this module
+        from .route import RUN_ID as NAMES
+
+        if not self.taken or not NAMES.search(run.get("url") or ""):
+            return None
+        if not self.pull and autopilot._commented_after(self.comments, self.plan):
+            return None
+        doc = copy.deepcopy(self.doc)
+        doc.update(state="planning", plan=None, attention=None)
+        version = (doc["change"] or {}).get("version")
+        doc["pending"] = [agent_run("plan", version)]
+        doc["asked"] += ["answers"] * autopilot.asked_again(self.comments)
+        event = host._result(self.issue["number"], self.plan, self.data, run, self.doc["change"])
+        policies = host.policies(self.cfg, host.item_profile(self.cfg, self.comments))
+        try:
+            found = host.step(doc, event, policies)
+        except host.Refused:
+            return None
+        if not found.get("changed"):
+            return None
+        self.doc.clear()
+        self.doc.update(found["state"])
+        self.doc["revision"] = REVISION
+        self.seen(event, run)
+        said = str(run.get("attention") or "").strip()
+        if self.doc["attention"] and said:
+            self.doc["attention"]["text"] = clip(said, "reason")
+        self.kind = "plan answered"
+        return self.kind
 
     def round(self, comment, latest):
         """Place an item whose NexKit pull request is open by its latest round, as
@@ -1074,13 +1129,14 @@ def _latest(rows):
 
 
 def _next_state(row, name):
-    """The state of the run that a round started next: a fix round, its own command again,
-    or a review of the head that a branch update or a moved head gave."""
-    if row.get("outcome") in ("auto_fix", "conflict_fix"):
-        return "fixing"
+    """The state of the run that a round started next: the command it recorded (`next`), which
+    autopilot starts again when it does not come, else a fix round, or a review of the head that
+    a branch update or a moved head gave."""
     command = (row.get("next") or {}).get("command")
     if command in OF_COMMAND and command != "plan":
         return OF_COMMAND[command]
+    if row.get("outcome") in ("auto_fix", "conflict_fix"):
+        return "fixing"
     if row.get("outcome") in ("branch_updated", "head_moved", "superseded"):
         return "checking"
     return name

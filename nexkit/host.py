@@ -398,10 +398,7 @@ the decision is the markers' document at the stored revision, with the stored `c
 `first_state.empty` never gives a budget back, and so that NexKit 6's answers stay
 exactly as they are: the import of a finished plan that waits (one of an issue that autopilot does
 not take, or with a collaborator's comment after it) is `awaitingApproval`, which cannot take the
-plan's result, and a second send of one event, such as the plan's result that `report` and the
-step run both send, would be a duplicate. A plan's result keeps the marks of the answers that the
-engine gave to a round's questions (`_carry_replan`), which the markers cannot say, so that a round
-that asks again after such a re-plan is not answered twice in a row. `after_go`, `round_carried_on`,
+plan's result, and a second send of one event would be a duplicate. `after_go`, `round_carried_on`,
 `stopped` and `stop_carried_on` no longer go through it: they pass no document of the markers.
 Nor do `no_change_found`, `on_base_found`, `stage_limited`, `stage_transient`, `stage_untrusted`
 and `resumes`, which decide on the stored state alone, and neither do `command`, `_on_base`,
@@ -412,14 +409,19 @@ first as a `held` event. So do
 sweep's looks at a merge that waits for required checks or that GitHub refused, and what the
 merge finds. So do `required_failed`, `accept_answer` and `update_failed`. `first_plan` and
 `approved` pass none either, and neither does `vouched`. Nor does `lost_again`. Nor do
-`plan_carried_on` and `plan_waits_for`: the plan's `report` sends the plan's result once for every
-plan of an issue that autopilot takes, naming the plan run that the stored outbox holds
-(`pending_id`) and echoing its change version, and stores the answer, whatever it is. The import of
-a finished plan of such an issue, with no collaborator's comment after it, plays that result
-through the engine under the item's own policies (`first_state.Item.play_plan`), so the stored
-state already holds the answer: its outbox, such as the implement run of a clean plan, and the plan
-run's id among the events seen. The sweep and the step run (`after_plan`) still build their
-document from the markers.
+`plan_carried_on`, `plan_waits_for` and `after_plan`: the plan's `report` sends the plan's result
+once for every plan of an issue that autopilot takes, naming the plan run that the stored outbox
+holds (`pending_id`) and echoing its change version, and stores the answer, whatever it is. The
+import of a finished plan of such an issue, with no collaborator's comment after it, plays that
+result through the engine under the item's own policies (`first_state.Item.play_plan`), so the
+stored state already holds the answer: its outbox, such as the implement run of a clean plan, and
+the plan run's id among the events seen. The sweep and the step run (`after_plan`) decide on the
+stored state alone too: they send the engine only what it has not seen, the plan's result while the
+stored state waits for that plan run and has seen neither its result nor a comment after the plan,
+and a collaborator's comment after the plan that the state has not taken, and carry out the stored
+outbox (a close, a split, a start, with autopilot's answers when the outbox shows them, or a wait
+for a person). The marks of a new plan are autopilot's record before the answer and the stored
+`asked` after it.
 Nor do `round_ended` and `after_round` through it: a round's checks and review decide on the
 stored state alone, and the counts of automatic fix rounds and of a transient review's runs again
 are the stored `rounds` and `again`, never the round's command or NexKit 6's state comment.
@@ -479,7 +481,7 @@ from . import autopilot, first_state, item_state, program, protocol, usage
 from . import config as configuration
 from .checks import failing_signatures
 from .github import TRUSTED_ASSOCIATIONS, GitHubError
-from .protocol.size import LONGEST, MOST
+from .protocol.size import MOST
 from .report import TOO_LARGE
 from .schema import filled
 from .state import (
@@ -686,41 +688,6 @@ def _number(options, text):
     return options.index(text) + 1 if text and text in options else 0
 
 
-def _document(issue, record, plan=None, data=None, change=None):
-    """The document of `issue` as NexKit 6's markers leave it for a decision after a plan:
-    its title, what autopilot's `record` asked for, and the plan comment `plan` with its record
-    `data`, if given, and its pull request's `change`."""
-    doc = first_state.empty(str(issue["number"]))
-    doc["title"] = str(issue.get("title") or "")[: LONGEST["title"]]
-    doc["change"] = change
-    doc["plan"] = first_state.plan_of(plan, data, False) if plan else None
-    doc["asked"] = [name for key, name in first_state.ASKED.items() if record.get(key)]
-    return doc
-
-
-def _planning(doc, depth, again):
-    """`doc` while its plan runs, which the engine waits for. `again` says that autopilot's
-    answers started this plan and no person commented since (`autopilot.asked_again`)."""
-    doc.update(state="planning", depth=depth)
-    doc["pending"] = [first_state.agent_run("plan", (doc["change"] or {}).get("version"))]
-    doc["asked"] += ["answers"] * again
-    return doc
-
-
-def _waiting(doc):
-    """`doc` while its plan waits. NexKit 6 decides after a plan at the next sweep, so a
-    comment that came before that sweep is taken on the plan as it waits."""
-    plan = doc["plan"]
-    reason = "question" if plan["questions"] else "approval"
-    doc["state"] = "awaitingApproval"
-    doc["attention"] = {
-        "reason": reason,
-        "text": first_state.SAYS[reason],
-        "ref": plan["text"]["ref"],
-    }
-    return doc
-
-
 # The kinds of source that name an event: a comment, a review, an event of the issue events API,
 # a dispatch (by its run) and an agent's result (by its run).
 SOURCES = item_state.SOURCES
@@ -781,14 +748,6 @@ def _person(login, role):
     return {"id": login or "someone", "role": role}
 
 
-def _depth(gh, issue, data):
-    """How deep a part `issue` is, read only for a plan that is too large, the one decision
-    that reads it, as NexKit 6 reads it."""
-    if not (data or {}).get("too_large"):
-        return 0
-    return autopilot.depth(issue, autopilot.lineage(gh, issue))
-
-
 def _picked(text, data):
     """(question, option, text) of the option that only closes the issue that a person's
     `text` picks among the questions of the plan record or run marker `data`, or None
@@ -803,17 +762,16 @@ def _picked(text, data):
     return None
 
 
-def _said(gh, number, comment, picked, doc):
-    """The event of a collaborator's `comment` on the plan that waits in `doc`: an answer
-    when it picks the option that only closes the issue, which `picked` names, otherwise a
-    comment."""
+def _said(gh, number, comment, picked, asked):
+    """The event of a collaborator's `comment` on the plan that waits, whose text the ref
+    `asked` names: an answer when it picks the option that only closes the issue, which `picked`
+    names, otherwise a comment."""
     by = (comment.get("user") or {}).get("login") or ""
     at = comment.get("created_at")
     if picked:
         # Closing is a write: a collaborator who may only read changes the plan at most.
         role = "writer" if by and gh.can_write(by) else "reader"
         answers = [{"question": picked[0], "option": picked[1]}]
-        asked = doc["attention"]["ref"]
         name = event_id("comment", comment)
         fields = {"by": _person(by, role), "answers": answers, "note": "", "asked": asked}
         return _event("answered", number, at, name, **fields)
@@ -1448,32 +1406,50 @@ def close_done(gh, cfg, number):
 def after_plan(gh, cfg, issue, plan, run, record, start, comments, pull=None, write=False):
     """The step after the latest plan of `issue`, the comment `plan` that the run `run`
     posted, as the engine decides it: with `pull`, the plan autopilot asked for after a round
-    of that pull request ran out of time. A collaborator's comment after an issue's plan comes
-    first (`autopilot._assess`). `record` is autopilot's record and `start` what a command
-    that the step starts begins from. With `write`, which only the run of the item's group
-    passes, the engine's answer is stored (`decide`). Raises `Refused`."""
-    number = issue["number"]
-    data = plan_data(plan)
+    of that pull request ran out of time. It decides on the item's stored state alone and carries
+    out what its outbox holds after the plan: a close, a split, a start or a wait for a person.
+    The engine is sent only what it has not seen: the plan's result, when the stored state still
+    waits for that plan run, has not seen its result and has taken no comment after the plan (the
+    plan's report could not store its answer), and a collaborator's comment after an issue's plan
+    (`autopilot._assess`), when the stored state has not taken it. When the stored state holds
+    nothing to carry out, the item waits for a person. `record` is autopilot's record, which gives
+    the marks of the plan's own re-plan before the answer, and `start` what a command that the
+    step starts begins from. With `write`, which only the run of the item's group passes, the
+    engine's answer is stored (`decide`). Raises `Refused`, with no configuration."""
+    if cfg is None:
+        raise Refused(NO_CONFIG)
+    number, data = issue["number"], plan_data(plan)
     said = [] if pull else autopilot._commented_after(comments, plan)
     picked = _picked(said[-1].get("body"), data) if said else None
-    if said:
-        doc = _waiting(_document(issue, record, plan, data))
-        event = _said(gh, number, said[-1], picked, doc)
-    else:
-        change = None
-        if pull:
-            change = {"id": str(pull), "version": gh.pull(pull)["head"]["sha"]}
-        doc = _document(issue, record, change=change)
-        if pull:
-            # The plan that a round that ran out of time asked for: its split withdraws the change.
-            doc["asked"].append("supersede")
-        doc = _planning(doc, _depth(gh, issue, data), autopilot.asked_again(comments))
-        doc = _carry_replan(gh, cfg, number, doc)
-        event = _result(number, plan, data, run, change)
-    action = None if said else ("runAgent", "plan")
-    state, actions = decide(gh, cfg, number, event, doc, pull=pull, action=action, write=write)
+    result_id = _run_event_id(run.get("url"))
+
+    def row(state):
+        if state is None:
+            raise Refused("The item has no state to decide on.")
+        seen = set(state["recentEvents"])
+        told = any(event_id("comment", comment) in seen for comment in said)
+        running = next(
+            (a for a in state["pending"] if a["kind"] == "runAgent" and a.get("stage") == "plan"),
+            None,
+        )
+        events = []
+        # A plan run that the comment after the plan started is not this plan's.
+        if running and result_id not in seen and not told:
+            change = {"version": running.get("changeVersion")}
+            events.append(_result(number, plan, data, run, change))
+        if said and event_id("comment", said[-1]) not in seen:
+            asked = (state.get("attention") or {}).get("ref") or str(plan["id"])
+            events.append(_said(gh, number, said[-1], picked, asked))
+        return events
+
+    def named(events):
+        return [("runAgent", "plan") if e["kind"] == "actionFinished" else None for e in events]
+
+    state, _ = decide_all(gh, cfg, number, row, None, pull=pull, action=named, write=write)
+    before = [name for name, key in REMEMBER.items() if record.get(key)]
+    after = [name for name in state["asked"] if name in REMEMBER]
     view = _PlanView(issue, plan, data, run, start, pull, picked, said)
-    return view.carry(actions, doc["asked"], state["asked"])
+    return view.carry(state["pending"], before, after)
 
 
 class _PlanView:
@@ -1483,19 +1459,33 @@ class _PlanView:
         self.issue, self.plan, self.data, self.run = issue, plan, data or {}, run
         self.start, self.pull, self.picked, self.said = start, pull, picked, said
 
-    def carry(self, actions, before, after):
-        kinds = {action["kind"]: action for action in actions}
+    def carry(self, pending, before, after):
+        """The step for what the stored outbox `pending` holds, the first action of each kind
+        (`show` and `cancel` carry nothing out). `before` and `after` are the marks of the
+        re-plans that autopilot's record and the stored state hold."""
+        kinds = {}
+        for action in pending:
+            if action["kind"] not in ("show", "cancel"):
+                kinds.setdefault(action["kind"], action)
         if "close" in kinds:
             return self.closed(kinds["close"])
         if "createParts" in kinds:
             return self.split(kinds["createParts"], kinds.get("withdrawChange"))
         if "runAgent" in kinds:
-            shown = any(a["kind"] == "show" and a["what"] == "answers" for a in actions)
+            run = kinds["runAgent"]
+            # Answers that the same answer of the engine showed, not an older one still pending.
+            prefix = str(run["id"]).split(".")[0]
+            shown = any(
+                a["kind"] == "show"
+                and a.get("what") == "answers"
+                and str(a["id"]).split(".")[0] == prefix
+                for a in pending
+            )
             asked = [name for name in after if name not in before]
-            return self.started(kinds["runAgent"], shown, asked)
+            return self.started(run, shown, asked)
         if "needPerson" in kinds:
             return self.waits(kinds["needPerson"]["reason"])
-        raise Refused("The engine answered nothing to carry out.")
+        raise Refused("The item's stored state holds nothing to carry out after its plan.")
 
     def step(self, state, reason="", **fields):
         return autopilot._step(self.issue, state, reason, **fields)
@@ -1503,6 +1493,8 @@ class _PlanView:
     def closed(self, close):
         url = self.plan.get("html_url") or ""
         if close["outcome"] == "notPlanned":
+            if not self.said or not self.picked:
+                raise Refused("The engine closes the issue as not planned with no answer to it.")
             by = (self.said[-1].get("user") or {}).get("login") or ""
             reason = f"@{by} answered with the option that only closes the issue"
             return self.step("close", reason, answer=self.picked[2], by=by, asked=url)
@@ -1600,21 +1592,6 @@ class _PlanView:
         else:
             raise Refused(f"The engine waits for a person for {reason!r} after a plan.")
         return self.step("waits", text)
-
-
-# The marks of `asked` for the answers that the engine gave (`machine.ANSWERED`).
-ANSWERED_MARKS = ("answers", "replan")
-
-
-def _carry_replan(gh, cfg, number, doc):
-    """`doc`, the document that NexKit 6's markers leave for the result of a plan, with the marks
-    of the answers that the engine gave to a round's questions when the stored state holds a
-    re-plan: the markers cannot say that such a plan carries them on to the round after it, so
-    that a round that asks again is not answered a second time in a row."""
-    held = stored(gh, cfg, number)[1] if cfg is not None else None
-    if held is not None and "replan" in held["asked"]:
-        doc["asked"] = [*doc["asked"], *(m for m in ANSWERED_MARKS if m not in doc["asked"])]
-    return doc
 
 
 def _plan_version(gh, cfg, number):

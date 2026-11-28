@@ -1747,6 +1747,8 @@ class SplitTests(AnswerAndSplitCase):
         )
         self.assertEqual((step["state"], step["reason"]), ("waits", reason))
         # A plan with parts titled by their own behaviour splits.
+        # A person asks for another plan, which the engine's wait for a person ends.
+        plan_running(self.gh, self.cfg, 5)
         self.posted_plan(5, too_large=True, split=self.PARTS)
         self.sweep()
         self.sweep()
@@ -1776,6 +1778,8 @@ class SplitTests(AnswerAndSplitCase):
         )
         self.assertEqual((step["state"], step["reason"], step["person"]), ("waits", reason, True))
         # A plan with parts splits.
+        # A person asks for another plan, which the engine's wait for a person ends.
+        plan_running(self.gh, self.cfg, 5)
         self.posted_plan(5, too_large=True, split=self.PARTS)
         self.sweep()
         self.sweep()
@@ -1805,6 +1809,8 @@ class SplitTests(AnswerAndSplitCase):
         why = f"its plan has {len(many)} parts again, and autopilot files at most {state.MAX_PARTS}"
         self.assertEqual(step["reason"], autopilot.person(autopilot.SPLIT_DO, why))
         # A plan with fewer parts splits.
+        # A person asks for another plan, which the engine's wait for a person ends.
+        plan_running(self.gh, self.cfg, 5)
         self.posted_plan(5, too_large=True, split=self.PARTS)
         self.sweep()
         self.sweep()
@@ -5520,7 +5526,10 @@ class StoredStateDecisionsTests(AutopilotCase):
         self.assertEqual(self.revisions(), {5: 1, 6: 1, 7: 1})
         for number in (5, 6, 7):
             autopilot.assess(self.gh, self.cfg, self.gh.issues[number], {}, write=True)
-            self.assertEqual(item_state.read(self.gh, number)[1]["revision"], 2, number)
+            # The import played the plans of #5 and #7, so their answers are stored and the step
+            # run sends the engine nothing for them.
+            moved = 2 if number == 6 else 1
+            self.assertEqual(item_state.read(self.gh, number)[1]["revision"], moved, number)
         # What was stored is the engine's answer, and the sweep still reads the same steps.
         _, again = autopilot.preview(self.gh, self.cfg)
         self.assertEqual(
@@ -5529,5 +5538,8 @@ class StoredStateDecisionsTests(AutopilotCase):
         )
 
     def test_the_step_run_stores_the_answer_of_its_own_issue(self):
+        autopilot.step(self.gh, self.cfg, 6, "nexkit.yml", "main")
+        self.assertEqual(self.revisions(), {5: 1, 6: 2, 7: 1})
+        # #5's plan was played by the import, so its step run stores nothing more.
         autopilot.step(self.gh, self.cfg, 5, "nexkit.yml", "main")
-        self.assertEqual(self.revisions(), {5: 2, 6: 1, 7: 1})
+        self.assertEqual(self.revisions(), {5: 1, 6: 2, 7: 1})

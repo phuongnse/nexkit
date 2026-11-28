@@ -575,10 +575,10 @@ class Item:
         not played. It is played for an issue that autopilot takes, when the run's link names a
         workflow run, and when no collaborator commented after the plan (a comment on a pull
         request is not read, as `host.after_plan` reads none). The document is the one while the
-        plan runs (`host._planning`) and the event the plan's result, under the item's own
-        policies. The engine's answer replaces the document at revision 1, with the plan's run
-        among the events seen. When the engine refuses it, or changes nothing, the plan is
-        placed as it waits."""
+        plan runs (the state `planning`, with its plan run pending) and the event the plan's
+        result, under the item's own policies. The engine's answer replaces the document at
+        revision 1, with the plan's run among the events seen. When the engine refuses it, or
+        changes nothing, the plan is placed as it waits."""
         from . import host  # host imports this module
         from .route import RUN_ID as NAMES
 

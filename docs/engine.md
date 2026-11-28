@@ -520,15 +520,20 @@ adapter's tests and the answers as what its adapter carries out.
 1. The engine grew inside NexKit 6: decisions moved behind the protocol one by one, and every
    decision of the loop is now its own. Most of the GitHub host's decisions decide on the item's
    stored state document, or on the import in memory when none is stored, and store the engine's
-   answer in the item's group, a row of events as one write. Four kinds still build the document from
+   answer in the item's group, a row of events as one write. Three kinds still build the document from
    NexKit 6's markers, as its import reads them, and use the stored one only where it says what the
-   markers say (`resync`): what follows a plan in the sweep and the step run (`after_plan`), a
-   round's end (`after_round`, `round_ended`), a conflict when a round publishes (`conflicting`) and
-   the checks that a fix round diagnoses (`diagnosis`). A person's command and a closing command
-   decide on the stored state too.
+   markers say (`resync`): a round's end (`after_round`, `round_ended`), a conflict when a round
+   publishes (`conflicting`) and the checks that a fix round diagnoses (`diagnosis`). A person's
+   command and a closing command decide on the stored state too.
    The plan's report sends the plan's result to the engine once for every plan of an issue that
    autopilot takes, a clean plan and one that finds no change too, and stores the answer. Asking
-   what a plan waits for reads the stored state alone and stores nothing.
+   what a plan waits for reads the stored state alone and stores nothing. The sweep's and the step
+   run's decision after a plan (`after_plan`) decides on the stored state alone too, and sends the
+   engine only what it has not seen: the plan's result, while the stored state waits for that plan
+   run and has seen neither its result nor a comment after the plan, and a collaborator's comment
+   after the plan that the state has not taken. It then carries out what the stored outbox holds (a
+   close, a split, a start or a wait for a person), and an item that holds nothing to carry out
+   waits for a person with the reason.
    A blocked or failed `/nexkit go`, a fix round that stopped as blocked and a round that ran out
    of time decide on the stored document alone, including its `depth` and `asked`: `report` sends
    the round's result on the state that waits for the round's agent run, and the sweep sends it

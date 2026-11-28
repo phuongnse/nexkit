@@ -21,49 +21,11 @@ from ..protocol.size import (
     fit,
     signature,
 )
+from ..protocol.stages import ACCESS, INPUTS, RUNS
 from ..schema import filled
-from .textutil import clip as clip_text
+from ..textutil import clip as clip_text
 
 FINAL = ("accepted", "noChange", "dropped")
-# The state that runs each stage's agent.
-RUNS = {"plan": "planning", "implement": "working", "fix": "fixing", "review": "reviewing"}
-ACCESS = {"triage": "none", "plan": "read", "review": "read", "implement": "write", "fix": "write"}
-# The texts each stage's prompt is written from (`prompt.write`), by the kinds of runAgent's
-# `inputs`: the host fetches them for the `prompt` call.
-INPUTS = {
-    "triage": ["item", "discussion", "notes", "previousPlan"],
-    "plan": [
-        "item",
-        "discussion",
-        "notes",
-        "previousPlan",
-        "linked",
-        "evidence",
-        "parts",
-        "workspace",
-    ],
-    "implement": ["item", "discussion", "notes", "plan", "linked", "evidence", "workspace"],
-    "fix": [
-        "item",
-        "discussion",
-        "notes",
-        "plan",
-        "checks",
-        "linked",
-        "evidence",
-        "diff",
-        "workspace",
-    ],
-    "review": [
-        "item",
-        "discussion",
-        "plan",
-        "checks",
-        "linked",
-        "diff",
-        "workspace",
-    ],
-}
 # The actions that carry an item on (docs/engine.md#conformance). Each belongs to the state
 # that asked for it, so the engine cancels the ones that run when the item leaves that state.
 # The others stay pending until the host reports them done, whatever the state.

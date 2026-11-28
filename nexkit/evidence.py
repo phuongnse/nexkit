@@ -27,9 +27,9 @@ from pathlib import Path, PurePosixPath
 
 from .autopilot import CI_RUNS, FAILED, on_default_branch
 from .checks import _is_text, size_text
-from .engine.textutil import since_text
 from .github import LOG_CUT, TRUSTED_ASSOCIATIONS, GitHubError
 from .state import bot_record, by_bot
+from .textutil import since_text
 
 # A link to a run, an attempt of it, or a job of it.
 RUN_LINK = re.compile(

@@ -425,9 +425,9 @@ import time
 from . import autopilot, engine, first_state, item_state, protocol, usage
 from . import config as configuration
 from .checks import failing_signatures
-from .engine.machine import RUNS
 from .github import TRUSTED_ASSOCIATIONS, GitHubError
 from .protocol.size import LONGEST, MOST
+from .protocol.stages import RUNS
 from .report import TOO_LARGE
 from .schema import filled
 from .state import (

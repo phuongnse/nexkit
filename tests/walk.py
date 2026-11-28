@@ -168,8 +168,9 @@ class Walker:
 
     def __init__(self):
         from nexkit import engine, protocol
-        from nexkit.engine.machine import DEFAULTS, RUNS, _later
+        from nexkit.engine.machine import DEFAULTS, _later
         from nexkit.protocol.size import failure_key
+        from nexkit.protocol.stages import RUNS
         from tests import test_conformance as tc
 
         self.engine, self.protocol, self.tc = engine, protocol, tc

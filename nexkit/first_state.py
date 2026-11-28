@@ -25,10 +25,9 @@ from datetime import UTC, datetime
 from . import autopilot, item_state, protocol
 from .autopilot import CHAINED, CI_WAITING, HELD, PULL_CLOSED, UNTRUSTED_MERGE, UNTRUSTED_ROUND
 from .checks import failing_signatures
-from .engine.machine import ACCESS, INPUTS
-from .engine.textutil import clip as clip_text
 from .github import TRUSTED_ASSOCIATIONS
 from .protocol.size import HISTORY, LONGEST, MOST, clip, failure_key, fit, signature
+from .protocol.stages import ACCESS, INPUTS
 from .schema import filled
 from .state import (
     COMMIT,
@@ -49,6 +48,7 @@ from .state import (
     run_action,
     run_comments,
 )
+from .textutil import clip as clip_text
 from .usage import PAUSE_WINDOW, iso, parse_iso
 
 # The most blockers an imported item waits for; the state keeps at most 64 waits.

@@ -13,7 +13,7 @@ from pathlib import Path
 from unittest import mock
 
 from nexkit import checks
-from nexkit.engine import textutil as engine_text
+from nexkit import textutil as engine_text
 from nexkit.state import check_fingerprint
 from tests.support import GitRepos, git, make_config
 

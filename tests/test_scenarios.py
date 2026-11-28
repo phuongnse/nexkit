@@ -1150,6 +1150,26 @@ class ScenarioTests(unittest.TestCase):
         vouches = [e for e in events if e.get("kind") == "requested" and e.get("what") == "trust"]
         self.assertEqual(len(vouches), 1)
 
+    def test_the_engine_gets_a_clean_plan_s_result_once_and_the_go_starts_from_the_stored_outbox(
+        self,
+    ):
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else done()
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5)
+        with mock.patch.object(host.program, "call", wraps=host.program.call) as answer:
+            self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
+        [run] = [r["run"] for r in pipe.gh.run_comments(5) if r["run"]["command"] == "plan"]
+        named = host._run_event_id(run["url"])
+        events = [call.args[1].get("event") or {} for call in answer.call_args_list]
+        results = [e for e in events if e.get("kind") == "actionFinished" and e["id"] == named]
+        # The plan's report stores the engine's answer, so the sweep and the step run send the
+        # result no more, and the go starts from the outbox with no `requested` event of its own.
+        self.assertEqual(len(results), 1)
+        starts = [e for e in events if e.get("kind") == "requested" and e.get("what") == "go"]
+        self.assertEqual(starts, [])
+
     def test_an_untrusted_edit_that_stops_a_merge_is_stored_as_ready_for_a_person(self):
         def at(days):
             return (datetime.now(UTC) + timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")

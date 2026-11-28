@@ -527,8 +527,13 @@ adapter's tests and the answers as what its adapter carries out.
    item's document from NexKit 6's markers, as its import reads them. The plan's report sends the
    plan's result to the engine once for every plan of an issue that autopilot takes, a clean plan
    and one that finds no change too, and stores the answer, and asking what a plan waits for reads
-   the stored state alone and stores nothing. The ones that follow a plan (the sweep's and the
-   step run's), start a new issue's first plan, follow a merge and its refusals,
+   the stored state alone and stores nothing. The sweep's and the step run's decision after a
+   plan decides on the stored state alone too, and sends the engine only what it has not seen: the
+   plan's result, while the stored state waits for that plan run and has seen neither its result
+   nor a comment after the plan, and a collaborator's comment after the plan that the state has
+   not taken. It then carries out what the stored outbox holds (a close, a split, a start or a
+   wait for a person), and an item that holds nothing to carry out waits for a person with the
+   reason. The ones that start a new issue's first plan, follow a merge and its refusals,
    and end a pull request's round, a conflict or a wait read the stored
    document, which they use only where it says what the markers say, and store the engine's answer
    in the item's group, a row of events as one write. A blocked or failed `/nexkit go`, a fix round

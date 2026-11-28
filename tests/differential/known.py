@@ -545,6 +545,170 @@ KNOWN += [
 ]
 
 
+def _decided(record):
+    """The action of the decision that `route` made in `record`, or None."""
+    found = record.get("decision")
+    return found.get("action") if isinstance(found, dict) else None
+
+
+KNOWN += [
+    {
+        "name": "a plan while a NexKit pull request is open",
+        "family": "command",
+        "by": "#706",
+        "why": (
+            "NexKit 6 started a plan for `/nexkit plan` on an issue whose NexKit pull request is "
+            "open, which `/nexkit go` could not carry on anyway. The engine decides on the stored "
+            "state, which holds that change, and refuses: its reply names the pull request and "
+            "sends the person to `/nexkit fix`, as `/nexkit go` does. NexKit sends no plan "
+            "there by itself. Only the plan of a command or a dispatch on an issue with an open "
+            "pull request is excused."
+        ),
+        "match": lambda sc, old, new: (
+            sc["command"] == "plan"
+            and sc["target"] in ("issue_pull", "issue_pull_unplanned")
+            and _decided(old) == "plan"
+            and _decided(new) == "none"
+            and "Pull request #6 is already open" in new["decision"]["reason"]
+        ),
+    },
+    {
+        "name": "a dispatch while the implement round still runs",
+        "family": "command",
+        "by": "#706",
+        "why": (
+            "NexKit 6 started the fix or review that NexKit's own dispatch named on a pull "
+            "request whose implement round has not reported, as `route` read only that the pull "
+            "request is open. The engine decides on the stored state, in which the item still "
+            "waits for the round's report, and refuses. NexKit dispatches a fix or a review "
+            "only after a round reported, so no run reaches it. A person's command gets "
+            "NexKit 6's reply. Only a dispatch of a fix or a review there is excused."
+        ),
+        "match": lambda sc, old, new: (
+            sc["target"] == "pull_running"
+            and sc["source"] in ("dispatch", "auto", "conflicts")
+            and sc["command"] in ("fix", "review")
+            and _decided(old) == sc["command"]
+            and _decided(new) == "none"
+        ),
+    },
+]
+
+
+def _refused_dispatch(old, new):
+    """Whether `new`, the decision `route` made for NexKit's dispatch of a fix or a review, is the
+    engine's refusal where NexKit 6's `old` started it, or sent it away as a conflict round that
+    already ran."""
+    if not (isinstance(old, dict) and isinstance(new, dict)):
+        return False
+    started = old.get("action") in ("fix", "review")
+    tried = "A conflict round already ran" in (old.get("reason") or "")
+    refused = new.get("action") == "none" and "it starts nothing for" in (new.get("reason") or "")
+    return refused and (started or tried)
+
+
+def _differs_only_in(left, right, keys):
+    """Whether the dicts `left` and `right` differ in no key but `keys`."""
+    return all(left.get(key) == right.get(key) for key in {*left, *right} - set(keys))
+
+
+def _after_a_refused_round(sc, old, new):
+    """For the families that dispatch one round after another (`diag`, `many`): whether every
+    round before the first one that differs is equal, and that round, or the last automatic or
+    person's dispatch, is a dispatch that the engine refuses. What follows the refusal is
+    not compared: the round did not run."""
+    for before, after in zip(old.get("rounds", []), new.get("rounds", []), strict=False):
+        if before != after:
+            only = _differs_only_in(before, after, ("route", "report", "start"))
+            return only and _refused_dispatch(before.get("route"), after.get("route"))
+    for key in ("last_auto", "last_person"):
+        if old.get(key) != new.get(key):
+            return _refused_dispatch(old.get(key), new.get(key))
+    return False
+
+
+def _after_a_refused_review(sc, old, new):
+    """For the `review` family: whether the round's report is equal and the first dispatch that
+    differs is one that the engine refuses. What follows it is not compared."""
+    if old.get("report") != new.get("report"):
+        return False
+    for key in ("route", "route2", "route3"):
+        if old.get(key) != new.get(key):
+            return _refused_dispatch(old.get(key), new.get(key))
+    return False
+
+
+def _undiagnosed(old, new):
+    """Whether `new`, the decision for a dispatch of a fix round, is `old` without the checks that
+    the round diagnoses: the stored state holds the round as the import left it."""
+    if not (isinstance(old, dict) and isinstance(new, dict)):
+        return False
+    same = _differs_only_in(old, new, ("diagnose",))
+    return same and old.get("action") == "fix" and bool(old.get("diagnose")) and not new["diagnose"]
+
+
+def _only_refused_probes(sc, old, new):
+    """For the `chains` family, which probes the dispatches of the next round after each round
+    and never carries them out: whether every step before the first one that differs is equal,
+    and that step differs only in a probe that the engine refuses, or whose carried fix round
+    diagnoses no checks. What follows is not compared: the probes decided on the stored state
+    stored what they decided there."""
+    for one, other in zip(old.get("steps", []), new.get("steps", []), strict=False):
+        if one == other:
+            continue
+        if not _differs_only_in(one, other, ("routes",)):
+            return False
+        probes = {*one["routes"], *other["routes"]}
+        found = [(one["routes"].get(auto), other["routes"].get(auto)) for auto in probes]
+        found = [(was, now) for was, now in found if was != now]
+        return all(_refused_dispatch(was, now) or _undiagnosed(was, now) for was, now in found)
+    return False
+
+
+KNOWN += [
+    {
+        "name": "a dispatch for which the stored state holds no round",
+        "family": family,
+        "by": "#706",
+        "why": (
+            "These families dispatch a fix or a review in any order after any round, with no "
+            "regard for the state that the rounds before left. NexKit 6 started each one, as "
+            "`route` read only that the pull request is open. The engine decides on the stored "
+            "state and refuses a dispatch when no round of that kind is pending, with its own "
+            "reason, which NexKit never meets: it dispatches only the round that the engine "
+            "started and stored. Only a record whose first difference is such a refusal is "
+            "excused, and a round that follows it did not run, so it is not compared."
+        ),
+        "match": match,
+    }
+    for family, match in (
+        ("diag", _after_a_refused_round),
+        ("many", _after_a_refused_round),
+        ("review", _after_a_refused_review),
+    )
+]
+
+KNOWN += [
+    {
+        "name": "a dispatch for which the stored state holds no round, probed",
+        "family": "chains",
+        "by": "#706",
+        "why": (
+            "After each round this family probes how `route` would dispatch the next fix round, "
+            "in five ways, and carries none out. NexKit 6 started each probe. The engine decides "
+            "on the stored state and refuses a probe when no round of that kind is pending, "
+            "which NexKit never meets. A round that it does carry out comes from the stored "
+            "outbox, which holds the fix round as the import left it, with no checks to "
+            "diagnose, where NexKit 6 named the checks that failed the same way before. Each probe "
+            "that the engine accepts stores its answer, so what follows the first step with "
+            "such a probe is not compared. Only a record whose first difference is such probes "
+            "is excused."
+        ),
+        "match": _only_refused_probes,
+    }
+]
+
+
 KNOWN += [
     {
         "name": "a held conflict round keeps the policies it started with",

@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from unittest import mock
 
-from nexkit import agent, autopilot, cli, host, item_state
+from nexkit import agent, autopilot, cli, first_state, host, item_state
 from nexkit.github import GitHubError, run_url
 from nexkit.maintain import is_conflicting, maintain, resolve_conflicts
 from nexkit.report import _not_up_to_date
@@ -299,6 +299,16 @@ class SupersededTests(unittest.TestCase):
     def next_round(self):
         """The decision of the automatic review that the stop started, as `nexkit route`
         gives it once it read the configuration."""
+        # The stop stored the checks of the review that follows it as pending, which the
+        # dispatch carries out.
+        host.store_import(self.gh, self.cfg, 5)
+        comment, held = item_state.read(self.gh, 5)
+        carried = [a for a in held["pending"] if a["kind"] == "runChecks"]
+        if not carried or carried[0]["id"] == first_state.RUN_ID:
+            checks = {"id": "a2.1", "next": None, "kind": "runChecks", "changeVersion": "a" * 40}
+            asked = {**held, "revision": held["revision"] + 1, "state": "checking"}
+            asked["pending"] = [checks]
+            self.assertTrue(item_state.write(self.gh, 5, asked, (comment, held)))
         inputs = {"command": "review", "number": "6", "auto": "true"}
         decision = route(
             self.gh, "workflow_dispatch", {"sender": {"login": "x"}}, inputs, cfg=self.cfg
@@ -634,14 +644,23 @@ class RouteTests(unittest.TestCase):
                 "[implement round](https://github.com/acme/app/actions/runs/40)", decision["reason"]
             )
             self.assertIn("one NexKit round at a time", decision["reason"])
-        # The rounds that the implement round starts itself as it ends go on.
+        # The rounds that the implement round starts itself as it ends go on: its stored state
+        # holds the checks that it asked for, which the dispatch carries out.
+        self.assertTrue(host.store_import(self.gh, self.cfg, 5))
+        comment, held = item_state.read(self.gh, 5)
+        checks = {"id": "a2.1", "next": None, "kind": "runChecks", "changeVersion": "a" * 40}
+        asked = {**held, "revision": 2, "state": "checking", "pending": [checks]}
+        self.assertTrue(item_state.write(self.gh, 5, asked, (comment, held)))
         inputs = {"command": "review", "number": "6", "note": "", "auto": "retry"}
         dispatch = route(
             self.gh, "workflow_dispatch", {"sender": {"login": BOT_LOGIN}}, inputs, cfg=self.cfg
         )
         self.assertEqual(dispatch["action"], "review")
-        # Once it ended, the command runs.
+        # Once it ended, its report left the pull request ready for a person, and the command runs.
         self.gh.comment(5, render_run({**go, "status": "success"}))
+        comment, held = item_state.read(self.gh, 5)
+        ready = {**held, "revision": held["revision"] + 1, "state": "ready", "pending": []}
+        self.assertTrue(item_state.write(self.gh, 5, ready, (comment, held)))
         fix = route(
             self.gh, "issue_comment", comment_event(6, "/nexkit fix", on_pull=True), cfg=self.cfg
         )

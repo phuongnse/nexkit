@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
-from nexkit import autopilot, host, item_state, state
+from nexkit import autopilot, first_state, host, item_state, state
 from nexkit import maintain as maintain_module
 from nexkit.engine.textutil import TEXT_LIMIT
 from nexkit.github import GitHubError
@@ -63,6 +63,21 @@ class AutopilotCase(unittest.TestCase):
         self.gh = FakeGitHub()
         self.cfg = pilot()
         self.runs = 0
+
+    def stored_for(self, issue):
+        """Store the first state of `issue` and give the action of NexKit 6's run that the import
+        left pending an id of its own, as the step run that started the command stored it: a
+        dispatch of NexKit's own carries out a stored action (`host._carried`), never the
+        import's."""
+        host.store_import(self.gh, self.cfg, issue)
+        comment, doc = item_state.read(self.gh, issue)
+        pending = [
+            {**action, "id": f"a9.{place}"} if action["id"] == first_state.RUN_ID else action
+            for place, action in enumerate(doc["pending"], 1)
+        ]
+        if pending != doc["pending"]:
+            found = {**doc, "revision": doc["revision"] + 1, "pending": pending}
+            self.assertTrue(item_state.write(self.gh, issue, found, (comment, doc)))
 
     def issue(self, number, **kw):
         kw.setdefault("milestone", 1)
@@ -958,6 +973,7 @@ class TriggerTests(AutopilotCase):
         self.issue(5)
         self.maintain({"action": "maintain", "task": "sweep"})
         [inputs] = [d["inputs"] for d in self.gh.dispatches]
+        self.stored_for(5)
         decision = route(
             self.gh, "workflow_dispatch", {"sender": {"login": "bot"}}, inputs, cfg=self.cfg
         )
@@ -3512,12 +3528,13 @@ class CIWaitTests(AutopilotCase):
             self.fixes(),
             [{"command": "fix", "number": str(p), "note": "", "auto": "true"} for p in (10, 11)],
         )
-        for pull in pulls.values():
+        for issue, pull in pulls.items():
             state = self.state(pull)
             self.assertEqual(state["auto_fixes"], 1)
             self.assertNotIn("ci_wait", state)
             # The round is an automatic round after failing checks, so it merges `main`.
             inputs = {"command": "fix", "number": str(pull), "note": "", "auto": "true"}
+            self.stored_for(issue)
             decision = route(
                 self.gh, "workflow_dispatch", {"sender": {"login": BOT_LOGIN}}, inputs, cfg=self.cfg
             )
@@ -3638,6 +3655,7 @@ class CIWaitTests(AutopilotCase):
         self.sweep(self.cfg)
         again = self.fixes()[1]
         self.assertEqual(again["auto"], fix["auto"])
+        self.stored_for(5)
         decision = route(
             self.gh, "workflow_dispatch", {"sender": {"login": BOT_LOGIN}}, again, cfg=self.cfg
         )
@@ -3771,6 +3789,7 @@ class CIWaitTests(AutopilotCase):
         )
         self.assertEqual(self.state(10)["auto_fixes"], 1)
         inputs = self.fixes()[1]
+        self.stored_for(5)
         decision = route(
             self.gh, "workflow_dispatch", {"sender": {"login": BOT_LOGIN}}, inputs, cfg=self.cfg
         )

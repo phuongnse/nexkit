@@ -180,7 +180,7 @@ automatic rounds and `/nexkit review` use it; with no plan, or a plan from befor
 were configured, they use `default_profile`. `/nexkit go` without a plan does not run
 triage. When the plan names a profile that is no longer in the configuration, the round
 stops before any job runs and asks for a re-plan; it never falls back to another profile.
-A re-plan while the pull request is open applies from the next round.
+A re-plan of an issue whose pull request is open is refused (`/nexkit plan` there gets the engine's reply, which names the pull request): close the pull request to plan again.
 
 The job timeouts follow the profile. A stage may run for its `timeout_minutes` once for
 each agent of its fallback list, at most 340 minutes; the `agent` job adds

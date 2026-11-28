@@ -2309,7 +2309,7 @@ class ScenarioTests(unittest.TestCase):
             ],
         )
         # The round failed: the engine leaves the item to a person, and an agent's error is
-        # never retried by a conflict round (D6).
+        # never retried by a conflict round (D15).
         conflict_rounds = [d for d in pipe.gh.dispatches if d["inputs"].get("auto") == "conflicts"]
         self.assertEqual(conflict_rounds, [])
         self.assertEqual(pipe.gh.issues[5]["state"], "open")

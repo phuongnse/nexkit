@@ -35,6 +35,8 @@ from tests.support import (
     git,
     make_config,
     play_sweep,
+    store_fields,
+    store_pending,
 )
 from tests.test_report import HEAD, ReportCase, decision
 from tests.test_route import comment_event
@@ -587,9 +589,9 @@ class ReviewAfterMergeUpdateTest(unittest.TestCase):
         gh.add_issue(5)
         gh.add_pull(6, 5)
         cfg = make_config(conflicts={"auto_resolve": True, "max_rounds": 2})
-        self.assertTrue(host.store_import(gh, cfg, 5))
+        store_pending(gh, cfg, 5, 6, HEAD)
         refusal = {"accepted": False, "refusal": "behind", "text": "x"}
-        answer = host.accept_answer(gh, cfg, 5, 6, HEAD, 0, refusal, write=True)
+        answer = host.accept_answer(gh, cfg, 5, 6, refusal, write=True)
         self.assertEqual(answer[0], "update")
         found = item_state.read(gh, 5)[1]
         self.assertEqual([a["kind"] for a in found["pending"]], ["updateChange"])
@@ -1062,6 +1064,7 @@ class MergeRefusalTests(ReportCase):
         from tests.test_report import WORKFLOW
 
         self.target = {"pr": 6, "head": head, "issue": 5, "base": "main"}
+        store_pending(self.gh, self.cfg, 5, 6, head)
         with mock.patch.object(host, "step", wraps=host.step) as step:
             outcome, text = merge_pull(self.gh, self.cfg, self.target, {}, "", WORKFLOW, "main")
         return outcome, text, [call.args[1] for call in step.call_args_list]
@@ -1368,6 +1371,7 @@ class MergeRefusalTests(ReportCase):
         read = json.loads(json.dumps(state))
         state["auto_fixes"] = 2
         progress.save_state(self.gh, 6, comment_id, state, read)
+        store_pending(self.gh, self.cfg, 5, 6, HEAD, rounds={"counted": 2})
         self.gh.merge_error = [GitHubError(405, 'Required status check "e2e" is failing.')]
         self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], "needs_human")
         self.assertFalse(rounds_started(self.gh))
@@ -1381,6 +1385,7 @@ class MergeRefusalTests(ReportCase):
         read = json.loads(json.dumps(state))
         state["auto_fixes"] = 2
         progress.save_state(self.gh, 6, comment_id, state, read)
+        store_fields(self.gh, 5, rounds={"counted": 2})
         self.e2e_fails()
         play_sweep(self.gh, self.cfg)
         row = self.gh.run_comments(6)[-1]["run"]
@@ -1410,7 +1415,7 @@ class MergeRefusalTests(ReportCase):
 
         self.waiting_merge()
         # The sweep decides on the stored state, which holds the start of the wait.
-        self.assertTrue(host.store_import(self.gh, self.cfg, 5))
+        self.assertTrue(item_state.read(self.gh, 5)[1]["checksSince"])
         later = datetime.now(UTC) + timedelta(hours=7)
         real = host.step
 
@@ -1475,8 +1480,11 @@ class MergeRefusalTests(ReportCase):
         self.assertEqual(dispatch["inputs"]["command"], "review")
         self.assertTrue(self.gh.run_comments(6)[-1]["run"]["updated_branch"])
         # Once per `conflicts.max_rounds`: a person decides after that.
+        # The review that follows the update stores it as used (`command`), and a later merge
+        # of the same head is refused again.
         self.gh.pulls[6]["head"]["sha"] = HEAD
         self.gh.pulls[6]["mergeable_state"] = "behind"
+        store_pending(self.gh, self.cfg, 5, 6, HEAD, rounds={"updates": 1})
         self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], "merge_refused")
         self.assertEqual(len(self.gh.updated), 1)
 
@@ -1599,9 +1607,11 @@ class MergeRefusalTests(ReportCase):
         self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], "branch_updated")
         # GitHub answers 409 when the head is not the commit it was asked to merge, and the
         # pull request names its new head.
-        for error in (GitHubError(409, "Conflict"), UNKNOWN_REFUSAL):
+        for moved, error in (("9", GitHubError(409, "Conflict")), ("8", UNKNOWN_REFUSAL)):
             with self.subTest(error=error):
-                self.gh.pulls[6]["head"]["sha"] = "9" * 40
+                # Each refusal is of an `accept` that the engine asked for after the review.
+                store_pending(self.gh, self.cfg, 5, 6, HEAD)
+                self.gh.pulls[6]["head"]["sha"] = moved * 40
                 self.gh.pulls[6].pop("mergeable_state", None)
                 self.gh.merge_error = [error]
                 self.assertEqual(self.run_report(cfg=self.cfg)["outcome"], "head_moved")

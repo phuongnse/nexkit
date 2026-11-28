@@ -1430,9 +1430,12 @@ class ScenarioTests(unittest.TestCase):
             pipe.take_run(5)
             stored = item_state.read(pipe.gh, 5)[1]
             self.assertIn("review-9000", stored["recentEvents"])
-            # The refused merge stored a `needPerson` in the item's group, and the approval
-            # cancels it before the engine's accept.
-            self.assertEqual([action["kind"] for action in stored["pending"]], ["cancel", "accept"])
+            # The plan's `show` that nothing answered stays. The refused merge stored a
+            # `needPerson` in the item's group, and the approval cancels it before the engine's
+            # accept.
+            self.assertEqual(
+                [action["kind"] for action in stored["pending"]], ["show", "cancel", "accept"]
+            )
             pipe.drain()
         self.assertEqual(len(pipe.gh.merged), 1)
         heard = [
@@ -1476,7 +1479,12 @@ class ScenarioTests(unittest.TestCase):
         # The approval, the merge's `accepted` and the result of the issue's `close`.
         stored = item_state.read(pipe.gh, 5)[1]
         self.assertEqual(stored["revision"], item_state.find([comment])[1]["revision"] + 3)
-        self.assertEqual((stored["state"], stored["pending"]), ("accepted", []))
+        # Nothing but notices that no one answers is left: the plan's `show` and the `cancel` of
+        # the merge's `needPerson`. The `accept` and the `close` have their results.
+        self.assertEqual(
+            (stored["state"], [action["kind"] for action in stored["pending"]]),
+            ("accepted", ["show", "cancel"]),
+        )
         # The approval is named after its review, as `take` names it.
         self.assertIn("review-9000", stored["recentEvents"])
 

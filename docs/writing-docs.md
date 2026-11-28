@@ -373,6 +373,8 @@ when a list of what the code defines misses an entry. These rules close each of 
      and secrets.
    - `test_each_module_has_a_row`: the module table of [the architecture page](architecture.md) has
      a row for each module of `nexkit/`.
+   - `test_the_script_table_lists_each_file_of_scripts_and_no_other`: the script table of [the
+     architecture page](architecture.md) lists each file of `scripts/` and no other.
    - `test_the_job_diagram_shows_each_job_of_the_pipeline_and_the_order_it_waits_in`: the job
      diagram of [the architecture page](architecture.md) shows each job of `pipeline.yml`, and each
      arrow is a `needs:` of the job after it.

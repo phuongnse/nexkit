@@ -123,6 +123,7 @@ TEST_NAME = re.compile(r"`(test_\w+)`")
 WORKFLOWS = ("pipeline.yml", "pipeline-agent.yml", "pipeline-review.yml")
 JOBS_HEADER = "| Workflow | Job | Job token | App token | Secrets |"
 MODULES_HEADER = "| Module | Purpose |"
+SCRIPTS_HEADER = "| Script | Purpose |"
 RUN_JOBS_HEADER = "| Job | Runs for | Does |"
 RUN_HEADING = re.compile(r"^## One run, (\w+) jobs$", re.M)
 NUMBERS = (
@@ -1436,6 +1437,20 @@ class ArchitectureTests(unittest.TestCase):
                 any(f"`{name}`" in cell for cell in firsts),
                 f"docs/architecture.md has no row for nexkit/{name}",
             )
+
+    def test_the_script_table_lists_each_file_of_scripts_and_no_other(self):
+        rows = table(ARCH, SCRIPTS_HEADER)
+        self.assertTrue(rows, "docs/architecture.md has no script table")
+        bare = [row[0] for row in rows if not re.fullmatch(r"`[^`]+`", row[0])]
+        self.assertEqual(bare, [], "docs/architecture.md's script table names no file in backticks")
+        listed = {row[0].strip("`") for row in rows}
+        files = {p.name for p in (ROOT / "scripts").iterdir() if p.is_file()}
+        for name in sorted(files - listed):
+            with self.subTest(script=name):
+                self.fail(f"docs/architecture.md has no row for scripts/{name}")
+        for name in sorted(listed - files):
+            with self.subTest(script=name):
+                self.fail(f"docs/architecture.md has a row for scripts/{name}, which is not a file")
 
     def test_the_job_diagram_shows_each_job_of_the_pipeline_and_the_order_it_waits_in(self):
         lines = job_diagram(ARCH)

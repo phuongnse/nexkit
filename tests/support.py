@@ -56,6 +56,37 @@ def with_claude(raw):
 # what the GitHub host gives it.
 
 
+def prompt_texts(
+    gh,
+    decision,
+    stage=None,
+    fix_result=None,
+    results=None,
+    ci=None,
+    cfg=None,
+    workflow="",
+    texts=None,
+):
+    """The texts of a stage's prompt that come from GitHub, as the engine writes them
+    (`prompt.texts`) from what `context.gather` fetched: the shape that `gather` gave before
+    the agent step wrote the prompt. A text the prompt shortens goes whole to the folder
+    `texts`, as the agent step writes it."""
+    record = context.gather(gh, decision, stage, fix_result, results, ci, cfg, workflow)
+    shelf = prompt.Shelf(Path(texts).resolve() if texts else None)
+    out = prompt.texts(stage or decision["action"], record["inputs"], shelf, record["state"])
+    if shelf.folder:
+        context.keep_texts(
+            ({"path": path, "text": text} for path, text in shelf.files.items()), shelf.folder
+        )
+    if record.get("untrusted"):
+        out["untrusted"] = record["untrusted"]
+    if out.get("linked") is not None:
+        out["linked"]["read"] = record["linked"]["read"]
+    if "merge_moved_base" in record:
+        out["merge_moved_base"] = record["merge_moved_base"]
+    return out
+
+
 def build_prompt(stage, texts, cfg, extra=None):
     """A stage's prompt from the texts `context.gather` wrote, with the round's own in
     `extra`, as `engine.prompt.finish` builds it."""

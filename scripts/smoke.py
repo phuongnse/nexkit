@@ -27,12 +27,10 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from nexkit import agent, protocol  # noqa: E402
+from nexkit import agent, first_state, protocol  # noqa: E402
 from nexkit.agent import action_for, run_action  # noqa: E402
 from nexkit.config import validate  # noqa: E402
 from nexkit.context import current_fix  # noqa: E402
-from nexkit.engine import prompt  # noqa: E402
-from nexkit.engine.prompt import PERSON_PLAN  # noqa: E402
 from nexkit.publish import pull_body, render_plan  # noqa: E402
 from nexkit.report import review_body  # noqa: E402
 from nexkit.runtimes import RUNTIMES  # noqa: E402
@@ -63,17 +61,48 @@ SETTINGS = {
 }
 
 
+# What the context step hands the agent step: what it fetched from GitHub, and the fields that
+# later steps read (`context.record`). The agent step writes each prompt from it.
 CONTEXT = {
-    "issue": 1,
-    "pr": "",
+    "inputs": {
+        "item": {
+            "id": 1,
+            "title": "add() returns the wrong result",
+            "body": "calc.add(2, 3) returns -1. It should return 5.",
+            "change": None,
+            "person": False,
+        },
+        "notes": "",
+        "discussion": {"item": [], "change": []},
+        "plan": None,
+    },
+    "state": None,
     "title": "add() returns the wrong result",
-    "body": "calc.add(2, 3) returns -1. It should return 5.",
-    "discussion": "No discussion.",
-    "outside_plan": "None.",
-    "plan": "No plan was posted. Implement the issue as described.",
-    "note": "None.",
-    "feedback": "",
+    "person": False,
+    "replan": False,
 }
+
+
+def context_with(inputs=None, item=None, **fields):
+    """`CONTEXT` with `inputs` added to what it fetched, `item` to its item, and `fields`
+    set in the record."""
+    fetched = {**CONTEXT["inputs"], **(inputs or {})}
+    fetched["item"] = {**fetched["item"], **(item or {})}
+    found = {**CONTEXT, **fields, "inputs": fetched}
+    if item and "title" in item:
+        found["title"] = item["title"]
+    return found
+
+
+def said(author, text, number=1):
+    """A collaborator's comment on the issue, as the context step fetches it."""
+    return {
+        "id": number,
+        "at": "2026-11-01T00:00:00Z",
+        "author": author,
+        "text": text,
+        "kind": "comment",
+    }
 
 
 def git(repo, *args):
@@ -136,8 +165,13 @@ def triage(root, program):
         }
     )
     cases = [
-        ({**CONTEXT, "requests": "No discussion."}, "standard"),
-        ({**CONTEXT, "requests": "@olivia: Plan this with the hard profile."}, "hard"),
+        (CONTEXT, "standard"),
+        (
+            context_with(
+                {"discussion": {"item": [said("olivia", "Plan this with the hard profile.")]}}
+            ),
+            "hard",
+        ),
     ]
     for number, (context, want) in enumerate(cases, 1):
         action = action_for("triage", cfg)
@@ -170,8 +204,8 @@ def result_again(root, program):
             return ["result.reason must quote the code word that the issue gives"]
         return real(value, schema, where)
 
-    body = f"{CONTEXT['body']} The code word for this issue is PELICAN."
-    context = {**CONTEXT, "body": body, "requests": "No discussion."}
+    body = f"{CONTEXT['inputs']['item']['body']} The code word for this issue is PELICAN."
+    context = context_with(item={"body": body})
     with mock.patch.object(agent, "problems", first_refused):
         action = action_for("triage", cfg)
         out = root / "result-again"
@@ -227,17 +261,24 @@ def conflicted(root, name, path, start, base, pull):
     return work
 
 
+def fixing(item, plan=None, results=(), **fields):
+    """The record of a fix round on pull request 2, after the checks `results`."""
+    checks = {"results": list(results), "required": None, "diagnose": []}
+    inputs = {"checks": checks, "discussion": {"item": [], "change": [], "said": []}}
+    if plan is not None:
+        inputs["plan"] = plan
+    return context_with(inputs, item={"change": 2, **item}, **fields)
+
+
 def conflicts(root, program):
     """Fix rounds on pull requests that conflict with main: one conflict has one right
     answer, the other needs a person's decision, which a note then gives."""
-    context = {
-        **CONTEXT,
-        "pr": 2,
-        "title": "Add small helper functions",
-        "body": "Add the helper functions this project needs.",
-        "plan": "No plan was posted. Implement the issue as described.",
-        "feedback": "No recorded feedback. Follow the note.",
-    }
+    context = fixing(
+        {
+            "title": "Add small helper functions",
+            "body": "Add the helper functions this project needs.",
+        }
+    )
     calc = "def add(a, b):\n    return a + b\n"
     work = conflicted(
         root,
@@ -273,7 +314,8 @@ def conflicts(root, program):
     shutil.rmtree(root / "choice-work")
     work = conflicted(*choice)
     note = 'In greet.py, keep this pull request\'s greeting: "Hi " + name.'
-    stage("fix", work, root / "fix-note", program, {**context, "note": note}, base="main")
+    noted = {**context, "inputs": {**context["inputs"], "notes": note}}
+    stage("fix", work, root / "fix-note", program, noted, base="main")
     if (work / "greet.py").read_text() != greet.format('"Hi " + name'):
         raise SystemExit("fix: the note's decision was not followed")
 
@@ -305,19 +347,19 @@ def moved_base(root, program):
     git(origin, *commit, "Fix add()", "-a")
     work = root / "moved-work"
     git(root, "clone", "-q", "-b", "nexkit/issue-1", str(origin), str(work))
-    feedback = (
-        "### Failing check `test` (`python3 -m unittest -v`)\n\nExit code 1. End of output:"
-        "\n\n```\nFAIL: test_add (test_calc.T.test_add)\nAssertionError: -1 != 5\n```"
-    )
-    context = {
-        **CONTEXT,
-        "pr": 2,
-        "title": "Add greeting()",
-        "body": "Add a greeting(name) function.",
-        "plan": "Add greeting() in greet.py.",
-        "feedback": feedback,
-        "merge_moved_base": True,
+    failed = {
+        "name": "test",
+        "run": "python3 -m unittest -v",
+        "exit_code": 1,
+        "passed": False,
+        "output": "FAIL: test_add (test_calc.T.test_add)\nAssertionError: -1 != 5\n",
     }
+    context = fixing(
+        {"title": "Add greeting()", "body": "Add a greeting(name) function."},
+        plan="Add greeting() in greet.py.",
+        results=[failed],
+        merge_moved_base=True,
+    )
     fix = stage("fix", work, root / "fix-moved", program, context, base="main")
     if not fix["start_base"] or fix["conflicts"] or (work / "calc.py").read_text() != fixed:
         raise SystemExit(f"fix: the moved base branch was not merged: {fix}")
@@ -335,14 +377,11 @@ def asked(questions, name):
 def plan_questions(root, work, program):
     """A plan of an issue that leaves a choice open asks about it, with options, and may
     recommend one."""
-    context = {
-        **CONTEXT,
-        "title": "Add round_price()",
-        "body": (
-            "Add calc.round_price(x), which rounds a price to two decimals. We have not "
-            "decided whether halves round up or to even: ask us, and say which you recommend."
-        ),
-    }
+    body = (
+        "Add calc.round_price(x), which rounds a price to two decimals. We have not "
+        "decided whether halves round up or to even: ask us, and say which you recommend."
+    )
+    context = context_with(item={"title": "Add round_price()", "body": body})
     plan = stage("plan", work, root / "plan-questions", program, context)
     questions = plan["output"]["questions"]
     print(f"plan questions: {json.dumps(questions)}", flush=True)
@@ -368,10 +407,10 @@ def main():
         {**CONFIG["settings"], "checks": CHECKS, "review": {"checklist": CHECKLIST}}
     )
 
-    said = subprocess.run(
+    version_output = subprocess.run(
         [args.program, "--version"], capture_output=True, text=True, check=True
     ).stdout
-    version = re.search(r"\d+\.\d+\.\d+", said).group(0)
+    version = re.search(r"\d+\.\d+\.\d+", version_output).group(0)
     print(f"{args.runtime} {version}; NexKit pins {runtime.version}", flush=True)
     if version != runtime.version:
         raise SystemExit(f"The installed {args.runtime} is not the pinned version.")
@@ -387,16 +426,24 @@ def main():
             if not plan["output"][field]:
                 raise SystemExit(f"plan: no {field}")
         plan_questions(root, work, args.program)
-        CONTEXT["plan"] = render_plan(plan["output"]).removeprefix(PLAN_MARKER).strip()
-        if "<summary>Implementation notes</summary>" not in CONTEXT["plan"]:
+        approved = render_plan(plan["output"]).removeprefix(PLAN_MARKER).strip()
+        CONTEXT["inputs"]["plan"] = approved
+        if "<summary>Implementation notes</summary>" not in approved:
             raise SystemExit("plan: the rendered plan lacks the implementation notes")
-        print(CONTEXT["plan"], flush=True)
+        print(approved, flush=True)
 
         # A re-plan revises that plan with what was asked since it.
         # A change of scope that no first plan contains, so the re-plan must say what changed.
-        since = "@olivia: Also let add() take an optional third number c, default 0."
+        since = said("olivia", "Also let add() take an optional third number c, default 0.", 2)
         note = "Add the optional third argument, and test that add(1, 2, 3) returns 6."
-        context = {**CONTEXT, "since_plan": since, "note": note}
+        context = context_with(
+            {
+                "notes": note,
+                "discussion": {"item": [since], "change": []},
+                "previous_plan": {"text": approved, "before": 0},
+            },
+            replan=True,
+        )
         replan = stage("plan", work, root / "replan", args.program, context)
         revision = replan["output"]["revision"]
         print(render_plan(replan["output"], replan=True), flush=True)
@@ -477,10 +524,10 @@ def main():
         # No fix round was recorded since that review; this run's fix is the one it reads, as
         # the newest record, numbered after the review's round.
         current = current_fix(decision, fix)
-        reviewed = prompt.previous_review(
-            state["last_review"], [{**current, "round": state["last_review"]["round"] + 1}]
-        )
-        context = {**CONTEXT, "pr": 2, **reviewed}
+        head = git(work, "rev-parse", "HEAD")
+        kept = first_state.for_prompt(1, {"id": "2", "version": head}, state, current)
+        item = {"change": 2}
+        context = context_with(item=item, state=kept, previous_head=reviewed)
         second = stage(
             "review", work, root / "second", args.program, context, checks=checks, base="main"
         )
@@ -494,7 +541,7 @@ def main():
         if {item["severity"] for item in previous} != {"blocking", "suggestion"}:
             raise SystemExit(f"second review: severities not kept in {previous}")
         # A person's pull request: no plan, so no criteria, and no limit on protected paths.
-        context = {**CONTEXT, "pr": 3, "issue": 3, "person": True, "plan": PERSON_PLAN}
+        context = context_with(item={"id": 3, "change": 3, "person": True}, person=True)
         person = stage(
             "review", work, root / "person", args.program, context, checks=checks, base="main"
         )

@@ -10,7 +10,6 @@ from pathlib import Path
 from unittest import mock
 
 from nexkit import cli, host, item_state, progress
-from nexkit.context import gather
 from nexkit.github import GitHubError
 from nexkit.maintain import WAIT_INPUTS
 from nexkit.progress import trigger
@@ -36,7 +35,7 @@ from nexkit.state import (
     render_state,
 )
 from nexkit.usage import parse_iso, shown
-from tests.support import FakeGitHub, interpret_claude, make_config, store_pending
+from tests.support import FakeGitHub, interpret_claude, make_config, prompt_texts, store_pending
 
 HEAD = "c" * 40
 WORKFLOW = "acme/app/.github/workflows/nexkit.yml@refs/heads/main"
@@ -1827,7 +1826,7 @@ class ReportTests(ReportCase):
 
         # The next fix round still sees each shard's failure line and real end.
         fix = {"action": "fix", "issue": 5, "pr": 6, "head": HEAD, "note": ""}
-        feedback = gather(self.gh, fix)["feedback"]
+        feedback = prompt_texts(self.gh, fix)["feedback"]
         self.assertEqual(feedback.count("✘ 1 desk.spec.ts:42 › picks an option (1.3s)"), 6)
         self.assertEqual(feedback.count("teardown ok\n1 failed\n```"), 6)
         self.assertIn("Off. Off.", feedback)
@@ -1889,7 +1888,7 @@ class ReportTests(ReportCase):
         self.assertEqual(state["feedback"]["review"]["findings"][0]["body"], body)
 
         fix = {"action": "fix", "issue": 5, "pr": 6, "head": HEAD, "note": ""}
-        feedback = gather(self.gh, fix)["feedback"]
+        feedback = prompt_texts(self.gh, fix)["feedback"]
         # The review NexKit records for the next round keeps a finding's first 1,500 characters.
         self.assertIn(body[:1_500].strip(), feedback)
         self.assertIn("✘ 1 desk.spec.ts:42 › picks an option (1.3s)", feedback)
@@ -2105,11 +2104,11 @@ class ReportTests(ReportCase):
         # The review of the next fix round is told how many were left out.
         decision = {"action": "fix", "issue": 5, "pr": 6, "head": "e" * 40, "note": ""}
         fix_result = {"status": "done", "summary": "Fixed the sign.", "output": {"cause": ""}}
-        text = gather(self.gh, decision, "review", fix_result)["previous_round"]
+        text = prompt_texts(self.gh, decision, "review", fix_result)["previous_round"]
         self.assertIn("1. blocking, `calc.py:2`: Wrong sign", text)
         self.assertIn("That review had 6 more findings, left out here", text)
         # The fix agent's own prompt reads the whole review, so it lists the finding too.
-        feedback = gather(self.gh, decision, "fix")["feedback"]
+        feedback = prompt_texts(self.gh, decision, "fix")["feedback"]
         self.assertIn("`calc.py:2`: Wrong sign", feedback)
 
     def test_a_review_of_at_most_30_findings_is_recorded_whole_in_its_order(self):

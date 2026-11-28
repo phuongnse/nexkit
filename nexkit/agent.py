@@ -16,13 +16,13 @@ from dataclasses import replace
 from pathlib import Path
 
 from . import config as configuration
-from . import protocol
+from . import engine, protocol
 from .checks import BASE_SHA, environment, known_base
-from .context import KEEPS, keep_texts
-from .engine import prompt as engine_prompt
+from .context import keep_texts
 from .first_state import agent_run
 from .gitutil import GitError, git, is_ancestor, merge_tree, names
-from .protocol.stages import COMMIT, MAX_DIFF
+from .protocol.keys import camel, snake
+from .protocol.stages import COMMIT, INPUTS, MAX_DIFF
 from .redact import Redactor
 from .runlog import RunLog, add_tokens, one_line, summary, write_summary
 from .runtimes import PROVIDERS, RUNTIMES
@@ -356,11 +356,9 @@ def own_merge(repo, base, merged):
     return heads[0], None
 
 
-def shortened_folders(context):
-    """The folders that hold the whole texts a prompt shortened, and the whole outputs of
-    the failing checks it shows."""
-    paths = [item["path"] for item in context.get("shortened") or []]
-    paths += context.get("check_outputs") or []
+def shortened_folders(paths):
+    """The folders that hold the files a prompt's answer names: the whole texts it shortened,
+    and the whole outputs of the failing checks it shows."""
     found = {str(Path(path).parent) for path in paths}
     return sorted(folder for folder in found if folder != "." and Path(folder).is_dir())
 
@@ -520,6 +518,37 @@ def policies(cfg):
         "profiles": {name: {"when": profile["when"]} for name, profile in cfg["profiles"].items()},
         "budgets": {"implement": {"seconds": minutes * 60}},
     }
+
+
+def prompt_request(stage, context, added, cfg, folder):
+    """The `prompt` request of `stage`: the inputs the context step fetched, with what this
+    round adds in `added` (its diff, checks and workspace), in the protocol's camelCase and
+    only the kinds the stage reads; the state document; the policies; and the `folder` for
+    whole texts."""
+    fetched = context.get("inputs") or {}
+    inputs = {**fetched, **added}
+    if "diff" in fetched:
+        inputs["diff"] = {**fetched["diff"], **added.get("diff", {})}
+    inputs = {key: value for key, value in camel(inputs).items() if key in INPUTS[stage]}
+    return {
+        "protocol": protocol.VERSION,
+        "call": "prompt",
+        "state": context.get("state"),
+        "stage": stage,
+        "inputs": inputs,
+        "policies": policies(cfg),
+        "texts": str(folder),
+    }
+
+
+def prompt_call(request):
+    """The engine's answer to a `prompt` request: {text, shortened, notRead, files}. It is
+    answered in this process for now; a request the engine refuses ends the round with an
+    error result, which nothing retries."""
+    answer = engine.answer(json.loads(json.dumps(request)))
+    if "error" in answer:
+        raise RuntimeError(f"The engine wrote no prompt: {answer['error']}")
+    return answer
 
 
 def stage_schema(stage, cfg):
@@ -809,7 +838,17 @@ def _run_one(
                 )
                 folder = out / "result-again"
                 folder.mkdir(exist_ok=True)
-                text = engine_prompt.result_prompt(stage, redact(result["unfit"]))
+                text = prompt_call(
+                    {
+                        "protocol": protocol.VERSION,
+                        "call": "prompt",
+                        "state": None,
+                        "stage": stage,
+                        "inputs": {},
+                        "policies": {},
+                        "unfit": redact(result["unfit"]),
+                    }
+                )["text"]
                 (folder / "prompt.md").write_text(text, encoding="utf-8")
                 again = RunLog(
                     redact,
@@ -993,8 +1032,12 @@ def run_triage(context, cfg, previous, out_dir, *, program=None):
     out = Path(out_dir) / "triage"
     out.mkdir(parents=True, exist_ok=True)
     profiles = cfg["profiles"]
-    inputs = {"previous_plan": {"profile": previous}}
-    text = engine_prompt.finish("triage", context, inputs, policies(cfg))["text"]
+    # Beside the plan's texts, outside the working tree; the agent's artifact keeps them.
+    folder = (Path(out_dir) / "texts").resolve()
+    added = {"previous_plan": {"profile": previous}}
+    answer = prompt_call(prompt_request("triage", context, added, cfg, folder))
+    keep_texts(answer["files"], folder)
+    text = answer["text"]
     (out / "prompt.md").write_text(text, encoding="utf-8")
     redact = Redactor()
     # An empty directory, so the repository's agent settings and instructions do not load.
@@ -1057,7 +1100,7 @@ def run_stage(
             # Once committed, the merge has the merged base commit as its merge base.
             commits = {**(commits or {}), BASE_SHA: known_base(repo, merged)}
     # The rest of the prompt's inputs, which the context job could not read: the engine
-    # writes the prompt from them and the texts it wrote there (`context.gather`).
+    # writes the prompt from them and what the context job fetched (`context.gather`).
     inputs = {
         "diff": {"base": base or "", "merging": {"commit": merged, "files": conflicts}},
         "workspace": workspace(cfg),
@@ -1069,13 +1112,12 @@ def run_stage(
             sides=merge_sides(repo, context),
         )
         inputs["checks"] = {"results": checks}
-    # Beside the context's texts, outside the working tree; the agent's artifact keeps them.
+    # The whole texts go beside the context, outside the working tree; the agent's artifact
+    # keeps them.
     folder = (out / "texts").resolve()
-    written = engine_prompt.finish(stage, context, inputs, policies(cfg), folder, KEEPS)
-    keep_texts(written["files"], folder)
-    if written["files"]:
-        context = {**context, "check_outputs": [item["path"] for item in written["files"]]}
-    text = written["text"]
+    answer = prompt_call(prompt_request(stage, context, inputs, cfg, folder))
+    keep_texts(answer["files"], folder)
+    text = answer["text"]
     (out / "prompt.md").write_text(text, encoding="utf-8")
 
     redact = Redactor()
@@ -1111,7 +1153,7 @@ def run_stage(
         restore=restore if base_commit else None,
         dirs=[
             *([found["folder"]] if found and Path(found["folder"]).is_dir() else []),
-            *shortened_folders(context),
+            *shortened_folders([item["path"] for item in answer["files"]]),
         ],
     )
     answer_checklist(result, stage, cfg)
@@ -1180,11 +1222,12 @@ def run_stage(
             result["passed_since"] = passed_runs(found)
     if triage:
         result.update(profile=triage["profile"], triage=triage)
-    if context.get("shortened"):
-        result["shortened"] = engine_prompt.shortened_names(context)
-    refers = context.get("linked") or {}
-    if refers.get("read") or refers.get("skipped"):
-        result["linked"] = {key: refers.get(key) or [] for key in ("read", "skipped")}
+    if answer["shortened"]:
+        result["shortened"] = snake(answer["shortened"])
+    read = (context.get("linked") or {}).get("read") or []
+    skipped = list(answer["notRead"])
+    if read or skipped:
+        result["linked"] = {"read": read, "skipped": skipped}
     return _save(result, out, redact, calls, start=start, merged=merged, conflicts=conflicts)
 
 

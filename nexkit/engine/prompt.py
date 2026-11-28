@@ -10,10 +10,9 @@ the last review are not an input: they come from the call's `state`, as `rounds.
 
 A prompt is written in two internal steps, which `write` runs one after the other: `texts`,
 from what the host read about the work item, and `finish`, from what its round adds: the
-change's diff, the checks' results and the workspace. The GitHub host sends one `prompt` call
-for each prompt, from its agent step: the job that reads GitHub holds a token and fetches the
-inputs, and the agent job, with the checkout and no token, adds the diff, the checks and the
-workspace to them. The agent step sends the call to the `nexkit-engine` program.
+change's diff, the checks' results and the workspace. A host sends one `prompt` call for each
+prompt, with the texts it fetched, so the engine needs no access to the host
+(docs/engine.md#the-prompt).
 
 A text that a prompt keeps only the start of goes whole to a file in the host's folder for
 texts, which the agent reads: the engine names the file in the prompt and answers its path
@@ -182,7 +181,7 @@ def _fit(entries, shelf, limit=BLOCK_LIMIT):
 def discussion(entries, notes=False, shelf=None, limit=BLOCK_LIMIT):
     """A discussion's entries as the prompt shows them, oldest first. Each entry is
     {id, author, at, text, kind}: a person's `comment`, a `note` on a command, which counts
-    only with `notes`, or the `answers` that autopilot gave for the owner. The latest
+    only with `notes`, or the `answers` that a policy gave for the people who decide. The latest
     MAX_COMMENTS count, each whole as long as the block fits (see `_fit`); older ones go
     whole to `shelf`, and a note says how many were left out."""
     rows, times = [], []
@@ -265,7 +264,7 @@ def earlier_fixes(fixes):
 
 
 def _required_text(item):
-    """A required check that failed, so GitHub refused the merge, after NexKit's own
+    """A required check that failed, so the host refused the accept, after NexKit's own
     checks and review passed: its job's failed commands and the tests it names."""
     name = item.get("name") or "a required check"
     lines = [f"### Required check `{name}` failed, so GitHub refused the merge", ""]
@@ -460,11 +459,11 @@ def linked(found, shelf):
 
 
 def texts(stage, inputs, shelf, state=None):
-    """The texts of a stage's prompt that come from what the host fetched, as NexKit 6's
-    `context.gather` gave them: the item, its plan and discussions, what it links to, and the
-    stage's own, in the order a prompt shortens them. The earlier fix rounds and the last
-    review come from `state`'s `rounds`, and the version the last review must have read for
-    the fix prompt to show its findings from the change's. A text the prompt shortens goes
+    """The texts of a stage's prompt that come from what the host fetched: the item, its plan
+    and discussions, what it links to, and the stage's own, in the order a prompt shortens
+    them. The earlier fix rounds and the last review come from `state`'s `rounds`, and the
+    version the last review must have read for the fix prompt to show its findings from the
+    change's. A text the prompt shortens goes
     whole to `shelf`, and `shortened` names it."""
     item = inputs.get("item") or {}
     talk = inputs.get("discussion") or {}
@@ -936,11 +935,11 @@ def extras(
     keeps=None,
     shelf=None,
 ):
-    """The texts of a stage's prompt that come from the round itself, as NexKit 6's
-    `agent.run_stage` wrote them: the evidence, a fix round's merge of `base` (`merging`,
-    {commit, files}), and a review's `diff`, its diff `since` the previous review, the
-    `sides` of a merge in the fix round and the `checks`' results, whose whole outputs go
-    to `shelf`. `keeps` says what the host keeps of evidence: {ci, results: {one, several}}."""
+    """The texts of a stage's prompt that come from the round itself: the evidence, a fix
+    round's merge of `base` (`merging`, {commit, files}), and a review's `diff`, its diff
+    `since` the previous review, the `sides` of a merge in the fix round and the `checks`'
+    results, whose whole outputs go to `shelf`. `keeps` says what the host keeps of evidence:
+    {ci, results: {one, several}}."""
     keeps = keeps or {}
     extra = {}
     if stage in ("plan", "implement", "fix"):

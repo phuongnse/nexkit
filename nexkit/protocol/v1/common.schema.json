@@ -24,7 +24,7 @@
       "type": "string"
     },
     "change": {
-      "$comment": "A pull request or a draft, and its version, such as a commit or a revision.",
+      "$comment": "A change, such as a pull request or a draft of records, and its version, such as a commit or a revision.",
       "type": "object",
       "properties": {
         "id": {
@@ -204,7 +204,7 @@
           "type": "boolean"
         },
         "acceptable": {
-          "$comment": "The host's accept of this version would be accepted now, as far as the host can tell, such as GitHub's `mergeable_state` being `clean`, `unstable` or `has_hooks`. Left out when it would not, or when the host cannot tell. Only the engine's retry of an accept that waits for a person reads it (docs/engine-states.md#states).",
+          "$comment": "The host can tell that its accept of this version would succeed now, such as when nothing but optional checks stands in its way. Left out when it would not, or when the host cannot tell. Only the engine's retry of an accept that waits for a person reads it (docs/engine-states.md#states).",
           "type": "boolean"
         }
       },

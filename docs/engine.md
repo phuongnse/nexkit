@@ -9,17 +9,10 @@ NexKit 6's autopilot takes its starts from; the
 GitHub host's state comment, its import of NexKit 6's open work, which the first run in an open
 item's concurrency group stores as the item's state comment, and its taking of an item's events
 from their sources (`host.take`), which `route` calls at the start of each run in that group; and
-the decisions that follow a plan, a blocked `/nexkit go` and a round on a pull request, its
-review, diagnosis and conflict rounds, the end of a round's wait and which rounds count, and the
-start of a new issue's first plan, which
-NexKit 6's autopilot, `route`, `report` and `maintain` take from `step` (see
-[getting there](#getting-there)); the decisions that follow a plan, a new issue's first plan, a
-writer's vouch, a merge with its refusals, a blocked or stopped round, a usage limit or a
-transient error, a resume that comes due and a lost command, and the rounds of a pull request (a
-round's end, its conflicts, the end of a wait for a hold or the base branch, and which rounds
-count) also read the item's stored state document and, in the item's concurrency group, store the
-engine's answer. The rest of this page is not built yet, and NexKit 6 runs as
-[How it works](how-it-works.md) says._
+the GitHub host's decisions, which NexKit 6's autopilot, `route`, `report` and `maintain` take from
+`step` and which store the engine's answer in the item's concurrency group (see
+[getting there](#getting-there) for the decisions that read the stored state). The rest of this
+page is not built yet, and NexKit 6 runs as [How it works](how-it-works.md) says._
 
 NexKit 7 splits NexKit into an **engine** that decides what happens to a piece of work, and
 **hosts** that store the work, carry out what the engine decides and show it to people. GitHub
@@ -316,7 +309,7 @@ The protocol is built for delivery at least once, in any order a host's queues g
   starts afresh when a request is taken or work other than a `wait` finishes. Work that a person
   started, and the rest of that round, which carries `by: "person"` on its actions, waits for a
   person at once when lost, and so does a run of a person's that waits after a usage limit or a
-  transient stop. A lost publish, replace, accept or parts creation fails the step, for a
+  transient stop. A lost publish, replace, update, accept or parts creation fails the step, for a
   person, and so does every lost action that works under the default `lostWaits`, which is
   empty.
 - **The state is an outbox.** Each action the engine answered stays in the state, whole, as
@@ -401,7 +394,9 @@ each request to `POST URL/<call>`, as `nexkit-engine serve` answers. With `--pro
 `COMMAND <call>` and writes the request on its standard input, as `nexkit-engine` reads it. It prints
 each answer that differs from the file's, naming the case and the request's number, and exits 1. An
 answer differs when its text is not the file's, or when its status is not 200 or 0 for an answer and
-400 or 1 for a refusal. It exits 0 when every answer matches.
+400 or 1 for a refusal. It exits 0 when every answer matches. A file that does not fit
+`nexkit/protocol/v1/conformance.schema.json` makes `check` print its problems and exit 2, without
+sending any request.
 
 An engine written again in another language passes when it gives the same answers: the same text for
 each request, refusals included, word for word. A host takes the requests as the inputs of its
@@ -523,28 +518,31 @@ adapter's tests and the answers as what its adapter carries out.
 ## Getting there
 
 1. The engine grew inside NexKit 6: decisions moved behind the protocol one by one, and every
-   decision of the loop is now its own. Most of the GitHub host's decisions still build the
-   item's document from NexKit 6's markers, as its import reads them. The plan's report sends the
-   plan's result to the engine once for every plan of an issue that autopilot takes, a clean plan
-   and one that finds no change too, and stores the answer, and asking what a plan waits for reads
-   the stored state alone and stores nothing. The ones that follow a plan (the sweep's and the
-   step run's), start a new issue's first plan, follow a merge and its refusals,
-   and end a pull request's round, a conflict or a wait read the stored
-   document, which they use only where it says what the markers say, and store the engine's answer
-   in the item's group, a row of events as one write. A blocked or failed `/nexkit go`, a fix round
-   that stopped as blocked and a round that ran out of time decide on the stored document alone
-   too, including its `depth` and `asked`: `report` sends the round's result on the state that
-   waits for the round's agent run, and the sweep sends it only while the state still waits for
-   that run and does not hold the result, and otherwise carries out what the state holds.
+   decision of the loop is now its own. Most of the GitHub host's decisions decide on the item's
+   stored state document, or on the import in memory when none is stored, and store the engine's
+   answer in the item's group, a row of events as one write. Four kinds still build the document from
+   NexKit 6's markers, as its import reads them, and use the stored one only where it says what the
+   markers say (`resync`): what follows a plan in the sweep and the step run (`after_plan`), a
+   round's end (`after_round`, `round_ended`), a conflict when a round publishes (`conflicting`) and
+   the checks that a fix round diagnoses (`diagnosis`). A person's command and a closing command
+   decide on the stored state too.
+   The plan's report sends the plan's result to the engine once for every plan of an issue that
+   autopilot takes, a clean plan and one that finds no change too, and stores the answer. Asking
+   what a plan waits for reads the stored state alone and stores nothing.
+   A blocked or failed `/nexkit go`, a fix round that stopped as blocked and a round that ran out
+   of time decide on the stored document alone, including its `depth` and `asked`: `report` sends
+   the round's result on the state that waits for the round's agent run, and the sweep sends it
+   only while the state still waits for that run and does not hold the result, and otherwise
+   carries out what the state holds.
    A usage limit, a transient error and a resume that comes due decide on the stored document
    alone: its pending agent run, its count of runs again and its wait. So does a lost command:
    it counts the losses from the stored `again.lost`, sends only the tick of a wait that the
-   stored state holds already, and carries out an `outage` that waits for a person. So does a writer's vouch
-   after an untrusted edit: when the item's own run already took it, the step carries out what
-   the stored state holds, and a plan that an untrusted edit stopped, which never reached the
-   engine, starts again. A command that NexKit
-   dispatches carries out the action that the stored state has pending for it, and takes its
-   diagnosed checks from that action; with nothing pending it is a new request, `dispatch-<run id>`, which for an
+   stored state holds already, and carries out an `outage` that waits for a person. A writer's
+   vouch after an untrusted edit also decides on the stored state: when the item's own run already
+   took it, the step carries out what the stored state holds, and a plan that an untrusted edit
+   stopped, which never reached the engine, starts again. A command that NexKit dispatches carries
+   out the action that the stored state has pending for it, and takes its diagnosed checks from
+   that action; with nothing pending it is a new request, `dispatch-<run id>`, which for an
    automatic fix round says so, so that the engine counts it as its own round.
    The automatic fix rounds and the conflict rounds that they count are the stored count, and
    NexKit 6's only when no state can be read. The run of a conflict round that the push run, the
@@ -563,7 +561,8 @@ adapter's tests and the answers as what its adapter carries out.
    a cancel or a rerun follows an answer of the engine. `tests/test_answers.py` keeps it so: it
    reads every module outside `nexkit/engine/` except `nexkit/github.py`, which defines the writes,
    and fails on a write that no call of the engine comes before. The writes that serve no item are
-   named in it with their reasons: the sweep's own dispatch, the workflows on the base branch after
+   named with their reasons in `NAMED`, the table of `tests/answers.py` that `test_answers.py`
+   imports: the sweep's own dispatch, the workflows on the base branch after
    a merge, the default branch's CI reruns and the wait dispatch. So are the writes that carry out
    an answer that an earlier job took from the engine. The detail of each move is in the docstring
    of `nexkit/host.py`.

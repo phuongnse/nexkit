@@ -244,8 +244,11 @@ which `conflicting` sends. The stored state then waits for the round's checks on
 head while they run, and a fix round's record of the head it changed and of changing nothing is
 in it. The `report` finds the round stored and sends nothing again, or stores it when the
 publish job could not, and the checks are decided on that state alone. A round that the import
-already placed in its checks stores nothing new, and decides on the markers' document as
-before. The import places a NexKit 6 round whose run is in its check jobs there too.
+already placed in its checks stores nothing new. Its checks and review decide on the markers'
+document as before, but its conflicting commit is an observation on the stored state, where a
+hold on the issue makes the engine cancel the running checks and leaves the round to a person
+(`conflicting` raises `Refused`). The import places a NexKit 6 round whose run is in its check
+jobs there too.
 
 It decides the start of the first plan of a new issue too (`first_plan`, called by
 `autopilot._first_plan`): it decides on the item's stored document (`decide`), or on the import in
@@ -2693,7 +2696,8 @@ def round_published(gh, cfg, decision, pr, head, agent, ran, conflicts):
     then finds the round stored and sends nothing: the stored state waits for the round's
     checks on `head`, with one `runChecks` that the engine gave an id. Each result is sent only
     while the stored state has that action pending, so that a round the import already placed
-    in its checks sends nothing, and the report decides it on the markers' document. True when
+    in its checks sends nothing, and the report decides its checks and review on the markers'
+    document, and its conflicting commit on the stored state (`conflicting`). True when
     the stored state then has `runChecks` pending on `head`: the checks and the review decide on
     it alone (`round_ended`). False when nothing was sent, or the engine did not answer so,
     which warns and lets the round go on as NexKit 6 decides it. Raises `Refused`."""
@@ -3079,15 +3083,18 @@ def conflicting(gh, cfg, decision, pr, head, held, write=False):
 
     It decides on the stored state alone, and the conflict rounds used are the stored
     `rounds.conflicts`. The label `held` goes first as a `held` event while the stored state is
-    not held, so that the engine keeps the round back however many rounds are left, and the
-    stored count does not change. The conflict then answers the `publish` that the round's report
+    not held. On the stored `publish`, the engine then keeps the round back however many rounds
+    are left, and the stored count does not change. On the observation path below, the engine
+    cancels the checks that run and answers no round, so the host raises `Refused` and leaves
+    the round to a person. The conflict answers the `publish` that the round's report
     left pending: `round_published` stored the agent's result only, so the publish result of the
     conflicting commit is sent here. A stored state with no `publish` of the stage pending, as
     for a NexKit 6 round that the import placed in its checks, gets the conflict as an
     observation of the head instead (`changeObserved`), as `base_moved` sends it. The engine
     then leaves its checks pending when no conflict round is left, and the host does not decide
-    for it: that raises `Refused`, which leaves the round to a person. With `write`, which only
-    `report` passes, the answer is stored (`decide_all`). Raises `Refused`."""
+    for it: that raises `Refused`, which leaves the round to a person, as it does for a hold.
+    With `write`, which only `report` passes, the answer is stored (`decide_all`). Raises
+    `Refused`."""
     number = decision["issue"]
     stage = "fix" if decision["action"] == "fix" else "implement"
     seen = {"changeId": str(pr), "version": head, "conflicts": True}

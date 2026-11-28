@@ -49,7 +49,7 @@ class PagesTests(unittest.TestCase):
             audit.SKILL,
         ):
             self.assertIn(page, audited)
-        for page in ("CHANGELOG.md", "tests/differential/README.md", "docs/README.txt"):
+        for page in ("CHANGELOG.md", "docs/README.txt"):
             self.assertFalse(audit.AUDITED.match(page), page)
         runs = [audit.pages_for(files, run) for run in range(audit.SHARES)]
         self.assertEqual(sorted(p for pages in runs for p in pages), sorted(audited))

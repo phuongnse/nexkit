@@ -5146,10 +5146,10 @@ class BaseMovedStoredTest(ReportCase):
 
 
 class NoConflictRoundAfterAFailedRoundTest(ReportCase):
-    """The deliberate differences from NexKit 6 that tests/differential/known.py lists for
-    #758: a base-branch move decides on the stored state alone, so a round that failed, one
-    whose run was lost and one that started a next round that never ran start no conflict
-    round, where NexKit 6's markers let the sweep start one."""
+    """The deliberate differences from NexKit 6, for #758: a base-branch move decides on the
+    stored state alone, so a round that failed, one whose run was lost and one that started a
+    next round that never ran start no conflict round, where NexKit 6's markers let the sweep
+    start one."""
 
     URL = "https://github.com/acme/app/actions/runs/40"
 

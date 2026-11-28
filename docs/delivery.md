@@ -28,8 +28,6 @@ them true and each merge easy to review.
   any repository and name no product that uses it, except the README's *Built with NexKit* list
   and the changelog, which may cite a case. Issues, pull requests and code comments may name one
   as context.
-- A change that moves a decision of NexKit 6 into the engine proves it and writes its pull request
-  as [Moving decisions into the engine](testing.md#moving-decisions-into-the-engine) says.
 - Every plan and review answers the checklist, `review.checklist` in `.nexkit/config.json`. Each
   item names one doc, the one section of it, or the Agreed decisions, that holds rules a review
   checks in the diff, and no rule is named by two items. Each says in a sentence what it covers,

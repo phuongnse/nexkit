@@ -1,6 +1,6 @@
-"""The mutants of the engine's mutation check (`tests/mutants.py`) still apply, and neither it nor
-the walker reads NexKit 6's checks. After NexKit 7.0 the mutation check runs only by hand, so
-these tests are what tells a refactor of the engine that a mutant no longer breaks anything."""
+"""The mutants of the engine's mutation check (`tests/mutants.py`) still apply. The mutation
+check runs only by hand, so these tests are what tells a refactor of the engine that a mutant no
+longer breaks anything."""
 
 import importlib.util
 import tempfile
@@ -9,7 +9,6 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
-FOLDER = "tests/differential"
 
 
 def load(name):
@@ -42,23 +41,16 @@ class MutantTests(unittest.TestCase):
                 text = (ROOT / mutant["path"]).read_text()
                 compile(text.replace(mutant["old"], mutant["new"]), mutant["path"], "exec")
 
-    def test_a_copy_has_the_mutant_and_no_check_of_nexkit_6(self):
+    def test_a_copy_has_the_mutant(self):
         name = next(iter(mutants.MUTANTS))
         mutant = mutants.MUTANTS[name]
         with tempfile.TemporaryDirectory() as folder:
             root = mutants.build(name, folder)
-            self.assertFalse((root / FOLDER).exists())
             self.assertTrue((root / "tests" / "walk.py").exists())
             self.assertTrue((root / "nexkit").is_dir())
             text = (root / mutant["path"]).read_text()
             self.assertNotIn(mutant["old"], text)
             self.assertIn(mutant["new"], text)
-        self.assertTrue((ROOT / FOLDER).is_dir(), "the original keeps its folder")
-
-    def test_the_walker_and_the_mutation_check_do_not_read_nexkit_6_checks(self):
-        for name in ("walk", "mutants"):
-            text = (HERE / f"{name}.py").read_text()
-            self.assertNotIn(FOLDER, text, name)
 
 
 if __name__ == "__main__":

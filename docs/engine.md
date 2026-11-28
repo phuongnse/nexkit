@@ -584,9 +584,8 @@ adapter's tests and the answers as what its adapter carries out.
    automatic fix round left waits for a person, where NexKit 6 started a counted round. A person
    whose command the engine refuses gets a reply, which NexKit 6 never gave. After a blocked
    `/nexkit go` whose recommended answer only closes the issue, the report mentions the person
-   and the sweep does not mention them again. The other differences are in
-   `tests/differential/known.py`. Every existing test passes after each step, and the engine's
-   part of `tests/test_scenarios.py` became the conformance suite.
+   and the sweep does not mention them again. Every existing test passes after each step, and
+   the engine's part of `tests/test_scenarios.py` became the conformance suite.
 
    The GitHub host builds each open item's first document from NexKit 6's markers, open pull
    requests, paused runs and waits included. The import reads NexKit 6's markers only from

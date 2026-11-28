@@ -468,7 +468,7 @@ when a list of what the code defines misses an entry. These rules close each of 
      titles on [the autopilot page](autopilot.md) shows the titles that `ci_title` and `red_title`
      write, for each kind and form, and no other.
    - `test_the_page_names_each_invariant_of_the_walker_and_no_other`: the walker's invariants that
-     [Moving decisions into the engine](testing.md#moving-decisions-into-the-engine) names are the
+     [Rules for tests](testing.md#rules-for-tests) names are the
      keys of `INVARIANTS` in `tests/walk.py`, and no other.
    - `test_the_page_lists_each_action_that_carries_an_item_on_and_no_other`: the actions that carry
      an item on, which [the engine's conformance rule](engine.md#conformance) lists, are those of

@@ -136,7 +136,7 @@ counts, the stored state is still `checking` with the round's `rounds.automatic`
 gives the round's count back as it stores the answer. A conflict on a stored state that waits, such
 as `fixing` after a round that ended waiting for CI, or `failed` after a failed review, starts no
 conflict round, where NexKit 6 started one at once: a failed item waits for a person, and a due fix
-round merges the base branch itself (`tests/differential/known.py`).
+round merges the base branch itself (`NoConflictRoundAfterAFailedRoundTest`).
 
 It decides when a plan, implement or fix stage runs again after its agent stopped at a usage
 limit or on a transient error (`stage_limited`, `stage_transient`, called by `report`), and when
@@ -273,7 +273,7 @@ or the checks and review, as the engine answers. When the item's own run already
 (`take` stored it), it carries out what the state holds instead of sending it again, and it
 starts the plan run that a stored state still holds after a plan that an untrusted edit stopped,
 as NexKit 6 plans again. A pull request with no automatic fix round left waits for a person,
-where NexKit 6 started a counted round anyway (`tests/differential/known.py`). Every start that
+where NexKit 6 started a counted round anyway. Every start that
 autopilot makes follows an answer of the engine (`tests/test_autopilot.py` and
 `tests/test_answers.py`).
 
@@ -3584,7 +3584,7 @@ def part_ended(gh, cfg, parent, subs, part, state, write=False):
     anything is sent or stored. A parent whose stored state is not `split`, such as one stored
     before it had sub-issues, raises `Refused`: a person decides its end. A completed sub-issue
     beyond the ten that a state holds is not sent either, so the engine may leave the parent to
-    a person where NexKit 6 closed it (`tests/differential/known.py`). A parent that the engine
+    a person where NexKit 6 closed it (`ParentAsksTheEngineTests`). A parent that the engine
     already accepted answers `close` with nothing sent.
 
     With `write`, which only the `step` run of the parent's group passes

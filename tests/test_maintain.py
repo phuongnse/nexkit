@@ -493,7 +493,7 @@ class ParentAsksTheEngineTests(unittest.TestCase):
         none_completed = ["Left #1 open: none of its sub-issues was completed."]
         self.assertEqual(close_parents(self.gh, self.CFG, 5), none_completed)
         # A completed one beyond the ten that a state holds is not sent to the engine, so a
-        # person decides (`tests/differential/known.py`).
+        # person decides.
         self.gh.issues[30].update(state_reason="completed")
         self.assertEqual(close_parents(self.gh, self.CFG, 5), none_completed)
         self.gh.issues[20].update(state_reason="completed")

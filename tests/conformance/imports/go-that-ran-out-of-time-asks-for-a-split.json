@@ -1,0 +1,122 @@
+{
+  "kind": "split asked",
+  "nexkit6": {
+    "issue": {
+      "number": 42
+    },
+    "comments": [
+      {
+        "plan": {
+          "criteria": [
+            "A test shows the round says the issue is closed."
+          ],
+          "record": {
+            "questions": [],
+            "too_large": false
+          }
+        }
+      },
+      {
+        "run": {
+          "command": "plan",
+          "status": "success",
+          "url": "https://github.com/acme/app/actions/runs/1",
+          "outcome": "planned"
+        }
+      },
+      {
+        "run": {
+          "command": "go",
+          "status": "failure",
+          "url": "https://github.com/acme/app/actions/runs/2",
+          "outcome": "agent_error",
+          "attention": "The agent ran out of time",
+          "timed_out": true
+        }
+      }
+    ]
+  },
+  "config": {
+    "autopilot": {
+      "enabled": true
+    }
+  },
+  "state": {
+    "schemaVersion": 1,
+    "revision": 1,
+    "item": "42",
+    "itemKind": "change",
+    "state": "planning",
+    "change": null,
+    "observed": null,
+    "attention": null,
+    "hold": false,
+    "waits": [
+      {
+        "id": "w1.1",
+        "for": "start",
+        "until": null,
+        "on": null
+      }
+    ],
+    "pending": [],
+    "actors": {
+      "plan": "engine",
+      "change": "engine",
+      "review": "engine"
+    },
+    "plan": {
+      "text": {
+        "name": "plan",
+        "ref": "1"
+      },
+      "questions": [],
+      "criteria": 1,
+      "tooLarge": false,
+      "parts": 0,
+      "noChange": false,
+      "protectedPaths": [],
+      "approved": true,
+      "split": []
+    },
+    "rounds": {
+      "started": 0,
+      "counted": 0,
+      "conflicts": 0,
+      "signatures": [],
+      "findings": [],
+      "criteria": [],
+      "checklist": []
+    },
+    "used": {
+      "tokens": {
+        "input": 0,
+        "cached": 0,
+        "output": 0
+      },
+      "seconds": 0,
+      "since": null
+    },
+    "asked": [
+      "split"
+    ],
+    "parts": [],
+    "policies": {},
+    "recentEvents": [
+      "run-2"
+    ]
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "requested",
+        "what": "start"
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    }
+  ]
+}

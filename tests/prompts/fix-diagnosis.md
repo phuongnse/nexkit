@@ -152,9 +152,10 @@ change.
   unchanged, each as a path in the repository. Otherwise an empty list.
 - `open_conflicts`: only when you stop because conflicts with the base branch need a
   person's decision; otherwise an empty list. One entry for each open conflict:
-  - `file`: the file.
+  - `location`: where the conflict is. `location` is
+    the file and line, such as `nexkit/report.py:262`, the file alone when it is not about one line, or an empty string when it is about no file.
   - `base_change`: what the base branch changed there, in one sentence.
-  - `pr_change`: what this pull request changed there, in one sentence.
+  - `this_change`: what this pull request changed there, in one sentence.
   - `question`: the choice a person has to make, as one question.
   - `options`: the answers you see, two to four, such as keeping one side or the other.
   - `recommended`: the number of the option you would choose, counting from 1, when the

@@ -415,6 +415,20 @@ def asked_last(comments):
     return None
 
 
+def conflict_names(item):
+    """An open conflict of a fix round with `location` and `this_change`, when it has
+    `file` and `pr_change` instead, which the result files of an earlier NexKit hold. Any
+    other value comes back as it is."""
+    if not isinstance(item, dict):
+        return item
+    renamed = {"file": "location", "pr_change": "this_change"}
+    return {
+        renamed.get(key, key): value
+        for key, value in item.items()
+        if key not in renamed or renamed[key] not in item
+    }
+
+
 def round_questions(agent):
     """Every question of a blocked implement or fix round, for the run's marker: the
     decisions, then the conflicts, each with the file it is about."""
@@ -422,8 +436,8 @@ def round_questions(agent):
         return []
     output = agent.get("output") or {}
     conflicts = [
-        {**item, "question": f"`{item.get('file') or ''}`: {item.get('question') or ''}"}
-        for item in output.get("open_conflicts") or []
+        {**item, "question": f"`{item.get('location') or ''}`: {item.get('question') or ''}"}
+        for item in map(conflict_names, output.get("open_conflicts") or [])
         if isinstance(item, dict)
     ]
     return questions([*(output.get("questions") or []), *conflicts])

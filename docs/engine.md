@@ -151,9 +151,9 @@ events and actions](engine-states.md). The runners, the policies a host decides 
   text, one string for each thing an agent may not change, such as a path or a record. The
   plan, implement and fix prompts list them, and the engine keeps them without reading them. A
   plan, implement or fix result names what the change needs of them `protected`, a list of the
-  same kind. When the result of a stage that has no question holds one, the item waits for a
-  person to make the change by hand, and the state document keeps a plan's list in
-  `plan.protected`. The engine refuses a `workspace` without `protected` and names the missing
+  same kind. When a plan holds one, is not too large and finds that a change is needed, or when
+  a blocked implement or fix round holds one, the item waits for a person to make the change by
+  hand. The state document keeps a plan's list in `plan.protected`. The engine refuses a `workspace` without `protected` and names the missing
   field.
 - **The host's workspace text.** The `workspace` input's `text` object holds the host's own
   sentences on how the agent sees and edits the change. Each replaces one span of a line in the
@@ -186,7 +186,7 @@ events and actions](engine-states.md). The runners, the policies a host decides 
   fix round ("Any later versions were saved without a fix round."); `workspaceName`, where
   the agent reads the change, which the engine's notes name when a version or a diff is not
   there ("this draft's history"); and `locationForm`, how the agent writes where a review finding
-  points, after "`location` is" in the review prompt ("the record and its field, such as `form
+  or an open conflict of a fix round points, after "`location` is" in the review and fix prompts ("the record and its field, such as `form
   Customer › field Phone`, or an empty string when it is about no record"). Each is a string of at most 500 characters, and every field is
   required in every call with a `workspace`. A text holds no line break, except `mergeRule` and
   `sideHistory`: each is one sentence that a template wraps over two lines, and a host whose
@@ -250,7 +250,7 @@ Every decision of the loop is the engine's: plans, questions and answers, splits
   signatures, and the last review's round, version, verdict and findings with severity, location
   and body. A location is the host's own text for where a finding points, which the agent writes in
   the form that `locationForm` gives. The engine keeps it as it came, clipped, without reading it,
-  and shows it to the next fix and review prompts, or shows "general" when it is empty. The engine records a fix round when its agent returns a result that is not blocked, and
+  and shows it to the next fix and review prompts, or shows "general" when it is empty. The question that the engine asks for an open conflict of a fix round starts with the conflict's location, clipped, in backticks. The engine records a fix round when its agent returns a result that is not blocked, and
   the checks after it complete the record. A round under way keeps who started it, whether it
   diagnoses and its note until then (`rounds.fixRound`). Other long texts, such as a plan's prose,
   check output, a discussion and evidence, stay with the host as texts that the state names, and

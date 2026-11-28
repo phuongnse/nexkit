@@ -2225,6 +2225,43 @@ class ReportTests(ReportCase):
         self.assertIn("`/nexkit fix` followed by your decisions", body)
         self.assertEqual(row["run"]["status"], "failure")
 
+    def test_a_conflict_with_a_location_renders_the_comment_of_one_with_a_file(self):
+        shapes = {
+            "old": {"file": "Program.cs", "pr_change": "Moves the endpoints above the middleware."},
+            "new": {
+                "location": "Program.cs",
+                "this_change": "Moves the endpoints above the middleware.",
+            },
+        }
+        rows = {}
+        for name, names in shapes.items():
+            open_conflict = {
+                **names,
+                "base_change": "Adds request validation before the endpoints.",
+                "question": "Should validation run before this pull request's endpoint?",
+                "options": ["Keep validation first", "Keep the endpoints first"],
+                "recommended": 1,
+            }
+            self.write(
+                "nexkit-agent",
+                "result.json",
+                {
+                    "status": "blocked",
+                    "error": "A conflict needs a decision.",
+                    "start_base": "b" * 40,
+                    "conflicts": ["Program.cs"],
+                    "output": {"status": "blocked", "open_conflicts": [open_conflict]},
+                },
+            )
+            self.run_report(d=decision("fix", pr=6, target=6, head=HEAD), published=False)
+            rows[name] = self.gh.run_comments(6)[-1]
+            self.gh.issue_comments[6].clear()
+            self.run_ids = itertools.count(1)
+        self.assertEqual(rows["old"]["body"], rows["new"]["body"])
+        self.assertEqual(rows["old"]["run"]["questions"], rows["new"]["run"]["questions"])
+        [asked] = rows["new"]["run"]["questions"]
+        self.assertTrue(asked["question"].startswith("`Program.cs`: Should validation run"))
+
     def test_round_comment_says_the_base_was_merged(self):
         self.candidate()
         self.write(

@@ -1479,13 +1479,13 @@ class PromptInputTests(unittest.TestCase):
                 None,
                 ("fixLocation", "earlierWork", "mergeRule", "versionKind", "mergeInto")
                 + ("sideHistory", "sideNote", "mergeUndo", "baseKind", "instructions")
-                + ("saving", "leftovers", "summaryUse"),
+                + ("saving", "leftovers", "summaryUse", "locationForm"),
             ),
             "fix without conflicts": (
                 "fix",
                 {**base, "merging": {"commit": "b" * 40, "files": []}},
                 None,
-                ("lastMerged", "versionKind", "mergeInto", "baseKind", "mergeUndo"),
+                ("lastMerged", "versionKind", "mergeInto", "baseKind", "mergeUndo", "locationForm"),
             ),
             "review with sides": (
                 "review",

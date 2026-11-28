@@ -1143,7 +1143,7 @@
           "maxLength": 500
         },
         "locationForm": {
-          "$comment": "How the agent writes where a review finding points, after \"`location` is\", such as \"the record and its field, such as `form Customer › field Phone`, or an empty string when it is about no record\". The engine keeps what the agent writes, clipped, and shows it to the next fix and review prompts without reading it.",
+          "$comment": "How the agent writes where a review finding or an open conflict of a fix round points, after \"`location` is\" in the review and fix prompts, such as \"the record and its field, such as `form Customer › field Phone`, or an empty string when it is about no record\". The engine keeps what the agent writes, clipped, and shows a finding's to the next fix and review prompts and an open conflict's first in its question, without reading it.",
           "type": "string",
           "maxLength": 500
         }

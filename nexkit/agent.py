@@ -29,7 +29,7 @@ from .runlog import RunLog, add_tokens, one_line, summary, write_summary
 from .runtimes import PROVIDERS, RUNTIMES
 from .runtimes.base import ACCESS, AgentConfigError, Spec
 from .schema import filled, problems
-from .state import protected_of, round_questions
+from .state import conflict_names, protected_of, round_questions
 from .textutil import checklist_item, person_decides
 from .usage import schedule
 
@@ -100,8 +100,9 @@ def with_location(finding):
 
 def with_defaults(output, stage):
     """`output` with the empty value of each optional field it left out, for a review each
-    finding at a `location`, and for a plan, implement or fix round what only a person
-    changes as `protected`, which the results of an earlier NexKit name `protected_paths`."""
+    finding at a `location`, for a fix each open conflict at a `location` too, and for a
+    plan, implement or fix round what only a person changes as `protected`, which the
+    results of an earlier NexKit name `protected_paths`."""
     if not isinstance(output, dict):
         return output
     if stage in ("plan", "implement", "fix") and "protected" not in output:
@@ -112,6 +113,8 @@ def with_defaults(output, stage):
     output = {**output, **copy.deepcopy(missing)}
     if stage == "review" and isinstance(output.get("findings"), list):
         output["findings"] = [with_location(item) for item in output["findings"]]
+    if stage == "fix" and isinstance(output.get("open_conflicts"), list):
+        output["open_conflicts"] = [conflict_names(item) for item in output["open_conflicts"]]
     return output
 
 

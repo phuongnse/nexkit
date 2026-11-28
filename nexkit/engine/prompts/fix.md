@@ -97,9 +97,10 @@ $writing
   unchanged, each as a path in the repository. Otherwise an empty list.
 - `open_conflicts`: only when you stop because conflicts with the $base_kind need a
   person's decision; otherwise an empty list. One entry for each open conflict:
-  - `file`: the file.
+  - `location`: where the conflict is. `location` is
+    $location_form.
   - `base_change`: what the $base_kind changed there, in one sentence.
-  - `pr_change`: what this $change_kind changed there, in one sentence.
+  - `this_change`: what this $change_kind changed there, in one sentence.
   - `question`: the choice a person has to make, as one question.
   - `options`: the answers you see, two to four, such as keeping one side or the other.
   - `recommended`: the number of the option you would choose, counting from 1, when the

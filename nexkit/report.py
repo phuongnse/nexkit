@@ -39,6 +39,7 @@ from .state import (
     TROUBLESHOOTING,
     UNCOUNTED,
     clip,
+    conflict_names,
     empty_state,
     option_marks,
     passed_checks,
@@ -619,15 +620,16 @@ def _text(item, key):
 
 def open_conflicts(agent, base):
     """The conflicts with the base branch that a blocked fix round left for a person."""
-    items = [i for i in (agent.get("output") or {}).get("open_conflicts") or [] if i]
+    found = (agent.get("output") or {}).get("open_conflicts") or []
+    items = [conflict_names(i) for i in found if i]
     if agent.get("status") != "blocked" or not items:
         return ""
     lines = [f"**Conflicts with `{base}` that need your decision**", ""]
     for item in items:
         lines += [
-            f"- `{_text(item, 'file')}`",
+            f"- `{_text(item, 'location')}`",
             f"  - `{base}`: {_text(item, 'base_change')}",
-            f"  - This pull request: {_text(item, 'pr_change')}",
+            f"  - This pull request: {_text(item, 'this_change')}",
             f"  - **Question:** {_text(item, 'question')}",
             *_options(item),
         ]

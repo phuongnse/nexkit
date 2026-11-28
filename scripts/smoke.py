@@ -306,7 +306,10 @@ def conflicts(root, program):
     blocked = stage("fix", work, root / "fix-choice", program, context, base="main", want="blocked")
     questions = blocked["output"]["open_conflicts"]
     print(f"open conflicts: {json.dumps(questions)}", flush=True)
-    if not any(item["file"] == "greet.py" and item["question"] for item in questions):
+    if not any(
+        re.fullmatch(r"greet\.py(:\d+)?", item.get("location", "")) and item["question"]
+        for item in questions
+    ):
         raise SystemExit("fix: the open conflict in greet.py was not listed")
     asked(questions, "fix")
 

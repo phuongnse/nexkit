@@ -1,0 +1,156 @@
+{
+  "kind": "answered",
+  "nexkit6": {
+    "issue": {
+      "number": 42
+    },
+    "comments": [
+      {
+        "plan": {
+          "criteria": [
+            "A test shows the round says the issue is closed."
+          ],
+          "record": {
+            "questions": [],
+            "too_large": false
+          }
+        }
+      },
+      {
+        "run": {
+          "command": "plan",
+          "status": "success",
+          "url": "https://github.com/acme/app/actions/runs/1",
+          "outcome": "planned"
+        }
+      },
+      {
+        "run": {
+          "command": "go",
+          "status": "success",
+          "url": "https://github.com/acme/app/actions/runs/2",
+          "outcome": "pr_opened"
+        }
+      }
+    ],
+    "pull": {
+      "number": 308,
+      "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "pullComments": [
+      {
+        "run": {
+          "round": 2,
+          "trigger": "fix",
+          "action": "fix",
+          "status": "failure",
+          "outcome": "agent_blocked",
+          "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "url": "https://github.com/acme/app/actions/runs/3",
+          "questions": [
+            {
+              "question": "Keep it small or split it?",
+              "options": [
+                "Keep it small",
+                "Split it"
+              ],
+              "recommended": "Keep it small"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "config": {
+    "autopilot": {
+      "enabled": true,
+      "answer": "recommended"
+    }
+  },
+  "state": {
+    "schemaVersion": 1,
+    "revision": 1,
+    "item": "42",
+    "itemKind": "change",
+    "state": "fixing",
+    "change": {
+      "id": "308",
+      "version": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "observed": null,
+    "attention": null,
+    "hold": false,
+    "waits": [
+      {
+        "id": "w1.1",
+        "for": "start",
+        "until": null,
+        "on": null
+      }
+    ],
+    "pending": [],
+    "actors": {
+      "plan": "engine",
+      "change": "engine",
+      "review": "engine"
+    },
+    "plan": {
+      "text": {
+        "name": "plan",
+        "ref": "1"
+      },
+      "questions": [],
+      "criteria": 1,
+      "tooLarge": false,
+      "parts": 0,
+      "noChange": false,
+      "protectedPaths": [],
+      "approved": true,
+      "split": []
+    },
+    "rounds": {
+      "started": 2,
+      "counted": 0,
+      "conflicts": 0,
+      "signatures": [],
+      "findings": [],
+      "criteria": [],
+      "checklist": [],
+      "fixRound": {
+        "auto": true,
+        "diagnosis": false,
+        "note": ""
+      }
+    },
+    "used": {
+      "tokens": {
+        "input": 0,
+        "cached": 0,
+        "output": 0
+      },
+      "seconds": 0,
+      "since": null
+    },
+    "asked": [
+      "answers"
+    ],
+    "parts": [],
+    "policies": {},
+    "recentEvents": [
+      "run-3"
+    ]
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "requested",
+        "what": "start"
+      },
+      "state": "fixing",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    }
+  ]
+}

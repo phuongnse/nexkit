@@ -2331,8 +2331,8 @@ class StoppedTest(HostCase):
         self.fix_stopped(5, 6, [{**ASKED, "closes": 0}])
         with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
             step = self.step(5, cfg)
-        [call] = answer.call_args_list
-        request = call.args[0]
+        # The import of the item, which places this round too, asks the engine first.
+        request = answer.call_args_list[-1].args[0]
         self.assertEqual(
             (request["state"]["state"], request["state"]["change"]["id"]), ("fixing", "6")
         )
@@ -2357,11 +2357,15 @@ class StoppedTest(HostCase):
         self.run_comment(5, "go", status="failure", outcome="agent_error", timed_out=True)
         with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
             step = self.step(5)
-        [request] = asked_step(answer)
+        # The import of the item, which places this round too, asks the engine first.
+        request = asked_step(answer)[-1]
         self.assertTrue(request["event"]["result"]["timedOut"])
         self.assertEqual((step["command"], step["remember"]), ("plan", {"split_asked": True}))
         self.assertEqual(step["note"], autopilot.SPLIT_NOTE)
-        with mock.patch.object(host, "step", return_value={"actions": [], "state": {}}):
+        real, stub = host.step, {"actions": [], "state": {}}
+        # The import of the item, which places this round too, asks first and gets the real one.
+        answers = [lambda *args: real(*args), lambda *args: stub]
+        with mock.patch.object(host, "step", side_effect=lambda *a: answers.pop(0)(*a)):
             self.assertIn("refused to decide", self.step(5)["reason"])
 
     def test_a_part_whose_parent_asked_for_a_split_waits_for_a_person(self):
@@ -2372,7 +2376,7 @@ class StoppedTest(HostCase):
         self.gh.parents[5] = 4
         self.plan(5)
         self.run_comment(5, "go", status="failure", outcome="agent_error", timed_out=True)
-        [request] = self.requests(5)
+        request = self.requests(5)[-1]
         self.assertIn("split", request["state"]["asked"])
         self.assertIn("after #4 asked for a split", self.step(5)["reason"])
 

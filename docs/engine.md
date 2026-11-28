@@ -523,7 +523,10 @@ adapter's tests and the answers as what its adapter carries out.
    stored state document, or on the import in memory when none is stored, and stores the engine's
    answer in the item's group, a row of events as one write. Only the first import builds a
    document from NexKit 6's markers, as its import reads them. A person's command and a closing
-   command decide on the stored state too.
+   command decide on the stored state too. `tests/test_host.py` guards this: it fails any `step`
+   that NexKit's code asks for on another state, which is anything but the stored document, the
+   state the row's previous event gave, the import in memory while nothing is stored, or a call
+   inside the first import.
    The plan's report sends the plan's result to the engine once for every plan of an issue that
    autopilot takes, a clean plan and one that finds no change too, and stores the answer. Asking
    what a plan waits for reads the stored state alone and stores nothing. The sweep's and the step

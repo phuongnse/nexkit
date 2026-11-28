@@ -134,6 +134,20 @@ events and actions](engine-states.md). The runners, the policies a host decides 
 | `diff` | The change against its base, since the last review, the merge of the base that the newest fix record made, and the files a merge conflicted in |
 | `workspace` | The checks the agent can run, and the paths only a person changes |
 
+- **The host's words.** The call's `words` object names, as the host's people see them, what the
+  prompts say in place of one host's own: `item`, the work item in a sentence ("request R-42");
+  `itemHeading`, the item as a heading ("Request R-42"); `itemKind` and `itemKinds`, the noun in
+  the rules and its plural ("request", "requests"); `change`, the change with its id ("draft 3"),
+  "" when the item has none; `changeKind` ("draft"); `source`, where people wrote the texts, and
+  `readers`, where they read the agent's text ("in the app"); `approve` and `fixRound`, the words
+  that approve a plan and ask for a fix round; and `commands`, the commands people write on the
+  item, with their noun. Each is a string of at most 200 characters, and every field is
+  required. The engine refuses a stage's prompt without `words` and names the missing field, as
+  in `request.words is missing`; a call with `unfit` needs none. The words sit outside the
+  `<untrusted>` tags, as the host's own text, so a host builds them only from its own fixed text
+  and ids, never from what people wrote. The engine breaks `item` and `changeKind` at their last
+  space where a template breaks a line inside them, so a host's prompts keep the line breaks
+  they had. [What a host decides](engine-hosts.md#what-a-host-decides) gives GitHub's words.
 - **What a stage needs.** Every stage needs `item`, and every stage but triage `workspace`.
   Implement, fix and review need `plan`, which is null when the item has none, and fix and review
   need `diff`. The engine refuses a call without them.

@@ -11,6 +11,6 @@
   Return `request_changes` when an item is `not_met`. NexKit turns each one into a blocking
   finding, so do not raise it as a finding as well.
 
-The repository's checklist, which every pull request must meet:
+The repository's checklist, which every $change_kind must meet:
 
 $items

@@ -1,7 +1,7 @@
 
 ## Latest plan
 
-NexKit already posted a plan for this issue. The discussion above came before it.
+NexKit already posted a plan for this $item_kind. The discussion above came before it.
 
 <untrusted>
 $plan
@@ -19,8 +19,8 @@ $since_plan
   can change any part of it. A later comment wins over an earlier one.
 - Keep every summary point, change, decision, risk, acceptance criterion and
   implementation step that nothing asks to change, in the same words.
-- Where the issue now says something different from the latest plan, follow the issue.
-- When the note asks for a new plan from scratch, plan again from the issue and the
+- Where the $item_kind now says something different from the latest plan, follow the $item_kind.
+- When the note asks for a new plan from scratch, plan again from the $item_kind and the
   discussion without keeping the latest plan's choices, and set `revision.started_over`.
 - In `revision.changes`, list each decision, acceptance criterion or scope item you added,
   changed or removed compared with the latest plan, one sentence each. Leave it empty

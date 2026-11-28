@@ -231,6 +231,12 @@ class ChecklistTests(unittest.TestCase):
         self.assertEqual(result["error"], "It failed.")
 
 
+def github_template(stage):
+    """The template of `stage` with GitHub's words in it, on one line."""
+    words = agent.prompt_words(5, 6)
+    return " ".join(engine_prompt.fill(engine_prompt.template(stage), words).split())
+
+
 class PromptTests(unittest.TestCase):
     def test_prompt_keeps_untrusted_text_literal(self):
         prompt = build_prompt("implement", TEXTS, make_config())
@@ -501,7 +507,7 @@ class PromptTests(unittest.TestCase):
             item = agent.SCHEMAS[stage]["properties"]["questions"]["items"]
             self.assertEqual(item["properties"]["replans"]["items"], {"type": "integer"})
             self.assertIn("replans", item["required"])
-            template = " ".join(engine_prompt.template(stage).split())
+            template = github_template(stage)
             self.assertIn("`replans`: the numbers of the options that change the issue's", template)
             self.assertIn(
                 "when no issue holds that work yet, the option changes the scope", template
@@ -509,7 +515,7 @@ class PromptTests(unittest.TestCase):
         self.assertNotIn(
             "replans", agent.SCHEMAS["plan"]["properties"]["questions"]["items"]["properties"]
         )
-        template = " ".join(engine_prompt.template("plan").split())
+        template = github_template("plan")
         self.assertIn(
             "the note answers a blocked round with an option that splits the issue", template
         )
@@ -520,7 +526,7 @@ class PromptTests(unittest.TestCase):
             closing = ["question", "options", "recommended", "closes"]
             replans = ["replans"] if stage == "implement" else []
             self.assertEqual(item["required"], [*closing, *replans], stage)
-            template = " ".join(engine_prompt.template(stage).split())
+            template = github_template(stage)
             self.assertIn(
                 "`closes`: the number of the option that only closes the issue, with no "
                 "change, or 0 when no option does. NexKit closes the issue when a person "
@@ -530,10 +536,8 @@ class PromptTests(unittest.TestCase):
             self.assertIn("Never offer closing together with another step", template)
         item = agent.SCHEMAS["fix"]["properties"]["questions"]["items"]
         self.assertNotIn("closes", item["properties"])
-        self.assertIn(
-            "Never offer to close the issue", " ".join(engine_prompt.template("fix").split())
-        )
-        template = " ".join(engine_prompt.template("implement").split())
+        self.assertIn("Never offer to close the issue", github_template("fix"))
+        template = github_template("implement")
         self.assertIn("and set its `closes` to that option's number", template)
         self.assertIn(
             "when you are blocked for any other reason, such as work that is not merged yet, "
@@ -815,6 +819,33 @@ class PromptCallTests(StageCase):
         self.assertEqual((request["call"], request["stage"]), ("prompt", "implement"))
         self.assertEqual(request["texts"], str(self.out / "texts"))
         self.assertEqual(protocol.check(request, "calls/prompt.schema.json", "request"), [])
+
+    def test_the_request_holds_githubs_words_built_from_the_numbers_of_the_item(self):
+        cfg = make_config()
+        added = {"diff": {"base": "main"}, "workspace": agent.workspace(cfg)}
+        item = {**CONTEXT["inputs"]["item"], "id": 5, "change": 6}
+        context = context_with({"item": item})
+        request = agent.prompt_request("fix", context, added, cfg, self.out / "texts")
+        words = request["words"]
+        self.assertEqual(words["item"], "GitHub issue #5")
+        self.assertEqual(words["itemHeading"], "Issue #5")
+        self.assertEqual(words["change"], "pull request #6")
+        self.assertEqual(
+            (words["itemKind"], words["itemKinds"], words["changeKind"]),
+            ("issue", "issues", "pull request"),
+        )
+        self.assertEqual((words["source"], words["readers"]), ("on GitHub", "on GitHub"))
+        self.assertEqual(
+            (words["approve"], words["fixRound"], words["commands"]),
+            ("`/nexkit go`", "`/nexkit fix`", "`/nexkit` commands"),
+        )
+        self.assertEqual(protocol.check(request, "calls/prompt.schema.json", "request"), [])
+        # Without a pull request the item has no change.
+        item = {**item, "change": None}
+        context = context_with({"item": item})
+        request = agent.prompt_request("implement", context, added, cfg, self.out / "texts")
+        self.assertEqual(request["words"]["change"], "")
+        self.assertEqual(request["words"]["item"], "GitHub issue #5")
 
     def test_the_diff_the_context_step_fetched_keeps_what_the_agent_step_adds_to_it(self):
         merged = {"head": "a" * 40, "base": "b" * 40, "conflicts": ["calc.py"]}

@@ -6,7 +6,9 @@ The host fetches; the engine writes. The inputs are named by kind, as `runAgent`
 (`protocol.stages.INPUTS`). Inside the engine they are snake_case, as NexKit's records are; the
 protocol's call sends them in camelCase, and `answer` converts them. The earlier fix rounds and
 the last review are not an input: they come from the call's `state`, as `rounds.fixes` and
-`rounds.lastReview`.
+`rounds.lastReview`. The host's own words for its work item, its change and where people read
+come with the call, as `words`: the templates and the code here read them in place of any
+host's (`template_words`), and the engine refuses a stage's prompt without them.
 
 A prompt is written in two internal steps, which `write` runs one after the other: `texts`,
 from what the host read about the work item, and `finish`, from what its round adds: the
@@ -60,9 +62,23 @@ REVIEW_FAILURE_LINES = 10
 # What a part's plan keeps of each earlier part's text and plan.
 EARLIER_BODY = 3_000
 EARLIER_PLAN = 6_000
-NO_PLAN = "No plan was posted. Implement the issue as described."
-PERSON_PLAN = "None: a person wrote this pull request."
-NO_EARLIER_FIXES = "None. This is the first fix round of this pull request."
+NO_PLAN = "No plan was posted. Implement the $item_kind as described."
+PERSON_PLAN = "None: a person wrote this $change_kind."
+NO_EARLIER_FIXES = "None. This is the first fix round of this $change_kind."
+# The host's words of a `prompt` call (`words` in the protocol), in the engine's snake_case.
+WORDS = (
+    "item",
+    "item_heading",
+    "item_kind",
+    "item_kinds",
+    "change",
+    "change_kind",
+    "source",
+    "readers",
+    "approve",
+    "fix_round",
+    "commands",
+)
 # How the prompts mark a checklist item that a person decides.
 PERSON_MARK = "(a person decides)"
 # The stages whose prompts answer `review.checklist`: those with a checklist result.
@@ -96,6 +112,31 @@ def file_name(key):
     if name == key and not HASHED.search(key):
         return name
     return f"{name}-{hashlib.sha256(key.encode('utf-8', 'surrogatepass')).hexdigest()[:8]}"
+
+
+def _broken(words, key, indent):
+    """The host's word `key` broken at its last space, for the two template lines that
+    break inside it: with `indent` on the next line; unchanged when it has no space."""
+    value = str(words.get(key) or "")
+    head, space, tail = value.rpartition(" ")
+    return f"{head}\n{indent}{tail}" if space else value
+
+
+def template_words(words):
+    """The host's `words`, as the templates read them: each field, and `item_broken` and
+    `change_kind_broken`, the item and the change's kind broken at their last space, as the
+    two template lines that hold them break (docs/engine.md#the-prompt)."""
+    words = words or {}
+    return {
+        **{key: str(words[key]) for key in WORDS if key in words},
+        "item_broken": _broken(words, "item", ""),
+        "change_kind_broken": _broken(words, "change_kind", "  "),
+    }
+
+
+def fill(text, words, **values):
+    """`text`, a template of the engine, with the host's `words` and `values` in it."""
+    return Template(text).safe_substitute({**template_words(words), **values})
 
 
 @functools.cache
@@ -403,10 +444,11 @@ def earlier_parts(found):
     return {"parent": found["parent"], "parts": parts} if parts else None
 
 
-def _linked_entry(text):
-    """The entry `_fit` shows of a linked text: a comment, a NexKit `plan` or an `item`."""
+def _linked_entry(text, words):
+    """The entry `_fit` shows of a linked text: a comment, a NexKit `plan` or an `item`, in
+    the host's `words`."""
     if text["kind"] == "item":
-        kind = "pull request" if text.get("change") else "issue"
+        kind = words["change_kind"] if text.get("change") else words["item_kind"]
         who = "NexKit" if text.get("nexkit") else f"@{text.get('author') or 'someone'}"
         header = f"#{text['id']}, {kind} of {who}: {text.get('title') or ''}\n"
         body = text.get("text") or "No description."
@@ -420,19 +462,21 @@ def _linked_entry(text):
     return header, text.get("text") or "", name, f"linked-{number}"
 
 
-def linked(found, shelf):
+def linked(found, shelf, words):
     """What the issue refers to, as the prompt shows it: the `texts` its texts link to, the
     first linked first, and the issues of `chain` it was split from, nearest first, each
     with its text, or None when its `body` was not read, and its discussion. Each block keeps
     at most BLOCK_LIMIT characters; texts past that go whole to `shelf`. `not_read` lists
-    the links not read and why. None when there is nothing."""
+    the links not read and why. The kinds of its texts come from the host's `words`. None when
+    there is nothing."""
+    words = template_words(words)
     if not found:
         return None
     texts, chain = found.get("texts") or [], found.get("chain") or []
     not_read = list(found.get("not_read") or [])
     if not texts and not chain and not not_read:
         return None
-    entries = [_linked_entry(text) for text in texts]
+    entries = [_linked_entry(text, words) for text in texts]
     # The first linked first: `_fit` keeps the last entries whole.
     shown = _fit(entries[::-1], shelf)[::-1] if entries else []
     out = {"comments": "\n\n---\n\n".join(shown), "chain": []}
@@ -444,7 +488,7 @@ def linked(found, shelf):
         text = (
             (body or "No description.")
             if body is not None
-            else ("NexKit did not read this issue's text.")
+            else (f"NexKit did not read this {words['item_kind']}'s text.")
         )
         keep = max(SHORT, min(TEXT_LIMIT, left))
         text = shelf.put(f"the body of #{number}", f"issue-{number}", text, keep)
@@ -459,19 +503,22 @@ def linked(found, shelf):
     return out
 
 
-def texts(stage, inputs, shelf, state=None):
+def texts(stage, inputs, shelf, state=None, words=None):
     """The texts of a stage's prompt that come from what the host fetched, as NexKit 6's
     `context.gather` gave them: the item, its plan and discussions, what it links to, and the
     stage's own, in the order a prompt shortens them. The earlier fix rounds and the last
     review come from `state`'s `rounds`, and the version the last review must have read for
     the fix prompt to show its findings from the change's. A text the prompt shortens goes
-    whole to `shelf`, and `shortened` names it."""
+    whole to `shelf`, and `shortened` names it. `words` are the host's (`template_words`): they
+    go to the context first, so every text that holds one reads it there."""
+    words = template_words(words)
     item = inputs.get("item") or {}
     talk = inputs.get("discussion") or {}
     on_item, on_change = talk.get("item") or [], talk.get("change") or []
     number = item.get("id")
     plan = inputs.get("plan")
     context = {
+        **words,
         "issue": number,
         "pr": item.get("change") or "",
         "title": item.get("title") or "",
@@ -481,7 +528,7 @@ def texts(stage, inputs, shelf, state=None):
             item.get("body") or "No description.",
             TEXT_LIMIT,
         ),
-        "plan": plan if plan is not None else NO_PLAN,
+        "plan": plan if plan is not None else fill(NO_PLAN, words),
         "note": inputs.get("notes") or "None.",
         "feedback": "",
         "outside_plan": "None.",
@@ -491,7 +538,7 @@ def texts(stage, inputs, shelf, state=None):
     if stage in ("plan", "implement", "fix") and "ci" in evidence:
         context["ci_evidence"] = _without_keeps(evidence["ci"])
     if stage in ("plan", "implement", "fix", "review"):
-        context["linked"] = linked(inputs.get("linked"), shelf)
+        context["linked"] = linked(inputs.get("linked"), shelf, words)
     history = snake((state or {}).get("rounds") or {})
     fixes, last = history.get("fixes") or [], history.get("last_review")
     if last:
@@ -518,12 +565,12 @@ def texts(stage, inputs, shelf, state=None):
         # Its item is the change itself, with its description and comments, so the review
         # needs neither a plan nor the same discussion twice.
         shown = discussion(on_item, notes=True, shelf=shelf)
-        context.update(person=True, plan=PERSON_PLAN)
+        context.update(person=True, plan=fill(PERSON_PLAN, words))
         context.update(reviewed or {})
     elif stage == "review" and item.get("change"):
         shown = (
             discussion(on_item, notes=True, shelf=shelf)
-            + "\n\n---\n\nOn the pull request:\n\n"
+            + f"\n\n---\n\nOn the {words['change_kind']}:\n\n"
             + discussion(on_change, notes=True, shelf=shelf)
         )
         context["outside_plan"] = outside_plan(item.get("outside_plan"))
@@ -552,7 +599,7 @@ def texts(stage, inputs, shelf, state=None):
         # shortened here.
         shown = (
             discussion(on_item, shelf=Shelf())
-            + "\n\n---\n\nOn the pull request:\n\n"
+            + f"\n\n---\n\nOn the {words['change_kind']}:\n\n"
             + discussion(on_change, shelf=Shelf())
         )
     context["discussion"] = shown or discussion(on_item, shelf=shelf)
@@ -573,7 +620,7 @@ def _without_keeps(found):
 # The texts of a stage's prompt that come from its checkout, its checks and its evidence.
 
 
-def checklist_text(stage, items):
+def checklist_text(stage, items, words=None):
     """The prompt's section about `review.checklist`, or "" without items or for a stage
     that does not answer them, so that its prompt stays as it is."""
     if stage not in CHECKLIST_STAGES or not items:
@@ -582,9 +629,9 @@ def checklist_text(stage, items):
         f"{number}. {checklist_item(item)}" + (f" {PERSON_MARK}" if person_decides(item) else "")
         for number, item in enumerate(items, 1)
     )
-    text = Template(template(f"{stage}_checklist")).safe_substitute(items=numbered).rstrip()
+    text = fill(template(f"{stage}_checklist"), words, items=numbered).rstrip()
     if any(person_decides(item) for item in items):
-        person = Template(template(f"{stage}_checklist_person")).safe_substitute(mark=PERSON_MARK)
+        person = fill(template(f"{stage}_checklist_person"), words, mark=PERSON_MARK)
         text = f"{text}\n\n{person.rstrip()}"
     return text
 
@@ -710,8 +757,8 @@ def previous_plan(context):
     """The plan prompt's section about the latest plan, or "" for a first plan."""
     if "since_plan" not in context:
         return ""
-    return Template(template("plan_previous")).safe_substitute(
-        plan=context["plan"], since_plan=context["since_plan"]
+    return fill(
+        template("plan_previous"), context, plan=context["plan"], since_plan=context["since_plan"]
     )
 
 
@@ -728,17 +775,17 @@ def earlier_parts_text(context):
         if part.get("plan"):
             lines += ["", "Its latest plan:", "", part["plan"]]
         blocks.append("\n".join(lines))
-    return Template(template("plan_parts")).safe_substitute(
-        parent=earlier["parent"], parts="\n\n".join(blocks)
+    return fill(
+        template("plan_parts"), context, parent=earlier["parent"], parts="\n\n".join(blocks)
     )
 
 
 # What each stage does with the texts NexKit read for it, and with those it could not read.
 LINKED_USE = {
-    "plan": "When what this issue asks depends on a text listed under *Links NexKit did not "
+    "plan": "When what this $item_kind asks depends on a text listed under *Links NexKit did not "
     "read*, and nothing shown here, in the discussion or in the repository settles it, do not "
     "guess: ask a question about it with `recommended` 0, so that a person answers it.",
-    "implement": "When what this issue asks depends on a text listed under *Links NexKit did "
+    "implement": "When what this $item_kind asks depends on a text listed under *Links NexKit did "
     "not read*, and nothing shown here, in the plan, in the discussion or in the repository "
     "settles it, do not guess: stop and return `status: blocked` with a question about it, "
     "with `recommended` 0, so that a person answers it.",
@@ -750,26 +797,33 @@ LINKED_USE = {
 LINKED_USE["fix"] = LINKED_USE["implement"]
 
 
+def _article(noun):
+    """ "an" before a noun that starts with a vowel, otherwise "a"."""
+    return "an" if noun[:1].lower() in "aeiou" else "a"
+
+
 def linked_text(context, stage=None):
     """The plan, implement, fix and review prompts' section about what the issue refers to:
     for a part of a split, the issues it was split from, root first, and the texts that the
     issue and those issues link to, with what NexKit could not read, or "" without any.
     `context["linked"]` comes from `linked`."""
     found = context.get("linked") or {}
+    words = template_words(context)
+    kind, kinds = words["item_kind"], words["item_kinds"]
     blocks = []
     chain = found.get("chain") or []
     if chain:
-        names = ["this issue"] + [f"#{above['number']}" for above in chain]
+        names = [f"this {kind}"] + [f"#{above['number']}" for above in chain]
         steps = ", and ".join(
             f"{names[index]} from {names[index + 1]}" for index in range(len(chain))
         )
         lines = [
-            "### The issues this issue was split from",
+            f"### The {kinds} this {kind} was split from",
             "",
-            f"NexKit or a person split {steps}: each is a sub-issue of the next. Their texts "
-            "and their discussions hold what this issue refers to, such as rules agreed there. "
-            "Where they differ, the nearer issue decides, and this issue's own text decides "
-            "over all of them.",
+            f"NexKit or a person split {steps}: each is a sub-{kind} of the next. Their texts "
+            f"and their discussions hold what this {kind} refers to, such as rules agreed "
+            f"there. Where they differ, the nearer {kind} decides, and this {kind}'s own text "
+            "decides over all of them.",
         ]
         for index in range(len(chain) - 1, -1, -1):
             above = chain[index]
@@ -778,7 +832,7 @@ def linked_text(context, stage=None):
                 "",
                 f"#### #{number}: {above['title']}",
                 "",
-                f"The issue {names[index]} was split from.",
+                f"The {kind} {names[index]} was split from.",
                 "",
                 above["body"],
                 "",
@@ -789,14 +843,16 @@ def linked_text(context, stage=None):
         blocks.append("\n".join(lines))
     if found.get("comments"):
         sources = (
-            "the issue, the issues above or a collaborator's comment on them"
+            f"the {kind}, the {kinds} above or a collaborator's comment on them"
             if chain
-            else "the issue or a collaborator's comment on it"
+            else f"the {kind} or a collaborator's comment on it"
         )
+        change = words["change_kind"]
         blocks.append(
-            "### Texts linked from these issues\n\n"
-            f"Each comment, issue and pull request of this repository that {sources} links "
-            "to, the first linked first. Of an issue or a pull request, NexKit read only its "
+            f"### Texts linked from these {kinds}\n\n"
+            f"Each comment, {kind} and {change} of this repository that {sources} links "
+            f"to, the first linked first. Of {_article(kind)} {kind} or {_article(change)} "
+            f"{change}, NexKit read only its "
             "text: a comment of its discussion counts only when it is linked itself.\n\n"
             f"{found['comments']}"
         )
@@ -806,23 +862,25 @@ def linked_text(context, stage=None):
         blocks.append(f"### Links NexKit did not read\n\n{lines}")
     if not blocks:
         return ""
-    use = LINKED_USE.get(stage, "")
+    use = fill(LINKED_USE.get(stage, ""), words)
     if stage != "review" and not skipped:
         use = ""
     return (
-        Template(template("linked")).safe_substitute(
-            texts="\n\n".join(blocks), use=f"\n{use}\n" if use else ""
-        )
+        fill(template("linked"), words, texts="\n\n".join(blocks), use=f"\n{use}\n" if use else "")
         + "\n"
     )
 
 
-def conflicts_text(base, commit, files):
+def conflicts_text(base, commit, files, words=None):
     """The fix prompt's section about a merge of the base branch, or ""."""
     if not commit:
         return ""
-    text = Template(template("fix_conflicts" if files else "fix_merged")).safe_substitute(
-        base=base, base_commit=commit[:7], files=_files(files)
+    text = fill(
+        template("fix_conflicts" if files else "fix_merged"),
+        words,
+        base=base,
+        base_commit=commit[:7],
+        files=_files(files),
     )
     return text + "\n"
 
@@ -858,7 +916,7 @@ def evidence_text(found, keeps):
     return text + "\n"
 
 
-def ci_evidence_text(found, keeps):
+def ci_evidence_text(found, keeps, words=None):
     """The plan, implement and fix prompts' section about the CI runs the issue names, or
     "" without any. `keeps` is the most a round keeps of them."""
     if not found or not (found["runs"] or found.get("skipped")):
@@ -882,9 +940,7 @@ def ci_evidence_text(found, keeps):
             + "; ".join(found["left_out"])
         )
     lines += [f"- Not collected: {reason}." for reason in found.get("skipped") or []]
-    text = Template(template("ci_evidence")).safe_substitute(
-        folder=found["folder"], runs="\n".join(lines)
-    )
+    text = fill(template("ci_evidence"), words, folder=found["folder"], runs="\n".join(lines))
     return text + "\n"
 
 
@@ -944,13 +1000,15 @@ def extras(
     keeps = keeps or {}
     extra = {}
     if stage in ("plan", "implement", "fix"):
-        extra["ci_evidence"] = ci_evidence_text(context.get("ci_evidence"), keeps.get("ci"))
+        extra["ci_evidence"] = ci_evidence_text(
+            context.get("ci_evidence"), keeps.get("ci"), context
+        )
     if stage == "fix":
         merging = merging or {}
         files = merging.get("files") or []
-        extra["conflicts"] = conflicts_text(base, merging.get("commit"), files)
+        extra["conflicts"] = conflicts_text(base, merging.get("commit"), files, context)
         extra["evidence"] = evidence_text(context.get("evidence"), keeps.get("results"))
-        extra["earlier_fixes"] = context.get("earlier_fixes") or NO_EARLIER_FIXES
+        extra["earlier_fixes"] = context.get("earlier_fixes") or fill(NO_EARLIER_FIXES, context)
         extra["diagnosis"] = diagnosis_text(context.get("diagnose"))
     if stage == "plan":
         extra["previous"] = previous_plan(context)
@@ -985,18 +1043,18 @@ def build(stage, context, settings, extra=None):
     `protected_paths` and `implement_minutes`, and the host's `checklist`."""
     protected = ", ".join(f"`{p}`" for p in settings.get("protected_paths") or [])
     person = bool(context.get("person"))
-    limits = Template(template("review_limits_person" if person else "review_limits"))
+    limits = template("review_limits_person" if person else "review_limits")
     checks = settings.get("checks") or []
     values = {
         **context,
         "checks": _checks_text(checks),
         "round_checks": _round_checks_text(checks),
-        "writing": template("writing"),
+        "writing": fill(template("writing"), context),
         "protected": protected,
-        "limits": limits.safe_substitute(protected=protected).rstrip(),
-        "person": template("review_person") if person else "",
+        "limits": fill(limits, context, protected=protected).rstrip(),
+        "person": fill(template("review_person"), context) if person else "",
         "implement_minutes": settings.get("implement_minutes"),
-        "checklist": checklist_text(stage, settings.get("checklist")),
+        "checklist": checklist_text(stage, settings.get("checklist"), context),
         "earlier_parts": earlier_parts_text(context),
         "linked": linked_text(context, stage),
         "max_parts": MAX_PARTS,
@@ -1010,10 +1068,13 @@ def result_prompt(stage, wrong):
     return Template(template("result_again")).safe_substitute(stage=stage, wrong=wrong)
 
 
-def refusals(stage, inputs, policies):
-    """Why a call cannot have a prompt of `stage`, beyond what its schema says: an input the
-    stage needs, a plan's implement time, a profile triage could not read."""
+def refusals(stage, inputs, policies, words=None):
+    """Why a call cannot have a prompt of `stage`, beyond what its schema says: the host's
+    `words`, an input the stage needs, a plan's implement time, a profile triage could not
+    read."""
     found = [f"request.inputs.{kind} is missing" for kind in NEEDS[stage] if kind not in inputs]
+    if words is None:
+        found.insert(0, "request.words is missing")
     seconds = _implement_seconds(policies)
     if stage == "plan" and (not isinstance(seconds, int) or isinstance(seconds, bool)):
         found.append("request.policies.budgets.implement.seconds must be an integer for a plan")
@@ -1086,17 +1147,17 @@ def finish(stage, context, inputs, policies, folder=None, keeps=None):
     }
 
 
-def write(stage, inputs, policies=None, folder=None, unfit=None, state=None):
+def write(stage, inputs, policies=None, folder=None, unfit=None, state=None, words=None):
     """The `prompt` call, on inputs in snake_case: {text, shortened, not_read, files}. The
     prompt of `stage` from `inputs` and the `state` it reads earlier rounds from, or, with
-    `unfit`, the prompt that asks the same session for its result alone. `folder` is where the
-    host keeps the texts the prompt shortens; `files` are those the host writes there before
-    the agent runs."""
+    `unfit`, the prompt that asks the same session for its result alone. `words` are the host's, in
+    snake_case (`template_words`). `folder` is where the host keeps the texts the prompt
+    shortens; `files` are those the host writes there before the agent runs."""
     if unfit is not None:
         text = result_prompt(stage, unfit)
         return {"text": text, "shortened": [], "not_read": [], "files": []}
     shelf = Shelf(folder)
-    context = texts(stage, inputs, shelf, state)
+    context = texts(stage, inputs, shelf, state, words)
     done = finish(stage, context, inputs, policies or {}, folder)
     kept = [{"path": path, "text": text} for path, text in shelf.files.items()]
     return {**done, "files": kept + done["files"]}
@@ -1111,5 +1172,6 @@ def answer(request):
         request.get("texts"),
         request.get("unfit"),
         request.get("state"),
+        snake(request.get("words") or {}),
     )
     return camel(written)

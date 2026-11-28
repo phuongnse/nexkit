@@ -3,6 +3,6 @@
   and `how`: one or two sentences on how the change meets the item, or why it does not
   apply. The review answers each item, so put what the item needs in the change.
 
-The repository's checklist, which every pull request must meet:
+The repository's checklist, which every $change_kind must meet:
 
 $items

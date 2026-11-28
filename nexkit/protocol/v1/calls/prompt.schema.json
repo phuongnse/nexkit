@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/phuongnse/nexkit/protocol/v1/calls/prompt.schema.json",
-  "$comment": "A prompt call: the prompt of one stage, written from the texts the host fetched for it, by the kinds runAgent names. `texts` is the absolute path, POSIX or Windows, of the folder outside the working tree where the host keeps the whole texts a prompt shortens, which the agent reads; null when it reads no files. With `unfit`, why a session's result did not fit its schema, the answer is the prompt that asks the same session for its result alone. Beside the host's policies, `checklist` and `profiles` feed the prompts.",
+  "$comment": "A prompt call: the prompt of one stage, written from the texts the host fetched for it, by the kinds runAgent names. `texts` is the absolute path, POSIX or Windows, of the folder outside the working tree where the host keeps the whole texts a prompt shortens, which the agent reads; null when it reads no files. With `unfit`, why a session's result did not fit its schema, the answer is the prompt that asks the same session for its result alone. `words` are the host's own words for the work item, the change and where people read, which a stage's prompt needs. Beside the host's policies, `checklist` and `profiles` feed the prompts.",
   "type": "object",
   "required": [
     "protocol",
@@ -79,6 +79,9 @@
         "string",
         "null"
       ]
+    },
+    "words": {
+      "$ref": "#/$defs/words"
     }
   },
   "$defs": {
@@ -1007,6 +1010,80 @@
       "required": [
         "checks",
         "protectedPaths"
+      ]
+    },
+    "words": {
+      "$comment": "The host's words, as its people see them, which the prompts of the stages use in place of any host's own. Each is a string of at most 200 characters, and every field is required, as the host's own text and outside the `<untrusted>` tags: a host builds them only from its own fixed text and ids, never from what people wrote. `itemKind` and `changeKind` are nouns the prompts use in rules, such as \"the issue's scope\"; `itemKinds` is the plural, which cannot be made from the noun. A template breaks a line inside `item` and `changeKind`, which the engine does at their last space. The engine refuses a stage's prompt without `words` and names the missing field; a call with `unfit` needs none.",
+      "type": "object",
+      "properties": {
+        "item": {
+          "$comment": "The work item in a sentence, with its id, such as \"GitHub issue #5\".",
+          "type": "string",
+          "maxLength": 200
+        },
+        "itemHeading": {
+          "$comment": "The work item as the heading of its text, such as \"Issue #5\".",
+          "type": "string",
+          "maxLength": 200
+        },
+        "itemKind": {
+          "$comment": "The noun for a work item, such as \"issue\".",
+          "type": "string",
+          "maxLength": 200
+        },
+        "itemKinds": {
+          "$comment": "The plural of `itemKind`, such as \"issues\".",
+          "type": "string",
+          "maxLength": 200
+        },
+        "change": {
+          "$comment": "The work item's change with its id, such as \"pull request #6\"; \"\" when the item has none.",
+          "type": "string",
+          "maxLength": 200
+        },
+        "changeKind": {
+          "$comment": "The noun for a change, such as \"pull request\".",
+          "type": "string",
+          "maxLength": 200
+        },
+        "source": {
+          "$comment": "Where people wrote the texts the prompt shows, such as \"on GitHub\".",
+          "type": "string",
+          "maxLength": 200
+        },
+        "readers": {
+          "$comment": "Where people read the agent's text, such as \"on GitHub\".",
+          "type": "string",
+          "maxLength": 200
+        },
+        "approve": {
+          "$comment": "The words that approve a plan, such as \"`/nexkit go`\".",
+          "type": "string",
+          "maxLength": 200
+        },
+        "fixRound": {
+          "$comment": "The words that ask for a fix round, such as \"`/nexkit fix`\".",
+          "type": "string",
+          "maxLength": 200
+        },
+        "commands": {
+          "$comment": "The commands people write on the item, with their noun, such as \"`/nexkit` commands\".",
+          "type": "string",
+          "maxLength": 200
+        }
+      },
+      "required": [
+        "item",
+        "itemHeading",
+        "itemKind",
+        "itemKinds",
+        "change",
+        "changeKind",
+        "source",
+        "readers",
+        "approve",
+        "fixRound",
+        "commands"
       ]
     }
   }

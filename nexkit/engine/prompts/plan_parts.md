@@ -1,7 +1,7 @@
 
 ## Earlier parts this part relies on
 
-This issue is a part of #$parent, split from it because it was too large for one session.
+This $item_kind is a part of #$parent, split from it because it was too large for one session.
 It needs these earlier parts first:
 
 <untrusted>

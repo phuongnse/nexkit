@@ -3,8 +3,8 @@
 A write is a dispatch, a merge, a branch update, a close, a cancel or a rerun on GitHub, an
 autopilot step that starts, merges, closes or splits, or a route decision that closes a
 pull request or an issue with what the engine answered. The engine answers through
-`engine.answer`, which only `host.step` and the sweep call. A write is answered when a call that
-reaches `engine.answer` runs before it on every path of its function. `tests/test_answers.py`
+`program.call`, which only `host.step` and the sweep call. A write is answered when a call that
+reaches `program.call` runs before it on every path of its function. `tests/test_answers.py`
 runs this on every module outside the engine, and `tests/test_autopilot.py` on autopilot's steps.
 """
 
@@ -32,7 +32,7 @@ WRITES = (
 TASKS = ("close_answer", "on_base")
 
 # The call that is the engine's answer.
-ROOT = "engine.answer"
+ROOT = "program.call"
 
 # The writes that serve no item, or carry out an answer that an earlier job took from the engine.
 # Each function is named whole: none of its writes is checked.

@@ -12,7 +12,9 @@ import json
 from unittest import mock
 
 from common import (
+    FIX_OUTPUT,
     HEAD,
+    IMPLEMENT_OUTPUT,
     TOK,
     WAIT,
     WORKFLOW,
@@ -26,12 +28,13 @@ from common import (
     snapshot,
 )
 
-from nexkit import autopilot
+from nexkit import autopilot, progress
 from nexkit.github import GitHubError
 from nexkit.report import report
 from nexkit.state import empty_state, render_state
 from tests.support import FakeGitHub, make_config
 
+OLD = "b" * 40
 BLOCK = {"severity": "blocking", "file": "a.py", "line": 3, "body": "Breaks x."}
 SUGG = {"severity": "suggestion", "file": "a.py", "line": 3, "body": "Nicer y."}
 PITEM = {"item": "Docs updated by owner", "answer": "not_met", "evidence": "none", "person": True}
@@ -117,7 +120,11 @@ def run(sc):
     gh.add_issue(5, milestone=1)
     if sc["hold"] == "label":
         gh.issues[5]["labels"] = [{"name": "on-hold"}]
-    gh.add_pull(6, 5, head_sha=HEAD)
+    # A fix round that changed something publishes a new head: the pull request is at the head
+    # the round started from until the round's stored state is taken, and at the published head
+    # after it. One that changed nothing (`recheck`) leaves the head as it was.
+    started = OLD if sc["action"].startswith("fix") and not sc["recheck"] else HEAD
+    gh.add_pull(6, 5, head_sha=started)
     if sc["prior"] is not None:
         gh.comment(6, render_state({**empty_state(5), "auto_fixes": sc["prior"]}))
     cfg = make_config(
@@ -127,11 +134,12 @@ def run(sc):
         notify=["olivia"],
     )
     art = Artifacts()
-    cause = {"output": {"cause": "Flaky env"}} if sc["recheck"] else {}
-    art.agent({"status": "done", "tokens": TOK, **cause})
+    cause = {"cause": "Flaky env"} if sc["recheck"] else {}
+    kind = sc["action"].split("_")[0]
+    fits = IMPLEMENT_OUTPUT if kind == "implement" else FIX_OUTPUT
+    art.agent({"status": "done", "tokens": TOK, "output": {**fits, **cause}})
     art.checks(CHECKS[sc["checks"]])
     art.review(REVIEWS[sc["review"]])
-    kind = sc["action"].split("_")[0]
     auto = sc["action"].endswith("auto")
     d = {
         "action": kind,
@@ -140,7 +148,7 @@ def run(sc):
         "target": 5 if kind == "implement" else 6,
         "branch": "nexkit/issue-5",
         "base": "main",
-        "head": None if kind == "implement" else HEAD,
+        "head": None if kind == "implement" else started,
         "note": "",
         "auto": auto,
     }
@@ -168,8 +176,16 @@ def run(sc):
             raise GitHubError(502, "Bad gateway")
         return real_held(gh_, cfg_, number)
 
-    seed(gh, cfg)
     res = {}
+    # The round's stored state is taken just after its `progress.start`, before the patches
+    # that make GitHub fail: `seed` swallows an error, and the import would store nothing.
+    with quiet():
+        try:
+            progress.start(gh, d)
+        except Exception as exc:  # noqa: BLE001
+            res["start"] = f"EXC {type(exc).__name__}: {exc}"
+        seed(gh, cfg)
+    gh.pulls[6]["head"]["sha"] = HEAD
     with (
         mock.patch.object(autopilot, "ci_wait", ci_wait),
         mock.patch.object(autopilot, "held", held),

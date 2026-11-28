@@ -12,6 +12,7 @@ from unittest import mock
 
 from common import (
     APPROVE,
+    FIX_OUTPUT,
     HEAD,
     REQUEST_CHANGES,
     TOK,
@@ -31,6 +32,7 @@ from nexkit.report import report
 from nexkit.state import PLAN_MARKER, empty_state, render_run, render_state
 from tests.support import FakeGitHub, make_config
 
+OLD = "b" * 40
 REVIEWS = {"approve": APPROVE, "rc": REQUEST_CHANGES}
 
 
@@ -79,7 +81,11 @@ def run(sc):
     gh.comment(5, f"{PLAN_MARKER}\n## Plan\n\nAdd it.")
     go = {"command": "go", "status": "success", "outcome": "pr_opened"}
     gh.comment(5, render_run({"url": f"{runs}/2", **go}, "D."))
-    gh.add_pull(6, 5, head_sha=HEAD)
+    # A fix round that changed something publishes a new head: the pull request is at the head
+    # the round started from until the round's stored state is taken, and at the published head
+    # after it. One that changed nothing (`recheck`) leaves the head as it was.
+    started = OLD if sc["action"].startswith("fix") and not sc["recheck"] else HEAD
+    gh.add_pull(6, 5, head_sha=started)
     state = {**empty_state(5), "auto_fixes": sc["fixes"]}
     if sc["prior"] == "ci":
         state["ci_wait"] = dict(WAIT)
@@ -101,7 +107,7 @@ def run(sc):
     auto = who == "auto"
     art = Artifacts()
     cause = {"cause": "Flaky env"} if sc["recheck"] else {}
-    art.agent({"status": "done", "tokens": TOK, "output": cause})
+    art.agent({"status": "done", "tokens": TOK, "output": {**FIX_OUTPUT, **cause}})
     art.checks(_checks(sc["checks"]))
     art.review(REVIEWS[sc["review"]])
     d = {
@@ -111,7 +117,7 @@ def run(sc):
         "target": 6,
         "branch": "nexkit/issue-5",
         "base": "main",
-        "head": HEAD,
+        "head": started,
         "note": "",
         "auto": auto,
         "run_id": 4242,
@@ -133,17 +139,19 @@ def run(sc):
             raise GitHubError(502, "Bad gateway")
         return dict(WAIT) if sc["base"] == "yes" else None
 
-    seed(gh, cfg)
     res = {}
+    with quiet():
+        try:
+            progress.start(gh, d)
+        except Exception as exc:  # noqa: BLE001
+            res["start"] = f"EXC {type(exc).__name__}: {exc}"
+        seed(gh, cfg)
+    gh.pulls[6]["head"]["sha"] = HEAD
     with (
         mock.patch.object(autopilot, "ci_wait", ci_wait),
         mock.patch.object(autopilot, "ci_wait_over", lambda g, w: None),
         quiet(),
     ):
-        try:
-            progress.start(gh, d)
-        except Exception as exc:  # noqa: BLE001
-            res["start"] = f"EXC {type(exc).__name__}: {exc}"
         res["report"] = attempt(
             report, gh, d, cfg, needs, art.path, workflow_ref=WORKFLOW, default_branch="main"
         )

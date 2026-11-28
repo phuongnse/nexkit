@@ -53,6 +53,7 @@ from tests.support import (
     BOT_LOGIN,
     FakeGitHub,
     make_config,
+    plan_running,
     play_resume,
     profile_config,
     store_fields,
@@ -205,7 +206,9 @@ class AfterPlanTest(HostCase):
     def test_the_engine_hears_the_plan_s_result_or_the_comment_after_it(self):
         self.issue(5)
         self.plan(5, {"questions": [ASKED]})
-        [request] = self.requests(5)
+        # With no state comment, the import plays the plan's result first, and the sweep's
+        # decision after the plan is the last request.
+        request = self.requests(5)[-1]
         self.assertEqual(request["event"]["kind"], "actionFinished")
         self.assertEqual(request["state"]["state"], "planning")
         self.assertEqual(request["state"]["title"], "Issue 5")
@@ -249,6 +252,7 @@ class AfterPlanTest(HostCase):
         cfg = make_config(autopilot={"enabled": True, "answer": "recommended"}, notify=["olivia"])
         self.issue(5)
         output = plan_output(questions=[{**ASKED, "recommended": 3}])
+        plan_running(self.gh, cfg, 5)
         result = self.report_plan(cfg, output)
         self.assertIn("answer the plan's questions", result["attention"])
         self.assertNotIn("carries on", result["summary"])
@@ -318,7 +322,7 @@ class AfterPlanTest(HostCase):
 
     def test_the_plan_after_a_timed_out_round_goes_to_the_engine_with_its_pull_request(self):
         self.timed_out_plan()
-        [request] = self.requests(5)
+        request = self.requests(5)[-1]
         self.assertIn("supersede", request["state"]["asked"])
         head = self.gh.pulls[9]["head"]["sha"]
         self.assertEqual(request["state"]["change"], {"id": "9", "version": head})
@@ -457,7 +461,7 @@ class EventIdTest(HostCase):
                 autopilot.carries_on(self.gh, cfg, decision, "planned", agent)
         [reported] = [call.args[1]["event"]["id"] for call in answer.call_args_list]
         self.plan(5, {"questions": [ASKED]}, url=url)
-        [swept] = [request["event"]["id"] for request in self.requests(5)]
+        swept = [request["event"]["id"] for request in self.requests(5)][-1]
         self.assertEqual((reported, swept), ("run-123", "run-123"))
 
     def test_a_run_outside_github_actions_has_no_source(self):
@@ -874,7 +878,8 @@ class DecideTest(HostCase):
         self.cfg = pilot(answer="recommended")
         self.issue(5)
         self.plan(5, {"questions": [ASKED]})
-        seed(self.gh, self.cfg, 5)
+        # The import plays the plan that is posted, so the state is the plan's run on its way.
+        plan_running(self.gh, self.cfg, 5)
 
     def read(self, number=5):
         return item_state.read(self.gh, number)
@@ -1014,10 +1019,61 @@ class DecideTest(HostCase):
     def test_what_a_plan_waits_for_is_read_on_the_stored_state_and_never_stored(self):
         output = {"questions": [ASKED]}
         before = copy.deepcopy(self.gh.comments(5))
-        waits = host.plan_waits_for(output, self.gh, self.cfg, 5)
-        self.assertEqual(waits, host.plan_waits_for(output))
+        with mock.patch.object(host.program, "call", wraps=ANSWER) as answer:
+            waits = host.plan_waits_for(output, self.gh, self.cfg, 5)
         self.assertEqual(waits, "question")
+        [request] = asked_step(answer)
+        self.assertEqual(request["state"], self.read()[1])
+        self.assertEqual(request["policies"], {})
+        self.assertEqual(request["event"]["action"], request["state"]["pending"][0]["id"])
         self.assertEqual(self.gh.comments(5), before)
+
+    def test_what_a_plan_waits_for_refuses_without_github_a_configuration_or_an_item(self):
+        output = {"questions": [ASKED]}
+        for given in ((None, self.cfg, 5), (self.gh, None, 5), (self.gh, self.cfg, None), ()):
+            with mock.patch.object(host.program, "call", wraps=ANSWER) as answer:
+                with self.assertRaises(host.Refused):
+                    host.plan_waits_for(output, *given)
+            answer.assert_not_called()
+
+    def test_what_a_plan_waits_for_refuses_when_no_plan_run_waits_for_the_result(self):
+        restate(self.gh, 5, state="working", pending=[])
+        with self.assertRaises(host.Refused):
+            host.plan_waits_for({"questions": [ASKED]}, self.gh, self.cfg, 5)
+
+    def test_plan_carried_on_refuses_without_a_configuration_and_asks_no_engine(self):
+        with mock.patch.object(host.program, "call", wraps=ANSWER) as answer:
+            with self.assertRaises(host.Refused):
+                host.plan_carried_on(
+                    self.gh, None, self.gh.issues[5], self.decision(), {"questions": [ASKED]}
+                )
+        answer.assert_not_called()
+
+    def test_a_plan_that_no_run_waits_for_does_not_carry_on_unless_it_finds_no_change(self):
+        restate(self.gh, 5, state="working", pending=[])
+        with self.assertRaises(host.Refused):
+            self.carried_on(write=True)
+        output = {"questions": [], "no_change": "Nothing to do."}
+        issue = self.gh.issues[5]
+        self.assertTrue(
+            host.plan_carried_on(self.gh, self.cfg, issue, self.decision(), output, write=True)
+        )
+
+    def test_a_clean_plan_is_sent_once_and_leaves_the_implement_run_in_the_outbox(self):
+        output = plan_output()
+        with mock.patch.object(host.program, "call", wraps=ANSWER) as answer:
+            result = self.report_plan(self.cfg, output)
+        self.assertIsNone(result["attention"])
+        # The preview of what the plan waits for is a what-if under its own event, and stores
+        # nothing: the plan run's id names the one result the engine gets.
+        found = asked_step(answer)
+        self.assertEqual([r["event"]["id"] for r in found], ["plan", f"run-{100 + self.runs - 1}"])
+        request = found[-1]
+        self.assertEqual(request["state"]["revision"], 1)
+        state = self.read()[1]
+        self.assertEqual((state["revision"], state["state"]), (2, "working"))
+        self.assertEqual(runs_of(state), ["implement"])
+        self.assertIn(request["event"]["id"], state["recentEvents"])
 
     def test_a_state_comment_that_cannot_be_read_holds_up_nothing_and_is_not_written_over(self):
         comment, _ = self.read()
@@ -1036,27 +1092,31 @@ class DecideTest(HostCase):
         self.assertEqual(host.pending_id(doc, "runChecks"), first_state.RUN_ID)
 
     def test_with_no_built_document_the_stored_state_alone_decides(self):
-        state = copy.deepcopy(self.read()[1])
+        # A plan that waits, which a comment changes: the plan of #5 is running, and ignores one.
+        self.issue(6)
+        self.plan(6, {"questions": [ASKED]})
+        seed(self.gh, make_config(), 6)
+        state = copy.deepcopy(self.read(6)[1])
         self.assertIs(host.resync(state, None, {"id": "x"}), state)
         self.assertIsNone(host.resync(None, None, {"id": "x"}))
         event = {
             "protocol": 1,
             "kind": "commented",
             "id": "comment-9",
-            "item": "5",
+            "item": "6",
             "at": "2026-01-02T00:00:00Z",
             "by": {"id": "bob", "role": "reader"},
             "text": {"name": "comment", "ref": "9"},
         }
-        stored, _ = host.decide(self.gh, self.cfg, 5, event, None, write=True)
+        stored, _ = host.decide(self.gh, self.cfg, 6, event, None, write=True)
         self.assertEqual(stored["recentEvents"][-1], "comment-9")
-        self.assertEqual(self.read()[1]["recentEvents"][-1], "comment-9")
-        self.assertEqual(stored["state"], self.read()[1]["state"])
+        self.assertEqual(self.read(6)[1]["recentEvents"][-1], "comment-9")
+        self.assertEqual(stored["state"], self.read(6)[1]["state"])
         # An item with no state comment has the import in memory, and a state that cannot be
         # read has nothing to decide on.
         with mock.patch.object(host, "stored", return_value=(None, None)):
             with self.assertRaises(host.Refused):
-                host.decide(self.gh, self.cfg, 5, {**event, "id": "comment-10"}, None)
+                host.decide(self.gh, self.cfg, 6, {**event, "id": "comment-10"}, None)
 
     def test_the_stored_state_decides_only_where_it_agrees_with_the_markers(self):
         built = host._planning(host._document({"number": 5}, {}), 0, False)
@@ -1683,8 +1743,11 @@ class ClosingCommandTest(HostCase):
         super().setUp()
         self.issue(5)
         self.asked = self.plan(5, {"questions": [{**ASKED, "recommended": 0}]})
-        # As `nexkit route` stores the first state before it routes the item's first event.
-        seed(self.gh, self.cfg, 5)
+        # As `nexkit route` stores the first state before it routes the item's first event, for
+        # an issue that autopilot did not take: its plan waits for the person's answers. (An
+        # issue it takes is imported with the engine's answer to the plan, which refuses a go
+        # while the plan's questions are open.)
+        seed(self.gh, make_config(), 5)
 
     def decide(self, body, comment=None, taken=None):
         event = comment_event(5, body)
@@ -2445,27 +2508,37 @@ class RoundClosingCommandTest(HostCase):
 
 
 class PlanWaitsForTest(HostCase):
+    def setUp(self):
+        super().setUp()
+        self.issue(5)
+        plan_running(self.gh, self.cfg, 5)
+
+    def waits(self, plan):
+        return needs_person("planned", self.cfg, plan=plan, gh=self.gh, number=5)
+
     def test_a_plan_without_autopilot_waits_for_what_the_engine_names(self):
         with mock.patch.object(host.program, "call", wraps=ANSWER) as answer:
-            reason = needs_person(
-                "planned", self.cfg, plan={"questions": [ASKED], "too_large": True}
-            )
+            reason = self.waits({"questions": [ASKED], "too_large": True})
         self.assertEqual(reason, TOO_LARGE)
         [call] = answer.call_args_list
         self.assertEqual(call.args[1]["policies"], {})
         found = {"questions": [ASKED], "protected_paths": ["a.yml"]}
-        self.assertEqual(
-            needs_person("planned", self.cfg, plan=found), autopilot.protected_reason(["a.yml"])
-        )
+        self.assertEqual(self.waits(found), autopilot.protected_reason(["a.yml"]))
         with mock.patch.object(host, "plan_waits_for", return_value="approval"):
-            self.assertIsNone(needs_person("planned", self.cfg, plan={"questions": [ASKED]}))
+            self.assertIsNone(self.waits({"questions": [ASKED]}))
 
     def test_a_plan_that_finds_no_change_or_asks_blank_questions_names_a_person_s_step(self):
         found = {"questions": [], "no_change": "The base branch has it."}
-        self.assertEqual(needs_person("planned", self.cfg, plan=found), NO_CHANGE_PLAN)
+        self.assertEqual(self.waits(found), NO_CHANGE_PLAN)
         # Questions that name no question still ask, as NexKit 6 reads them.
-        reason = needs_person("planned", self.cfg, plan={"questions": [{"question": ""}]})
+        reason = self.waits({"questions": [{"question": ""}]})
         self.assertIn("/nexkit plan <answers>", reason)
+
+    def test_a_plan_asked_without_github_or_a_configuration_needs_a_person_with_the_reason(self):
+        with mock.patch.object(host.program, "call", wraps=ANSWER) as answer:
+            reason = needs_person("planned", self.cfg, plan={"questions": []})
+        answer.assert_not_called()
+        self.assertIn(host.NO_CONFIG, reason)
 
 
 class AfterRoundTest(ReportCase):

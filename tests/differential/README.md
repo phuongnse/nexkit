@@ -135,6 +135,10 @@ item's document from NexKit 6's markers, apart from the decisions after a plan, 
 plan, the end of a part in
 its parent's state and about a pull request's rounds, which store their answer in the item's
 state comment but decide from the markers' document wherever it differs from the stored one. The
+plan's report and the question of what a plan waits for (`plan_carried_on`, `plan_waits_for`)
+decide on the stored state alone, and `check.sh` fails if either falls back; the import of a
+finished plan of an issue that autopilot takes plays the plan's result through the engine, so that
+state holds the engine's answer. The
 decisions after a blocked or failed `/nexkit go`, after a fix round that stopped as blocked or a
 round that ran out of time, an implement round that finds no change, a fix round
 whose change is on the base branch, a usage limit, a transient error, a resume and a lost

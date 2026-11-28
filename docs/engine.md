@@ -475,7 +475,12 @@ adapter's tests and the answers as what its adapter carries out.
   with `supersede`, so its split withdraws the pull request. A split that an issue above the
   item asked for is imported into `asked`, so a part that runs out of time again waits for a
   person. An issue autopilot does not take keeps a time-out in `failed` and a blocked fix round
-  waiting for answers. A NexKit 6 run on its way, or a command that autopilot started and that
+  waiting for answers. A finished plan of an issue autopilot takes, with no collaborator's comment
+  after it, is imported as the engine's answer to the plan's result, played under the item's own
+  policies: its outbox holds what follows the plan, such as the implement run of a clean plan, and
+  the plan run's id is among the events seen, so the result is never sent again. Any other
+  finished plan waits for its approval, its answers or a hand-made change. A NexKit 6 run on its
+  way, or a command that autopilot started and that
   has not run yet, becomes the action the engine waits for. A run keeps the count of its runs again after a transient error when it is one
   (`again.transient`, as a paused one does). Either keeps autopilot's count of lost starts
   (`again.lost`, and `again.once` when the record says the start runs once more), from the record
@@ -519,8 +524,11 @@ adapter's tests and the answers as what its adapter carries out.
 
 1. The engine grew inside NexKit 6: decisions moved behind the protocol one by one, and every
    decision of the loop is now its own. Most of the GitHub host's decisions still build the
-   item's document from NexKit 6's markers, as its import reads them. The ones that follow a plan,
-   start a new issue's first plan, follow a merge and its refusals,
+   item's document from NexKit 6's markers, as its import reads them. The plan's report sends the
+   plan's result to the engine once for every plan of an issue that autopilot takes, a clean plan
+   and one that finds no change too, and stores the answer, and asking what a plan waits for reads
+   the stored state alone and stores nothing. The ones that follow a plan (the sweep's and the
+   step run's), start a new issue's first plan, follow a merge and its refusals,
    and end a pull request's round, a conflict or a wait read the stored
    document, which they use only where it says what the markers say, and store the engine's answer
    in the item's group, a row of events as one write. A blocked or failed `/nexkit go`, a fix round

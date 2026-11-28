@@ -323,8 +323,9 @@ Every run in an item's group first stores the item's first state when it has no 
 (`store_import`): an open item's document imported from NexKit 6's markers, at revision 1. It then
 takes the item's events (`take`, both called by `cli._take` from `nexkit route`): it answers every
 comment, review and hold-label change of the item after the cursor in its state comment, oldest
-first, so that a command whose run a newer one replaced is still answered, and a run whose writes
-keep losing fails and leaves its event for the next run. It passes over a command and a review of
+first (a hold label's adding only when autopilot takes the issue, as NexKit 6 reads it), so that
+a command whose run a newer one replaced is still answered, and a run whose writes keep losing
+fails and leaves its event for the next run. It passes over a command and a review of
 a closed issue or pull request, which no stage follows. A state comment that someone other than
 the App changed stores and takes nothing: the item waits for a person.
 
@@ -832,11 +833,15 @@ def _newer(one, cursor, stored):
     return one.at > at or (one.at == at and one.kind == "comment" and one.raw["id"] > stored["id"])
 
 
-def _taken_event(gh, number, pull, comments, holds, one):
+def _taken_event(gh, number, pull, comments, holds, one, taken=lambda: True):
     """The event that the source `one` gives work item `number`, or None for a source that
     gives none: a comment of a bot, a review that is not a writer's approval or request for
     changes, any other event of an issue. `pull` is the item's change, `comments` the item's
-    comments and `holds` the labels that hold. What each event does is the engine's to decide."""
+    comments and `holds` the labels that hold. `taken` is a function that says whether autopilot
+    takes the issue: adding a hold label counts only then, as NexKit 6 reads one only then
+    (`autopilot.held`). Removing one always counts: the engine ignores `released` while the item is
+    not held, and without it a hold stored while autopilot took the issue could never end. What
+    each event does is the engine's to decide."""
     raw, name, at = one.raw, one.name, one.at
     user = raw.get("user") or {}
     login = user.get("login") or ""
@@ -845,6 +850,8 @@ def _taken_event(gh, number, pull, comments, holds, one):
         if raw.get("event") not in ("labeled", "unlabeled") or label not in holds:
             return None
         if raw["event"] == "labeled":
+            if not taken():
+                return None
             return _event("held", number, at, name, label=label)
         return _event("released", number, at, name)
     if user.get("type") == "Bot" or by_bot(raw):
@@ -925,9 +932,10 @@ def take(gh, cfg, number, tries=item_state.TRIES, sleep=time.sleep):
     replaced with a newer one is answered by the run that ran, not lost
     (docs/engine-hosts.md#hosts). The sources are a writer's `/nexkit` comments, other people's
     comments, a writer's approving or *Request changes* review of the change, and the adding
-    and removing of a label of `autopilot.labels` that holds the item. A comment of someone
-    outside the repository's collaborators, or text of a command that is not taken as one, is
-    sent with the role `outside`, which the engine ignores, as autopilot ignores it
+    of a label of `autopilot.labels` that holds the item: the adding counts only when autopilot
+    takes the issue, as NexKit 6 reads a hold label only then, and the removing always counts. A
+    comment of someone outside the repository's collaborators, or text of a command that is not
+    taken as one, is sent with the role `outside`, which the engine ignores, as autopilot ignores it
     (`autopilot._commented_after`). A writer's comment that picks the option that only closes the
     issue, on questions that the state holds, is sent as an `answered` event, and so is a writer's
     `/nexkit plan` or `/nexkit go` whose note picks that option while no change is open: the engine
@@ -965,9 +973,20 @@ def _take(gh, cfg, number, tries, sleep):
             closed[on] = found.get("state") != "open"
         return closed[on]
 
+    autopilot_takes = []
+
+    def takes_it():
+        """Whether autopilot takes the issue now, read once for this run, and only when a hold
+        label was added."""
+        if not autopilot_takes:
+            autopilot_takes.append(
+                autopilot.takes(cfg) and autopilot.taken(gh, cfg, gh.issue(number))
+            )
+        return autopilot_takes[0]
+
     taken = []
     for one in sources:
-        event = _taken_event(gh, number, pull, comments, holds, one)
+        event = _taken_event(gh, number, pull, comments, holds, one, takes_it)
         if event is not None and protocol.check(event, "event.schema.json", "event"):
             event = None
         if event is None:

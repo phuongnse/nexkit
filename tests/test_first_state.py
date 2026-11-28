@@ -350,6 +350,50 @@ class ImportTest(unittest.TestCase):
         self.assertEqual([action["kind"] for action in state["pending"]], ["runAgent"])
         self.assertTrue(state["rounds"]["automatic"])
 
+    def test_a_running_round_on_the_pull_request_keeps_the_count_of_its_command(self):
+        head = "b" * 40
+        later = datetime(2026, 11, 23, 16, 0, tzinfo=UTC)
+
+        def imported(job=None, action="fix", **fields):
+            gh = FakeGitHub()
+            gh.add_issue(5)
+            gh.add_pull(6, 5, head_sha=head)
+            record = {
+                "command": "fix",
+                "basis": [0, 0],
+                "target": 6,
+                "note": "",
+                "at": "2026-11-23T15:00:00Z",
+                "url": "https://x/actions/runs/9",
+                "tries": 2,
+                **fields,
+            }
+            gh.comment(5, f"NexKit autopilot started a command.\n\n{record_marker(record)}")
+            url = "https://github.com/acme/app/actions/runs/77"
+            running = {"round": 2, "trigger": "fix", "action": action, "status": "running"}
+            gh.comment(6, render_run({**running, "url": url, "head": head}))
+            if job:
+                gh.runs[77] = {"status": "in_progress", "run_attempt": 1}
+                gh.jobs[77] = [{"name": f"nexkit / {job}", "status": "in_progress"}]
+            return first_state.import_item(gh, make_config(), 5, 6, now=later)
+
+        # In its check jobs and in its agent job, the round keeps the count of its start.
+        for job, name in (("verify (unit)", "checking"), (None, "fixing")):
+            with self.subTest(job):
+                state = imported(job)
+                self.assertEqual(state["state"], name)
+                self.assertEqual(state["again"], {"lost": 2})
+                self.assertEqual(imported(job, once=True)["again"], {"lost": 2, "once": True})
+                self.assertEqual(imported(job, tries=15)["again"], {"lost": 10})
+                for why, fields in (
+                    ("a record of review", {"command": "review"}),
+                    ("a record of the issue", {"target": 5}),
+                ):
+                    with self.subTest(f"{job} {why}"):
+                        self.assertNotIn("again", imported(job, **fields))
+        # Any other round is read as a review.
+        self.assertEqual(imported(action="review", command="review")["again"], {"lost": 2})
+
     def test_an_issue_autopilot_does_not_take_gets_no_automatic_answers(self):
         given = json.loads((CASES / "go-answered-by-autopilot-runs-again.json").read_text())
         cfg = make_config(autopilot={**given["config"]["autopilot"], "scope": None})

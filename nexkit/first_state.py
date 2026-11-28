@@ -157,7 +157,7 @@ def failing(recorded):
 def empty(item):
     """The state document of an item before anything happened to it."""
     return {
-        "schemaVersion": 2,
+        "schemaVersion": 1,
         "revision": REVISION,
         "item": item,
         "itemKind": "change",

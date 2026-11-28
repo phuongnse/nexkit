@@ -98,7 +98,7 @@
     "splitDepth": 3
   },
   "state": {
-    "schemaVersion": 2,
+    "schemaVersion": 1,
     "revision": 1,
     "item": "42",
     "itemKind": "change",

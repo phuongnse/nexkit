@@ -147,52 +147,22 @@ class ProtocolTest(unittest.TestCase):
         for path in paths:
             walk(json.loads(path.read_text(encoding="utf-8")), str(path.relative_to(protocol.ROOT)))
 
-    def test_a_state_document_with_used_usd_is_read_without_it(self):
+    def test_a_state_document_of_an_older_shape_is_refused(self):
         state = example("state/planning.json")
         old = {**state, "used": {**state["used"], "usd": 1.5}}
         self.assertIn("usd", " ".join(protocol.check(old, "state.schema.json")))
-        self.assertEqual(protocol.upgrade(old), state)
-        self.assertIn("usd", old["used"])  # the document given is left as it was
-        for value in (state, None, [], "x", {"used": None}, {"used": []}):
-            self.assertEqual(protocol.upgrade(value), value)
+        path = HERE / "golden" / "state" / "v1" / "reviewing-with-findings.json"
+        old = json.loads(path.read_text())
+        self.assertEqual(protocol.check(old, "state.schema.json"), [])
+        finding = old["rounds"]["lastReview"]["findings"][0]
+        placed = {"severity": "blocking", "file": "a.py", "line": 3, "body": finding["body"]}
+        old["rounds"]["lastReview"]["findings"][0] = placed
+        found = " ".join(protocol.check(old, "state.schema.json"))
+        self.assertIn("file", found)
+        self.assertIn("location is missing", found)
 
-    def test_a_version_1_state_document_is_read_at_version_2(self):
-        folder = HERE / "golden" / "state"
-        old = json.loads((folder / "v1" / "reviewing-with-findings.json").read_text())
-        self.assertIn("schemaVersion must be 2", " ".join(protocol.check(old, "state.schema.json")))
-        state = protocol.upgrade(old)
-        self.assertEqual(protocol.check(state, "state.schema.json"), [])
-        self.assertEqual(state["schemaVersion"], 2)
-        findings = state["rounds"]["lastReview"]["findings"]
-        # A line becomes `file:line`, line 0 leaves the file alone, and no file is empty.
-        self.assertEqual([item["location"] for item in findings], ["a.py:3", "b.py", ""])
-        self.assertEqual(
-            findings[0], {"severity": "blocking", "location": "a.py:3", "body": findings[0]["body"]}
-        )
-        # The plan's list of protected paths has its new name, and the document given is
-        # left as it was.
-        self.assertEqual(state["plan"]["protected"], old["plan"]["protectedPaths"])
-        self.assertNotIn("protectedPaths", state["plan"])
-        self.assertEqual(old["schemaVersion"], 1)
-        self.assertIn("file", old["rounds"]["lastReview"]["findings"][0])
-        golden = json.loads((folder / "v2" / "reviewing-with-findings.json").read_text())
-        self.assertEqual(state, golden)
-
-    def test_a_version_1_state_without_a_plan_or_a_review_is_read_at_version_2(self):
-        for name in ("new", "planning", "reviewing", "fixing"):
-            old = json.loads((HERE / "golden" / "state" / "v1" / f"{name}.json").read_text())
-            new = json.loads((HERE / "golden" / "state" / "v2" / f"{name}.json").read_text())
-            with self.subTest(name):
-                self.assertEqual(protocol.upgrade(old), new)
-        for value in (
-            {"schemaVersion": 1, "plan": "x", "rounds": []},
-            {"schemaVersion": 1, "rounds": {"lastReview": {"findings": ["x", {"severity": 1}]}}},
-        ):
-            self.assertEqual(protocol.upgrade(value)["schemaVersion"], 2)
-        # Findings that point nowhere or hold a location already are kept as they are.
-        kept = {"schemaVersion": 1, "rounds": {"lastReview": {"findings": [{"location": "x"}]}}}
-        found = protocol.upgrade(kept)["rounds"]["lastReview"]["findings"]
-        self.assertEqual(found, [{"location": "x"}])
+    def test_a_finding_location_is_the_file_and_the_line(self):
+        self.assertEqual(protocol.finding_location("a.py", 3), "a.py:3")
         self.assertEqual(protocol.finding_location("a.py", 0), "a.py")
         self.assertEqual(protocol.finding_location("", 5), "")
 
@@ -251,7 +221,7 @@ class ProtocolTest(unittest.TestCase):
                 {**new, "schemaVersion": True, "itemKind": "pull"},
                 "state.schema.json",
                 [
-                    "value.schemaVersion must be 2",
+                    "value.schemaVersion must be 1",
                     "value.itemKind must be one of 'change', 'reviewOnly'",
                 ],
             ),
@@ -801,7 +771,7 @@ class CompatibilityTest(unittest.TestCase):
 
 
 class StateDocumentsTest(unittest.TestCase):
-    """The engine reads each state document that a host stored at an older schema version."""
+    """The engine steps each state document at the current schema version."""
 
     folder = HERE / "golden" / "state"
 

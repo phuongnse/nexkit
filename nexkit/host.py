@@ -366,7 +366,9 @@ first (a hold label's adding only when autopilot takes the issue, as NexKit 6 re
 a command whose run a newer one replaced is still answered, and a run whose writes keep losing
 fails and leaves its event for the next run. It passes over a command and a review of
 a closed issue or pull request, which no stage follows. A state comment that someone other than
-the App changed stores and takes nothing: the item waits for a person.
+the App changed stores and takes nothing: the item waits for a person. A state comment whose
+document the current schema no longer fits counts as none: the run imports the item again, posts
+a new state comment, leaves the old one and reads the new one from then on.
 
 The decisions after a plan (`after_plan`, `plan_carried_on`, `plan_waits_for`), for a new issue's
 first plan (`first_plan`), after a writer's vouch (`vouched`), at a merge (`required_failed`,
@@ -891,10 +893,12 @@ def _edited(edited):
 def store_import(gh, cfg, number, now=None):
     """Store the first state of the open work item `number` as the App's state comment at
     revision 1, imported from NexKit 6's markers (`first_state.import_item`), when it has no
-    state comment, and answer whether it did. It keeps no cursor, so that `take` answers what
-    came after the comment. A closed item stores nothing: it has nothing to carry on, and every
-    closed issue starts a run in its group. A state comment that someone other than the App
-    changed is not absent: it raises `Refused` and nothing is stored."""
+    state comment, and answer whether it did. A state comment whose document the current schema
+    refuses counts as none: it is left as it is and a new one is posted. It keeps no cursor, so
+    that `take` answers what came after the comment. A closed item stores nothing: it has
+    nothing to carry on, and every closed issue starts a run in its group. A state comment
+    that someone other than the App changed is not absent: it raises `Refused` and nothing is
+    stored."""
     try:
         _, doc = item_state.read(gh, number)
     except item_state.Edited as edited:
@@ -1104,8 +1108,9 @@ def _pending_action(state, kind):
 def stored(gh, cfg, number, pull=None):
     """(comment, document) of work item `number`: its state comment and the document stored
     in it, or (None, document) with the document that the import builds in memory when it has
-    none (`first_state.import_item`), and (None, None) when the import breaks the protocol, the
-    comment holds a document that cannot be read, or GitHub cannot be read, which holds nothing
+    none, or only one that the current schema no longer fits (`first_state.import_item`), and
+    (None, None) when the import breaks the protocol, the comment holds a document that cannot
+    be read, or GitHub cannot be read, which holds nothing
     up (NexKit 6's decisions read nothing here) and which nothing is stored over. Nothing is
     stored. Raises `Refused` when someone other than the App changed the comment."""
     try:

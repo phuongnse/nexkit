@@ -23,3 +23,4 @@ superseded decision is listed and when a change needs one.
 | [D14](decisions/d14-every-pin-has-one-source.md) | Every pin has one source | Proposed |
 | [D15](decisions/d15-agent-errors-and-blocked-results-never-retry-automatically.md) | Agent errors and blocked results never retry automatically | Proposed |
 | [D16](decisions/d16-the-engine-assumes-no-host-and-no-kind-of-change.md) | The engine assumes no host and no kind of change | Agreed |
+| [D17](decisions/d17-the-state-document-changes-in-place-until-the-engine-is-stable.md) | The state document changes in place until the engine is stable | Proposed |

@@ -32,7 +32,7 @@
     "tooLarge": true,
     "parts": 2,
     "noChange": false,
-    "protectedPaths": [],
+    "protected": [],
     "approved": true,
     "split": [
       {

@@ -82,8 +82,6 @@ def text(answer):
 def _answer(request):
     if not isinstance(request, dict) or request.get("call") not in CALLS:
         raise EngineError(f"A request's call must be one of {', '.join(CALLS)}.")
-    if "state" in request:
-        request = {**request, "state": protocol.upgrade(request["state"])}
     if request["call"] == "describe":
         return _describe(request)
     if request["call"] == "prompt":

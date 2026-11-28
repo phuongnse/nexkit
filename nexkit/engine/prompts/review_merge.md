@@ -18,7 +18,7 @@ $base_side
 This $change_kind:
 
 ```diff
-$pr_side
+$change_side
 ```
 </untrusted>
 

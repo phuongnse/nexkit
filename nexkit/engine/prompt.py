@@ -486,7 +486,7 @@ def _linked_entry(text, words):
         who = "NexKit" if text.get("nexkit") else f"@{text.get('author') or 'someone'}"
         header = f"#{text['id']}, {kind} of {who}: {text.get('title') or ''}\n"
         body = text.get("text") or "No description."
-        return header, body, f"the text of #{text['id']}", f"issue-{text['id']}"
+        return header, body, f"the text of #{text['id']}", f"{kind}-{text['id']}"
     plan = text["kind"] == "plan"
     number, login = text["id"], text.get("author")
     where = f" on #{text['on']}" if text.get("on") else ""
@@ -497,8 +497,8 @@ def _linked_entry(text, words):
 
 
 def linked(found, shelf, words):
-    """What the issue refers to, as the prompt shows it: the `texts` its texts link to, the
-    first linked first, and the issues of `chain` it was split from, nearest first, each
+    """What the work item refers to, as the prompt shows it: the `texts` its texts link to, the
+    first linked first, and the items of `chain` it was split from, nearest first, each
     with its text, or None when its `body` was not read, and its discussion. Each block keeps
     at most BLOCK_LIMIT characters; texts past that go whole to `shelf`. `not_read` lists
     the links not read and why. The kinds of its texts come from the host's `words`. None when
@@ -515,7 +515,7 @@ def linked(found, shelf, words):
     shown = _fit(entries[::-1], shelf)[::-1] if entries else []
     out = {"comments": "\n\n---\n\n".join(shown), "chain": []}
     read = {text["id"] for text in texts if text["kind"] != "item"}
-    # The issues above share one block, the nearest first, each text before its discussion.
+    # The items above share one block, the nearest first, each text before its discussion.
     left = BLOCK_LIMIT
     for above in chain:
         number, body = above["id"], above.get("body")
@@ -525,7 +525,7 @@ def linked(found, shelf, words):
             else (f"NexKit did not read this {words['item_kind']}'s text.")
         )
         keep = max(SHORT, min(TEXT_LIMIT, left))
-        text = shelf.put(f"the body of #{number}", f"issue-{number}", text, keep)
+        text = shelf.put(f"the body of #{number}", f"{words['item_kind']}-{number}", text, keep)
         left -= len(text)
         # A comment already shown above, whole, is not repeated in the discussion.
         rest = [entry for entry in above.get("discussion") or [] if entry["id"] not in read]
@@ -564,7 +564,7 @@ def texts(stage, inputs, shelf, state=None, words=None):
         "title": item.get("title") or "",
         "body": shelf.put(
             f"the body of #{number}",
-            f"issue-{number}",
+            f"{words.get('item_kind', '')}-{number}",
             item.get("body") or "No description.",
             TEXT_LIMIT,
         ),
@@ -798,7 +798,7 @@ def merge_review(context, base, sides, text):
         base_commit=commit[:7],
         files=_files(files),
         base_side=sides[0],
-        pr_side=sides[1],
+        change_side=sides[1],
         **text,
     )
 
@@ -814,7 +814,7 @@ def previous_plan(context):
 
 def earlier_parts_text(context):
     """The plan prompt's section about the earlier parts that a part of a split relies
-    on, or "" for an issue that is not such a part."""
+    on, or "" for an item that is not such a part."""
     earlier = context.get("earlier") or {}
     if not earlier.get("parts"):
         return ""
@@ -853,9 +853,9 @@ def _article(noun):
 
 
 def linked_text(context, stage=None):
-    """The plan, implement, fix and review prompts' section about what the issue refers to:
-    for a part of a split, the issues it was split from, root first, and the texts that the
-    issue and those issues link to, with what NexKit could not read, or "" without any.
+    """The plan, implement, fix and review prompts' section about what the work item refers to:
+    for a part of a split, the items it was split from, root first, and the texts that the
+    item and those items link to, with what NexKit could not read, or "" without any.
     `context["linked"]` comes from `linked`."""
     found = context.get("linked") or {}
     words = template_words(context)
@@ -965,7 +965,7 @@ def evidence_text(found):
 
 
 def ci_evidence_text(found, keeps, words=None):
-    """The plan, implement and fix prompts' section about the CI runs the issue names, or
+    """The plan, implement and fix prompts' section about the CI runs the work item names, or
     "" without any. `keeps` is the most a round keeps of them."""
     if not found or not (found["runs"] or found.get("skipped")):
         return ""
@@ -1012,7 +1012,7 @@ def shortened_text(context):
         f"here, the whole text in `{item['path']}`"
         for item in items
     ]
-    return Template(template("shortened")).safe_substitute(texts="\n".join(lines)) + "\n"
+    return fill(template("shortened"), context, texts="\n".join(lines)) + "\n"
 
 
 def shortened_names(context):

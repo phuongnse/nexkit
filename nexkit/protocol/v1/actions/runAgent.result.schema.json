@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/phuongnse/nexkit/protocol/v1/actions/runAgent.result.schema.json",
-  "$comment": "The result of runAgent, in actionFinished. `changeVersion` is the version the session produced; `timedOut` says it ran out of its time; `seconds` is what it spent, null when not known.",
+  "$comment": "The result of runAgent, in actionFinished. `changeVersion` is the version the session produced; `timedOut` says it ran out of its time; `seconds` is what it spent, null when not known; `untrusted` true says the host stopped the run before its agent started, because an edit by someone without write access changed the text it reads, and false or left out otherwise.",
   "type": "object",
   "properties": {
     "output": {
@@ -81,6 +81,9 @@
         "integer",
         "null"
       ]
+    },
+    "untrusted": {
+      "type": "boolean"
     }
   },
   "required": [

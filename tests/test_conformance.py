@@ -86,6 +86,12 @@ RESULTS = {
     "@timeout": {**AGENT, "output": None, "timedOut": True},
     "@error": {**AGENT, "output": None, "error": "The agent stopped."},
     "@transient": {**AGENT, "output": None, "transient": True, "error": "Overloaded."},
+    "@untrusted": {
+        **AGENT,
+        "output": None,
+        "untrusted": True,
+        "error": "An edit by someone without write access stopped it.",
+    },
 }
 # The states a conflict leads to under each conflict policy (docs/engine-states.md#states).
 CONFLICTS = {"person": ("ready",), "resolve": ("fixing", "ready"), "redo": ("working", "ready")}

@@ -5386,6 +5386,48 @@ class StoredStopsTest(HostCase):
         runs = [(a["kind"], a["stage"]) for a in doc["pending"] if a["kind"] == "runAgent"]
         self.assertEqual(runs, [("runAgent", "fix")])
 
+    def test_an_untrusted_stop_of_an_automatic_fix_round_gives_its_count_back(self):
+        self.gh.add_pull(6, 5, head_sha=HEAD)
+        self.started(action="fix", pr=6, target=6, head=HEAD)
+        self.stored()
+        before = self.read()[1]
+        pending = [a["stage"] for a in before["pending"] if a["kind"] == "runAgent"]
+        self.assertEqual(pending, ["fix"])
+        rounds = {**before["rounds"], "automatic": True, "counted": 2}
+        before = restate(self.gh, 5, rounds=rounds)
+        fix = {"issue": 5, "pr": 6, "action": "fix", "head": HEAD}
+        sent = []
+        real = host.engine.answer
+
+        def spy(request):
+            sent.append(request)
+            return real(request)
+
+        with mock.patch.object(host.engine, "answer", spy):
+            state = host.stage_untrusted(self.gh, self.cfg, fix, "@bob edited it", write=True)
+        # The engine hears the stored state and the run's untrusted result, once.
+        [request] = sent
+        self.assertEqual(request["state"], before)
+        result = request["event"]["result"]
+        self.assertTrue(result["untrusted"])
+        self.assertEqual(request["event"]["kind"], "actionFinished")
+        stored = self.read()[1]
+        self.assertEqual(stored, state)
+        self.assertEqual(stored["revision"], before["revision"] + 1)
+        self.assertEqual(stored["state"], "failed")
+        self.assertEqual(stored["attention"]["reason"], "untrusted")
+        self.assertEqual(stored["attention"]["text"], "@bob edited it")
+        self.assertEqual(stored["rounds"]["counted"], 1)
+        self.assertNotIn("automatic", stored["rounds"])
+
+    def test_an_untrusted_stop_with_no_configuration_raises_and_stores_nothing(self):
+        self.started(action="implement")
+        self.stored()
+        before = copy.deepcopy(self.gh.comments(5))
+        with self.assertRaises(host.Refused):
+            host.stage_untrusted(self.gh, None, self.GO, "No.", write=True)
+        self.assertEqual(self.gh.comments(5), before)
+
     def test_one_issue_resumes_twice_on_the_stored_state(self):
         # The second wait of an issue gets its own tick: the engine ignores an id that it holds.
         self.cfg["retry"]["wait_minutes"] = [15, 30]

@@ -529,7 +529,9 @@ adapter's tests and the answers as what its adapter carries out.
    a counted automatic fix round's checks gives that round's count back. The `report` of an
    implement or fix round first stores the agent's result and the publish result of a commit that
    does not conflict, in one write, so that the round's checks and review then decide on the
-   stored state alone. A decision that
+   stored state alone. The `report` of a round or a merge that an untrusted edit stopped stores that
+   stop too: the round's result says `untrusted`, or the accept is refused as `untrusted`, and the
+   engine answers `failed` or `ready` with attention `untrusted`. A decision that
    still falls back to the markers' document keeps the stored counts, so that no budget starts
    again. The host sends the event that GitHub shows, and carries out the answer in NexKit 6's words,
    comments and statuses. A start, a merge, a branch update, a close,
@@ -548,7 +550,8 @@ adapter's tests and the answers as what its adapter carries out.
      autopilot's count of tries.
    - A pull request's `mergeable_state`: `acceptable` for `clean`, `unstable` or `has_hooks`,
      `behind` and `dirty`.
-   - A hold label, a fork, a writer's vouch, a person's own pull request and an unknown command.
+   - A hold label, a fork, a writer's vouch, an edit after a vouch, a person's own pull request
+     and an unknown command.
    - Parts that were never filed as sub-issues, and an implement round that still runs.
 
    Three differences from NexKit 6 are known on purpose. A vouch on a pull request with no

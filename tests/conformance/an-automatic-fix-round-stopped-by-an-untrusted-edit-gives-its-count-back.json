@@ -1,0 +1,38 @@
+{
+  "policies": {},
+  "state": {
+    "example": "fixing",
+    "set": {
+      "rounds": {
+        "started": 2,
+        "counted": 1,
+        "conflicts": 0,
+        "signatures": [
+          "fail test_close_race"
+        ],
+        "findings": [],
+        "criteria": [],
+        "checklist": [],
+        "automatic": true
+      }
+    }
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@untrusted"
+      },
+      "state": "failed",
+      "changed": true,
+      "actions": [
+        "needPerson"
+      ],
+      "expect": {
+        "rounds.counted": 0,
+        "attention.reason": "untrusted"
+      }
+    }
+  ]
+}

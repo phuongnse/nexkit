@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/phuongnse/nexkit/protocol/v1/actions/accept.result.schema.json",
-  "$comment": "The result of accept, in actionFinished.",
+  "$comment": "The result of accept, in actionFinished. A refusal as `untrusted` says the host did not try the accept, because an edit by someone without write access changed the text it reads.",
   "type": "object",
   "properties": {
     "accepted": {
@@ -18,7 +18,8 @@
             "headMoved",
             "conflict",
             "notAccepted",
-            "needsPerson"
+            "needsPerson",
+            "untrusted"
           ]
         },
         {

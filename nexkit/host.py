@@ -282,9 +282,12 @@ input names `carry`, and neither `resumed` nor `retry`) stores the update before
 pending action, and starts the checks only as the engine answers them (`_branch_updated`). Any
 other command, a person's own dispatch and a dispatch with nothing pending too, is a new request,
 named `dispatch-<run id>`, decided on the stored state, which a run of the item's group stores
-(`decide`). A command whose own run a newer run replaced starts in the run that ran, when that
-run's own event starts nothing (`route._taken_start`). No document built from NexKit 6's markers
-decides a command: the stored state does, or the import in memory when nothing is stored. It
+(`decide`). An automatic fix round dispatched with nothing pending (its `auto` input names
+`true`, and not `conflicts`, `retry` or `resumed`) says so in its request, and the engine counts it
+and marks it automatic as it does its own due round; a person's dispatch stays a person's round.
+A command whose own run a newer run replaced starts in the run that ran, when that run's own event
+starts nothing (`route._taken_start`). No document built from NexKit 6's markers decides a
+command: the stored state does, or the import in memory when nothing is stored. It
 holds the facts that `route` once read: whether the issue or pull request is open, the latest
 plan, an open pull request and the round that opened it, and the base branch that already holds
 the change, which `command` sends as an observation. The host starts only the stage that the
@@ -2316,6 +2319,7 @@ def command(
     carried=None,
     observe_conflict=False,
     updated=False,
+    automatic=False,
 ):
     """What the engine answers to a person's command `what` (`plan`, `go`, `fix` or `review`)
     on work item `item` (`route._decide`): `plan`, `implement`, `fix` or `review` for the stage
@@ -2345,9 +2349,13 @@ def command(
     otherwise. The review that follows a branch update (`updated`, which `route` sets for a
     `review` dispatch whose `auto` input names `carry` and neither `resumed` nor `retry`) stores
     that update first (`_branch_updated`), before it looks for a pending action, and starts when
-    the engine answers its checks. With nothing pending and for a person's own
-    dispatch, the command is a new request, named `dispatch-<run id>` (`_dispatch_id`), decided
-    on the stored state (`decide`, which stores the answer in the item's group). No
+    the engine answers its checks. With nothing pending, an automatic fix round (`automatic`,
+    which `route` sets when the `auto` input names `true` and none of `conflicts`, `retry` or
+    `resumed`) is a new request named `dispatch-<run id>` (`_dispatch_id`) that says it is
+    automatic, with `by` null: the engine counts it, marks it automatic and diagnoses the
+    repeated checks, as it does its own due round. A person's own dispatch, and any other
+    command with nothing pending, is a new request of that name from the person, decided on the
+    stored state (`decide`, which stores the answer in the item's group). No
     closed issue or pull request reaches it: `route._decide` refuses a command on one before, in
     NexKit 6's words, so that no command changes the stored state of a closed item.
 
@@ -2422,6 +2430,9 @@ def command(
         if observe_conflict and what == "fix" and change:
             return _conflict_round(gh, cfg, item, change, found)
         request = {**request, "id": _dispatch_id(found)}
+        if automatic and what == "fix":
+            # NexKit's own automatic fix round: the engine counts and marks it as its own.
+            request = {**request, "by": None, "automatic": True}
     _, actions = decide(gh, cfg, item, request, None, pull=pull, write=True)
     return starts(actions) or "refused"
 

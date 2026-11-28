@@ -993,9 +993,14 @@ class Step:
             # was judged already, or it is a round that waits, whose count stands too.
             self.s["rounds"].pop("automatic", None)
             self.s["policies"], self.p = {}, self.given
-            self.s["used"]["since"] = self.at
             self.move("fixing")
-            self.run("fix", by=event["by"], note=event["note"])
+            if event.get("automatic"):
+                # NexKit's own automatic fix round, dispatched with nothing pending: counted
+                # and marked as the engine's due round.
+                self.issue_fix()
+            else:
+                self.s["used"]["since"] = self.at
+                self.run("fix", by=event["by"], note=event["note"])
         elif what == "review":
             if not change or not self.takes_request(("new", "ready", "failed")):
                 return False

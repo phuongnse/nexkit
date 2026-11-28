@@ -526,7 +526,8 @@ adapter's tests and the answers as what its adapter carries out.
    A usage limit, a transient error and a resume that comes due decide on the stored document
    alone: its pending agent run, its count of runs again and its wait. A command that NexKit
    dispatches carries out the action that the stored state has pending for it, and takes its
-   diagnosed checks from that action; with nothing pending it is a new request, `dispatch-<run id>`.
+   diagnosed checks from that action; with nothing pending it is a new request, `dispatch-<run id>`, which for an
+   automatic fix round says so, so that the engine counts it as its own round.
    The automatic fix rounds and the conflict rounds that they count are the stored count, and
    NexKit 6's only when no state can be read. The run of a conflict round that the push run, the
    schedule or another item's merge dispatches counts it before the round starts. The review that

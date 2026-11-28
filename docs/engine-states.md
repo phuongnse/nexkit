@@ -141,7 +141,11 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   is a person's request for a review; a person's request for a fix runs that fix. The round
   that waited no longer waits, and none of these counts: the checks and the review that follow
   decide the next round, as in NexKit 6.
-- **Which rounds count.** Only an automatic fix round counts toward `fixRounds`. One that is
+- **Which rounds count.** Only an automatic fix round counts toward `fixRounds`. It is the round
+  that the engine issues itself, or a `fix` request with `automatic` true that the host sends with
+  `by` null for NexKit's own dispatch. Such a request is counted, marked automatic and diagnoses the
+  repeated checks as the engine's own round does, and a person decides when no round is left. A
+  `fix` request without `automatic` is a person's and counts nothing. One that is
   stopped before its review ends gives its count back, since it could no longer lead to an
   accept and its work was not judged: the engine stops it when a conflict round takes over, or
   when a person pushes while its agent runs, and the host may stop it (`stopped`), as GitHub does
@@ -333,7 +337,7 @@ Three things sit beside the state, never in place of it:
 | --- | --- |
 | `created` | A work item is made, with its kind, its title and text, how deep a part it is, who does each stage and, for an item made with a plan, the plan |
 | `textChanged`, `commented` | A work item's text is edited, or a person writes on it, with their role |
-| `requested` | A person or the sweep asks for something: `plan`, `planFromScratch`, `go`, `fix`, `review`, `retry`, `trust` or `start`, with a note, and the item's title and depth again when the host gives them. The engine takes `trust` only from a writer on an item that an untrusted edit stopped (the attention of that name), and starts the next command as the rule on an untrusted stop says. For any other `trust` it changes nothing, since whom a host trusts is its own check, as [vouching for an issue](autopilot.md#vouching-for-an-issue) says |
+| `requested` | A person or the sweep asks for something: `plan`, `planFromScratch`, `go`, `fix`, `review`, `retry`, `trust` or `start`, with a note, and the item's title and depth again when the host gives them. A fix request with no person that says it is automatic is the host's own automatic fix round: the engine counts and marks it as its own due round. The engine takes `trust` only from a writer on an item that an untrusted edit stopped (the attention of that name), and starts the next command as the rule on an untrusted stop says. For any other `trust` it changes nothing, since whom a host trusts is its own check, as [vouching for an issue](autopilot.md#vouching-for-an-issue) says |
 | `planApproved`, `answered`, `changesRequested`, `changeApproved`, `dropRequested` | A person decides: the plan, its questions, the change, a person-only checklist item or criterion on the change's version, or the end |
 | `actionFinished` | An action ended, with its id, the change version and its result |
 | `actionLost` | An action the host started never reported, with any tokens it is known to have used |

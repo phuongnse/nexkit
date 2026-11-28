@@ -515,6 +515,9 @@ class Walker:
             event["by"] = rng.choice([tc.PERSON, None])
             if event["what"] == "trust":
                 event["by"] = rng.choice([{"id": "u", "role": role} for role in ROLES] + [None])
+            if event["what"] == "fix" and event["by"] is None and rng.random() < 0.5:
+                # NexKit's own automatic fix round, dispatched with nothing pending.
+                event["automatic"] = True
             if rng.random() < 0.3:
                 event["title"] = rng.choice([TITLE, "Other"])
             if rng.random() < 0.3:
@@ -857,6 +860,8 @@ class Walker:
             return
         old = state["rounds"]
         fixes = [a for a in actions if a["kind"] == "runAgent" and a["stage"] == "fix"]
+        # NexKit's own automatic request is a round that was dispatched already: it counts.
+        dispatched = event["kind"] == "requested" and bool(event.get("automatic"))
         # counts
         most = {**self.defaults, **eff}["fixRounds"]
         if rounds["counted"] > max(most, old["counted"]):
@@ -872,12 +877,18 @@ class Walker:
             if not rounds.get("automatic") and new["state"] == "fixing":
                 flag("automatic", "a counted round not marked automatic", info)
             vouched = event["kind"] == "requested" and event["what"] == "trust"
+            # So is NexKit's own automatic fix round (`automatic`), which counts like a due one.
+            vouched = vouched or bool(event.get("automatic"))
             if event["kind"] in ("requested", "changesRequested", "answered", "commented"):
                 # A writer's vouch starts the engine's own round, which counts (`trust`).
                 if not old.get("due") and not vouched:
                     flag("counts", "a person's round counted", info)
+        if dispatched and fixes and rounds["conflicts"] == old["conflicts"]:
+            # NexKit's own automatic fix round: counted and marked like a due one.
+            if not rounds.get("automatic") or rounds["counted"] != old["counted"] + 1:
+                flag("automatic", "an automatic request's fix round not counted and marked", info)
         if state["state"] == "fixing" and old.get("due") and event["kind"] == "requested":
-            if short.get("what") in ("fix", "review") and answer["changed"]:
+            if short.get("what") in ("fix", "review") and answer["changed"] and not dispatched:
                 if rounds["counted"] != old["counted"]:
                     flag("counts", "a person's request during a wait counted", info)
         if rounds["conflicts"] > old["conflicts"]:
@@ -889,7 +900,7 @@ class Walker:
             if rounds["updates"] > max({**self.defaults, **pol}["conflictRounds"], mine):
                 flag("counts", "updates past conflictRounds", info)
         # hold
-        if state["hold"] and new["hold"] and rounds["counted"] > old["counted"]:
+        if state["hold"] and new["hold"] and rounds["counted"] > old["counted"] and not dispatched:
             flag("hold", "an automatic fix round counted under a hold", info)
         # give-back
         # A person's push after the round published keeps its count: its change stays under the
@@ -948,7 +959,8 @@ class Walker:
                 if rounds["conflicts"] > old["conflicts"]:
                     flag("diagnosis", "a conflict round diagnoses", info)
                 if event["kind"] in ("requested", "changesRequested", "answered", "commented"):
-                    flag("diagnosis", "a person's or an answered round diagnoses", info)
+                    if not event.get("automatic"):
+                        flag("diagnosis", "a person's or an answered round diagnoses", info)
         if rounds["counted"] > old["counted"] and rounds.get("automatic"):
             for action in fixes:
                 if action.get("diagnose") != (rounds.get("repeated") or [])[:10]:
@@ -1020,6 +1032,7 @@ class Walker:
             own = rounds["conflicts"] > old["conflicts"]
             # So is the automatic fix round that a writer's vouch starts (`trust`).
             own = own or (event["what"] == "trust" and bool(rounds.get("automatic")))
+            own = own or bool(event.get("automatic"))
             if not own and any(("by" in a) != (event["by"] is not None) for a in marked):
                 flag("lost", "a request's work is marked other than by who asked", info)
         # usage-limit

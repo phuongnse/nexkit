@@ -778,13 +778,6 @@ APP_TEXT_READ = {
     "review": ("reviewLocation", "checksOn", "diffHeading", "pipeline"),
     "person": ("reviewLocation", "personChange", "pipeline", "pipelineFiles", "pipelineFile"),
 }
-# What the prompts still say of git and CI outside the host's input, in the descriptions of the
-# `no_change` field, whitespace-normalised. Part 5 of #864 moves them, and then deletes this
-# list.
-NO_CHANGE = (
-    "the evidence that shows it: the commit,",
-    "such as the commit, log or test output lines",
-)
 # A word that belongs to git or GitHub, which a host of another kind of change never sends.
 GIT_WORD = re.compile(r"\b(?:checkout|checked out|commit|branch|git|workflow)", re.I)
 CI_WORD = re.compile(r"\bCI\b")
@@ -1202,10 +1195,6 @@ class PromptInputTests(unittest.TestCase):
             with self.subTest(stage):
                 request = self.evidence_request(stage)
                 text = engine.answer(request)["text"]
-                if stage == "plan":
-                    # The protected path's example is part 2's (#873) to move out of the
-                    # engine. Remove this line with it, whichever of the two parts merges second.
-                    text = text.replace("`.github/workflows/ci.yml`", "")
                 flat = " ".join(text.split())
                 for word in said:
                     self.assertIn(word, flat)
@@ -1374,8 +1363,6 @@ class PromptInputTests(unittest.TestCase):
                 flat = " ".join(text.split())
                 for name in APP_TEXT_READ["person" if person else stage]:
                     self.assertIn(" ".join(APP_TEXT[name].split()), flat, name)
-                for phrase in NO_CHANGE:
-                    flat = flat.replace(phrase, "")
                 self.assertIsNone(GIT_WORD.search(flat), GIT_WORD.search(flat))
                 self.assertIsNone(CI_WORD.search(flat), CI_WORD.search(flat))
 
@@ -1439,8 +1426,6 @@ class PromptInputTests(unittest.TestCase):
                 flat = " ".join(text.split())
                 for field in read:
                     self.assertIn(" ".join(APP_TEXT[field].split()), flat, field)
-                for phrase in NO_CHANGE:
-                    flat = flat.replace(phrase, "")
                 self.assertIsNone(GIT_WORD.search(flat), GIT_WORD.search(flat))
                 self.assertNotIn("pull request", flat)
 

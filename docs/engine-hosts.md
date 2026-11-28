@@ -154,7 +154,9 @@ Each host maps its platform onto the engine's words. The table gives GitHub's ma
 engine only over HTTP, stores each request's state in a row and carries out only pending actions.
 [`tests/test_apphost.py`](../tests/test_apphost.py) plays it against `nexkit-engine serve`. The host keeps
 a clock that sends `tick` when a wait's time comes, makes parts that start when created, and carries
-out every action kind, which a test checks.
+out every action kind, which a test checks. It also keeps each prompt it gets: the plan, implement, fix
+and review prompts of one request are kept as goldens in `tests/app-prompts/`, as
+[Testing](testing.md#which-check-covers-what) says.
 
 What exists only because of GitHub stays in the GitHub host: the GitHub App, statuses, branch
 clean-up, watching CI and flaky runs, Dependabot, shards, artifacts, carrying a review over a base merge,

@@ -59,7 +59,7 @@ shapes, and a host shows them in its own words.
 ## What a host decides
 
 A host gives the engine its policies in its configuration. Each has a default, and the
-protocol's `policies.schema.json` names it, as the first column does below. Five settings are not
+protocol's `policies.schema.json` names it, as the first column does below. Six settings are not
 policies of the engine, and each has its place:
 
 - **Start** is the host's. It sends `requested` when a person or its sweep starts an item, and calls

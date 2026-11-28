@@ -85,6 +85,18 @@
           "type": "null"
         }
       ]
+    },
+    "blockers": {
+      "type": "array",
+      "items": {
+        "$ref": "../common.schema.json#/$defs/id"
+      },
+      "maxItems": 32,
+      "$comment": "The ids of the open items that block the new item: it waits for a blockerClosed of each before it starts."
+    },
+    "splitAsked": {
+      "type": "boolean",
+      "$comment": "For a part, true when its item above asked for a split after a round ran out of time: a round of the part that runs out of time waits for a person."
     }
   },
   "required": [

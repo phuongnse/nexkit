@@ -868,11 +868,19 @@ class Step:
         self.take_place(event)
         if self.review_only and not event["change"]:
             raise EngineError("A review-only item comes with its change.")
+        if self.review_only and event.get("blockers"):
+            raise EngineError("A review-only item has no blockers.")
         if event["plan"] is not None and not self.review_only:
             self.take_plan(event["plan"], {"name": "plan", "ref": "created"})
             self.plan_waits()
         else:
             self.wait("start")
+        # A host names what blocks a new item, one wait for each, and a part whose item above
+        # already asked for a split does not ask again.
+        for blocker in dict.fromkeys(event.get("blockers") or []):
+            self.wait("blocker", on=blocker)
+        if event.get("splitAsked") and "split" not in self.s["asked"]:
+            self.s["asked"].append("split")
         return True
 
     def on_requested(self, event):

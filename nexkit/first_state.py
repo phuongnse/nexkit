@@ -28,7 +28,7 @@ from . import autopilot, item_state, protocol
 from .autopilot import CHAINED, CI_WAITING, HELD, PULL_CLOSED, UNTRUSTED_MERGE, UNTRUSTED_ROUND
 from .checks import failing_signatures
 from .github import TRUSTED_ASSOCIATIONS
-from .protocol.size import HISTORY, LONGEST, MOST, clip, failure_key, fit, signature
+from .protocol.size import BLOCKERS, HISTORY, LONGEST, MOST, clip, failure_key, fit, signature
 from .protocol.stages import ACCESS, INPUTS
 from .schema import filled
 from .state import (
@@ -54,8 +54,6 @@ from .state import (
 from .textutil import clip as clip_text
 from .usage import PAUSE_WINDOW, iso, parse_iso
 
-# The most blockers an imported item waits for; the state keeps at most 64 waits.
-BLOCKERS = 32
 # The revision of an imported document, and the id of the action that a NexKit 6 run on its
 # way stands for, as the engine numbers the actions of the answer that made revision 1. The
 # GitHub host reports that run's end as this action's result, or its loss.

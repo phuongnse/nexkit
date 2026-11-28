@@ -1,0 +1,71 @@
+{
+  "policies": {},
+  "steps": [
+    {
+      "event": {
+        "kind": "created",
+        "blockers": [
+          "7",
+          "8"
+        ]
+      },
+      "state": "new",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "waits.1.for": "blocker",
+        "waits.1.on": "7",
+        "waits.2.on": "8"
+      }
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "start"
+      },
+      "state": "new",
+      "changed": false,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "blockerClosed",
+        "blocker": "7",
+        "completed": true
+      },
+      "state": "new",
+      "changed": true,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "start"
+      },
+      "state": "new",
+      "changed": false,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "blockerClosed",
+        "blocker": "8",
+        "completed": true
+      },
+      "state": "new",
+      "changed": true,
+      "actions": []
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "start"
+      },
+      "state": "planning",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    }
+  ]
+}

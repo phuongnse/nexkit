@@ -441,6 +441,10 @@ class Walker:
             }
             if rng.random() < 0.2:
                 event["plan"] = self.plan_output(rng)
+            if rng.random() < 0.2:
+                event["blockers"] = rng.sample(["7", "8"], rng.randint(1, 2))
+            if rng.random() < 0.2:
+                event["splitAsked"] = True
             return event
         kind = rng.choice(
             ["requested", "requested", "planApproved", "answered", "commented"]

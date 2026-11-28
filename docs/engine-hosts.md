@@ -117,7 +117,7 @@ The engine decides which fix rounds count against `fixRounds`, as [States](engin
 
 **Someone else may do a stage.** `created` says who does each stage: the engine's runners, a
 person, or an outside app that writes the plan and the change through the host. An item made
-with its plan starts in `awaitingApproval`. A stage done outside ends with `actionFinished` for
+with its plan starts in `awaitingApproval`. A host also gives, in `created`, the open items that block the new item (`blockers`) and, for a part whose item above already asked for a split after a time-out, `splitAsked: true`. A stage done outside ends with `actionFinished` for
 the action the engine waits for, as a runner's would, under the host's rules of trust. The one
 who made a change never reviews it. A review that could not run, because no reviewer was
 available, leaves the accept to a person.

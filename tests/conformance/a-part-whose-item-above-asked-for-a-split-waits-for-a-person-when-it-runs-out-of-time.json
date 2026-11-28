@@ -1,0 +1,48 @@
+{
+  "policies": {
+    "splits": true
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "created",
+        "depth": 1,
+        "splitAsked": true
+      },
+      "state": "new",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "asked": [
+          "split"
+        ]
+      }
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "go"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ]
+    },
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@timeout"
+      },
+      "state": "failed",
+      "changed": true,
+      "actions": [
+        "needPerson"
+      ],
+      "expect": {
+        "attention.reason": "failed"
+      }
+    }
+  ]
+}

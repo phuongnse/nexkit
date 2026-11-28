@@ -253,7 +253,7 @@ A work item is always in one state. The state document names it, so every decisi
   goes to `accepting` with an `accept`, which a hold keeps back.
 - **An agent that runs out of time** in an implement or fix stage: with splits on, the item asks once for a plan that splits it, and the state records that it asked;
   otherwise, the second time, and for an item at `splitDepth` levels of parts, which is not
-  split, it goes to `failed` for a person. A host marks a part whose parent already asked as having asked, since a part carries its parent's work. An item that has a change asks too, after a fix round, and marks the plan `supersede`. If that plan is
+  split, it goes to `failed` for a person. A host says that the item above a part already asked with `splitAsked` in `created`, since a part carries its parent's work. An item that has a change asks too, after a fix round, and marks the plan `supersede`. If that plan is
   too large, the split rules apply and `withdrawChange` ends the change. Any other plan goes on
   as one change on it. The mark is dropped once a fix or implement run starts, or the item is
   split.
@@ -295,7 +295,7 @@ Three things sit beside the state, never in place of it:
   (`baseFailure`); or required checks before a merge (`requiredChecks`), whose first start is
   kept beside the waits, as the bullet on a refused accept above says. Each wait has an id that
   is new each time, and the event that ends it names it. A tick ends only a wait for a time:
-  `time`, `usageLimit` or `requiredChecks`. When a blocker, or the item about a base failure, closes, the waits on it end, and an item does not start while a blocker is open. A host
+  `time`, `usageLimit` or `requiredChecks`. When a blocker, or the item about a base failure, closes, the waits on it end, and an item does not start while a blocker is open. A host names the open items that block a new item when it creates it, and the engine adds one wait for each, as the Events table says. A host
   reports that the base branch passes again, so that its failure is gone though its item is
   open, as the end of that item too, naming it. A base failure whose record names no item of
   its own waits on the word "none", since no item's end could end it, so the host ends it the first time it looks. An end that comes before the
@@ -312,7 +312,7 @@ Three things sit beside the state, never in place of it:
 
 | Event | Sent when |
 | --- | --- |
-| `created` | A work item is made, with its kind, its title and text, how deep a part it is, who does each stage and, for an item made with a plan, the plan |
+| `created` | A work item is made, with its kind, its title and text, how deep a part it is, the open items that block it (`blockers`, at most 32, and none for a review-only item), for a part whether its item above already asked for a split (`splitAsked`), who does each stage and, for an item made with a plan, the plan |
 | `textChanged`, `commented` | A work item's text is edited, or a person writes on it, with their role |
 | `requested` | A person or the sweep asks for something: `plan`, `planFromScratch`, `go`, `fix`, `review`, `retry`, `trust` or `start`, with a note, and the item's title and depth again when the host gives them. A fix request with no person that says it is automatic is the host's own automatic fix round: the engine counts and marks it as its own due round. The engine takes `trust` only from a writer on an item that an untrusted edit stopped (the attention of that name), and starts the next command as the rule on an untrusted stop says. For any other `trust` it changes nothing, since whom a host trusts is its own check, as [Hosts](engine-hosts.md#hosts) says |
 | `planApproved`, `answered`, `changesRequested`, `changeApproved`, `dropRequested` | A person decides: the plan, its questions, the change, a person-only checklist item or criterion on the change's version, or the end |

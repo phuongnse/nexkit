@@ -136,7 +136,9 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   engine's answers run again name no check. A fix round that waits for the base branch's failure
   forgets what repeated, since that failure is the base branch's, and a round whose change conflicts
   at its publish runs no checks, so the checks after the next round have none of it to compare with.
-  A hold keeps a diagnosis round back as any fix round, and it diagnoses when it runs.
+  A hold keeps a diagnosis round back as any fix round, and it diagnoses when it runs. The host's
+  automatic fix request is no such round: it runs, counts and diagnoses under a hold, as NexKit 6
+  runs a round that NexKit dispatches.
 - **While a fix round waits** for a hold or the base branch, a person's push is checked, and so
   is a person's request for a review; a person's request for a fix runs that fix. The round
   that waited no longer waits, and none of these counts: the checks and the review that follow
@@ -309,7 +311,9 @@ Three things sit beside the state, never in place of it:
   waits in `checking` until it ends. A hold does not stop a step that runs: a run paused at a usage
   limit or waiting after a transient stop runs again at its tick, as NexKit 6's resume does under
   the label (`maintain.resume_paused`). A fix round that is due, an accept, a conflict round
-  and the start again of lost work wait until the hold ends, which starts the work again.
+  and the start again of lost work wait until the hold ends, which starts the work again. The
+  host's automatic fix request, which carries out a round NexKit already dispatched, runs and
+  counts under a hold, as NexKit 6 runs a dispatched round.
 - **Wait:** the next step waits for something named: a request to start (`start`); a time, such
   as after a transient stop (`time`); the reset of a usage limit (`usageLimit`); an item that
   blocks it (`blocker`); the parts of a split (`parts`); a failure the base branch has

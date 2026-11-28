@@ -8,8 +8,7 @@ from pathlib import Path
 from unittest import mock
 
 from nexkit import evidence
-from nexkit.context import gather
-from tests.support import FakeGitHub, build_prompt, ci_evidence_text, make_config
+from tests.support import FakeGitHub, build_prompt, ci_evidence_text, make_config, prompt_texts
 
 TOKEN = "ghp_" + "a" * 36
 
@@ -67,10 +66,10 @@ class EvidenceCase(unittest.TestCase):
     def issue(self, body):
         self.gh.add_issue(5, title="Create stays disabled at times", body=body)
 
-    def gather(self, stage="implement"):
+    def prompt_texts(self, stage="implement"):
         decision = {"action": stage, "issue": 5, "pr": None, "note": ""}
         with mock.patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": str(self.folder.parent / "s")}):
-            return gather(
+            return prompt_texts(
                 self.gh, decision, ci=str(self.folder), cfg=self.cfg, workflow="nexkit.yml"
             )
 
@@ -79,7 +78,7 @@ class EvidenceTests(EvidenceCase):
     def test_runs_named_by_marker_and_by_link_are_collected_outside_the_checkout(self):
         self.issue("It failed in https://github.com/acme/app/actions/runs/202/job/2020 too.")
         self.gh.comment(5, "Recorded.\n\n<!-- nexkit:ci-runs 101.1 -->")
-        context = self.gather()
+        context = self.prompt_texts()
         found = context["ci_evidence"]
         self.assertEqual([run["id"] for run in found["runs"]], [202, 101])
         for run_id in (101, 202):
@@ -116,7 +115,7 @@ class EvidenceTests(EvidenceCase):
         self.gh.logs.pop(3030)  # the log is gone too
         out = io.StringIO()
         with mock.patch("sys.stdout", out):
-            found = self.gather()["ci_evidence"]
+            found = self.prompt_texts()["ci_evidence"]
         log = out.getvalue()
         section = ci_evidence_text(found)
         for text in (log, section):
@@ -143,7 +142,7 @@ class EvidenceTests(EvidenceCase):
             5, "https://github.com/acme/app/actions/runs/303", login="ci-bot[bot]"
         )
         bot["user"]["type"] = "Bot"
-        found = self.gather()["ci_evidence"]
+        found = self.prompt_texts()["ci_evidence"]
         self.assertEqual([run["id"] for run in found["runs"]], [101, 202])
         self.assertEqual(found["skipped"], [])
         self.assertTrue((self.folder / "run-101" / "artifacts" / "test-results-e2e").is_dir())
@@ -164,7 +163,7 @@ class EvidenceTests(EvidenceCase):
         )
         out = io.StringIO()
         with mock.patch("sys.stdout", out):
-            found = self.gather()["ci_evidence"]
+            found = self.prompt_texts()["ci_evidence"]
         # The five named last that are not NexKit's own fill the five places.
         self.assertEqual([run["id"] for run in found["runs"]], [101, 202, 303, 304, 305])
         own = "a run of NexKit's own workflow, `nexkit.yml`"
@@ -180,7 +179,7 @@ class EvidenceTests(EvidenceCase):
         self.issue("https://github.com/acme/app/actions/runs/101")
         real = evidence.Budget
         with mock.patch.object(evidence, "Budget", lambda: real(limit=80)):
-            self.gather()
+            self.prompt_texts()
         summary = (self.folder.parent / "s").read_text()
         self.assertIn("### NexKit: evidence from CI runs", summary)
         self.assertIn("Left out, past the 250.0 MB a round keeps", summary)
@@ -188,7 +187,7 @@ class EvidenceTests(EvidenceCase):
     def test_a_zip_entry_that_leads_out_of_its_folder_is_skipped(self):
         self.issue("https://github.com/acme/app/actions/runs/101")
         self.gh.zips[106] = zipped({"../../escape.txt": "x", "ok/file.txt": "y"})
-        self.gather()
+        self.prompt_texts()
         artifact = self.folder / "run-101" / "artifacts" / "test-results-e2e"
         self.assertTrue((artifact / "ok" / "file.txt").exists())
         self.assertFalse((self.folder.parent / "escape.txt").exists())
@@ -198,7 +197,7 @@ class EvidenceTests(EvidenceCase):
         self.issue("https://github.com/acme/app/actions/runs/101")
         self.gh.logs[1010] = ("é" * 10).encode() + f" {TOKEN}\n".encode() + ("x" * 10).encode()
         with mock.patch.object(evidence, "LOG_TAIL", 30 + len(TOKEN)):
-            self.gather()
+            self.prompt_texts()
         log = (self.folder / "run-101" / "attempt-1" / "e2e-chromium.log").read_text()
         self.assertNotIn(TOKEN, log)
 
@@ -207,7 +206,7 @@ class EvidenceTests(EvidenceCase):
         lines = "".join(f"line {n}\n" for n in range(1000))
         self.gh.logs[1010] = f"{lines}Error: Create stays disabled\n".encode()
         self.gh.log_limit = 2000
-        self.gather()
+        self.prompt_texts()
         log = (self.folder / "run-101" / "attempt-1" / "e2e-chromium.log").read_bytes()
         self.assertTrue(log.startswith(evidence.LOG_CUT))
         self.assertTrue(log.endswith(b"line 999\nError: Create stays disabled\n"))
@@ -215,11 +214,11 @@ class EvidenceTests(EvidenceCase):
         # A log that what a round keeps cuts says so too; a whole one says nothing.
         self.gh.log_limit = 1_000_000
         with mock.patch.object(evidence, "LOG_TAIL", 100):
-            self.gather()
+            self.prompt_texts()
         log = (self.folder / "run-101" / "attempt-1" / "e2e-chromium.log").read_bytes()
         self.assertTrue(log.startswith(evidence.LOG_CUT))
         self.assertTrue(log.endswith(b"Error: Create stays disabled\n"))
-        self.gather()
+        self.prompt_texts()
         log = (self.folder / "run-101" / "attempt-1" / "e2e-chromium.log").read_bytes()
         self.assertTrue(log.startswith(b"line 0\n"))
 
@@ -228,7 +227,7 @@ class EvidenceTests(EvidenceCase):
         self.gh.zips[106] = zipped({"a": "1", "a/b": "2", "c\n::error::x": "3", "d": "4"})
         out = io.StringIO()
         with mock.patch("sys.stdout", out):
-            context = self.gather()
+            context = self.prompt_texts()
         artifact = self.folder / "run-101" / "artifacts" / "test-results-e2e"
         self.assertTrue((artifact / "d").exists())
         self.assertNotIn("\n::error::", out.getvalue())
@@ -236,19 +235,19 @@ class EvidenceTests(EvidenceCase):
 
     def test_issues_that_name_no_run_collect_nothing(self):
         self.issue("Create stays disabled.")
-        self.assertIsNone(self.gather()["ci_evidence"])
-        self.assertIsNone(self.gather("plan")["ci_evidence"])
-        self.assertNotIn("ci_evidence", self.gather("review"))
+        self.assertIsNone(self.prompt_texts()["ci_evidence"])
+        self.assertIsNone(self.prompt_texts("plan")["ci_evidence"])
+        self.assertNotIn("ci_evidence", self.prompt_texts("review"))
         self.assertFalse(self.folder.exists())
 
     def test_a_plan_gets_the_same_evidence_as_an_implement_round(self):
         self.issue("Recorded.")
         self.gh.comment(5, "Recorded.\n\n<!-- nexkit:ci-runs 101.1 -->")
-        found = self.gather("plan")["ci_evidence"]
+        found = self.prompt_texts("plan")["ci_evidence"]
         self.assertEqual([run["id"] for run in found["runs"]], [101])
         log = self.folder / "run-101" / "attempt-1" / "e2e-chromium.log"
         self.assertIn("Error: Create stays disabled", log.read_text())
-        context = {**self.gather("plan"), "ci_evidence": found}
+        context = {**self.prompt_texts("plan"), "ci_evidence": found}
         prompt = build_prompt(
             "plan", context, make_config(), {"ci_evidence": ci_evidence_text(found)}
         )
@@ -264,7 +263,7 @@ class EvidenceTests(EvidenceCase):
         self.issue("https://github.com/acme/app/actions/runs/101")
         self.gh.logs.pop(1010)
         self.gh.run_artifact_list[101] = []
-        found = self.gather("plan")["ci_evidence"]
+        found = self.prompt_texts("plan")["ci_evidence"]
         section = ci_evidence_text(found)
         self.assertIn("e2e-chromium.log`: missing, its log: GitHub API 410", section)
         self.assertIn("Missing: no artifact named `test-results-e2e`.", section)
@@ -298,7 +297,7 @@ class EvidenceTests(EvidenceCase):
             "https://github.com/acme/app/actions/runs/101 and "
             "https://github.com/acme/app/actions/runs/202"
         )
-        found = self.gather("plan")["ci_evidence"]
+        found = self.prompt_texts("plan")["ci_evidence"]
         since = {run["id"]: run.get("passed_since") for run in found["runs"]}
         self.assertEqual(since[101]["id"], 150)
         self.assertIsNone(since[202])
@@ -347,7 +346,7 @@ class EvidenceTests(EvidenceCase):
         self.issue("https://github.com/acme/app/actions/runs/101")
         self.gh.run_artifact_list[101][0]["size_in_bytes"] = 60_000_000
         with mock.patch.object(self.gh, "artifact_zip", wraps=self.gh.artifact_zip) as download:
-            found = self.gather()["ci_evidence"]
+            found = self.prompt_texts()["ci_evidence"]
         self.assertGreater(download.call_args.args[1], 60_000_000)
         self.assertEqual(found["left_out"], [])
         found["left_out"] = ["artifact `big` of run 101 (300.0 MB)"]
@@ -361,7 +360,7 @@ class EvidenceTests(EvidenceCase):
             ["test-results-e2e-2", "perf", "test-results-e2e-1", "test-results-unit-1", "perf-2"],
         )
         self.issue("https://github.com/acme/app/actions/runs/101")
-        found = self.gather()["ci_evidence"]
+        found = self.prompt_texts()["ci_evidence"]
         folder = self.folder / "run-101" / "artifacts"
         self.assertEqual(
             sorted(path.name for path in folder.iterdir()),
@@ -374,7 +373,7 @@ class EvidenceTests(EvidenceCase):
     def test_a_pattern_and_an_exact_name_of_the_same_artifact_download_it_once(self):
         self.cfg = make_config(evidence={"artifacts": ["test-results-*", "test-results-e2e"]})
         self.issue("https://github.com/acme/app/actions/runs/101")
-        found = self.gather()["ci_evidence"]
+        found = self.prompt_texts()["ci_evidence"]
         artifacts = [f for f in found["runs"][0]["files"] if "/artifacts/" in f["path"]]
         self.assertEqual(len(artifacts), 1)
         self.assertEqual(found["runs"][0]["missing"], [])
@@ -382,19 +381,19 @@ class EvidenceTests(EvidenceCase):
     def test_a_pattern_that_matches_nothing_says_so(self):
         self.cfg = make_config(evidence={"artifacts": ["smoke-*"]})
         self.issue("https://github.com/acme/app/actions/runs/101")
-        section = ci_evidence_text(self.gather()["ci_evidence"])
+        section = ci_evidence_text(self.prompt_texts()["ci_evidence"])
         self.assertIn("Missing: no artifact whose name starts with `smoke-`.", section)
 
     def test_shards_past_the_size_limit_are_left_out_and_named(self):
         self.issue("https://github.com/acme/app/actions/runs/101")
         self.cfg = make_config(evidence={"artifacts": []})
-        logs = self.gather()["ci_evidence"]["used"]  # the log and annotations
+        logs = self.prompt_texts()["ci_evidence"]["used"]  # the log and annotations
         self.cfg = make_config(evidence={"artifacts": ["test-results-e2e-*"]})
         size = self.shards(101, [f"test-results-e2e-{n}" for n in (3, 1, 5, 2, 4)], size=40)
         real = evidence.Budget
         # Room for two shards' files, and for no third download.
         with mock.patch.object(evidence, "Budget", lambda: real(limit=logs + 80 + size - 1)):
-            found = self.gather()["ci_evidence"]
+            found = self.prompt_texts()["ci_evidence"]
         kept = sorted(path.name for path in (self.folder / "run-101" / "artifacts").iterdir())
         self.assertEqual(kept, ["test-results-e2e-1", "test-results-e2e-2"])
         shown = evidence.size_text(size)

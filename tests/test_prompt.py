@@ -3,8 +3,9 @@
 
 Each case sets up an issue on GitHub, and a checkout where a stage needs one, and builds
 its prompt twice: as the GitHub host does in a round (`context.gather`, then
-`agent.run_stage` or `agent.run_triage`), and with the engine's `prompt` call from the
-inputs the GitHub host fetches. Both must equal the prompt NexKit 6 wrote for the case,
+`agent.run_stage` or `agent.run_triage`, which send one `prompt` request through
+`agent.prompt_call`), and with the engine's `prompt` call on that request. Both must equal the
+prompt NexKit 6 wrote for the case,
 kept in `tests/prompts/`. Those files are NexKit 6's record, written by its code at f9b83c7
 before the prompts moved: never write them again with NEXKIT_WRITE_PROMPTS from this code. Set
 it only to add a case's file, from NexKit 6's code. A change to a prompt edits its file by hand
@@ -571,7 +572,7 @@ class Round:
             if found["previous"]:
                 decision["previous_profile"] = found["previous"]
         self.decision = decision
-        self.fetched, self.added, self.state = {}, {}, None
+        self.sent = []
 
     def run(self):
         """The prompt the round writes, as `prompt.md` keeps it."""
@@ -584,8 +585,7 @@ class Round:
             mock.patch("nexkit.context.ci_evidence", return_value=ci),
             mock.patch.object(agent, "run_agent", side_effect=Stop),
             mock.patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": ""}),
-            mock.patch.object(prompt, "texts", side_effect=self.texts),
-            mock.patch.object(prompt, "finish", side_effect=self.finish),
+            mock.patch.object(agent, "prompt_call", side_effect=self.prompt_call),
         ):
             context = gather(
                 world.gh,
@@ -595,7 +595,6 @@ class Round:
                 results=world.results,
                 ci=world.root / "ci" if ci else None,
                 cfg=cfg if ci else None,
-                texts=world.out / "texts",
             )
             # As the round passes it from one step to the next.
             context = json.loads(json.dumps(context))
@@ -618,36 +617,24 @@ class Round:
         folder = world.out / "triage" if stage == "triage" else world.out
         return world.shown((folder / "prompt.md").read_text(encoding="utf-8"))
 
-    def texts(self, stage, inputs, shelf, state=None, real=prompt.texts):
-        self.fetched = json.loads(json.dumps(inputs))
-        self.state = json.loads(json.dumps(state))
-        return real(stage, inputs, shelf, state)
-
-    def finish(self, stage, context, inputs, policies, *rest, real=prompt.finish):
-        self.added = json.loads(json.dumps(inputs))
-        return real(stage, context, inputs, policies, *rest)
+    def prompt_call(self, request, real=agent.prompt_call):
+        """Records each request that writes a stage's prompt, then answers it."""
+        if "unfit" not in request:
+            self.sent.append(json.loads(json.dumps(request)))
+        return real(request)
 
     def request(self):
-        """The `prompt` call with what the round fetched: from GitHub, and from the checkout,
+        """The `prompt` request that the round sent: its inputs from GitHub, from the checkout,
         its checks and the configuration. Only the kinds that runAgent names for the stage."""
-        inputs = {**self.fetched, **self.added}
-        if "diff" in self.fetched:
-            # The context job reads the merge of the base, the agent job the checkout's diff.
-            inputs["diff"] = {**self.fetched["diff"], **self.added.get("diff", {})}
-        inputs = {
-            kind: value
-            for kind, value in prompt.camel(inputs).items()
-            if kind in INPUTS[self.stage]
-        }
-        return {
-            "protocol": 1,
-            "call": "prompt",
-            "state": self.state,
-            "stage": self.stage,
-            "inputs": inputs,
-            "policies": agent.policies(self.cfg),
-            "texts": str((self.world.out / "texts").resolve()),
-        }
+        return self.sent[-1]
+
+    def texts(self):
+        """The texts of the stage's prompt that come from GitHub, as the engine writes them
+        from what the context step fetched."""
+        folder = self.world.out / "texts"
+        return prompt.texts(
+            self.stage, self.context["inputs"], prompt.Shelf(folder), self.context["state"]
+        )
 
 
 def golden(name, text):
@@ -666,8 +653,11 @@ class NexKit6PromptTests(unittest.TestCase):
         for name, case in CASES.items():
             with self.subTest(name):
                 world = World(self)
-                text = Round(world, case(world)).run()
+                round = Round(world, case(world))
+                text = round.run()
                 self.assertEqual(text, golden(name, text))
+                # The round writes its prompt from one request.
+                self.assertEqual(len(round.sent), 1)
 
     def test_a_session_asked_again_for_its_result_gets_nexkit_6s_prompt(self):
         for stage, wrong in AGAIN.items():
@@ -687,6 +677,7 @@ class PromptCallTests(unittest.TestCase):
                 round = Round(world, case(world))
                 round.run()
                 request = round.request()
+                self.assertEqual(protocol.check(request, "calls/prompt.schema.json", "request"), [])
                 answer = engine.reply("prompt", json.dumps(request).encode())
                 self.assertNotIn("error", answer)
                 self.assertEqual(world.shown(answer["text"]), golden(name, None))
@@ -696,10 +687,9 @@ class PromptCallTests(unittest.TestCase):
                 if round.stage == "triage":
                     continue  # its round's comment names what the plan's prompt shortened
                 # What the round's comment names as shortened and not read.
-                self.assertEqual(
-                    answer["shortened"], prompt.camel(prompt.shortened_names(round.context))
-                )
-                linked = round.context.get("linked") or {}
+                written = round.texts()
+                self.assertEqual(answer["shortened"], prompt.camel(prompt.shortened_names(written)))
+                linked = written.get("linked") or {}
                 self.assertEqual(answer["notRead"], linked.get("skipped") or [])
 
     def test_a_session_asked_again_for_its_result_gets_nexkit_6s_prompt(self):

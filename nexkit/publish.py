@@ -299,7 +299,7 @@ def _render_plan(output, profile, replan, passed, cut=None):
 def publish_plan(gh, decision, result, context, cfg):
     profile = render_profile(result, cfg) if cfg["profiles"] else None
     passed = result.get("passed_since")
-    body = render_plan(result["output"], profile, replan="since_plan" in context, passed=passed)
+    body = render_plan(result["output"], profile, replan=bool(context.get("replan")), passed=passed)
     comment = gh.comment(decision["issue"], body)
     return {"published": True, "comment": comment.get("html_url")}
 

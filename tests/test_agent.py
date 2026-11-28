@@ -8,14 +8,15 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from nexkit import agent, runlog
+from nexkit import agent, first_state, protocol, runlog
 from nexkit.checks import kept_output
 from nexkit.engine import prompt as engine_prompt
-from nexkit.engine.prompt import PERSON_PLAN
+from nexkit.evidence import EVIDENCE_LIMIT
 from nexkit.redact import Redactor
 from nexkit.report import apply_criteria
 from nexkit.runtimes import RUNTIMES
 from nexkit.runtimes.claude_code import ClaudeReader
+from nexkit.textutil import TEXT_LIMIT
 from tests.support import (
     CALC,
     MUL,
@@ -30,7 +31,9 @@ from tests.support import (
     profile_config,
 )
 
-CONTEXT = {
+# The texts of a prompt that come from GitHub, as the engine writes them (`prompt.texts`), for
+# the checks of how a prompt is built.
+TEXTS = {
     "issue": 5,
     "pr": "",
     "title": "Fix add",
@@ -41,6 +44,33 @@ CONTEXT = {
     "note": "None.",
     "feedback": "",
 }
+# What the context step hands the agent step: what it fetched from GitHub, and the fields later
+# steps read (`context.record`). A round writes its prompt from it.
+CONTEXT = {
+    "inputs": {
+        "item": {
+            "id": 5,
+            "title": "Fix add",
+            "body": TEXTS["body"],
+            "change": None,
+            "person": False,
+        },
+        "notes": "",
+        "discussion": {"item": [], "change": []},
+        "plan": "Change add to return a + b.",
+    },
+    "state": None,
+    "title": "Fix add",
+    "person": False,
+    "replan": False,
+}
+
+
+def context_with(inputs=None, **fields):
+    """`CONTEXT` with `inputs` added to what it fetched, and `fields` of the record set."""
+    return {**CONTEXT, **fields, "inputs": {**CONTEXT["inputs"], **(inputs or {})}}
+
+
 DONE = {
     "status": "done",
     "summary": "Fixed add.",
@@ -90,19 +120,19 @@ class ChecklistTests(unittest.TestCase):
 
     def test_the_items_are_in_the_plan_and_review_prompts(self):
         for stage in ("plan", "review"):
-            prompt = build_prompt(stage, CONTEXT, self.cfg)
+            prompt = build_prompt(stage, TEXTS, self.cfg)
             self.assertIn("1. Docs change with the code\n2. A setting has a safe default", prompt)
             self.assertIn("`checklist`:", prompt)
             self.assertNotIn("$items", prompt)
             self.assertNotIn("$checklist", prompt)
-        review = build_prompt("review", CONTEXT, self.cfg)
+        review = build_prompt("review", TEXTS, self.cfg)
         self.assertIn("`not_met`", review)
         self.assertIn("`not_applicable`", review)
 
     def test_with_the_setting_empty_the_prompts_and_results_are_as_before(self):
         cfg = make_config()
         for stage in ("plan", "review"):
-            prompt = build_prompt(stage, CONTEXT, cfg)
+            prompt = build_prompt(stage, TEXTS, cfg)
             self.assertNotIn("checklist", prompt)
             self.assertNotIn("$checklist", prompt)
             self.assertIs(agent.stage_schema(stage, cfg), agent.SCHEMAS[stage])
@@ -112,7 +142,7 @@ class ChecklistTests(unittest.TestCase):
 
     def test_the_other_stages_have_no_checklist(self):
         for stage in ("implement", "fix"):
-            self.assertNotIn("checklist", build_prompt(stage, CONTEXT, self.cfg))
+            self.assertNotIn("checklist", build_prompt(stage, TEXTS, self.cfg))
             self.assertIs(agent.stage_schema(stage, self.cfg), agent.SCHEMAS[stage])
 
     def test_the_schema_asks_for_an_answer_to_each_item(self):
@@ -162,11 +192,11 @@ class ChecklistTests(unittest.TestCase):
         person = {"text": "No check loosens", "person": True}
         cfg = make_config(review={"checklist": [*CHECKLIST, person]})
         for stage in ("plan", "review"):
-            prompt = build_prompt(stage, CONTEXT, cfg)
+            prompt = build_prompt(stage, TEXTS, cfg)
             self.assertIn("3. No check loosens (a person decides)", prompt)
             self.assertIn("Only a person decides the items marked (a person decides)", prompt)
             self.assertNotIn("$mark", prompt)
-        self.assertNotIn("a person decides", build_prompt("review", CONTEXT, self.cfg))
+        self.assertNotIn("a person decides", build_prompt("review", TEXTS, self.cfg))
         answers = [
             {"number": n, "answer": "met" if n < 3 else "not_met", "evidence": "x"}
             for n in (1, 2, 3)
@@ -201,21 +231,21 @@ class ChecklistTests(unittest.TestCase):
 
 class PromptTests(unittest.TestCase):
     def test_prompt_keeps_untrusted_text_literal(self):
-        prompt = build_prompt("implement", CONTEXT, make_config())
+        prompt = build_prompt("implement", TEXTS, make_config())
         self.assertIn("Use $HOME and ${{ secrets.X }} literally.", prompt)
         self.assertIn("`test`: `true`", prompt)
         self.assertIn("`.github/`", prompt)
         self.assertNotIn("$plan", prompt)
 
     def test_first_plan_has_no_latest_plan(self):
-        extra = {"previous": engine_prompt.previous_plan(CONTEXT)}
-        prompt = build_prompt("plan", CONTEXT, make_config(), extra)
+        extra = {"previous": engine_prompt.previous_plan(TEXTS)}
+        prompt = build_prompt("plan", TEXTS, make_config(), extra)
         self.assertNotIn("Latest plan", prompt)
         self.assertIn("</untrusted>\n\n## Note from the person", prompt)
         self.assertNotRegex(prompt, r"\$(previous|since_plan)\b")
 
     def test_a_split_asks_that_a_parts_criteria_prove_what_later_parts_rely_on(self):
-        prompt = " ".join(build_prompt("plan", CONTEXT, make_config()).split())
+        prompt = " ".join(build_prompt("plan", TEXTS, make_config()).split())
         self.assertIn(
             "when later parts depend on a part, its acceptance criteria must prove end to "
             "end the behaviour they rely on",
@@ -236,7 +266,7 @@ class PromptTests(unittest.TestCase):
                 {"number": 7, "title": "Add a case client", "state": "open", "body": "B."},
             ],
         }
-        context = {**CONTEXT, "earlier": earlier}
+        context = {**TEXTS, "earlier": earlier}
         prompt = build_prompt("plan", context, make_config())
         flat = " ".join(prompt.split())
         self.assertIn("This issue is a part of #3", flat)
@@ -257,7 +287,7 @@ class PromptTests(unittest.TestCase):
         positions = [prompt.index(text) for text in order]
         self.assertEqual(positions, sorted(positions))
         # An issue that is not a part, or a part that needs no other, has no such section.
-        for other in (CONTEXT, {**CONTEXT, "earlier": {"parent": 3, "parts": []}}):
+        for other in (TEXTS, {**TEXTS, "earlier": {"parent": 3, "parts": []}}):
             prompt = build_prompt("plan", other, make_config(), {"previous": ""})
             self.assertNotIn("Earlier parts", prompt)
             self.assertNotIn("$earlier_parts", prompt)
@@ -266,13 +296,13 @@ class PromptTests(unittest.TestCase):
     def test_the_plan_prompt_states_how_many_parts_a_split_may_have(self):
         from nexkit.state import MAX_PARTS
 
-        prompt = " ".join(build_prompt("plan", CONTEXT, make_config()).split())
+        prompt = " ".join(build_prompt("plan", TEXTS, make_config()).split())
         self.assertIn(f"in order, at most {MAX_PARTS} of them,", prompt)
         self.assertIn("NexKit files no part of a split with more parts than that", prompt)
         self.assertNotIn("$max_parts", prompt)
 
     def test_plan_criteria_are_what_the_review_can_verify(self):
-        prompt = " ".join(build_prompt("plan", CONTEXT, make_config()).split())
+        prompt = " ".join(build_prompt("plan", TEXTS, make_config()).split())
         self.assertIn(
             "each verifiable by the review from what it sees: a test in the change, or the "
             "result of a project check above, run once on the candidate commit.",
@@ -292,7 +322,7 @@ class PromptTests(unittest.TestCase):
         self.assertIn("cannot be shown by a test or a check, say so in `risks`", prompt)
 
     def test_a_persons_pull_request_is_reviewed_in_its_protected_paths_too(self):
-        context = {**CONTEXT, "person": True}
+        context = {**TEXTS, "person": True}
         prompt = " ".join(build_prompt("review", context, make_config()).split())
         self.assertIn("## A person's pull request", prompt)
         self.assertIn("a person makes any change", prompt)
@@ -308,7 +338,7 @@ class PromptTests(unittest.TestCase):
         self.assertNotIn("$protected", prompt)
 
     def test_the_review_of_a_nexkit_pull_request_leaves_protected_paths_out(self):
-        prompt = " ".join(build_prompt("review", CONTEXT, make_config()).split())
+        prompt = " ".join(build_prompt("review", TEXTS, make_config()).split())
         self.assertNotIn("A person's pull request", prompt)
         self.assertNotIn("$person", prompt)
         self.assertIn(
@@ -318,13 +348,13 @@ class PromptTests(unittest.TestCase):
         )
 
     def test_review_judges_each_criterion_and_unmet_ones_request_changes(self):
-        prompt = " ".join(build_prompt("review", CONTEXT, make_config()).split())
+        prompt = " ".join(build_prompt("review", TEXTS, make_config()).split())
         self.assertIn("no criterion is `unmet` and every check passed", prompt)
         self.assertIn("`unverifiable` when they hold no evidence either way", prompt)
         self.assertIn("A criterion that a collaborator dropped or replaced", prompt)
 
     def test_replan_revises_the_latest_plan(self):
-        context = {**CONTEXT, "since_plan": "@olivia: Also accept `label`."}
+        context = {**TEXTS, "since_plan": "@olivia: Also accept `label`."}
         extra = {"previous": engine_prompt.previous_plan(context)}
         prompt = build_prompt("plan", context, make_config(), extra)
         order = [
@@ -343,13 +373,13 @@ class PromptTests(unittest.TestCase):
 
     def test_first_review_has_no_previous_round(self):
         extra = {"diff": "+x", "check_results": "ok", "previous": "", "merge": ""}
-        prompt = build_prompt("review", CONTEXT, make_config(), extra)
+        prompt = build_prompt("review", TEXTS, make_config(), extra)
         self.assertNotIn("Previous round", prompt)
         self.assertIn("</untrusted>\n\n## How to review", prompt)
 
     def test_review_sees_the_discussion_and_why_the_code_leaves_the_plan(self):
         context = {
-            **CONTEXT,
+            **TEXTS,
             "discussion": "@olivia: Planned for the next release.",
             "outside_plan": "- Wrote the migration: the owner asked for it.",
         }
@@ -366,13 +396,13 @@ class PromptTests(unittest.TestCase):
     def test_writing_stages_run_commands_in_the_foreground(self):
         extra = {"diff": "+x", "check_results": "ok", "previous": "", "merge": ""}
         for stage in ("implement", "fix"):
-            prompt = build_prompt(stage, CONTEXT, make_config(), extra)
+            prompt = build_prompt(stage, TEXTS, make_config(), extra)
             self.assertIn("Run every command in the foreground", prompt, stage)
 
     def test_every_prompt_has_the_writing_guide(self):
         extra = {"diff": "+x", "check_results": "ok", "previous": "", "merge": ""}
         for stage in ("plan", "implement", "fix", "review"):
-            prompt = build_prompt(stage, CONTEXT, make_config(), extra)
+            prompt = build_prompt(stage, TEXTS, make_config(), extra)
             self.assertIn("## How to write", prompt, stage)
             self.assertIn("Write for a person who knows the project", prompt, stage)
             self.assertNotIn("$writing", prompt, stage)
@@ -531,7 +561,7 @@ class PromptTests(unittest.TestCase):
     def test_every_stage_template_is_complete(self):
         extra = {"diff": "+x", "check_results": "ok", "previous": "", "merge": ""}
         for stage in ("plan", "implement", "fix", "review"):
-            prompt = build_prompt(stage, CONTEXT, make_config(), extra)
+            prompt = build_prompt(stage, TEXTS, make_config(), extra)
             for name in ("$issue", "$title", "$plan", "$checks", "$protected", "$diff"):
                 self.assertNotIn(name, prompt, f"{stage} leaves {name}")
             self.assertNotIn("$round_checks", prompt, stage)
@@ -541,13 +571,13 @@ class PromptTests(unittest.TestCase):
         cfg = make_config(checks=checks)
         listed = "  - `unit`: `make test`\n  - `lint`: `make lint`\n"
         for stage in ("plan", "implement", "fix"):
-            prompt = build_prompt(stage, CONTEXT, cfg)
+            prompt = build_prompt(stage, TEXTS, cfg)
             self.assertIn(listed, prompt, stage)
             self.assertNotIn("slow", prompt, stage)
         rule = "- Before finishing, run the project checks and fix any failures you caused:\n"
-        self.assertIn(rule + listed, build_prompt("implement", CONTEXT, cfg))
+        self.assertIn(rule + listed, build_prompt("implement", TEXTS, cfg))
         rule = "- Before finishing, run the project checks:\n"
-        self.assertIn(rule + listed, build_prompt("fix", CONTEXT, cfg))
+        self.assertIn(rule + listed, build_prompt("fix", TEXTS, cfg))
 
     def test_slow_checks_are_listed_apart_and_not_run_in_full(self):
         checks = [
@@ -557,7 +587,7 @@ class PromptTests(unittest.TestCase):
         ]
         cfg = make_config(checks=checks)
         for stage in ("implement", "fix"):
-            prompt = build_prompt(stage, CONTEXT, cfg)
+            prompt = build_prompt(stage, TEXTS, cfg)
             order = [
                 "  - `unit`: `make test`\n  - `lint`: `make lint`\n",
                 "  - NexKit runs these slow checks after your round. Do not run them in full.",
@@ -568,7 +598,7 @@ class PromptTests(unittest.TestCase):
             self.assertEqual(positions, sorted(positions), stage)
             self.assertEqual(prompt.count("`e2e`"), 1, stage)
         # The plan lists every check NexKit runs, slow or not.
-        plan = build_prompt("plan", CONTEXT, cfg)
+        plan = build_prompt("plan", TEXTS, cfg)
         self.assertIn("  - `unit`: `make test`\n  - `e2e`: `scripts/e2e.sh`\n", plan)
         self.assertNotIn("slow", plan)
 
@@ -752,11 +782,64 @@ class StageCase(unittest.TestCase):
             **kw,
         )
 
+    def reviewed(self, reviewed, head, findings, merged=None):
+        """The record of a review of the pull request, after the review of `reviewed` that
+        found `findings`."""
+        last = {"round": 1, "head": reviewed, "verdict": "request_changes", "findings": findings}
+        state = first_state.for_prompt(5, {"id": "6", "version": head}, {"last_review": last})
+        item = {**CONTEXT["inputs"]["item"], "change": 6}
+        inputs = {"item": item, **({"diff": {"merged": merged}} if merged else {})}
+        found = {"previous_head": reviewed, **({"merged": merged} if merged else {})}
+        return context_with(inputs, state=state, **found)
+
     def run_quietly(self, stage, cfg=None, **kw):
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
             result = self.run_stage(stage, cfg, **kw)
         return result, stdout.getvalue()
+
+
+class PromptCallTests(StageCase):
+    """The agent step writes each prompt with one `prompt` request to the engine."""
+
+    def test_the_request_holds_what_was_fetched_and_what_the_round_adds(self):
+        cfg = make_config()
+        added = {"diff": {"base": "main"}, "workspace": agent.workspace(cfg)}
+        request = agent.prompt_request("implement", CONTEXT, added, cfg, self.out / "texts")
+        self.assertEqual(
+            sorted(request["inputs"]), ["discussion", "item", "notes", "plan", "workspace"]
+        )
+        self.assertEqual(request["inputs"]["item"]["id"], 5)
+        self.assertEqual((request["call"], request["stage"]), ("prompt", "implement"))
+        self.assertEqual(request["texts"], str(self.out / "texts"))
+        self.assertEqual(protocol.check(request, "calls/prompt.schema.json", "request"), [])
+
+    def test_the_diff_the_context_step_fetched_keeps_what_the_agent_step_adds_to_it(self):
+        merged = {"head": "a" * 40, "base": "b" * 40, "conflicts": ["calc.py"]}
+        context = context_with({"diff": {"merged": merged}})
+        added = {"diff": {"base": "main", "text": "d"}}
+        request = agent.prompt_request("review", context, added, make_config(), self.out)
+        self.assertEqual(
+            request["inputs"]["diff"],
+            {"merged": merged, "base": "main", "text": "d"},
+        )
+
+    def test_a_request_the_engine_refuses_ends_the_round_with_an_error_and_no_agent(self):
+        self.claude.configure(result=DONE)
+        broken = {**CONTEXT, "inputs": {**CONTEXT["inputs"], "item": {"id": "five"}}}
+        with self.assertRaisesRegex(RuntimeError, "The engine wrote no prompt: request"):
+            self.run_stage("implement", context=broken)
+        self.assertFalse(self.claude.log.exists())
+        self.assertFalse((self.out / "prompt.md").exists())
+
+    def test_the_prompt_is_written_from_one_request(self):
+        self.claude.configure(result=DONE, write={"calc.py": "x\n"})
+        with mock.patch.object(agent, "prompt_call", wraps=agent.prompt_call) as call:
+            self.run_stage("implement")
+        call.assert_called_once()
+        text = (self.out / "prompt.md").read_text()
+        self.assertEqual(text, self.claude.call()["prompt"])
+        self.assertIn("Change add to return a + b.", text)
 
 
 class RunStageTests(StageCase):
@@ -794,7 +877,22 @@ class RunStageTests(StageCase):
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
             return agent.run_triage(
-                {**CONTEXT, "requests": "@olivia: Use the hard profile."},
+                context_with(
+                    {
+                        "discussion": {
+                            "item": [
+                                {
+                                    "id": 9,
+                                    "at": "2026-11-01T00:00:00Z",
+                                    "author": "olivia",
+                                    "text": "Use the hard profile.",
+                                    "kind": "comment",
+                                }
+                            ],
+                            "change": [],
+                        }
+                    }
+                ),
                 profile_config(),
                 previous,
                 self.out,
@@ -818,7 +916,7 @@ class RunStageTests(StageCase):
         prompt = call["prompt"]
         self.assertIn("- `hard`: Touches security or storage.", prompt)
         self.assertIn("None. This is the first plan", prompt)
-        self.assertIn("@olivia: Use the hard profile.", prompt)
+        self.assertIn("@olivia (2026-11-01T00:00:00Z):\nUse the hard profile.", prompt)
         self.assertIn("Use $HOME and ${{ secrets.X }} literally.", prompt)
         self.assertIn("## How to write", prompt)
         self.assertNotRegex(prompt.replace("$HOME", ""), r"\$[a-z_]+")
@@ -1030,7 +1128,10 @@ class RunStageTests(StageCase):
         }
         finding = "The download host answered 409; run 61 passed since."
         self.claude.configure(result={**PLAN, "no_change": finding})
-        result = self.run_stage("plan", context={**CONTEXT, "ci_evidence": found})
+        context = context_with(
+            {"evidence": {"ci": {**found, "keeps": EVIDENCE_LIMIT}}}, ci_evidence=found
+        )
+        result = self.run_stage("plan", context=context)
         call = self.claude.call()
         self.assertEqual(call["args"][call["args"].index("--add-dir") + 1], str(folder))
         self.assertIn("  - `run-50/attempt-1/build.log`", call["prompt"])
@@ -1042,38 +1143,39 @@ class RunStageTests(StageCase):
 
     def test_an_agent_reads_the_texts_its_prompt_shortened_outside_the_checkout(self):
         folder = Path(self.tmp.name) / "out" / "texts"
-        folder.mkdir(parents=True)
-        (folder / "comment-7.md").write_text("x" * 39_016)
-        shortened = [
-            {
-                "name": "the comment of `@alice` of 2026-11-01T00:00:00Z",
-                "key": "comment-7",
-                "path": str(folder / "comment-7.md"),
-                "kept": 1_000,
-                "length": 39_016,
-            }
-        ]
+        body = "x" * (TEXT_LIMIT + 4_000)
+        item = {**CONTEXT["inputs"]["item"], "body": body}
         self.claude.configure(result={**DONE, "status": "blocked", "blocker": "Which file?"})
-        result = self.run_stage("implement", context={**CONTEXT, "shortened": shortened})
+        result = self.run_stage("implement", context=context_with({"item": item}))
         call = self.claude.call()
-        self.assertEqual(call["args"][call["args"].index("--add-dir") + 1], str(folder))
+        self.assertEqual(call["args"][call["args"].index("--add-dir") + 1], str(folder.resolve()))
+        self.assertEqual((folder / "issue-5.md").read_text(), body)
         self.assertIn("## Texts this prompt shortened", call["prompt"])
-        self.assertIn(f"the whole text in `{folder / 'comment-7.md'}`", call["prompt"])
+        self.assertIn(f"the whole text in `{folder.resolve() / 'issue-5.md'}`", call["prompt"])
         # The round's comment names them.
         self.assertEqual(
             result["shortened"],
-            [{"name": shortened[0]["name"], "kept": 1_000, "length": 39_016}],
+            [{"name": "the body of #5", "kept": TEXT_LIMIT, "length": TEXT_LIMIT + 4_000}],
         )
 
     def test_an_agent_asks_rather_than_guess_about_a_link_nexkit_did_not_read(self):
         linked = {
-            "comments": "@olivia on #2 (2026-11-01T00:00:00Z), comment 9:\nRule: cents.",
+            "texts": [
+                {
+                    "kind": "comment",
+                    "id": 9,
+                    "on": 2,
+                    "author": "olivia",
+                    "at": "2026-11-01T00:00:00Z",
+                    "text": "Rule: cents.",
+                }
+            ],
             "chain": [],
-            "read": ["comment 9 on #2"],
-            "skipped": ["comment 77 of other/repo: not this repository"],
+            "not_read": ["comment 77 of other/repo: not this repository"],
         }
         self.claude.configure(result={**DONE, "status": "blocked", "blocker": "Which rule?"})
-        result = self.run_stage("implement", context={**CONTEXT, "linked": linked})
+        context = context_with({"linked": linked}, linked={"read": ["comment 9 on #2"]})
+        result = self.run_stage("implement", context=context)
         prompt = self.claude.call()["prompt"]
         self.assertIn("Rule: cents.", prompt)
         self.assertIn("- comment 77 of other/repo: not this repository", prompt)
@@ -1081,7 +1183,7 @@ class RunStageTests(StageCase):
         # The round's comment says what the agent read and did not.
         self.assertEqual(
             result["linked"],
-            {"read": ["comment 9 on #2"], "skipped": linked["skipped"]},
+            {"read": ["comment 9 on #2"], "skipped": linked["not_read"]},
         )
 
     def test_only_protected_paths_count_as_needing_a_person(self):
@@ -1153,7 +1255,8 @@ class RunStageTests(StageCase):
         }
         self.claude.configure(result={**VERDICT, "criteria": [made_up]})
         checks = [{"name": "test", "run": "true", "exit_code": 0, "passed": True, "output": ""}]
-        person = {**CONTEXT, "person": True, "plan": PERSON_PLAN}
+        item = {**CONTEXT["inputs"]["item"], "person": True}
+        person = context_with({"item": item}, person=True)
         result, log = self.run_quietly("review", context=person, checks=checks, base="main")
         self.assertEqual(result["status"], "done")
         self.assertEqual(result["output"]["criteria"], [])
@@ -1215,11 +1318,9 @@ class RunStageTests(StageCase):
         (self.repo / "calc.py").write_text("def add(a, b):\n    return float(a) + b\n")
         git(self.repo, "add", "-A")
         self.repos.commit(self.repo, "floats")
-        context = {
-            **CONTEXT,
-            "previous_head": reviewed,
-            "previous_round": "1. blocking, `calc.py:2`: Use $floats",
-        }
+        head = git(self.repo, "rev-parse", "HEAD")
+        finding = {"severity": "blocking", "file": "calc.py", "line": 2, "body": "Use $floats"}
+        context = self.reviewed(reviewed, head, [finding])
         self.claude.configure(result=VERDICT)
         agent.run_stage(
             "review",
@@ -1242,11 +1343,11 @@ class RunStageTests(StageCase):
         self.assertNotIn("-    return a - b", previous)
 
     def test_previous_round_survives_a_missing_commit(self):
-        context = {**CONTEXT, "previous_head": "f" * 40, "previous_round": "x"}
+        context = {**TEXTS, "previous_head": "f" * 40, "previous_round": "x"}
         self.assertIn("not in this checkout", previous_round(self.repo, context, "main"))
         context["previous_head"] = "--output=/tmp/x"
         self.assertIn("unknown", previous_round(self.repo, context, "main"))
-        self.assertEqual(previous_round(self.repo, CONTEXT, "main"), "")
+        self.assertEqual(previous_round(self.repo, TEXTS, "main"), "")
 
     def test_missing_credentials(self):
         self.claude.configure(result=DONE)
@@ -1371,7 +1472,7 @@ class ConflictTests(StageCase):
 
     def run_after_failed_checks(self, **spec):
         self.claude.configure(**{"result": FIX_DONE, **spec})
-        context = {**CONTEXT, "merge_moved_base": True}
+        context = context_with(merge_moved_base=True)
         return self.run_stage("fix", context=context, base="main")
 
     def test_a_round_after_failed_checks_merges_a_moved_base_branch(self):
@@ -1416,7 +1517,7 @@ class ConflictTests(StageCase):
         ):
             self.checkout_branch()
             self.claude.configure(**spec)
-            result = self.run_stage("fix", context={**CONTEXT, **context}, base="main")
+            result = self.run_stage("fix", context=context_with(**context), base="main")
             self.assertEqual(result["status"], "error")
             self.assertNotIn("recheck", result)
         self.assertIn(f"What it found: {cause}", result["error"])
@@ -1427,7 +1528,7 @@ class ConflictTests(StageCase):
         self.repos.push_commit("dev", "main", workflow, "Change CI")
         self.checkout_branch()
         self.claude.configure(result=FIX_DONE)
-        context = {**CONTEXT, "merge_moved_base": True}
+        context = context_with(merge_moved_base=True)
         result = self.run_stage("fix", make_config(), context=context, base="main")
         self.assertEqual(result["changed_files"], [".github/workflows/ci.yml"])
 
@@ -1499,12 +1600,14 @@ class ConflictTests(StageCase):
         (self.repo / "calc.py").write_text(CALC + SUB + MUL)
         git(self.repo, "add", "-A")
         self.repos.commit(self.repo, "Merge main")
-        context = {
-            **CONTEXT,
-            "previous_head": head,
-            "previous_round": "1. suggestion, `calc.py:4`: Document sub().",
-            "merged": {"head": head, "base": base, "conflicts": ["calc.py"]},
+        finding = {
+            "severity": "suggestion",
+            "file": "calc.py",
+            "line": 4,
+            "body": "Document sub().",
         }
+        merged = {"head": head, "base": base, "conflicts": ["calc.py"]}
+        context = self.reviewed(head, git(self.repo, "rev-parse", "HEAD"), [finding], merged)
         self.claude.configure(result=VERDICT)
         agent.run_stage(
             "review",
@@ -1553,8 +1656,9 @@ class DiagnosisTests(StageCase):
     def run_fix(self, context=None, **spec):
         git(self.repo, "checkout", "-q", "-b", "nexkit/issue-5")
         self.claude.configure(**{"result": FIX_DONE, **spec})
-        context = {**CONTEXT, "diagnose": REPEATED, **(context or {})}
-        return self.run_stage("fix", context=context, base="main")
+        context = {"diagnose": REPEATED, **(context or {})}
+        found = context_with({"checks": {"diagnose": context["diagnose"]}}, **context)
+        return self.run_stage("fix", context=found, base="main")
 
     def test_the_prompt_asks_for_the_cause_before_a_change(self):
         cause = "pickOption clicks before the popup renders: trace.zip shows the click at 0 ms."
@@ -1612,7 +1716,9 @@ class DiagnosisTests(StageCase):
         git(self.repo, "fetch", "-q", "origin")
         self.claude.configure(result=FIX_DONE)
         git(self.repo, "checkout", "-q", "-b", "nexkit/issue-5", "HEAD")
-        context = {**CONTEXT, "diagnose": REPEATED, "merge_moved_base": True}
+        context = context_with(
+            {"checks": {"diagnose": REPEATED}}, diagnose=REPEATED, merge_moved_base=True
+        )
         result = self.run_stage("fix", context=context, base="main")
         # Only the merge changed files, so the round is not rejected: the merge is
         # published alone, and the next checks show whether the base branch fixed it.

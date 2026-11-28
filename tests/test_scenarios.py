@@ -4914,8 +4914,10 @@ class UpdatesStoredTest(unittest.TestCase):
         before = self.read()[1]
         self.assertEqual(before["rounds"]["counted"], 1)
         self.assertEqual(before["rounds"].get("updates", 0), 0)
+        self.assertTrue(before["rounds"]["fixes"])
         self.assertEqual(self.dispatch(inputs)["action"], "review")
         after = self.read()[1]
+        self.assertEqual(after["rounds"]["fixes"], before["rounds"]["fixes"])
         self.assertEqual(after["rounds"]["updates"], 1)
         self.assertEqual(after["rounds"]["counted"], 0)
         self.assertEqual(after["change"]["version"], self.NEW)

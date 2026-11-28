@@ -4048,6 +4048,44 @@ class DispatchedTest(HostCase):
         self.assertEqual(rounds["counted"], stored["rounds"]["counted"])
         self.assertNotIn("automatic", asked.call_args_list[0].args[1])
 
+    def keep_history(self):
+        """Store a round history over the state: one fix round and the last review. Give the
+        `rounds` stored."""
+        fixes = [
+            {
+                "round": 1,
+                "auto": True,
+                "diagnosis": False,
+                "note": "",
+                "summary": "Fixed.",
+                "cause": "",
+            }
+        ]
+        finding = {"severity": "blocking", "file": "a.py", "line": 1, "body": "x"}
+        review = {"round": 1, "version": self.HEAD, "verdict": "request_changes"}
+        review["findings"] = [finding]
+        doc = item_state.read(self.gh, 5)[1]
+        rounds = {**doc["rounds"], "fixes": fixes, "lastReview": review}
+        return restate(self.gh, 5, rounds=rounds, state="ready", pending=[])["rounds"]
+
+    def test_a_dispatch_with_nothing_pending_keeps_the_stored_round_history(self):
+        # A conflict round and a person's fix are new requests that no built document decides:
+        # the history of the rounds stays whatever NexKit 6's markers say.
+        for auto, run in (("false", "1001"), ("conflicts", "1002")):
+            with self.subTest(auto=auto):
+                if auto == "conflicts":
+                    self.gh.pulls[6]["mergeable"] = False
+                stored = self.keep_history()
+                with mock.patch.object(host, "on_fallback") as fallback:
+                    found = self.dispatch("fix", auto=auto, run=run)
+                self.assertEqual(found["action"], "fix")
+                fallback.assert_not_called()
+                rounds = item_state.read(self.gh, 5)[1]["rounds"]
+                self.assertEqual(rounds["fixes"], stored["fixes"])
+                self.assertEqual(rounds["lastReview"], stored["lastReview"])
+                if auto == "conflicts":
+                    self.assertEqual(rounds["conflicts"], stored["conflicts"] + 1)
+
     def test_an_automatic_dispatch_is_counted_and_marked_automatic(self):
         stored = item_state.read(self.gh, 5)[1]
         self.assertEqual((stored["state"], stored["pending"]), ("ready", []))

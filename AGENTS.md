@@ -37,10 +37,11 @@ job holds, and the plugin are described in [Architecture](docs/architecture.md).
 - State lives only on GitHub: comments, pull requests, statuses and the Actions artifacts of
   NexKit's own runs. See [State](docs/how-it-works.md#state) and
   [D1](docs/decisions/d1-state-lives-only-on-github.md).
-- Agent errors and `blocked` results never retry automatically. Only check failures and review
-  findings do, up to `fix.max_auto_rounds`; a transient error before publishing runs again after its
-  waits. See [Failure handling](docs/failure-handling.md#failure-handling) and
-  [D6](docs/decisions/d6-agent-errors-never-retry.md).
+- Agent errors and `blocked` results never retry automatically. After a failure, only check failures
+  and review findings start a round, up to `fix.max_auto_rounds`. A transient error, or a result
+  that never fits the schema, runs again after its waits. See [Failure
+  handling](docs/failure-handling.md#failure-handling) and
+  [D15](docs/decisions/d15-agent-errors-and-blocked-results-never-retry-automatically.md).
 - Every issue in autopilot's scope is carried on by a run that exists, or waits for a person. A
   command starts again only after a change, or when GitHub never ran it. A new automatic rule needs
   a scenario in `tests/test_scenarios.py`. See [Autopilot](docs/work-without-a-command.md#autopilot).

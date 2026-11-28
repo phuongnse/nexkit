@@ -14,7 +14,7 @@ rounds on this repository run the commands that `checks` in `.nexkit/config.json
 
 | Check | Where | What it covers |
 | --- | --- | --- |
-| Unit tests | `tests/test_*.py`, run by `python3 -m unittest discover -s tests -t .` | Each module's behaviour, most of it against `FakeGitHub`, with the standard library only. `tests/test_cli.py` also reads the workflows and checks which job holds which token and secret, and `tests/test_answers.py` reads every module outside `nexkit/engine/` except `nexkit/github.py`, which defines the writes, and fails on a write that no engine answer comes before, and `tests/test_engine.py` reads every module outside `nexkit/engine/`, and `bin/nexkit`, and fails on an import of the engine |
+| Unit tests | `tests/test_*.py`, run by `python3 -m unittest discover -s tests -t .` | Each module's behaviour, most of it against `FakeGitHub`, with the standard library only. `tests/test_host.py` fails any `step` that NexKit's code asks for on a state that is not the item's stored one, the state the row's previous event gave, the import in memory or a call inside the first import. `tests/test_cli.py` also reads the workflows and checks which job holds which token and secret, and `tests/test_answers.py` reads every module outside `nexkit/engine/` except `nexkit/github.py`, which defines the writes, and fails on a write that no engine answer comes before, and `tests/test_engine.py` reads every module outside `nexkit/engine/`, and `bin/nexkit`, and fails on an import of the engine |
 | Scenarios | `tests/test_scenarios.py` | Autopilot over many rounds and sweeps: every issue in scope is carried on or waits for a person, and budgets count as they should |
 | Conformance | `tests/conformance/` | Each rule of the engine, as a case of events and the actions and state they must give; every policy value, event kind and action kind of the protocol's schemas has a case that plays it; each kind of import (`first_state.KINDS`) has a case in `tests/conformance/imports/`; the `sweep` call has its cases in `tests/conformance/sweeps/`; `scripts/conformance.py` writes the cases as one file and plays it against an engine |
 | Prompt goldens | `tests/prompts/` | The prompt each stage writes, compared with NexKit 6's own record of it. A change to a prompt changes its golden by hand and says why. Never write them again with `NEXKIT_WRITE_PROMPTS` from today's code: set it only to add a case's file from NexKit 6's code |
@@ -109,16 +109,11 @@ Until NexKit 7.0 ships, changes move NexKit 6's decisions into the engine one by
   These two checks need no NexKit 6 and stay after 7.0, so a change to an engine rule adds to
   them after 7.0 as before it. A mutant of a rule that only the differential check sees goes to
   `tests/differential/mutants.py` instead. Each scenario stores its items' imports as the state
-  comment before its first event, which the check does not compare with NexKit 6, and
-  `--fallbacks` lists the decisions of `host.resync` that still come from the markers'
-  document, and `--forbid FUNCTION` fails the check when a named host function still falls back
-  to it (the [README](../tests/differential/README.md) says how). With a checkout of
-  8bf5190 for the first command:
+  comment before its first event, which the check does not compare with NexKit 6. With a checkout
+  of 8bf5190 for the first command:
 
   ```sh
   python3 tests/differential/harness.py --v6 PATH       # every scenario; --sample K for fewer
-  python3 tests/differential/harness.py --v6 PATH --fallbacks   # and each decision that still
-                                                        # decides from NexKit 6's markers
   python3 tests/walk.py                                 # 2,000 walks of the engine
   python3 tests/mutants.py                              # each broken rule is seen
   python3 tests/differential/mutants.py --v6 PATH       # each host rule is seen

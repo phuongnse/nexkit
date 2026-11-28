@@ -142,9 +142,9 @@
       "The change keeps docs/testing.md#rules-for-tests: read that section and check the tests and checks the change adds, changes or removes against each of its rules",
       "The change keeps docs/security.md: read the page and check the diff against each of its rules, on untrusted input, agent output, markers, repository code, the Actions bot and secrets",
       "The change keeps every Agreed decision in docs/decisions/ whose subject it touches, such as D10 (only the engine decides) and D13 (how the pipeline writes): read docs/decisions.md, open each such decision and check the diff against it",
-      "The change keeps docs/delivery.md#releases: a change other than a release sets no version and adds no CHANGELOG.md entry",
+      "The change keeps docs/delivery.md#releases: read that section and check the diff against each of its rules, on the version and CHANGELOG.md that only a release pull request changes, the files it sets the version in, its changelog entry and Upgrade steps, and the protocol freeze",
       {
-        "text": "The change adds no exception to a check and loosens none, as docs/testing.md#exceptions-to-a-check states",
+        "text": "The change keeps docs/testing.md#exceptions-to-a-check, adding no exception to a check and loosening none: read that section and check the diff against each of its rules",
         "person": true
       }
     ]

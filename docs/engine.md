@@ -36,7 +36,7 @@ carried out.
 
 The reasons for this split are in [D10](decisions/d10-an-engine-decides-hosts-carry-out.md). Why
 the engine and its protocol assume no host and no kind of change, so that a change may be files
-or records, is in [D15](decisions/d15-the-engine-assumes-no-host-and-no-kind-of-change.md).
+or records, is in [D16](decisions/d16-the-engine-assumes-no-host-and-no-kind-of-change.md).
 
 ## Words
 
@@ -507,7 +507,7 @@ adapter's tests and the answers as what its adapter carries out.
   (`rounds.fixed`) is not imported, since every imported fix round in its agent still publishes
   and the engine sets it then. A round whose run is in its check jobs (`shards`, `verify`,
   `combine`) is imported waiting for its checks on the pull request's head, and its report
-  decides it on the markers' document; a counted automatic fix round of it is marked automatic
+  sends the checks' result on that stored state; a counted automatic fix round of it is marked automatic
   (`rounds.automatic`), so that a stop gives its count back.
   What a round decided on its head keeps that head as the change's version, and a head pushed
   since is in the observation, so the engine checks it before it goes on. A run that waits to run again runs its own command again, and a lost round
@@ -521,13 +521,14 @@ adapter's tests and the answers as what its adapter carries out.
 ## Getting there
 
 1. The engine grew inside NexKit 6: decisions moved behind the protocol one by one, and every
-   decision of the loop is now its own. Most of the GitHub host's decisions decide on the item's
-   stored state document, or on the import in memory when none is stored, and store the engine's
-   answer in the item's group, a row of events as one write. Three kinds still build the document from
-   NexKit 6's markers, as its import reads them, and use the stored one only where it says what the
-   markers say (`resync`): a round's end (`after_round`, `round_ended`), a conflict when a round
-   publishes (`conflicting`) and the checks that a fix round diagnoses (`diagnosis`). A person's
-   command and a closing command decide on the stored state too.
+   decision of the loop is now its own. Every decision of the GitHub host decides on the item's
+   stored state document, or on the import in memory when none is stored, and stores the engine's
+   answer in the item's group, a row of events as one write. Only the first import builds a
+   document from NexKit 6's markers, as its import reads them. A person's command and a closing
+   command decide on the stored state too. `tests/test_host.py` guards this: it fails any `step`
+   that NexKit's code asks for on another state, which is anything but the stored document, the
+   state the row's previous event gave, the import in memory while nothing is stored, or a call
+   inside the first import.
    The plan's report sends the plan's result to the engine once for every plan of an issue that
    autopilot takes, a clean plan and one that finds no change too, and stores the answer. Asking
    what a plan waits for reads the stored state alone and stores nothing. The sweep's and the step
@@ -551,10 +552,13 @@ adapter's tests and the answers as what its adapter carries out.
    stopped, which never reached the engine, starts again. A command that NexKit dispatches carries
    out the action that the stored state has pending for it, and takes its diagnosed checks from
    that action; with nothing pending it is a new request, `dispatch-<run id>`, which for an
-   automatic fix round says so, so that the engine counts it as its own round.
+   automatic fix round says so, so that the engine counts it as its own round, and the round
+   takes its diagnosed checks from the fix run that the engine started for it. A fix round that
+   carries out a person's pending fix, and a retried or resumed one with nothing pending,
+   diagnose NexKit 6's repeated checks, as many as the engine diagnoses at most, and ask the
+   engine nothing.
    The automatic fix rounds that a round's end counts are the stored count alone, and so are a
-   transient review's runs again. The conflict rounds are the stored count, and NexKit 6's only when no
-   state can be read. The run of a conflict round that the push run, the
+   transient review's runs again. The conflict rounds are the stored count. The run of a conflict round that the push run, the
    schedule or another item's merge dispatches counts it before the round starts. The review that
    follows a branch update stores the update, and the run that the push run starts after it stopped
    a counted automatic fix round's checks gives that round's count back. The publish
@@ -565,9 +569,8 @@ adapter's tests and the answers as what its adapter carries out.
    review's agent pending, as after a usage limit or a transient stop of the review, only the review's
    result goes. A round whose stored state waits for neither waits for a person with that reason. The `report` finds the round stored, and stores it only when that job could not. The `report` of a round or a merge that an untrusted
    edit stopped stores that stop too: the round's result says `untrusted`, or the accept is
-   refused as `untrusted`, and the engine answers `failed` or `ready` with attention `untrusted`. A decision that
-   still falls back to the markers' document keeps the stored counts, so that no budget starts
-   again. The host sends the event that GitHub shows, and carries out the answer in NexKit 6's words,
+   refused as `untrusted`, and the engine answers `failed` or `ready` with attention `untrusted`.
+   The host sends the event that GitHub shows, and carries out the answer in NexKit 6's words,
    comments and statuses. A start, a merge, a branch update, a close,
    a cancel or a rerun follows an answer of the engine. `tests/test_answers.py` keeps it so: it
    reads every module outside `nexkit/engine/` except `nexkit/github.py`, which defines the writes,

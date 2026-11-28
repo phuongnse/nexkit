@@ -128,7 +128,7 @@ hosts](engine-hosts.md)) and [security](security.md) are reference pages.
   schemas and its code use the engine's words and name no host, no product and no implementation
   that the engine was built from. Each rule gives its own reason, and a host's page says how its
   platform maps onto the engine's words. The reasons are in
-  [D15](decisions/d15-the-engine-assumes-no-host-and-no-kind-of-change.md).
+  [D16](decisions/d16-the-engine-assumes-no-host-and-no-kind-of-change.md).
 
 ### Planned work
 
@@ -395,10 +395,20 @@ when a list of what the code defines misses an entry. These rules close each of 
      `.claude/skills/` resolve.
    - `test_each_task_of_nexkit_maintain_links_a_delivery_section`: each task of the
      `nexkit-maintain` skill links a section of [Delivery](delivery.md).
+   - `test_each_checklist_item_names_one_doc_and_asks_for_each_of_its_rules`: each item of this
+     repository's `review.checklist` names one doc, section or the Agreed decisions, no rule twice,
+     and asks the review to check the diff against each of its rules, as
+     [Delivery](delivery.md#issues-and-pull-requests) says.
    - `test_the_plan_layout_lists_the_sections_the_code_writes`: the plan layout of
      [stages](stages.md) lists the sections that `publish.render_plan` writes.
    - `test_the_review_layout_lists_the_parts_the_code_writes`: the review layout of
      [stages](stages.md) lists the parts that `report.review_body` writes.
+   - `test_the_resolution_table_lists_each_mark_the_code_writes_and_no_other`: the table of
+     previous-finding resolutions in [stages](stages.md) lists each mark `nexkit/report.py`
+     writes for an earlier finding, and no other.
+   - `test_the_review_layout_gives_each_mark_the_code_writes_and_no_other`: the review layout of
+     [stages](stages.md) gives each criterion and checklist mark `nexkit/report.py` writes, and
+     no other.
    - `test_each_value_a_page_repeats_is_its_constant`: each value that [agents and
      profiles](agents-and-profiles.md), [how it works](how-it-works.md), [work without a
      command](work-without-a-command.md), [failure handling](failure-handling.md),

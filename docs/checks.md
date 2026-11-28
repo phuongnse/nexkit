@@ -43,11 +43,13 @@ This page of the [configuration reference](configuration.md) says how to set the
   runs in when the round starts, and `max`, the most shards allowed. See
   [Parallel checks](#parallel-checks).
 
-`nexkit init` writes each check from `--check NAME=COMMAND`, and its other fields from
-flags that name the check: `--check-timeout NAME=MINUTES`, `--check-slow NAME`,
-`--check-results NAME=PATH`, repeated for each path, and `--check-unaffected NAME=GLOB`,
-repeated for each pattern in order (quote it, so the shell leaves `*` and `!` alone). The
-example's `e2e` check comes from:
+`nexkit init` writes each check from `--check NAME=COMMAND`, and its other fields, except
+`shards`, from flags that name the check: `--check-timeout NAME=MINUTES`, `--check-slow NAME`,
+`--check-results NAME=PATH`, repeated for each path, `--check-group NAME=GROUP` (see
+[Parallel checks](#parallel-checks)), and `--check-unaffected NAME=GLOB`, repeated for each
+pattern in order (quote it, so the shell leaves `*` and `!` alone). No flag writes `shards`,
+so add it to `.nexkit/config.json` by hand after `nexkit init`. The example's `e2e` check
+comes from:
 
 ```sh
 nexkit init --check "e2e=scripts/e2e.sh" --check-timeout e2e=40 --check-slow e2e   --check-results e2e=test-results --check-results e2e=artifacts/logs
@@ -314,8 +316,8 @@ while the others run again.
 - A check whose `run` changed gets no commit from rounds that ran another command, and no
   check gets one from rounds that ran other `setup` commands, or that recorded none.
 - The record has limits. A round's comment records at most the first 50 checks that passed,
-  in the order of `checks`. Each shard counts as one check, so 15 checks of 20 shards each
-  reach the limit. NexKit reads at most 50 checks from all rounds together. When rounds
+  in the order of `checks`. Each shard counts as one check, so three checks of 20 shards each
+  already go past it. NexKit reads at most 50 checks from all rounds together. When rounds
   recorded more, the checks first recorded in the earliest rounds drop out. For each check,
   NexKit keeps the commits of only its latest 3 commands, each `run` with its shard. Rounds
   that ran an older command give it nothing. A check past these limits gets no commit, so it
@@ -399,10 +401,10 @@ on before any check job starts. A `/nexkit review` that a person comments runs e
 check. Implement and fix rounds get their commit after the check jobs are fixed, and run
 every check.
 
-`route` compares the round's commit with the check's own record: the head of the latest
-round of the pull request on which the check passed with the same `run` and the same
-`setup` commands. When every path that changed between them, both names of a renamed
-file, is in the list, the check is skipped:
+`route` compares the round's commit with the check's own record, for each check without
+`shards`: the head of the latest round of the pull request on which the check passed with
+the same `run` and the same `setup` commands. When every path that changed between them,
+both names of a renamed file, is in the list, the check is skipped:
 
 - Its job is left out of the check matrix. With [`parallel_checks`](#parallel-checks), a
   job of several checks is left out only when all of them are skipped; in a job that runs,
@@ -421,9 +423,21 @@ cannot compare the commits, when the round's commit does not descend from the re
 (as after a force-push), or when GitHub lists 300 changed files, the most it lists. NexKit never falls back to `NEXKIT_VERIFIED_SHA` here: a round whose checks all
 passed may not have run this check at all.
 
-`route` holds write tokens, but it decides from the paths GitHub lists and runs no
-repository code. The list comes from `.nexkit/config.json` on the default branch, like
-every setting, so a pull request cannot widen it for its own checks. A wrong list skips a
+`route` leaves a sharded check out, because it does not know how many shards the check has.
+The `shards` job decides for each shard instead, and only in an automatic review. It skips a
+shard that its own record shows unaffected, the head on which that shard passed with the
+same `run` and the same `k/N`. The job lists the changed paths with `git diff` in its own
+checkout, both names of a renamed file, so GitHub's comparison and its 300-file limit play no
+part. The job runs the check's `count` command first, in that same checkout, so repository
+code runs before it decides. When the checkout lacks the recorded commit, the round's commit
+does not descend from it, or git fails, the shard runs in full. A skipped shard counts as
+passed, as any skipped check does, through `NEXKIT_SHARDS`.
+
+`route` holds write tokens, but it runs no repository code, and it decides from the paths
+GitHub lists for the checks it skips. The `shards` job holds a read-only token and no secrets
+(see [Tokens and secrets](architecture.md#tokens-and-secrets)), and its decision follows the
+repository's `count` command. The list of paths comes from `.nexkit/config.json` on the
+default branch, like every setting, so a pull request cannot widen it for its own checks. A wrong list skips a
 check that should have run, in every later round. Keep `.nexkit/**` out of a list unless
 the check depends on nothing there: a change of `setup` gives the check a new record, but
 other settings do not.

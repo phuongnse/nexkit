@@ -103,11 +103,15 @@ in two rounds in a row, NexKit asks for the cause first.
   through its *Previous round* section, and only checks give a failure signature to
   compare.
 
-Automatic rounds only follow concrete check failures or review findings. Agent errors and
-blocked results always stop, apart from what [autopilot](work-without-a-command.md#autopilot) answers or splits, so
-model usage is never spent repeating a problem the agent
-cannot fix. A run paused at the usage limit is not a retry: it continues the same command
-once the limit has reset. A run again after a transient error repeats a run that stopped
-for a reason outside the work, before it published anything.
+After a failure, automatic rounds follow only concrete check failures or review findings. Agent
+errors and blocked results stop the round, apart from what
+[autopilot](work-without-a-command.md#autopilot) answers or splits, and apart from its plan after
+a person's comment or a closed blocking issue. That plan follows a change, not a repeat of the same
+inputs, so model usage is never spent repeating a problem the agent cannot fix. A run paused at
+the usage limit is not a retry: it continues the same command once the limit has reset. A run
+again after a transient error repeats a run that stopped for a reason outside the work, whether or
+not it had published. A result that does not fit the schema is asked for once more, then runs
+again as after a transient error, as the table above says.
 
-The reasons are in [D6](decisions/d6-agent-errors-never-retry.md).
+The reasons are in
+[D15](decisions/d15-agent-errors-and-blocked-results-never-retry-automatically.md).

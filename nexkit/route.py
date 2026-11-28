@@ -884,19 +884,9 @@ def _decide(
             # Checks that failed the same way before and after the last fix round: an
             # automatic round looks for their cause first, as the engine runs it; a person's
             # round and a conflict round, which merges the base branch, do not.
-            try:
-                found = host.diagnosis(
-                    gh,
-                    cfg,
-                    decision["issue"],
-                    number,
-                    pull["head"]["sha"],
-                    auto and not conflicts,
-                    repeated,
-                    pending=carried[0] if carried else None,
-                )
-            except host.Refused:
-                found = []
+            found = host.diagnosis(
+                auto and not conflicts, repeated, pending=carried[0] if carried else None
+            )
             if found:
                 decision["diagnose"] = found
         return decision

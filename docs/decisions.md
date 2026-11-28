@@ -12,7 +12,7 @@ superseded decision is listed and when a change needs one.
 | [D3](decisions/d3-agent-jobs-hold-no-write-token.md) | Agent jobs hold no write token | Agreed |
 | [D4](decisions/d4-outside-text-is-untrusted.md) | Outside text is untrusted | Agreed |
 | [D5](decisions/d5-agents-cannot-change-the-pipeline.md) | Agents cannot change the pipeline | Agreed |
-| [D6](decisions/d6-agent-errors-never-retry.md) | Agent errors never retry | Agreed |
+| D6 | Agent errors never retry | Superseded by [D15](decisions/d15-agent-errors-and-blocked-results-never-retry-automatically.md), [last text](https://github.com/phuongnse/nexkit/blob/b67a4b38aa93bad08b76f8307f21e85d532eb737/docs/decisions/d6-agent-errors-never-retry.md) |
 | [D7](decisions/d7-one-tested-runtime-claude-code.md) | One tested runtime, Claude Code | Agreed |
 | [D8](decisions/d8-standard-library-only.md) | Standard library only | Agreed |
 | D9 | Pins live in one place | Superseded by [D14](decisions/d14-every-pin-has-one-source.md), [last text](https://github.com/phuongnse/nexkit/blob/65f09a6257f73e9982a687224abb4472bd4c5bbb/docs/decisions/d9-pins-live-in-one-place.md) |
@@ -21,4 +21,5 @@ superseded decision is listed and when a change needs one.
 | [D12](decisions/d12-a-host-runs-the-engine-as-a-program-or-over-http.md) | A host runs the engine as a program or over HTTP | Agreed |
 | [D13](decisions/d13-the-pipeline-writes-as-the-app-and-maintenance-jobs-with-the-actions-token.md) | The pipeline writes as the App, and maintenance jobs with the Actions token | Agreed |
 | [D14](decisions/d14-every-pin-has-one-source.md) | Every pin has one source | Proposed |
-| [D15](decisions/d15-the-engine-assumes-no-host-and-no-kind-of-change.md) | The engine assumes no host and no kind of change | Agreed |
+| [D15](decisions/d15-agent-errors-and-blocked-results-never-retry-automatically.md) | Agent errors and blocked results never retry automatically | Proposed |
+| [D16](decisions/d16-the-engine-assumes-no-host-and-no-kind-of-change.md) | The engine assumes no host and no kind of change | Agreed |

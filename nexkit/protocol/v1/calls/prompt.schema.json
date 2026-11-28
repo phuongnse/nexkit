@@ -956,7 +956,7 @@
       ]
     },
     "workspace": {
-      "$comment": "What the agent's workspace gives it: the checks it can run and the paths only a person changes.",
+      "$comment": "What the agent's workspace gives it: the checks it can run, the paths only a person changes and the host's own sentences on how the agent sees and edits the change, as `text`.",
       "type": "object",
       "properties": {
         "checks": {
@@ -996,11 +996,107 @@
           "items": {
             "type": "string"
           }
+        },
+        "text": {
+          "$ref": "#/$defs/workspaceText"
         }
       },
       "required": [
         "checks",
-        "protectedPaths"
+        "protectedPaths",
+        "text"
+      ]
+    },
+    "workspaceText": {
+      "$comment": "The host's own sentences on how the agent sees and edits the change, which the plan, implement and review prompts use in place of any host's. Each is a string of at most 500 characters and every field is required, in every call with a `workspace`, as the host's own text outside the `<untrusted>` tags: a host builds them only from its own fixed text, never from what people wrote. Each replaces one span of a prompt's line, so none holds a line break. The engine refuses a `workspace` without `text`, or without one of its fields, and names the missing field.",
+      "type": "object",
+      "properties": {
+        "location": {
+          "$comment": "Where the agent works, as the end of \"You are the planning agent, ...\", such as \"working through the application's tools on request R-12\".",
+          "type": "string",
+          "maxLength": 500
+        },
+        "reviewLocation": {
+          "$comment": "A sentence on what the review sees, such as \"The review sees draft 3 as it is now.\".",
+          "type": "string",
+          "maxLength": 500
+        },
+        "candidate": {
+          "$comment": "The version of the change that the checks ran on and the review sees, such as \"the candidate draft\".",
+          "type": "string",
+          "maxLength": 500
+        },
+        "instructions": {
+          "$comment": "Where the host keeps the project's instructions, in parentheses after \"conventions and instructions\", such as \"(the application's style notes)\".",
+          "type": "string",
+          "maxLength": 500
+        },
+        "saving": {
+          "$comment": "The rule on how the agent's edits are kept, a whole sentence, such as \"Do not publish the draft. The application saves your edits.\".",
+          "type": "string",
+          "maxLength": 500
+        },
+        "leftovers": {
+          "$comment": "The rule on what the agent leaves behind, a whole sentence, such as \"Leave no scratch records in the draft.\".",
+          "type": "string",
+          "maxLength": 500
+        },
+        "summaryUse": {
+          "$comment": "What the agent's summary becomes, such as \"the draft's note\".",
+          "type": "string",
+          "maxLength": 500
+        },
+        "checksOn": {
+          "$comment": "Where the checks ran, after \"Project checks,\" in a heading, such as \"run on this exact draft\".",
+          "type": "string",
+          "maxLength": 500
+        },
+        "diffHeading": {
+          "$comment": "The heading of the change's diff, before the base, such as \"Changes against\".",
+          "type": "string",
+          "maxLength": 500
+        },
+        "pipeline": {
+          "$comment": "What runs the checks, as the review limits name it, such as \"the application's validation rules\".",
+          "type": "string",
+          "maxLength": 500
+        },
+        "pipelineFiles": {
+          "$comment": "The plural of what a person's change to the pipeline may touch, such as \"validation rules\".",
+          "type": "string",
+          "maxLength": 500
+        },
+        "pipelineFile": {
+          "$comment": "One of them with its article, such as \"a validation rule\".",
+          "type": "string",
+          "maxLength": 500
+        },
+        "protectedExample": {
+          "$comment": "An example of a protected path, with its code marks, such as \"`settings/limits`\".",
+          "type": "string",
+          "maxLength": 500
+        },
+        "personChange": {
+          "$comment": "Where a person's change is, after \"changes nothing\", such as \"in this draft\".",
+          "type": "string",
+          "maxLength": 500
+        }
+      },
+      "required": [
+        "location",
+        "reviewLocation",
+        "candidate",
+        "instructions",
+        "saving",
+        "leftovers",
+        "summaryUse",
+        "checksOn",
+        "diffHeading",
+        "pipeline",
+        "pipelineFiles",
+        "pipelineFile",
+        "protectedExample",
+        "personChange"
       ]
     },
     "words": {

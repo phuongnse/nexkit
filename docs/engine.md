@@ -131,7 +131,7 @@ events and actions](engine-states.md). The runners, the policies a host decides 
 | `evidence` | What the host kept of the runs the item names, with the host's own description: its `name` for the heading ("the CI runs") and a paragraph on where the files are and what they hold, each run's files, what is missing from it and its `since` text, which says whether a newer run passed, and the most bytes the host keeps; and the result files of failing checks, with the host's note on how much its checks keep of them. The engine writes no word about the kind of evidence |
 | `parts` | The earlier parts of the same split that a part relies on |
 | `diff` | The change against its base, since the last review, the merge of the base that the newest fix record made, and the files a merge conflicted in |
-| `workspace` | The checks the agent can run, and the paths only a person changes |
+| `workspace` | The checks the agent can run, the paths only a person changes, and the host's texts on how the agent sees and edits the change |
 
 - **The host's words.** The call's `words` object names, as the host's people see them, what the
   prompts say in place of one host's own: `item`, the work item in a sentence ("request R-42");
@@ -147,6 +147,25 @@ events and actions](engine-states.md). The runners, the policies a host decides 
   and ids, never from what people wrote. The engine breaks `item` and `changeKind` at their last
   space where a template breaks a line inside them, so a host's prompts keep the line breaks
   they had. [Hosts](engine-hosts.md#hosts) gives each host's words.
+- **The host's workspace text.** The `workspace` input's `text` object holds the host's own
+  sentences on how the agent sees and edits the change. Each replaces one span of a line in the
+  plan, implement and review prompts, a review of a person's change included: `location`, where
+  the agent works ("working through the application's tools on request R-12"); `reviewLocation`,
+  what the review sees ("The review sees draft 3 as it is now."); `candidate`, the version the
+  checks ran on ("the candidate draft"); `instructions`, where the project's instructions are
+  ("(the application's style notes)"); `saving`, the rule on how the agent's edits are kept, a
+  whole sentence; `leftovers`, the rule on what the agent leaves behind, a whole sentence;
+  `summaryUse`, what the agent's summary becomes ("the draft's note"); `checksOn`, where the
+  checks ran ("run on this exact draft"); `diffHeading`, the heading of the diff ("Changes
+  against"); `pipeline`, what runs the checks ("the application's validation rules"); `pipelineFiles`
+  and `pipelineFile`, what a person's change to it touches, in the plural and with an article
+  ("validation rules", "a validation rule"); `protectedExample`, an example of a protected
+  path; and `personChange`, where a person's change is ("in this draft"). Each is a string of at
+  most 500 characters, and every field is required in every call with a `workspace`. The engine
+  refuses a call whose `workspace` has no `text`, or lacks one of its texts, and names the
+  missing field, as in `request.inputs.workspace.text.location is missing`. The texts sit outside
+  the `<untrusted>` tags, as the host's own text, so a host builds them only from its own fixed
+  text, never from what people wrote. [Hosts](engine-hosts.md#hosts) gives each host's texts.
 - **What a stage needs.** Every stage needs `item`, and every stage but triage `workspace`.
   Implement, fix and review need `plan`, which is null when the item has none, and fix and review
   need `diff`. The engine refuses a call without them.

@@ -493,9 +493,30 @@ def leftover_markers(repo, files):
     return found
 
 
+# GitHub's sentences on how the agent sees and edits the change, for the `workspace` input's
+# `text` in snake_case. They sit outside the prompt's `<untrusted>` tags, so they are fixed
+# strings, never built from what anyone wrote on GitHub.
+WORKSPACE_TEXT = {
+    "location": "working in a checkout of the repository",
+    "review_location": "The repository is checked out at the candidate commit.",
+    "candidate": "the candidate commit",
+    "instructions": "(CLAUDE.md or AGENTS.md)",
+    "saving": "Do not commit, push or create branches. NexKit commits your working-tree changes.",
+    "leftovers": "Leave no temporary files, logs or build output in the working tree.",
+    "summary_use": "the commit message",
+    "checks_on": "run by NexKit on this exact commit",
+    "diff_heading": "Diff against",
+    "pipeline": "CI configuration",
+    "pipeline_files": "workflows",
+    "pipeline_file": "a workflow",
+    "protected_example": "`.github/workflows/ci.yml`",
+    "person_change": "on this branch",
+}
+
+
 def workspace(cfg):
-    """The `workspace` input of a prompt: the checks the agent can run and the paths only a
-    person changes."""
+    """The `workspace` input of a prompt: the checks the agent can run, the paths only a
+    person changes and GitHub's texts on how the agent sees and edits the change."""
     return {
         "checks": [
             {
@@ -507,6 +528,7 @@ def workspace(cfg):
             for check in cfg["checks"]
         ],
         "protected_paths": list(cfg["protected_paths"]),
+        "text": dict(WORKSPACE_TEXT),
     }
 
 

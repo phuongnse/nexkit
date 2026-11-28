@@ -1,0 +1,36 @@
+{
+  "note": "A host that stores several events as one revision hands the next event a state still at the revision before them, so the next id can be one that an action of an earlier event of that row left pending.",
+  "policies": {},
+  "state": {
+    "example": "fixing",
+    "set": {
+      "revision": 6,
+      "pending": [
+        {
+          "action": "a7.1",
+          "id": "a7.1",
+          "kind": "cancel",
+          "next": null
+        }
+      ]
+    }
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "requested",
+        "what": "fix"
+      },
+      "state": "fixing",
+      "changed": true,
+      "actions": [
+        "runAgent"
+      ],
+      "expect": {
+        "pending.0.id": "a7.1",
+        "pending.1.id": "a7.2",
+        "pending.1.kind": "runAgent"
+      }
+    }
+  ]
+}

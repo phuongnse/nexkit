@@ -1926,6 +1926,8 @@ class ReportTests(ReportCase):
 
     def test_a_check_that_fails_the_same_way_twice_gets_a_diagnosis_round(self):
         self.candidate(checks_pass=False, review=review_result("request_changes"))
+        # The stored state that the implement run left, as every run of the item's group stores.
+        self.assertTrue(host.store_import(self.gh, make_config(), 5))
         self.failing("Running 3 tests\n  ✘ 1 desk.spec.ts:42 › picks an option (12.3s)\n")
         self.run_report(cfg=make_config(fix={"max_auto_rounds": 5}))
         self.assertNotIn("diagnose", self.next_round())  # no fix round has run yet

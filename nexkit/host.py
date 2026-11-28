@@ -7,8 +7,9 @@ code, in NexKit 6's words. The decisions after a plan, for a new issue's first p
 writer's vouch, after a blocked or stopped round, at a usage limit or a transient error, when a
 resume comes due, for a lost command and about a pull request's rounds read the item's stored
 state document too, and store the engine's answer (`stored`, `decide`, `decide_all`, `resync`,
-below). After a plan, a stopped round and a review, `report` also sends what the runner's
-`run.json` says the agent spent (`spent`).
+below), as does a person's command, NexKit's dispatch of one and a closing command. After a plan,
+a stopped round and a review, `report` also sends what the runner's `run.json` says the agent
+spent (`spent`).
 
 The engine decides what follows a plan: its approval by autopilot, the answers to its
 questions, once in a row, a writer's answer that only closes the issue, a plan that finds no
@@ -263,25 +264,41 @@ round on the same base commit ended (`route._conflicts_tried`); a resumed or ret
 counted when it started. The first dispatch of a review that follows a branch update (its `auto`
 input names `carry`, and neither `resumed` nor `retry`) stores the update before it looks for a
 pending action, and starts the checks only as the engine answers them (`_branch_updated`). Any
-other command, a person's own dispatch and
-a dispatch with nothing pending too, is a new request, named `dispatch-<run id>`, decided on the
-stored state, which a run of the item's group stores (`decide`, `resync`). A command whose own
-run a newer run replaced starts in the run that ran, when that run's own event starts nothing
-(`route._taken_start`). The host builds the small document that NexKit 6's `route` read the
-facts of, whether the issue or pull request is open, the latest plan, an open pull request for
-`/nexkit go` and a base branch that already holds the change, where `take` sent nothing or the
-engine is asked, and starts only the stage that the engine answers; a change that the engine
-ends as `noChange` goes to the `on_base` task. An open pull request for `/nexkit go` is the
-engine's to refuse on that document, and the host says it in NexKit 6's words. An engine that
-refuses, or answers another stage, starts nothing, and the person gets a reply. A closed issue or
-pull request, which a state comment outlives, a fork, a person's pull request, which takes no
-`/nexkit fix`, an unknown command and an implement round that still runs stay host checks: the
-reply to a command on a closed item is NexKit 6's ("The issue is closed", "The pull request is
-closed"), given before the engine is asked, and `take` only moves its cursor past such a command
-or *Request changes* review, so that no command changes a closed item's stored state. When the
+other command, a person's own dispatch and a dispatch with nothing pending too, is a new request,
+named `dispatch-<run id>`, decided on the stored state, which a run of the item's group stores
+(`decide`). A command whose own run a newer run replaced starts in the run that ran, when that
+run's own event starts nothing (`route._taken_start`). No document built from NexKit 6's markers
+decides a command: the stored state does, or the import in memory when nothing is stored. It
+holds the facts that `route` once read: whether the issue or pull request is open, the latest
+plan, an open pull request and the round that opened it, and the base branch that already holds
+the change, which `command` sends as an observation. The host starts only the stage that the
+engine answers; a change that the engine ends as `noChange` goes to the `on_base` task. An open
+pull request for `/nexkit plan` or `/nexkit go` is the engine's to refuse, and the host says it in
+NexKit 6's words ("Pull request #N is already open"); so is a command on an item whose state does
+not take it, such as `/nexkit fix` on an item with no change, which `route` refuses with the
+engine's reply. An engine that refuses, or answers another stage, starts nothing, and the
+person gets a reply. A closed issue or pull request, which a state comment outlives, a fork, a
+person's pull request, which takes no `/nexkit fix`, an unknown command and an implement round
+that still runs for a person's command (`route._one_round`) stay host checks: the reply to a
+command on a closed item is NexKit 6's ("The issue is closed", "The pull request is closed"),
+given before the engine is asked, and `take` only moves its cursor past such a command or
+*Request changes* review, so that no command changes a closed item's stored state. When the
 configuration did not load, `route._decide` answers a command, a *Request changes* review or a
 dispatch with the configuration error before the engine is asked, and `command` and
 `closing_command` raise `Refused`, since the engine needs the policies of the configuration.
+
+A writer's `/nexkit plan` or `/nexkit go` whose note picks the option that only closes the issue,
+among the questions that the stored state waits for (a blocked round's, or the plan's, as the
+state's attention names them), closes it as not planned with no agent run, but only the engine
+decides that, and it closes only on an answer. So `take` stores such a command as an `answered`
+event while the state has no change (`_command_answer`), as it does a plain comment that picks
+that option (`_closing_answer`), and `route._decide` carries out the `close` that this stored
+(`closing_command`, which hands the `maintain` job its `close_answer` task), before it asks the
+engine about the command: a run whose own comment is not among the events taken, and one whose
+event an earlier run took, only previews the answer on the stored state and stores nothing. A
+closing command whose run a newer run replaced is carried out by the run that ran, as any command
+is (`route._taken_start`). With an open pull request the engine closes nothing on an answer, and
+the command goes to its round as it is.
 
 An item whose document or event the engine refuses waits for a person, and no other item is
 held up by it.
@@ -301,22 +318,22 @@ first plan (`first_plan`), after a writer's vouch (`vouched`), at a merge (`requ
 blocked or failed `/nexkit go` (`after_go`, `round_carried_on`), after a stopped or timed-out round
 (`stopped`, `stop_carried_on`), at a usage limit or a transient error (`stage_limited`,
 `stage_transient`), when a resume comes due (`resumes`), for a lost command (`lost_again`), on a
-person's command (`command`), on a closing command (`closing_command`, which only previews, since
-`take` stored its event and the `maintain` job closes), on an approval (`approved`: the `step` run
-of the item's group stores it, and the approval's own run in `approved-N` previews), at an item's
-end and a parent's end (`no_change_found`, `on_base_found`, `part_ended`, as above) and about a
-pull request's rounds read the item's stored state document (`stored`: the document in its state
-comment, or the import in memory when it has none) and send their event through `decide`, or their
-events in a row through `decide_all`. The ones about its rounds are a round's end (`after_round`,
-`round_ended`), a conflict (`conflicting`, `conflicts_released`, `base_moved`), the end of a wait
-for a hold or the base branch (`released`, `base_passes`), the checks that a fix round diagnoses
-(`diagnosis`) and which rounds count (`stopped_counts`). The checks and the review of a round are
-two events that GitHub shows apart, so `round_ended` stores two revisions, and so does a wait's end
-that has a head to observe first. The automatic fix rounds and the conflict rounds used are the
-stored `rounds` (`_stored_count`), and NexKit 6's count only when no state can be read, for
-example with no configuration. A conflict round that the push run, the schedule, another item's
-merge or a round's report starts is counted by the run it starts (`command`), so the stored count
-is current when the next decision reads it.
+person's command (`command`), on a closing command (`closing_command`, which carries out the
+`close` that `take` stored, or previews when nothing was taken, and the `maintain` job closes), on
+an approval (`approved`: the `step` run of the item's group stores it, and the approval's own run
+in `approved-N` previews), at an item's end and a parent's end (`no_change_found`, `on_base_found`,
+`part_ended`, as above) and about a pull request's rounds read the item's stored state document
+(`stored`: the document in its state comment, or the import in memory when it has none) and send
+their event through `decide`, or their events in a row through `decide_all`. The ones about its
+rounds are a round's end (`after_round`, `round_ended`), a conflict (`conflicting`,
+`conflicts_released`, `base_moved`), the end of a wait for a hold or the base branch (`released`,
+`base_passes`), the checks that a fix round diagnoses (`diagnosis`) and which rounds count
+(`stopped_counts`). The checks and the review of a round are two events that GitHub shows apart, so
+`round_ended` stores two revisions, and so does a wait's end that has a head to observe first. The
+automatic fix rounds and the conflict rounds used are the stored `rounds` (`_stored_count`), and
+NexKit 6's count only when no state can be read, for example with no configuration. A conflict
+round that the push run, the schedule, another item's merge or a round's report starts is counted
+by the run it starts (`command`), so the stored count is current when the next decision reads it.
 
 While other decisions still build their document from NexKit 6's markers, `resync` uses the stored
 document only when it says what the markers' document says, apart from its revision, its events
@@ -326,10 +343,13 @@ the decision is the markers' document at the stored revision, with the stored `c
 `first_state.empty` never gives a budget back, and so that NexKit 6's answers stay
 exactly as they are: a finished plan's import is `awaitingApproval`, which cannot take the plan's
 result, and a second send of one event, such as the plan's result that `report` and the step run
-both send, would be a duplicate. `after_go` and `round_carried_on` no longer go through it: they
-pass no document of the markers. Nor do `stage_limited`, `stage_transient` and `resumes`, which
-decide on the stored state alone, and so do `checks_waited`, `refusal_cleared` and `change_seen`:
-the sweep's looks at a merge that waits for required checks or that GitHub refused, and what the
+both send, would be a duplicate. A plan's result keeps the marks of the answers that the engine
+gave to a round's questions (`_carry_replan`), which the markers cannot say, so that a round that
+asks again after such a re-plan is not answered twice in a row. `after_go` and `round_carried_on`
+no longer go through it: they pass no document of the markers. Nor do `stage_limited`,
+`stage_transient` and `resumes`, which decide on the stored state alone, and neither do `command`,
+`_on_base` and `closing_command`. So do `checks_waited`, `refusal_cleared` and `change_seen`: the
+sweep's looks at a merge that waits for required checks or that GitHub refused, and what the
 merge finds. So do `required_failed`, `accept_answer` and `update_failed`. `first_plan` and
 `approved` pass none either; `vouched` still goes through it. `stopped_counts` too: whether a
 stopped round gives its count back is the stored `rounds.automatic` and the pending fix run, never
@@ -888,7 +908,9 @@ def take(gh, cfg, number, tries=item_state.TRIES, sleep=time.sleep):
     outside the repository's collaborators, or text of a command that is not taken as one, is
     sent with the role `outside`, which the engine ignores, as autopilot ignores it
     (`autopilot._commented_after`). A writer's comment that picks the option that only closes the
-    issue, on questions that the state holds, is sent as an `answered` event. Each is answered by
+    issue, on questions that the state holds, is sent as an `answered` event, and so is a writer's
+    `/nexkit plan` or `/nexkit go` whose note picks that option while no change is open: the engine
+    closes the issue only on an answer. Each is answered by
     `item_state.apply`, which moves the cursor past it, even when the answer changes nothing,
     so that an old remark is never answered on a state that moved on. A work item with no
     state comment has nothing to take: `store_import` stores its first state before.
@@ -945,7 +967,11 @@ def _take(gh, cfg, number, tries, sleep):
         stored = []
 
         def answer(state, event=event, stored=stored, one=one):
-            event = _closing_answer(gh, number, event, one, state) or event
+            event = (
+                _closing_answer(gh, number, event, one, state)
+                or _command_answer(state, event, number, one.at)
+                or event
+            )
             found = step(state, event, found_policies)
             stored[:] = [found["changed"], event]
             return found["state"], found["actions"], found["changed"]
@@ -974,6 +1000,48 @@ def _closing_answer(gh, number, event, one, state):
     answers = [{"question": picked[0], "option": picked[1]}]
     fields = {"by": _person(by, "writer"), "answers": answers, "note": "", "asked": asked["ref"]}
     return _event("answered", number, one.at, one.name, **fields)
+
+
+def _waiting_asked(state):
+    """(ref, items) of the questions that `state` waits for answers to, as the engine reads them
+    (`machine.waiting_questions`): those of the round or the plan that attention names, while the
+    item awaits an answer with no change open, which is where an answer closes it. None when it
+    waits for none."""
+    if state["state"] != "awaitingApproval" or state.get("change"):
+        return None
+    ref = (state["attention"] or {}).get("ref")
+    asked, plan = state.get("questions"), state["plan"]
+    if ref is None:
+        return None
+    if asked and asked["ref"] == ref:
+        return ref, asked["items"]
+    if plan and plan["text"]["ref"] == ref:
+        return ref, plan["questions"]
+    return None
+
+
+def _closing_pick(state, note, by, number, at, name):
+    """The `answered` event `name` of the writer `by` (a `_person`) whose command note `note`
+    picks, among the questions that `state` waits for (`_waiting_asked`), the option that only
+    closes the issue; otherwise None. Only the pick is read here: whether the issue closes is the
+    engine's (`on_answered`)."""
+    waiting = _waiting_asked(state) if note else None
+    picked = _picked(note, {"questions": waiting[1]}) if waiting else None
+    if not picked:
+        return None
+    answers = [{"question": picked[0], "option": picked[1]}]
+    fields = {"by": by, "answers": answers, "note": "", "asked": waiting[0]}
+    return _event("answered", number, at, name, **fields)
+
+
+def _command_answer(state, event, number, at):
+    """The `answered` event that a writer's `/nexkit plan` or `/nexkit go`, the `requested` event
+    `event`, is on the questions that `state` waits for, when its note picks the option that only
+    closes the issue; otherwise None, and the command stays a request. A `requested` go on those
+    questions would start the change, and the engine closes only on an answer."""
+    if event["kind"] != "requested" or event["what"] not in ("plan", "go"):
+        return None
+    return _closing_pick(state, event["note"], event["by"], number, at, event["id"])
 
 
 # -- the stored document and the decisions that store their answer -------------------------
@@ -1304,6 +1372,7 @@ def after_plan(gh, cfg, issue, plan, run, record, start, comments, pull=None, wr
             # The plan that a round that ran out of time asked for: its split withdraws the change.
             doc["asked"].append("supersede")
         doc = _planning(doc, _depth(gh, issue, data), autopilot.asked_again(comments))
+        doc = _carry_replan(gh, cfg, number, doc)
         event = _result(number, plan, data, run, change)
     action = None if said else ("runAgent", "plan")
     state, actions = decide(gh, cfg, number, event, doc, pull=pull, action=action, write=write)
@@ -1437,6 +1506,21 @@ class _PlanView:
         return self.step("waits", text)
 
 
+# The marks of `asked` for the answers that the engine gave (`machine.ANSWERED`).
+ANSWERED_MARKS = ("answers", "replan")
+
+
+def _carry_replan(gh, cfg, number, doc):
+    """`doc`, the document that NexKit 6's markers leave for the result of a plan, with the marks
+    of the answers that the engine gave to a round's questions when the stored state holds a
+    re-plan: the markers cannot say that such a plan carries them on to the round after it, so
+    that a round that asks again is not answered a second time in a row."""
+    held = stored(gh, cfg, number)[1] if cfg is not None else None
+    if held is not None and "replan" in held["asked"]:
+        doc["asked"] = [*doc["asked"], *(m for m in ANSWERED_MARKS if m not in doc["asked"])]
+    return doc
+
+
 def plan_carried_on(gh, cfg, issue, decision, output, ran=None, write=False):
     """Whether autopilot carries on after the plan `output` that a run of `decision` posted,
     as the engine decides what follows it, so that `report` mentions nobody. A plan that finds
@@ -1454,6 +1538,7 @@ def plan_carried_on(gh, cfg, issue, decision, output, ran=None, write=False):
     data = plan_record(output)
     doc = _document(issue, autopilot.find_record(comments)[1])
     doc = _planning(doc, _depth(gh, issue, data), again)
+    doc = _carry_replan(gh, cfg, number, doc)
     result = {**spent(ran), "output": plan_output({}, data, {})}
     event = _event(
         "actionFinished",
@@ -1679,24 +1764,6 @@ def round_output(run):
         "reviewer_notes": [],
         "no_change": run.get("no_change") or "",
     }
-
-
-def _asks(doc, comment, run):
-    """`doc` while the questions of the blocked round whose run comment is `comment` wait:
-    a comment that came before NexKit 6's next sweep is taken on them as they wait. Only
-    `closing_command` still uses it; the decisions on its stored state replace it."""
-    ref = str(comment["id"])
-    items = [
-        {**item, "replans": sorted(set(item["replans"]) - {0, item["closes"]})}
-        for item in asked_of(run)
-    ]
-    found = bool(run.get("no_change"))
-    doc["state"] = "awaitingApproval"
-    doc["questions"] = {"ref": ref, "stage": "implement", "items": items, "noChange": found}
-    doc["attention"] = {"reason": "question", "text": "The round has questions.", "ref": ref}
-    if doc["plan"]:
-        doc["plan"]["approved"] = True
-    return doc
 
 
 def _plan_doc(issue, record, comments):
@@ -2125,65 +2192,48 @@ def stop_carried_on(gh, cfg, issue, decision, agent, ran=None, write=False):
 NO_CONFIG = "NexKit's configuration did not load, so the engine is not asked."
 
 
-def closing_command(gh, decision, comments, command, cfg):
-    """A writer's `/nexkit plan` or `/nexkit go` on an issue whose questions NexKit asked
-    last, those of its latest plan or of a `/nexkit go` that stopped as blocked
-    (`state.asked_last`): when its note picks the option that only closes the issue and the
-    engine drops the issue for it, the `maintain` job closes the issue as not planned, with
-    no agent run. Otherwise the command goes to its round as it is. `command` is the comment
-    of the command, which names the event. The engine answers on the item's stored state
-    (`decide`), which a preview only reads: `take` already stored the command's event, and the
-    `maintain` job carries out the close. With no `cfg`, it raises `Refused` and asks the engine
-    nothing. It only sees an open issue: `route._decide` refuses a command on a closed one
-    first."""
+def closing_command(gh, cfg, number, note, comments, source_id, *, branch, by=None, taken=None):
+    """What the `maintain` job needs to close issue `number` as not planned, with no agent run, as
+    {"answer": the option that was picked, "asked": the link of the questions}, for a writer's
+    `/nexkit plan` or `/nexkit go` whose note picks the option that only closes the issue, among
+    the questions that its stored state waits for, when the engine drops the issue for that
+    answer (`route._decide` builds the `close_answer` task from it); otherwise None, and the
+    command goes to its round as it is. `source_id` is the id
+    of the command's comment, which names the event as `take` does, `by` the writer, `branch` the
+    issue's NexKit branch, and `comments` the issue's comments, which hold the questions' link.
+
+    The engine's answer is stored by `take`, which sends the command as an `answered` event
+    (`_command_answer`): when it is among `taken`, [(event, actions)] as `take` gives them, the
+    `close` it stored is carried out, and the engine is not asked again, which it would take for a
+    duplicate. Otherwise the engine is asked on the item's stored state, or on the import in memory
+    when none is stored, and nothing is stored: a command that an earlier run took is not
+    answered here, and an open pull request keeps the item for a person, since the engine closes
+    only an item with no change. With no `cfg` it raises `Refused` and asks the engine nothing. It
+    only sees an open issue: `route._decide` refuses a command on a closed one first."""
     if cfg is None:
         raise Refused(NO_CONFIG)
-    number = decision["issue"]
-    asked = asked_last(comments)
-    if asked is None:
-        return decision
-    runs = [(comment, run) for comment, run in run_comments(comments) if "command" in run]
-    comment, run = runs[-1]
-    plan = data = None
-    if run.get("command") == "plan":
-        plan = latest_plan(comments)
-        data = plan_data(plan)
-    picked = _picked(decision["note"], data or run)
-    if not picked:
-        return decision
-    pulls = gh.open_pulls(decision["branch"])
-    change = {"id": str(pulls[0]["number"]), "version": pulls[0]["head"]["sha"]} if pulls else None
-    if plan:
-        doc = _waiting(_document({"number": number}, {}, plan, data, change))
+    name = event_id("comment", source_id)
+    mine = [actions for event, actions in taken or [] if event["id"] == name]
+    if mine:
+        actions = mine[0]
     else:
-        doc = _asks(_document({"number": number}, {}, change=change), comment, run)
-    answers = [{"question": picked[0], "option": picked[1]}]
-    fields = {"answers": answers, "note": "", "asked": doc["attention"]["ref"]}
-    by = _person(decision.get("actor"), "writer")
-    event = _event("answered", number, None, event_id("comment", command), by=by, **fields)
-    try:
-        _, actions = decide(
-            gh,
-            cfg,
-            number,
-            event,
-            doc,
-            pull=int(change["id"]) if change else None,
-            found_policies={},
-            write=False,
-        )
-    except Refused:
-        return decision
+        pulls = gh.open_pulls(branch)
+        pull = pulls[0]["number"] if pulls else None
+        _, doc = stored(gh, cfg, number, pull)
+        if doc is None or name in doc["recentEvents"]:
+            return None
+        event = _closing_pick(doc, note, _person(by, "writer"), number, None, name)
+        if event is None:
+            return None
+        try:
+            _, actions = decide(gh, cfg, number, event, None, pull=pull, write=False)
+        except Refused:
+            return None
     if not any(action["kind"] == "close" for action in actions):
-        # A pull request that is open stays with its issue: a person closes both.
-        return decision
-    return {
-        "action": "maintain",
-        "task": "close_answer",
-        "issue": number,
-        "answer": picked[2],
-        "asked": asked[0],
-    }
+        return None
+    asked = asked_last(comments)
+    picked = _picked(note, {"questions": asked[1]}) if asked else None
+    return {"answer": picked[2] if picked else note, "asked": asked[0] if asked else ""}
 
 
 # What the engine's answer to a person's command names, by the stage it runs.
@@ -2237,7 +2287,6 @@ def command(
     note="",
     change=None,
     plan=None,
-    review_only=False,
     empty=False,
     review_id=None,
     source_id=None,
@@ -2276,35 +2325,19 @@ def command(
     that update first (`_branch_updated`), before it looks for a pending action, and starts when
     the engine answers its checks. With nothing pending and for a person's own
     dispatch, the command is a new request, named `dispatch-<run id>` (`_dispatch_id`), decided
-    on the stored state (`decide`, which stores the answer in the item's group, `resync`). No
+    on the stored state (`decide`, which stores the answer in the item's group). No
     closed issue or pull request reaches it: `route._decide` refuses a command on one before, in
     NexKit 6's words, so that no command changes the stored state of a closed item.
 
-    That document holds only the facts that NexKit 6's `route` reads, as `closing_command` and
-    `_pull_doc` build theirs: `change`, `{"id", "version"}` of the open pull request, makes the
-    item `ready`, or `new` for a person's pull request (`review_only`); `plan` is the issue's
-    latest plan comment, which makes the item wait for its approval. `empty` says that the
-    change's base branch already holds it. `by` is the person, `note` their text, and `review_id`
-    the id of a *Request changes* review, which is sent as `changesRequested` as `take` sends it.
-    `source_id` is the id of the comment or review that gave the command, which names the event as
-    `take` does."""
+    The item's state decides all of it: nothing is built from NexKit 6's markers. `change`,
+    `{"id", "version"}` of the open pull request, names it where the item has no state comment yet
+    (the import in memory); `plan` is the issue's latest plan comment, which only names the plan
+    that a `/nexkit go` was sent for. `empty` says that the change's base branch already holds it.
+    `by` is the person, `note` their text, and `review_id` the id of a *Request changes* review,
+    which is sent as `changesRequested` as `take` sends it. `source_id` is the id of the comment or
+    review that gave the command, which names the event as `take` does."""
     if gh is None or cfg is None:
         raise Refused(NO_CONFIG)
-    doc = first_state.empty(str(item))
-    if review_only:
-        doc["itemKind"], doc["actors"]["change"] = "reviewOnly", "person"
-    if change:
-        doc["state"] = "new" if review_only else "ready"
-        doc["change"] = dict(change)
-        doc["observed"] = {
-            "changeId": change["id"],
-            "version": change["version"],
-            "conflicts": False,
-            "merged": False,
-            "empty": False,
-        }
-    elif plan:
-        doc = _waiting(_document({"number": item}, {}, plan, plan_data(plan)))
     observed = None
     if empty and change:
         seen = {"version": change["version"], "merged": False, "empty": True}
@@ -2334,7 +2367,7 @@ def command(
     pull = int(change["id"]) if change else None
     mine = [actions for event, actions in taken or [] if event["id"] == name]
     if mine:
-        if observed and _on_base(gh, cfg, item, observed, doc, pull):
+        if observed and _on_base(gh, cfg, item, observed, pull):
             return "noChange"
         return starts(mine[0]) or "refused"
     _, seen_doc = stored(gh, cfg, item, pull)
@@ -2345,16 +2378,20 @@ def command(
         for event, actions in taken or []
     ):
         return "refused"
-    if observed and _on_base(gh, cfg, item, observed, doc, pull):
+    if not sourced and updated and what == "review" and change:
+        comment, found = stored(gh, cfg, item, pull)
+        if comment is not None:
+            # Before the base branch is asked and before `_carried`: the engine holds what it
+            # observes of the head while the update is pending, and the checks of the round that
+            # the update stopped may still be pending, so carrying them out would leave the update
+            # uncounted. A change that the update left empty ends the item there.
+            answer = _branch_updated(gh, cfg, item, change, found, empty=bool(observed))
+            if answer is not None:
+                return answer
+    if observed and _on_base(gh, cfg, item, observed, pull):
         return "noChange"
     if not sourced:
         comment, found = stored(gh, cfg, item, pull)
-        if updated and what == "review" and change and comment is not None:
-            # Before `_carried`: the checks of the round that the update stopped may still be
-            # pending, and carrying them out would leave the update uncounted.
-            answer = _branch_updated(gh, cfg, item, change, found)
-            if answer is not None:
-                return answer
         action = _carried(found, what) if dispatched else None
         if action:
             if carried is not None:
@@ -2363,7 +2400,7 @@ def command(
         if observe_conflict and what == "fix" and change:
             return _conflict_round(gh, cfg, item, change, found)
         request = {**request, "id": _dispatch_id(found)}
-    _, actions = decide(gh, cfg, item, request, doc, pull=pull, write=True)
+    _, actions = decide(gh, cfg, item, request, None, pull=pull, write=True)
     return starts(actions) or "refused"
 
 
@@ -2418,10 +2455,12 @@ def _conflict_round(gh, cfg, item, change, found):
     return "fix" if answer == "round" else "refused"
 
 
-def _branch_updated(gh, cfg, item, change, found):
+def _branch_updated(gh, cfg, item, change, found, empty=False):
     """`review` when the engine answers the checks of the new head `change` (`{"id", "version"}`)
-    after a branch update, which it stores as one more update used (`command`), `refused` when it
-    answers none, and None when this run is not the one to store it. `found` is the stored state.
+    after a branch update, which it stores as one more update used (`command`), `noChange` when
+    the head, which `empty` says holds no change against the base branch, ends the item, `refused`
+    when it answers none, and None when this run is not the one to store it. `found` is the stored
+    state.
 
     A merge's update (`report._update_branch`) is stored as a pending `updateChange` already
     (`accept_answer`): only its result is sent. After the push run's update
@@ -2464,15 +2503,15 @@ def _branch_updated(gh, cfg, item, change, found):
             automatic=_stopped_round(row, old)[1],
         )
         if answer != "update":
-            seen = {**head_observed(item, pull, version), "id": f"{name}-head"}
-            _, actions = decide(gh, cfg, item, seen, None, pull=pull, write=True)
-            return starts(actions) or "refused"
+            seen = {**head_observed(item, pull, version), "id": f"{name}-head", "empty": empty}
+            state, actions = decide(gh, cfg, item, seen, None, pull=pull, write=True)
+            return _updated_end(state, actions)
     observed = {
         "changeId": change["id"],
         "version": version,
         "conflicts": False,
         "merged": False,
-        "empty": False,
+        "empty": empty,
     }
     result = {"change": {"id": change["id"], "version": version}, "refused": None}
     result["observed"] = observed
@@ -2487,14 +2526,20 @@ def _branch_updated(gh, cfg, item, change, found):
         result=result,
     )
     options = {"pull": pull, "action": ("updateChange",), "write": True}
-    _, actions = decide(gh, cfg, item, event, None, **options)
-    return starts(actions) or "refused"
+    state, actions = decide(gh, cfg, item, event, None, **options)
+    return _updated_end(state, actions)
 
 
-def _on_base(gh, cfg, item, observed, doc, pull):
+def _updated_end(state, actions):
+    """What `command` does after the engine's answer to a branch update: `noChange` when it ends
+    the item, otherwise the stage that it starts, or `refused`."""
+    return "noChange" if state["state"] == "noChange" else starts(actions) or "refused"
+
+
+def _on_base(gh, cfg, item, observed, pull):
     """Whether the engine ends the item as `noChange` on the observation `observed` that its
     base branch already holds the change (`command`)."""
-    state, _ = decide(gh, cfg, item, observed, doc, pull=pull, write=True)
+    state, _ = decide(gh, cfg, item, observed, None, pull=pull, write=True)
     return state["state"] == "noChange"
 
 

@@ -1249,7 +1249,7 @@ def moved_round(gh, cfg, pull, base, workflow, ref, max_rounds, settle):
 
 def close_answered(gh, decision):
     """Close an issue as not planned, as a writer's answer to NexKit's questions picked the
-    option that only closes it: `route._closing` took the decision from the engine's `close`
+    option that only closes it: the route took the decision from the engine's `close`
     (`host.closing_command`), and this carries it out, storing no state document. The issues
     event that the close starts closes parents and starts a sweep. Returns lines for the
     log."""

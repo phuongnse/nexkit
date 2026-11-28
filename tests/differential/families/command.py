@@ -9,7 +9,10 @@ last questions a note answers with the option that only closes it. Records the d
 
 NexKit 6 decided every command in `route`; since #568 the engine answers whether it starts its
 stage, and `route` says each refusal in NexKit 6's words. A fork, a person's pull request, an
-unknown command and a running implement round stay `route`'s."""
+unknown command and a running implement round stay `route`'s. Since #706 the engine decides on the
+item's stored state alone, so each NexKit pull request that an implement run opened carries the
+round comment that run posts: with none, the import holds it in its checks, where no command
+starts."""
 
 import inspect
 
@@ -47,6 +50,15 @@ PULLS = [
     "person_on_base",
     "fork",
 ]
+# The targets whose NexKit pull request an implement run opened and reported on.
+OPENED = [
+    "issue_pull",
+    "issue_pull_unplanned",
+    "issue_pull_closed",
+    "pull",
+    "pull_closed",
+    "pull_on_base",
+]
 # (the event that starts the command, its `auto` input when a dispatch)
 SOURCES = ["comment", "dispatch", "auto", "conflicts"]
 NUMBER = {"person": 10, "fork": 11}
@@ -82,6 +94,21 @@ def build(sc):
         gh.comment(5, f"{PLAN_MARKER}\n## Plan\n\nAdd it.\n\n{record}")
     if target.startswith(("issue_pull", "pull")):
         gh.add_pull(6, 5, head_sha=HEAD, state="closed" if target.endswith("closed") else "open")
+    if target in OPENED:
+        # The round that the implement run which opened the pull request posts: with none, the
+        # import holds the pull request in its checks, waiting for a round that never reports.
+        row = {
+            "url": f"{RUNS}/2",
+            "command": "go",
+            "round": 1,
+            "trigger": "implement",
+            "status": "success",
+            "outcome": "ready",
+            "head": HEAD,
+            "checks": "passed",
+            "verdict": "approve",
+        }
+        gh.comment(6, render_run(row, "Round 1."))
     if target == "pull_on_base":
         gh.on_base.add(HEAD)
     if target == "pull_running":

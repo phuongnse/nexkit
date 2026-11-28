@@ -292,6 +292,31 @@
     "cause_outside": false,
     "open_conflicts": []
   },
+  "fixConflict": {
+    "status": "blocked",
+    "summary": "Fix the failing test.",
+    "blocker": "",
+    "questions": [],
+    "checks_run": [
+      "python3 -m unittest"
+    ],
+    "protected_paths": [],
+    "cause": "The test read a stale fake issue.",
+    "cause_outside": false,
+    "open_conflicts": [
+      {
+        "location": "form Customer › field Phone",
+        "base_change": "Requires a country code.",
+        "this_change": "Saves the number as typed.",
+        "question": "Which phone format should the form keep?",
+        "options": [
+          "Keep the country code",
+          "Keep the number as typed"
+        ],
+        "recommended": 0
+      }
+    ]
+  },
   "review": {
     "verdict": "approve",
     "summary": "The change does what the plan says.",

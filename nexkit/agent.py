@@ -29,7 +29,7 @@ from .runlog import RunLog, add_tokens, one_line, summary, write_summary
 from .runtimes import PROVIDERS, RUNTIMES
 from .runtimes.base import ACCESS, AgentConfigError, Spec
 from .schema import filled, problems
-from .state import round_questions
+from .state import conflict_names, round_questions
 from .textutil import checklist_item, person_decides
 from .usage import schedule
 
@@ -100,13 +100,15 @@ def with_location(finding):
 
 def with_defaults(output, stage):
     """`output` with the empty value of each optional field it left out, and, for a review,
-    each finding at a `location`."""
+    each finding at a `location` and, for a fix, each open conflict at a `location` too."""
     if not isinstance(output, dict):
         return output
     missing = {key: value for key, value in OPTIONAL.get(stage, {}).items() if key not in output}
     output = {**output, **copy.deepcopy(missing)}
     if stage == "review" and isinstance(output.get("findings"), list):
         output["findings"] = [with_location(item) for item in output["findings"]]
+    if stage == "fix" and isinstance(output.get("open_conflicts"), list):
+        output["open_conflicts"] = [conflict_names(item) for item in output["open_conflicts"]]
     return output
 
 

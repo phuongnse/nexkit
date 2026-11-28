@@ -18,6 +18,7 @@ from nexkit.redact import Redactor
 from nexkit.report import apply_criteria
 from nexkit.runtimes import RUNTIMES
 from nexkit.runtimes.claude_code import ClaudeReader
+from nexkit.schema import problems
 from nexkit.textutil import TEXT_LIMIT
 from tests import engine_here
 from tests.support import (
@@ -668,9 +669,9 @@ class InterpretTests(unittest.TestCase):
     def test_a_blocked_result_must_say_why_or_ask(self):
         blocked = {**FIX_DONE, "status": "blocked"}
         conflict = {
-            "file": "a.py",
+            "location": "a.py",
             "base_change": "x",
-            "pr_change": "y",
+            "this_change": "y",
             "question": "Which?",
             "options": ["A", "B"],
             "recommended": 0,
@@ -1716,9 +1717,9 @@ class ConflictTests(StageCase):
         self.repos.diverge()
         self.checkout_branch()
         question = {
-            "file": "calc.py",
+            "location": "calc.py",
             "base_change": "Adds mul().",
-            "pr_change": "Adds sub().",
+            "this_change": "Adds sub().",
             "question": "Which one?",
             "options": ["Keep both"],
             "recommended": 0,
@@ -1747,11 +1748,42 @@ class ConflictTests(StageCase):
         item = schema["properties"]["open_conflicts"]["items"]
         self.assertEqual(
             item["required"],
-            ["file", "base_change", "pr_change", "question", "options", "recommended"],
+            ["location", "base_change", "this_change", "question", "options", "recommended"],
         )
         self.assertNotIn("open_conflicts", agent.SCHEMAS["implement"]["required"])
         for field in item["required"]:
             self.assertIn(f"`{field}`", engine_prompt.template("fix"))
+
+    def test_an_open_conflict_of_an_earlier_nexkit_passes_with_the_new_names(self):
+        old = {
+            "file": "calc.py",
+            "base_change": "Adds mul().",
+            "pr_change": "Adds sub().",
+            "question": "Which one?",
+            "options": ["Keep both"],
+            "recommended": 0,
+        }
+        output = {**FIX_DONE, "status": "blocked", "open_conflicts": [old]}
+        found = agent.with_defaults(output, "fix")
+        self.assertEqual(
+            found["open_conflicts"],
+            [
+                {
+                    "location": "calc.py",
+                    "base_change": "Adds mul().",
+                    "this_change": "Adds sub().",
+                    "question": "Which one?",
+                    "options": ["Keep both"],
+                    "recommended": 0,
+                }
+            ],
+        )
+        self.assertEqual(problems(found, agent.SCHEMAS["fix"]), [])
+        # An old shape that is not a conflict stays as it is, and the new shape is not changed.
+        new = found["open_conflicts"][0]
+        for kept in ([new], ["x"]):
+            again = agent.with_defaults({"open_conflicts": kept}, "fix")
+            self.assertEqual(again["open_conflicts"], kept)
 
     def test_fix_prompt_asks_for_a_decision_instead_of_a_guess(self):
         words, text = agent.prompt_words(5, 6), agent.WORKSPACE_TEXT

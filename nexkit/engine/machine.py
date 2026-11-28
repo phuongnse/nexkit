@@ -1773,7 +1773,10 @@ class Step:
         waits for that person, whatever it asks; one that asks waits for answers, which the
         engine may give (`answer_round`); one that neither asks nor needs such paths fails."""
         conflicts = [
-            {**item, "question": f"`{item['file']}`: {item['question']}"}
+            {
+                **item,
+                "question": f"`{clip(item['location'], 'location')}`: {item['question']}",
+            }
             for item in output.get("open_conflicts", [])
         ]
         named = [*output.get("questions", []), *conflicts]

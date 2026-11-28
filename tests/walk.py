@@ -326,9 +326,9 @@ class Walker:
         elif rng.random() < 0.2:
             found["open_conflicts"] = [
                 {
-                    "file": "a.py",
+                    "location": "a.py",
                     "base_change": "x",
-                    "pr_change": "y",
+                    "this_change": "y",
                     "question": "Which?",
                     "options": ["base", "pr"],
                     "recommended": rng.choice([0, 1]),

@@ -178,7 +178,7 @@ events and actions](engine-states.md). The runners, the policies a host decides 
   fix round ("Any later versions were saved without a fix round."); `workspaceName`, where
   the agent reads the change, which the engine's notes name when a version or a diff is not
   there ("this draft's history"); and `locationForm`, how the agent writes where a review finding
-  points, after "`location` is" in the review prompt ("the record and its field, such as `form
+  or an open conflict of a fix round points, after "`location` is" in the review and fix prompts ("the record and its field, such as `form
   Customer › field Phone`, or an empty string when it is about no record"). Each is a string of at most 500 characters, and every field is
   required in every call with a `workspace`. A text holds no line break, except `mergeRule` and
   `sideHistory`: each is one sentence that a template wraps over two lines, and a host whose
@@ -242,7 +242,7 @@ Every decision of the loop is the engine's: plans, questions and answers, splits
   signatures, and the last review's round, version, verdict and findings with severity, location
   and body. A location is the host's own text for where a finding points, which the agent writes in
   the form that `locationForm` gives. The engine keeps it as it came, clipped, without reading it,
-  and shows it to the next fix and review prompts, or shows "general" when it is empty. The engine records a fix round when its agent returns a result that is not blocked, and
+  and shows it to the next fix and review prompts, or shows "general" when it is empty. The question that the engine asks for an open conflict of a fix round starts with the conflict's location, clipped, in backticks. The engine records a fix round when its agent returns a result that is not blocked, and
   the checks after it complete the record. A round under way keeps who started it, whether it
   diagnoses and its note until then (`rounds.fixRound`). Other long texts, such as a plan's prose,
   check output, a discussion and evidence, stay with the host as texts that the state names, and

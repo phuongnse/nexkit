@@ -844,8 +844,8 @@ class Step:
         """An implement or fix agent ran out of time. With splits on, the
         item asks once for a plan that splits it; otherwise, the second time, or for an item
         at the deepest level of parts, which is not split, a person decides
-        (`split_refused`). An item with a change marks that plan
-        `supersede`: if it is too large, its split withdraws the change."""
+        (a split that is refused or not allowed ends in `failed`). An item with a change
+        marks that plan `supersede`: if it is too large, its split withdraws the change."""
         self.by = None
         deepest = self.s.get("depth", 0) >= self.p["splitDepth"]
         if self.p["splits"] and "split" not in self.s["asked"] and not deepest:

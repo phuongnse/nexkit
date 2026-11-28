@@ -50,7 +50,14 @@ from nexkit.state import (
     run_comments,
     run_kinds,
 )
-from tests.support import BOT_LOGIN, FakeGitHub, make_config, play_resume
+from tests.support import (
+    BOT_LOGIN,
+    FIX_OUTPUT,
+    IMPLEMENT_OUTPUT,
+    FakeGitHub,
+    make_config,
+    play_resume,
+)
 
 HEAD = "c" * 40
 NEW_HEAD = "e" * 40
@@ -116,11 +123,13 @@ class ProgressTests(unittest.TestCase):
             default_branch="main",
         )
 
-    def candidate(self, verdict="approve"):
+    def candidate(self, verdict="approve", output=None):
         tokens = {"input": 52_000, "cached": 30_000, "output": 900}
-        self.write(
-            "nexkit-agent", "result.json", {"status": "done", "summary": "Done.", "tokens": tokens}
-        )
+        agent = {"status": "done", "summary": "Done.", "tokens": tokens}
+        if output:
+            # The result that the publish job stores in the item's state before the checks.
+            agent["output"] = output
+        self.write("nexkit-agent", "result.json", agent)
         checks = [{"name": "test", "run": "t", "exit_code": 0, "passed": True, "output": ""}]
         self.write("nexkit-checks", "checks.json", checks)
         self.write("nexkit-review", "result.json", review_result(verdict))
@@ -230,7 +239,8 @@ class ProgressTests(unittest.TestCase):
             progress.start(self.gh, second)
             self.assertEqual(self.gh.run_comments(5)[0]["body"], first_body)
             self.assertIn("⏳", self.gh.comments(5)[-1]["body"])  # right after the command
-            self.candidate()
+            host.store_import(self.gh, make_config(), 5)
+            self.candidate(output=IMPLEMENT_OUTPUT)
             outcome = self.finish(second, {"published": True, "pr": 6, "head": HEAD})
         self.assertEqual(outcome["outcome"], "ready")
         comments = self.gh.run_comments(5)
@@ -270,6 +280,7 @@ class ProgressTests(unittest.TestCase):
     def test_pull_request_round_is_shown_while_running(self):
         d = decision("fix")
         progress.start(self.gh, d)
+        host.store_import(self.gh, make_config(), 5)
         self.assertEqual(self.gh.reactions, [(9, "eyes")])
         self.assertEqual(
             {(s["sha"], s["context"], s["state"], s["target_url"]) for s in self.gh.statuses},
@@ -279,7 +290,7 @@ class ProgressTests(unittest.TestCase):
         self.assertIn("### NexKit round 1: fix\n\n⏳ [running]", running["body"])
         self.assertIn("| ccccccc | N/A | N/A | N/A |", running["body"])
 
-        self.candidate()
+        self.candidate(output=FIX_OUTPUT)
         outcome = self.finish(d, {"published": True, "pr": 6, "head": NEW_HEAD})
         self.assertEqual(outcome["outcome"], "ready")
         [done] = self.gh.run_comments(6)  # the running comment was completed
@@ -384,8 +395,9 @@ class ProgressTests(unittest.TestCase):
         self.gh.comment(6, old_body)
         d = decision("fix", comment_id=None, auto=True)
         progress.start(self.gh, d)
+        host.store_import(self.gh, make_config(), 5)
         self.assertIn("### NexKit round 3: fix (auto)", self.gh.comments(6)[-1]["body"])
-        self.candidate("request_changes")
+        self.candidate("request_changes", output=FIX_OUTPUT)
         self.assertEqual(
             self.finish(d, {"published": True, "pr": 6, "head": NEW_HEAD})["outcome"], "auto_fix"
         )

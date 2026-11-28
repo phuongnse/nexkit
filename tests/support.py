@@ -146,6 +146,12 @@ def play_resume(gh, cfg, now=None, workflow="nexkit.yml", ref="main"):
     return found, upcoming
 
 
+# What a stage's agent gives that fits its result schema, so that the host stores the round's
+# agent result, as GitHub's publish job does (`host.round_published`).
+FIX_OUTPUT = {"status": "done", "summary": "Fixed.", "checks_run": []}
+IMPLEMENT_OUTPUT = {**FIX_OUTPUT, "changes": ["Add it."], "testing": "Ran make test."}
+
+
 def make_config(**overrides):
     raw = {"checks": [{"name": "test", "run": "true"}], "github_app": APP, **overrides}
     return validate(with_claude(raw))

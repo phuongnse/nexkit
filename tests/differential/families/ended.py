@@ -81,9 +81,9 @@ def run(sc):
         elif sc["pull"] == "closed":
             gh.pulls[6].update(state="closed", merged=False)
 
-    # A writer's approval finds the item's state stored while the pull request was open, as the
-    # item's group stored it before a person merged or closed the pull request.
-    if sc["path"] != "approved":
+    # A round's report and a writer's approval find the item's state stored while the pull request
+    # was open, as the item's group stored it before a person merged or closed the pull request.
+    if sc["path"] == "sweep":
         ended()
     if sc["parent"] != "none":
         gh.add_issue(1, title="Epic")
@@ -126,6 +126,7 @@ def run(sc):
             def first_round():
                 progress.start(gh, d)
                 seed(gh, cfg)
+                ended()
                 return report(
                     gh, d, cfg, needs, art.path, workflow_ref=WORKFLOW, default_branch="main"
                 )

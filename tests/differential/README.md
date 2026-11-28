@@ -148,6 +148,12 @@ holds already, so the `lost` family seeds a stored state whose count the import 
 looks at a merge that waits for required checks or that GitHub refused, and what the merge finds
 (`checks_waited`, `refusal_cleared`, `change_seen`): they read the start of the wait and the head
 refused while mergeable from the stored state, and `check.sh` fails if any of them falls back.
+A round's checks and review (`round_ended`, `after_round`) decide on the stored state alone too, so
+each family that plays a round's report stores the item's state just after the round's
+`progress.start`, with a scripted agent whose output fits the stage, so that the report stores the
+round before it decides the checks. The `chains` family, which dispatches rounds in any order,
+stores the import again as the next revision for each round after the first, as its dispatch
+stores the round in progress. `check.sh` fails if `round_ended` or `after_round` falls back.
 Every family stores the import of its items before its first event, so
 those decisions meet a stored state, and `--fallbacks` lists where they still decide from the
 markers' document. The counts of conflict rounds and automatic fix rounds are the stored ones,

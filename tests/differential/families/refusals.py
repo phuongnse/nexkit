@@ -85,49 +85,57 @@ def run(sc):
             "url": "https://github.com/acme/app/actions/runs/3",
         }
         gh.comment(6, render_run(row))
-    # Before the patches that make GitHub fail: the import is of the work as it stood.
-    seed(gh, cfg)
     res = {}
     art = Artifacts()
+    if sc["path"] == "first":
+        art.agent({"status": "done", "tokens": TOK, "output": IMPLEMENT_OUTPUT})
+        art.checks(
+            [{"name": "test", "run": "make test", "exit_code": 0, "passed": True, "output": ""}]
+        )
+        review = {
+            "verdict": "approve",
+            "summary": "S.",
+            "findings": [],
+            "criteria": [{"criterion": "x", "status": "met", "test": "t", "evidence": "e"}],
+        }
+        art.review({"status": "done", "tokens": TOK, "output": review})
+        d = {
+            "action": "implement",
+            "issue": 5,
+            "pr": None,
+            "target": 5,
+            "branch": "nexkit/issue-5",
+            "base": "main",
+            "head": None,
+            "note": "",
+            "auto": True,
+            "autopilot": "true",
+            "run_id": 4242,
+        }
+        pub = {"published": True, "pr": 6, "head": HEAD}
+        needs = {"publish": {"outputs": {"result": json.dumps(pub)}}}
+        # The round's stored state is taken just after its `progress.start`, before the patches
+        # that make GitHub fail: the import is of the work as it stood, and the pull request
+        # moves to its new head after it, as the report finds it.
+        with quiet():
+            try:
+                progress.start(gh, d)
+            except Exception as exc:  # noqa: BLE001
+                res["start"] = f"EXC {type(exc).__name__}: {exc}"
+            gh.pulls[6]["head"]["sha"] = HEAD
+            seed(gh, cfg)
+            gh.pulls[6]["head"]["sha"] = NEW if moved else HEAD
+    else:
+        # Before the patches that make GitHub fail: the import is of the work as it stood.
+        seed(gh, cfg)
     with contextlib.ExitStack() as stack:
         stack.enter_context(mock.patch.object(report_module.time, "sleep", lambda s: None))
         stack.enter_context(quiet())
         refuse(gh, refusal, stack)
         if sc["path"] == "first":
-            art.agent({"status": "done", "tokens": TOK, "output": IMPLEMENT_OUTPUT})
-            art.checks(
-                [{"name": "test", "run": "make test", "exit_code": 0, "passed": True, "output": ""}]
+            res["report"] = attempt(
+                report, gh, d, cfg, needs, art.path, workflow_ref=WORKFLOW, default_branch="main"
             )
-            review = {
-                "verdict": "approve",
-                "summary": "S.",
-                "findings": [],
-                "criteria": [{"criterion": "x", "status": "met", "test": "t", "evidence": "e"}],
-            }
-            art.review({"status": "done", "tokens": TOK, "output": review})
-            d = {
-                "action": "implement",
-                "issue": 5,
-                "pr": None,
-                "target": 5,
-                "branch": "nexkit/issue-5",
-                "base": "main",
-                "head": None,
-                "note": "",
-                "auto": True,
-                "autopilot": "true",
-                "run_id": 4242,
-            }
-            pub = {"published": True, "pr": 6, "head": HEAD}
-            needs = {"publish": {"outputs": {"result": json.dumps(pub)}}}
-
-            def first_round():
-                progress.start(gh, d)
-                return report(
-                    gh, d, cfg, needs, art.path, workflow_ref=WORKFLOW, default_branch="main"
-                )
-
-            res["report"] = attempt(first_round)
         else:
             if sc["path"] == "approved":
                 decision = {"action": "maintain", "task": "approved", "pr": 6, "issue": 5}

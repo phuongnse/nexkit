@@ -45,7 +45,7 @@ from nexkit.state import (
     with_run,
 )
 from nexkit.status import collect
-from tests.support import BOT_LOGIN, FakeGitHub, make_config
+from tests.support import BOT_LOGIN, FIX_OUTPUT, FakeGitHub, make_config
 from tests.test_item_state import CREATED, HELD, RELEASED
 from tests.test_item_state import step as engine_step
 
@@ -2825,7 +2825,8 @@ class ScenarioTests(unittest.TestCase):
 
     def test_a_fix_round_with_a_cause_outside_the_code_checks_again_once(self):
         cause = "The registry returned 500 Internal Server Error during `docker compose up`."
-        outside = {"cause": cause, "cause_outside": True}
+        # The agent's output fits the fix stage's schema, so that the publish job stores it.
+        outside = {**FIX_OUTPUT, "cause": cause, "cause_outside": True}
 
         def script(passes):
             def play(pipe, inputs):
@@ -4680,26 +4681,38 @@ class DispatchedFixRoundsTest(unittest.TestCase):
     RED = [{"name": "test", "passed": False, "output": "AssertionError"}]
     REVIEW = ("done", {"verdict": "approve", "criteria": [], "findings": []})
 
+    head = HEAD
+
     def read(self):
         return item_state.read(self.gh, 5)
 
-    def fail_the_checks(self):
-        """The round's checks fail, which stores an automatic fix round, as `report` does."""
-        found = {"action": "fix", "issue": 5, "pr": 6, "target": 6, "head": self.HEAD}
-        args = (self.gh, self.cfg, found, 6, self.HEAD, 0, self.RED, None, self.REVIEW)
-        end, _ = host.round_ended(*args, write=True)
+    def fail_the_checks(self, run):
+        """The round's checks fail, which stores an automatic fix round, as `report` does in
+        the workflow run `run`."""
+        found = {"action": "fix", "issue": 5, "pr": 6, "target": 6, "head": self.head}
+        # The checks that failed the round before are the stored `rounds.failing`: a round that
+        # fails the same way again is for a person, so each round fails in its own way.
+        # (Numbers do not tell failures apart, so the output holds the letter of the run.)
+        way = chr(ord("a") + run - 1001)
+        failed = [{**check, "output": f"AssertionError in {way}"} for check in self.RED]
+        args = (self.gh, self.cfg, found, 6, self.head, failed, self.REVIEW)
+        with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": str(run)}):
+            end, _ = host.round_ended(*args, write=True)
         self.assertEqual(end, "auto_fix")
         return host.pending_id(self.read()[1], "runAgent", "fix")
 
     def publish_the_fix(self, run):
         """The fix round of the workflow run `run` ends: its agent's and publish results reach
         the state, as the publish job stores them, and the next checks follow."""
-        found = {"action": "fix", "issue": 5, "pr": 6, "target": 6, "head": self.HEAD}
+        found = {"action": "fix", "issue": 5, "pr": 6, "target": 6, "head": self.head}
         output = {"status": "done", "summary": "Fixed.", "checks_run": []}
         agent = {"status": "done", "output": output}
-        args = (self.gh, self.cfg, found, 6, self.HEAD, agent, None, False)
+        # The fix commits a new head: a round that leaves its head as it was changed nothing.
+        pushed = f"{run:x}".rjust(40, "0")
+        args = (self.gh, self.cfg, found, 6, pushed, agent, None, False)
         with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": str(run)}):
             self.assertTrue(host.round_published(*args))
+        self.gh.pulls[6]["head"]["sha"] = self.head = pushed
 
     def dispatch(self, run):
         inputs = {"command": "fix", "number": "6", "note": "", "auto": "true"}
@@ -4715,7 +4728,7 @@ class DispatchedFixRoundsTest(unittest.TestCase):
         self.assertTrue(host.store_import(self.gh, self.cfg, 5, now=IMPORTED_AT))
         ids = []
         for run in (1001, 1002):
-            ids.append(self.fail_the_checks())
+            ids.append(self.fail_the_checks(run))
             before = self.read()[1]
             events = []
             real = host.step
@@ -4790,8 +4803,8 @@ class ConflictRoundsStoredTest(unittest.TestCase):
         args = (self.gh, self.cfg, found, 6, head, agent, None, False)
         with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": str(3000 + number)}):
             self.assertTrue(host.round_published(*args))
-            args = (self.gh, self.cfg, found, 6, head, 0, self.GREEN, None, self.REVIEW)
-            self.assertEqual(host.round_ended(*args, write=True, published=True)[0], "ready")
+            args = (self.gh, self.cfg, found, 6, head, self.GREEN, self.REVIEW)
+            self.assertEqual(host.round_ended(*args, write=True)[0], "ready")
         self.gh.round_comment(6, number + 1, head, "failed", conflicts=True, base_sha=sha)
         self.gh.pulls[6]["head"]["sha"] = self.head = head
 
@@ -4843,8 +4856,9 @@ class UpdatesStoredTest(unittest.TestCase):
         self.assertTrue(host.store_import(self.gh, self.cfg, 5, now=IMPORTED_AT))
         # The round's checks fail: an automatic fix round is stored and counts, as `report` does.
         found = {"action": "fix", "issue": 5, "pr": 6, "target": 6, "head": self.HEAD}
-        args = (self.gh, self.cfg, found, 6, self.HEAD, 0, self.RED, None, self.REVIEW)
-        self.assertEqual(host.round_ended(*args, write=True)[0], "auto_fix")
+        args = (self.gh, self.cfg, found, 6, self.HEAD, self.RED, self.REVIEW)
+        with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": "49"}):
+            self.assertEqual(host.round_ended(*args, write=True)[0], "auto_fix")
         # The round's publish job stores the round, as it does after it pushes the fix on the
         # same head: the stored state then waits for its checks, which the push run stops.
         decision = {"action": "fix", "issue": 5, "pr": 6, "target": 6, "head": self.HEAD}

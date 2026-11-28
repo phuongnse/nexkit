@@ -16,7 +16,7 @@ from nexkit.report import (
     report,
 )
 from nexkit.status import collect, render, to_json
-from tests.support import CLAUDE, make_config
+from tests.support import CLAUDE, IMPLEMENT_OUTPUT, make_config
 from tests.test_report import HEAD, LIMIT, ReportCase, decision, review_result
 
 WITH_CLAUDE = {"agents": CLAUDE}
@@ -339,12 +339,15 @@ class MentionTests(ReportCase):
 
     def test_a_carried_approval_keeps_the_evidence_of_each_item(self):
         review = self.person_review("Rule A")
-        self.candidate(review=review)
+        self.candidate(review=review, output=IMPLEMENT_OUTPUT)
         self.run_report()
         os.environ["GITHUB_RUN_ID"] = "carried"
         self.candidate(review={"stage": "review", "status": "carried", "carried": HEAD})
         self.write("nexkit-review", "carry.json", {"from": HEAD, "carried": True, "why": ""})
         d = decision("review", pr=6, target=6, head="d" * 40, carry_from=HEAD)
+        # The carrying review is of the new head, and starts its run, which the state holds.
+        self.gh.pulls[6]["head"]["sha"] = "d" * 40
+        self.reopened(make_config(notify=["owner"]), d)
         outcome = self.run_report(d=d, cfg=make_config(notify=["owner"]), published=False)
         self.assertEqual(outcome["outcome"], "ready")
         [c] = review["output"]["checklist"]

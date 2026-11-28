@@ -29,7 +29,6 @@ from nexkit import (
 )
 from nexkit import config as configuration
 from nexkit import report as reports
-from nexkit.checks import recorded
 from nexkit.github import GitHubError
 from nexkit.protocol.size import MOST
 from nexkit.report import NO_CHANGE_PLAN, TOO_LARGE, needs_person, report
@@ -51,6 +50,8 @@ from nexkit.state import (
 from tests import engine_here
 from tests.support import (
     BOT_LOGIN,
+    FIX_OUTPUT,
+    IMPLEMENT_OUTPUT,
     FakeGitHub,
     make_config,
     play_resume,
@@ -3562,7 +3563,7 @@ class RoundEndTest(ReportCase):
         self.gh.add_pull(7, 0, head_sha=HEAD, branch="feature/x")
         self.candidate(checks_pass=False)
         d = decision("review", issue=7, pr=7, target=7, head=HEAD, person=True)
-        outcome, calls = self.answers(d=d, published=False)
+        outcome, calls = self.answers(d=d, published=False, start=True)
         self.assertEqual(outcome["outcome"], "person_reviewed")
         self.assertEqual([c["state"]["itemKind"] for c in calls], ["reviewOnly"] * 2)
         self.assertEqual(self.gh.dispatches, [])
@@ -3570,8 +3571,10 @@ class RoundEndTest(ReportCase):
     def test_a_paused_review_waits_for_the_reset_the_host_gives_or_for_a_person(self):
         for resume, reset in ((True, "2026-10-11T04:40:00Z"), (False, None)):
             with self.subTest(resume=resume):
-                self.candidate(review=LIMIT)
+                self.candidate(review=LIMIT, output=FIX_OUTPUT)
                 cfg = make_config(usage_limit={"resume": resume})
+                # Each round starts its own run, as a person's command does.
+                self.reopened(cfg, self.fix())
                 outcome, calls = self.answers(d=self.fix(), cfg=cfg)
                 self.assertEqual(outcome["outcome"], "paused")
                 self.assertEqual(calls[-1]["event"]["result"]["limit"]["reset"], reset)
@@ -3629,6 +3632,12 @@ class RoundEndTest(ReportCase):
         self.assertLess(abs(at - now - timedelta(minutes=15)), timedelta(minutes=1))
 
     def test_a_review_that_stopped_after_the_last_wait_goes_to_a_person(self):
+        # The two runs again that the config gives, the second after its wait, count in the stored
+        # state, as the stops that came before.
+        for before in (0, 1):
+            self.stopped(before)
+        play_resume(self.gh, self.WAITS, datetime.now(UTC) + timedelta(hours=1))
+        self.gh.dispatches.clear()
         outcome, calls = self.stopped(2)
         self.assertEqual(calls[-1]["state"]["again"], {"transient": 2})
         self.assertEqual(outcome["outcome"], "retry_failed")
@@ -3666,23 +3675,31 @@ class RoundEndTest(ReportCase):
         self.assertIn("refused", outcome["attention"])
 
     def test_checks_that_failed_the_same_way_after_a_fix_round_are_kept_for_diagnosis(self):
-        state = {
-            **empty_state(5),
-            "feedback": {
-                "head": "b" * 40,
-                "review": None,
-                "checks": [{"name": "test", "passed": False, "signature": "AssertionError"}],
-            },
-        }
-        self.gh.comment(6, render_state(state))
-        self.candidate(checks_pass=False)
-        self.run_report(d=self.fix(auto=True, autopilot="true"))
+        auto = self.fix(auto=True, autopilot="true")
+        # The round before failed the checks, and its end stored them as the checks that the
+        # next automatic fix round is asked to fix.
+        self.candidate(checks_pass=False, output=FIX_OUTPUT)
+        self.run_report(d=auto)
+        _, found = read_state(self.gh.comments(6))
+        self.assertNotIn("repeated", found["feedback"])
+        self.assertEqual(
+            [a["kind"] for a in item_state.read(self.gh, 5)[1]["pending"]], ["runAgent"]
+        )
+        # The fix round's checks fail the same way.
+        self.candidate(checks_pass=False, output=FIX_OUTPUT)
+        self.run_report(d=auto)
         _, found = read_state(self.gh.comments(6))
         self.assertEqual(found["feedback"]["repeated"], ["test"])
         self.assertIn("run_id", found["feedback"])
         # A review round's checks are no fix round's.
+        event = {**comment_event(6, "/nexkit review"), "issue": {"number": 6, "pull_request": {}}}
+        found = route(self.gh, "issue_comment", event, cfg=make_config())
+        self.assertEqual(found["action"], "review")
         self.candidate(checks_pass=False)
-        self.run_report(d=decision("review", pr=6, target=6, head=HEAD))
+        review = decision("review", pr=6, target=6, head=HEAD)
+        self.run_report(d=review, start=True)
+        # The review round's end was decided: the failing checks started the next automatic fix.
+        self.assertEqual(item_state.read(self.gh, 5)[1]["rounds"]["counted"], 2)
         _, found = read_state(self.gh.comments(6))
         self.assertNotIn("repeated", found["feedback"])
 
@@ -3705,17 +3722,18 @@ class ManyChecksTest(ReportCase):
             for n in range(count)
         ]
 
-    def round_with(self, before, after, d, count=40):
-        state = {**empty_state(5), "feedback": {"head": "b" * 40, "review": None}}
-        state["feedback"]["checks"] = recorded(self.checks(before, count))
-        self.gh.comment(6, render_state(state))
-        self.write("nexkit-agent", "result.json", {"status": "done", "tokens": TOKENS})
-        self.write("nexkit-checks", "checks.json", self.checks(after, count))
+    def play(self, failing, d, count):
+        self.write("nexkit-agent", "result.json", {"status": "done", "output": FIX_OUTPUT})
+        self.write("nexkit-checks", "checks.json", self.checks(failing, count))
         self.write("nexkit-review", "result.json", review_result())
-        # The stored state that the implement run left: the pull request in its checks. The
-        # fix round that this round starts is stored by its report, which the dispatch carries out.
-        seed(self.gh, make_config(), 5)
         self.run_report(d=d)
+
+    def round_with(self, before, after, d, count=40):
+        """The round before failed the checks `before`, which the stored state of its end holds;
+        then the fix round `d` ends with `after` failing. The pull request's first state is
+        stored by the run of the round before, as GitHub does."""
+        self.play(before, self.fix(auto=True), count)
+        self.play(after, d, count)
         return read_state(self.gh.comments(6))[1]["feedback"].get("repeated")
 
     def fix(self, **kw):
@@ -3914,7 +3932,7 @@ class RoundPublishedTest(HostCase):
 
     def fail_the_checks(self):
         """The round's checks fail, which stores an automatic fix round with its agent pending."""
-        args = (self.gh, self.cfg, self.found, 6, HEAD, 0, self.RED, None, self.REVIEW)
+        args = (self.gh, self.cfg, self.found, 6, HEAD, self.RED, self.REVIEW)
         self.assertEqual(host.round_ended(*args, write=True)[0], "auto_fix")
         doc = self.read()[1]
         self.assertEqual(doc["state"], "fixing")
@@ -4211,6 +4229,133 @@ class DispatchedTest(HostCase):
         self.assertNotRegex(Path(host.__file__).read_text(), r'f"command-\{')
 
 
+class RoundStoredStateTest(ReportCase):
+    """A round's checks and review are decided on the item's stored state alone
+    (`host.round_ended`): the stored state says which result goes next, and its counts, the
+    review's runs again included, are the stored ones."""
+
+    GOOD = {"verdict": "approve", "criteria": [], "findings": []}
+    GREEN = [{"name": "test", "passed": True}]
+
+    def setUp(self):
+        super().setUp()
+        self.cfg = make_config(
+            retry={"wait_minutes": [0, 0, 15]},
+            autopilot={"enabled": True, "scope": None, "labels": {"on-hold": {"hold": True}}},
+        )
+        seed(self.gh, self.cfg, 5)
+
+    def read(self):
+        return item_state.read(self.gh, 5)[1]
+
+    def ended(self, run, review, label=None, write=True, **kw):
+        """The end of the round's checks and review in workflow run `run`."""
+        d = kw.pop("d", decision("fix", pr=6, target=6, head="b" * 40))
+        with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": str(run)}):
+            return host.round_ended(
+                self.gh, self.cfg, d, 6, HEAD, self.GREEN, review, label=label, write=write, **kw
+            )
+
+    def spied(self):
+        """A stand-in for `host.step` that keeps each event it got and what it answered."""
+        seen, real = [], host.step
+
+        def spy(state, event, found_policies):
+            found = real(state, event, found_policies)
+            seen.append((event, found))
+            return found
+
+        return seen, spy
+
+    def stop(self, run, **kw):
+        """The review stops on a transient error in workflow run `run`."""
+        now = datetime.now(UTC)
+        return self.ended(run, ("transient", "Overloaded"), now=now, **kw)[0]
+
+    def test_a_review_that_runs_again_sends_only_its_review_result(self):
+        self.assertEqual(self.stop(1), ("now", 1))
+        [review] = [a for a in self.read()["pending"] if a["kind"] == "runAgent"]
+        self.assertEqual(review["stage"], "review")
+        seen, spy = self.spied()
+        with mock.patch.object(host, "step", spy):
+            end, _ = self.ended(2, ("done", self.GOOD))
+        self.assertEqual(end, "ready")
+        # The checks went before: the engine already took them, so only the review's result goes.
+        [(event, found)] = seen
+        self.assertEqual((event["kind"], event["action"]), ("actionFinished", review["id"]))
+        self.assertEqual(event["id"], f"round-review-6-{HEAD}-run-2-{review['id']}")
+        revision = self.read()["revision"]
+        self.assertEqual(self.read(), {**found["state"], "revision": revision})
+        self.assertEqual(self.read()["state"], "ready")
+
+    def test_the_review_result_of_a_state_that_waits_for_its_review_is_stored(self):
+        self.stop(1)
+        before = self.read()["revision"]
+        seen, spy = self.spied()
+        with mock.patch.object(host, "step", spy):
+            self.ended(2, ("done", self.GOOD), write=False)
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(self.read()["revision"], before)
+        with mock.patch.object(host, "step", spy):
+            self.ended(2, ("done", self.GOOD))
+        self.assertEqual(self.read()["revision"], before + 1)
+
+    def test_the_runs_again_of_a_transient_review_are_the_stored_ones(self):
+        # The round's command says seven runs again, and the stored state none.
+        d = decision("fix", pr=6, target=6, head="b" * 40, retry=7)
+        self.assertEqual(self.stop(1, d=d), ("now", 1))
+        self.assertEqual(self.read()["again"], {"transient": 1})
+        # Another stop under a command that says none counts one more, from the stored count.
+        d = decision("fix", pr=6, target=6, head="b" * 40, retry=0)
+        self.assertEqual(self.stop(2, d=d), ("now", 2))
+        self.assertEqual(self.read()["again"], {"transient": 2})
+        # The third wait is the config's fifteen minutes.
+        later = self.stop(3, d=d)
+        self.assertEqual(later[0], "later")
+        self.assertEqual(self.read()["again"], {"transient": 3})
+
+    def test_a_state_that_waits_for_neither_the_checks_nor_the_review_is_refused(self):
+        doc = restate(self.gh, 5, state="ready", pending=[])
+        with self.assertRaises(host.Refused) as refused:
+            self.ended(1, ("done", self.GOOD))
+        self.assertIn("waits for neither the round's checks nor its review", str(refused.exception))
+        self.assertEqual(self.read()["revision"], doc["revision"])
+        # The report leaves the round to a person with the reason, and stores nothing.
+        self.candidate()
+        d = decision("review", pr=6, target=6, head=HEAD)
+        outcome = self.run_report(d=d, published=False)
+        self.assertEqual(outcome["outcome"], "needs_human")
+        self.assertIn("refused", outcome["attention"])
+        self.assertIn("waits for neither the round's checks nor its review", outcome["attention"])
+        self.assertEqual(self.read()["revision"], doc["revision"])
+
+    def test_a_hold_goes_first_only_while_the_stored_state_is_not_held(self):
+        seen, spy = self.spied()
+        with mock.patch.object(host, "step", spy):
+            self.ended(1, ("done", self.GOOD), label="on-hold")
+        kinds = [event["kind"] for event, _ in seen]
+        self.assertEqual(kinds, ["held", "actionFinished", "actionFinished"])
+        self.assertTrue(self.read()["hold"])
+        # Held by the stored state already: no second `held`. A new round of the pull request
+        # waits for its checks again.
+        checks = {"id": "a9.1", "next": None, "kind": "runChecks", "changeVersion": HEAD}
+        restate(self.gh, 5, state="checking", pending=[checks], waits=[], attention=None)
+        self.assertTrue(self.read()["hold"])
+        seen.clear()
+        with mock.patch.object(host, "step", spy):
+            self.ended(2, ("done", self.GOOD), label="on-hold")
+        self.assertEqual([event["kind"] for event, _ in seen], ["actionFinished"] * 2)
+
+    def test_the_ids_of_a_second_round_on_the_same_head_are_new_to_the_engine(self):
+        self.assertEqual(self.stop(1), ("now", 1))
+        before = self.read()["recentEvents"]
+        self.assertEqual(self.stop(1), ("now", 2))
+        # The same run again, but the review run it answers is another one: no duplicate.
+        events = self.read()["recentEvents"]
+        self.assertEqual(len(set(events)), len(events))
+        self.assertGreater(len(events), len(before))
+
+
 class RoundDecideTest(ReportCase):
     """The decisions about a pull request's rounds read the item's stored state document, and
     those that run in the item's group store the engine's answer at the next revision
@@ -4266,20 +4411,27 @@ class RoundDecideTest(ReportCase):
     def ended(self, **options):
         review = ("done", self.GOOD)
         d = decision("fix", pr=6, target=6, head="b" * 40)
-        return host.round_ended(
-            self.gh, self.cfg, d, 6, HEAD, 0, self.GREEN, None, review, **options
-        )
+        return host.round_ended(self.gh, self.cfg, d, 6, HEAD, self.GREEN, review, **options)
 
     def test_a_rounds_checks_and_review_each_store_a_revision(self):
         seen, spy = self.spied()
-        with mock.patch.object(host, "step", spy):
+        with (
+            mock.patch.dict(os.environ, {"GITHUB_RUN_ID": "77"}),
+            mock.patch.object(host, "step", spy),
+        ):
             end, _ = self.ended(write=True)
         self.assertEqual(end, "ready")
         [(_, checks, _), (_, review, _)] = seen
         self.assertEqual((checks["kind"], review["kind"]), ("actionFinished",) * 2)
         _, doc = self.read()
         self.assertEqual(doc["revision"], 3)
-        self.assertEqual(doc["recentEvents"][-2:], [f"checks-6-{HEAD}", f"round-review-6-{HEAD}"])
+        # Each id holds the run and the id of the action that the result answers.
+        names = [
+            f"checks-6-{HEAD}-run-77-{checks['action']}",
+            f"round-review-6-{HEAD}-run-77-{review['action']}",
+        ]
+        self.assertEqual([checks["id"], review["id"]], names)
+        self.assertEqual(doc["recentEvents"][-2:], names)
         # The review's result names the review run that the checks' answer started.
         self.assertEqual(seen[1][0]["revision"], 2)
         self.assertEqual(seen[1][2]["state"], doc)
@@ -4294,7 +4446,7 @@ class RoundDecideTest(ReportCase):
         seen, spy = self.spied()
         with mock.patch.object(host, "step", spy):
             self.ended()
-        # The stored state says what the markers' document says, but the id of its outbox.
+        # The stored outbox holds another id for its checks, which the result names.
         agreeing = copy.deepcopy(seen[0][0])
         agreeing["revision"] = 2
         agreeing["pending"][0]["id"] = "a7.1"
@@ -4311,26 +4463,23 @@ class RoundDecideTest(ReportCase):
         d = decision("fix", pr=6, target=6, head="b" * 40)
 
         def after(**options):
-            args = (self.gh, self.cfg, d, 6, HEAD, 0, self.RED, review, False, None, None)
+            args = (self.gh, self.cfg, d, 6, HEAD, self.RED, review, False, None, None)
             return host.after_round(*args, **options)
 
         self.assertEqual(after(), "auto_fix")
+        # The count is the stored one, the only count the round's end is decided on.
         self.store(counted=3)
         self.assertEqual(after(), "needs_human")
-        # NexKit 6's count is no floor: the stored one is current.
         self.store(counted=0)
-        args = (self.gh, self.cfg, d, 6, HEAD, 3, self.RED, review, False, None, None)
-        self.assertEqual(host.after_round(*args), "auto_fix")
+        self.assertEqual(after(), "auto_fix")
 
     def test_nexkit_6_s_count_is_used_only_when_no_state_can_be_read(self):
         self.assertEqual(host._stored_count(None, 3, "counted"), 3)
         self.assertEqual(host._stored_count(None, -1, "counted"), 0)
         self.assertEqual(host._stored_count(self.read()[1], 3, "counted"), 0)
 
-    def test_a_decision_that_falls_back_to_the_markers_keeps_the_stored_counts(self):
+    def test_a_rounds_end_keeps_the_stored_counts(self):
         self.store(conflicts=1, counted=2)
-        # The markers' document of a round's end holds no conflict round: it differs from the
-        # stored state, so the decision falls back to it.
         self.assertEqual(self.ended(write=True)[0], "ready")
         rounds = self.read()[1]["rounds"]
         self.assertEqual((rounds["conflicts"], rounds["counted"]), (1, 2))
@@ -5320,10 +5469,13 @@ class MergeFindsTest(ReportCase):
     AUTO = make_config(merge={"auto": True})
 
     def merge(self, cfg=None):
-        self.candidate()
+        # The implement round's result fits its schema, so that the stored round is published.
+        self.candidate(output=IMPLEMENT_OUTPUT)
         return self.run_report(cfg=cfg or self.AUTO)
 
     def merged_by_person(self):
+        # The item's state was stored while its issue was open.
+        host.store_import(self.gh, self.AUTO, 5)
         self.gh.issues[5].update(state="closed", state_reason="completed")
         self.gh.pulls[6].update(state="closed", merged=True, merged_by={"login": "olivia"})
 
@@ -5333,6 +5485,7 @@ class MergeFindsTest(ReportCase):
             outcome = self.merge()
         self.assertEqual(outcome["outcome"], "pull_closed")
         self.assertEqual(seen.call_args.args[4], {"version": HEAD, "merged": True, "empty": False})
+        self.reopened(self.AUTO)
         self.merged_by_person()
         with mock.patch.object(host, "change_seen", side_effect=host.Refused("no")):
             outcome = self.merge()
@@ -5340,6 +5493,7 @@ class MergeFindsTest(ReportCase):
         self.assertIn("refused to decide", outcome["attention"])
 
     def test_a_pull_request_closed_unmerged_is_not_sent_to_the_engine(self):
+        host.store_import(self.gh, self.AUTO, 5)
         self.gh.issues[5].update(state="closed", state_reason="not_planned")
         self.gh.pulls[6].update(state="closed", merged=False)
         with mock.patch.object(host, "change_seen") as seen:
@@ -5348,6 +5502,7 @@ class MergeFindsTest(ReportCase):
         seen.assert_not_called()
 
     def test_a_merge_found_while_github_refuses_is_the_engines_too(self):
+        host.store_import(self.gh, self.AUTO, 5)
         self.gh.merge_error = GitHubError(405, "Pull Request is not mergeable")
         self.gh.pulls[6].update(state="closed", merged=True, merged_by={"login": "olivia"})
         with mock.patch.object(host, "change_seen", wraps=host.change_seen) as seen:
@@ -5386,7 +5541,7 @@ class MergeFindsTest(ReportCase):
             self.assertEqual(self.merge(cfg)["outcome"], "merged")
         self.assertEqual(self.gh.issues[1]["state"], "open")
         self.assertEqual(ended.call_args.args[2:], (1, ended.call_args.args[3], 5, "accepted"))
-        self.gh.reopen(6, 5)
+        self.reopened(cfg)
         self.gh.pulls[6]["state"] = "open"
         with mock.patch.object(host, "part_ended", return_value="close"):
             self.assertEqual(self.merge(cfg)["outcome"], "merged")

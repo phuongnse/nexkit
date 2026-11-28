@@ -100,6 +100,31 @@ def restate(gh, number, **fields):
     return item_state.read(gh, number)[1]
 
 
+def conflicting_round(gh, cfg, conflicts=0, number=5, pull=6, version=HEAD):
+    """Item `number` after a fix round on `pull` ended on the commit `version`, which conflicts
+    with its base branch, as the report leaves it: the agent's result stored
+    (`host.round_published`), the `publish` of the stage pending, and `conflicts` conflict rounds
+    used. Seeds the item when it has no state."""
+    if item_state.read(gh, number)[1] is None:
+        seed(gh, cfg, number)
+    change = {"id": str(pull), "version": version}
+    rounds = item_state.read(gh, number)[1]["rounds"]
+    restate(
+        gh,
+        number,
+        state="fixing",
+        change=change,
+        pending=[first_state.agent_run("fix", version)],
+        rounds={**rounds, "conflicts": 0},
+        recentEvents=[],
+    )
+    found = {"action": "fix", "issue": number, "pr": pull, "target": pull, "head": version}
+    output = {"status": "done", "summary": "Fixed.", "checks_run": []}
+    agent = {"status": "done", "output": output}
+    assert not host.round_published(gh, cfg, found, pull, version, agent, None, True)
+    return restate(gh, number, rounds={**rounds, "conflicts": conflicts})
+
+
 def merging(gh, cfg, number=5, since=None, **fields):
     """Seed item `number` and store a merge that waits for required checks over it: `accepting`
     with its `requiredChecks` wait, and `checksSince` when `since` (a time) is given. `fields`
@@ -3855,18 +3880,11 @@ class ConflictingTest(ReportCase):
 
     def test_the_engine_starts_the_conflict_round_or_leaves_it_to_a_person(self):
         cfg = make_config(conflicts={"auto_resolve": True, "max_rounds": 2})
-        conflicting, gh = host.conflicting, self.gh
-        # The conflict rounds used are the item's own: the round comments that its import counts.
-        self.conflict_round(1)
-        self.assertEqual(conflicting(gh, cfg, decision("fix", head="b"), 6, HEAD, None, 1), "round")
-        self.conflict_round(2)
-        self.assertEqual(
-            conflicting(gh, cfg, decision("fix", head="b"), 6, HEAD, None, 2), "used_up"
-        )
-        self.assertEqual(conflicting(gh, cfg, decision(), 6, HEAD, "on-hold", 2), "held")
-
-    def conflict_round(self, number):
-        self.gh.round_comment(6, number, "b" * 40, "failed", conflicts=True, base_sha="d" * 40)
+        # The conflict rounds used are the stored `rounds.conflicts` of the round's state.
+        for used, want in ((1, "round"), (2, "used_up")):
+            conflicting_round(self.gh, cfg, used)
+            args = (self.gh, cfg, decision("fix", head="b"), 6, HEAD, None)
+            self.assertEqual(host.conflicting(*args), want)
 
     def test_a_report_after_the_conflict_rounds_are_used_up_starts_none(self):
         cfg = make_config(conflicts={"auto_resolve": True, "max_rounds": 2})
@@ -4058,10 +4076,91 @@ class RoundPublishedTest(HostCase):
         self.assertEqual(doc["pending"][0]["stage"], "fix")
         self.assertFalse(any(name.startswith("publish-") for name in doc["recentEvents"]))
         # `conflicting` then sends the publish result, which the stored state still waits for.
-        args = (self.gh, self.cfg, self.found, 6, self.NEW, None, 0)
+        args = (self.gh, self.cfg, self.found, 6, self.NEW, None)
         self.assertEqual(host.conflicting(*args, write=True), "round")
         seen = self.read()[1]["recentEvents"]
         self.assertTrue(any(name.startswith("publish-6-") for name in seen))
+
+
+class ConflictingStoredTest(HostCase):
+    """A round whose commit conflicts is decided on the stored state alone
+    (`host.conflicting`): the `publish` that the round's report left pending, or the conflict as
+    an observation when none is pending, a hold label first, and the conflict rounds used are the
+    stored `rounds.conflicts`."""
+
+    HOLD = {"enabled": True, "scope": None, "labels": {"on-hold": {"hold": True}}}
+
+    def setUp(self):
+        super().setUp()
+        self.cfg = make_config(
+            fix={"max_auto_rounds": 3},
+            conflicts={"auto_resolve": True, "max_rounds": 2},
+            autopilot=self.HOLD,
+        )
+        self.issue(5)
+        self.gh.add_pull(6, 5, head_sha=HEAD)
+
+    def read(self):
+        return item_state.read(self.gh, 5)
+
+    def conflicting(self, held=None, **options):
+        args = (self.gh, self.cfg, decision("fix", head="b"), 6, HEAD, held)
+        return host.conflicting(*args, **options)
+
+    def test_a_hold_label_keeps_the_conflict_round_back_and_the_stored_conflicts_as_they_are(self):
+        for used in (0, 1, 2):
+            with self.subTest(conflicts=used):
+                conflicting_round(self.gh, self.cfg, used)
+                self.assertEqual(self.conflicting(held="on-hold", write=True), "held")
+                doc = self.read()[1]
+                self.assertEqual(doc["rounds"]["conflicts"], used)
+                found = (doc["hold"], doc["state"], doc["pending"])
+                self.assertEqual(found, (True, "checking", []))
+
+    def test_a_conflict_is_used_up_at_the_limit_and_a_round_starts_below_it(self):
+        conflicting_round(self.gh, self.cfg, 2)
+        self.assertEqual(self.conflicting(write=True), "used_up")
+        self.assertEqual(self.read()[1]["rounds"]["conflicts"], 2)
+        conflicting_round(self.gh, self.cfg, 1)
+        seen, real = [], host.step
+
+        def spy(state, event, found_policies):
+            found = real(state, event, found_policies)
+            seen.append(event)
+            return found
+
+        with mock.patch.object(host, "step", spy):
+            self.assertEqual(self.conflicting(write=True), "round")
+        # The publish result answers the stored `publish`, under an id that names the run.
+        [event] = seen
+        self.assertEqual(event["kind"], "actionFinished")
+        self.assertTrue(event["id"].startswith(f"publish-6-{HEAD}-"))
+        doc = self.read()[1]
+        found = (doc["state"], runs_of(doc), doc["rounds"]["conflicts"])
+        self.assertEqual(found, ("fixing", ["fix"], 2))
+
+    def test_a_state_in_its_checks_gets_the_conflict_as_an_observation_and_starts_the_round(self):
+        seed(self.gh, self.cfg, 5)
+        self.assertEqual([a["kind"] for a in self.read()[1]["pending"]], ["runChecks"])
+        seen, real = [], host.step
+
+        def spy(state, event, found_policies):
+            found = real(state, event, found_policies)
+            seen.append(event)
+            return found
+
+        with mock.patch.object(host, "step", spy):
+            self.assertEqual(self.conflicting(write=True), "round")
+        self.assertEqual([event["kind"] for event in seen], ["changeObserved"])
+        self.assertTrue(seen[0]["id"].startswith(f"conflict-6-{HEAD}-"))
+        doc = self.read()[1]
+        self.assertEqual((runs_of(doc), doc["rounds"]["conflicts"]), (["fix"], 1))
+
+    def test_a_conflict_on_a_state_in_its_checks_with_no_round_left_is_refused(self):
+        seed(self.gh, self.cfg, 5)
+        restate(self.gh, 5, rounds={**self.read()[1]["rounds"], "conflicts": 2})
+        with self.assertRaises(host.Refused):
+            self.conflicting(write=True)
 
 
 class DispatchedTest(HostCase):
@@ -4425,31 +4524,32 @@ class RoundDecideTest(ReportCase):
         found = host.resync(plain, bare, event)
         self.assertNotIn("updates", found["rounds"])
 
-    def conflicting(self, held=None, used=0, **options):
-        args = (self.gh, self.cfg, decision("fix", head="b"), 6, HEAD, held, used)
+    def conflicting(self, held=None, **options):
+        args = (self.gh, self.cfg, decision("fix", head="b"), 6, HEAD, held)
         return host.conflicting(*args, **options)
 
-    def test_a_conflict_stores_the_engine_s_answer_at_the_next_revision(self):
+    def test_a_conflict_on_a_round_in_its_checks_is_stored_as_an_observation(self):
+        # The import's state has no `publish` pending, so the conflict goes as an observation.
         seen, spy = self.spied()
         with mock.patch.object(host, "step", spy):
             self.assertEqual(self.conflicting(write=True), "round")
         [(_, event, found)] = seen
-        self.assertEqual(event["action"], host.pending_id(found["state"], "publish"))
+        self.assertEqual(event["kind"], "changeObserved")
         self.assertEqual(self.read()[1], found["state"])
         self.assertEqual(self.read()[1]["revision"], 2)
 
-    def test_a_held_conflict_answers_held_whatever_the_stored_conflicts_are(self):
-        self.store(conflicts=2)
-        self.assertEqual(self.conflicting(held="on-hold"), "held")
-        self.assertEqual(self.conflicting(held="on-hold", used=2), "held")
-        self.assertEqual(self.conflicting(held="on-hold", write=True), "held")
-        # Without the label the stored count is at its limit.
-        self.store(conflicts=2)
-        self.assertEqual(self.conflicting(), "used_up")
+    def test_a_held_conflict_on_a_round_in_its_checks_is_left_to_a_person(self):
+        # The engine cancels the checks that run, so that nothing waits in `checking` for the
+        # hold's end, and the host does not decide in its place.
+        for used in (0, 2):
+            self.store(conflicts=used)
+            with self.assertRaises(host.Refused):
+                self.conflicting(held="on-hold")
 
     def test_a_conflict_round_counts_from_the_stored_conflicts(self):
         self.store(conflicts=2)
-        self.assertEqual(self.conflicting(used=0), "used_up")
+        with self.assertRaises(host.Refused):
+            self.conflicting()
         self.assertEqual(host.base_moved(self.gh, self.cfg, 5, 6, HEAD, True, False), "waits")
         self.waiting(outcome="held", held_back="conflicts")
         self.store(conflicts=2)

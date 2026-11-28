@@ -233,7 +233,10 @@ NexKit dispatches takes them from the `diagnose` list of its pending `runAgent` 
 stored state holds and the dispatch carries out, with no event and no read. A round whose commit
 conflicts with its base branch starts the round that resolves it, within
 `conflicts.max_rounds`, unless a label holds the issue, which keeps it back until the sweep
-finds the label gone (`conflicting`, `conflicts_released`). When an implement or fix round
+finds the label gone (`conflicting`, `conflicts_released`). `conflicting` decides on the stored
+state alone: the publish result of the conflicting commit answers the stored `publish` that the
+round's report left pending, and for a NexKit 6 round that the import placed in its checks the
+conflict goes as an observation of the head instead. When an implement or fix round
 ends, its publish job stores the agent's result and then the publish result in one write
 right after it pushes the commit (`publish.store_round`, `round_published`), each only while the
 stored state has that action pending, except the publish result of a commit that conflicts,
@@ -241,8 +244,11 @@ which `conflicting` sends. The stored state then waits for the round's checks on
 head while they run, and a fix round's record of the head it changed and of changing nothing is
 in it. The `report` finds the round stored and sends nothing again, or stores it when the
 publish job could not, and the checks are decided on that state alone. A round that the import
-already placed in its checks stores nothing new, and decides on the markers' document as
-before. The import places a NexKit 6 round whose run is in its check jobs there too.
+already placed in its checks stores nothing new. Its checks and review decide on the markers'
+document as before, but its conflicting commit is an observation on the stored state, where a
+hold on the issue makes the engine cancel the running checks and leaves the round to a person
+(`conflicting` raises `Refused`). The import places a NexKit 6 round whose run is in its check
+jobs there too.
 
 It decides the start of the first plan of a new issue too (`first_plan`, called by
 `autopilot._first_plan`): it decides on the item's stored document (`decide`), or on the import in
@@ -396,7 +402,9 @@ that asks again after such a re-plan is not answered twice in a row. `after_go`,
 `stopped` and `stop_carried_on` no longer go through it: they pass no document of the markers.
 Nor do `no_change_found`, `on_base_found`, `stage_limited`, `stage_transient`, `stage_untrusted`
 and `resumes`, which decide on the stored state alone, and neither do `command`, `_on_base`,
-`closing_command` and `base_moved`, which also takes every count from the stored `rounds`. So do
+`closing_command` and `base_moved`, which also takes every count from the stored `rounds`. So
+does `conflicting`: the conflict rounds used are the stored `rounds.conflicts`, and a hold goes
+first as a `held` event. So do
 `checks_waited`, `refusal_cleared` and `change_seen`: the
 sweep's looks at a merge that waits for required checks or that GitHub refused, and what the
 merge finds. So do `required_failed`, `accept_answer` and `update_failed`. `first_plan` and
@@ -2688,7 +2696,8 @@ def round_published(gh, cfg, decision, pr, head, agent, ran, conflicts):
     then finds the round stored and sends nothing: the stored state waits for the round's
     checks on `head`, with one `runChecks` that the engine gave an id. Each result is sent only
     while the stored state has that action pending, so that a round the import already placed
-    in its checks sends nothing, and the report decides it on the markers' document. True when
+    in its checks sends nothing, and the report decides its checks and review on the markers'
+    document, and its conflicting commit on the stored state (`conflicting`). True when
     the stored state then has `runChecks` pending on `head`: the checks and the review decide on
     it alone (`round_ended`). False when nothing was sent, or the engine did not answer so,
     which warns and lets the round go on as NexKit 6 decides it. Raises `Refused`."""
@@ -3062,42 +3071,54 @@ def _round_end(answer, recheck):
 # -- a round whose change conflicts, and a hold on its conflict round ----------------------
 
 
-def conflicting(gh, cfg, decision, pr, head, held, used, write=False):
+def conflicting(gh, cfg, decision, pr, head, held, write=False):
     """What follows a round of `decision` whose commit `head` on the pull request `pr`
     conflicts with its base branch's tip, as `publish` found, so that its checks and review
     did not run, as the engine decides it (`report._skipped_conflicting`): `round`, the
     round that resolves the conflict; `held` while a label `held` the issue, which keeps it
-    back; or `used_up` when its `used` conflict rounds leave none, or when
+    back; or `used_up` when the conflict rounds used leave none, or when
     `conflicts.auto_resolve` is off. `publish` finds a conflict only with it on, so that
     answer comes only when the configuration changed between the two jobs, where NexKit 6
-    started the round all the same. The conflict rounds used are the stored
-    `rounds.conflicts`, or `used` when no state can be read (`_stored_count`), and none while a
-    label `held` the issue, as NexKit 6 reads them, so that a hold never turns into `used_up`. With
-    `write`, which only `report` passes, the answer is stored (`decide`). Raises
+    started the round all the same.
+
+    It decides on the stored state alone, and the conflict rounds used are the stored
+    `rounds.conflicts`. The label `held` goes first as a `held` event while the stored state is
+    not held. On the stored `publish`, the engine then keeps the round back however many rounds
+    are left, and the stored count does not change. On the observation path below, the engine
+    cancels the checks that run and answers no round, so the host raises `Refused` and leaves
+    the round to a person. The conflict answers the `publish` that the round's report
+    left pending: `round_published` stored the agent's result only, so the publish result of the
+    conflicting commit is sent here. A stored state with no `publish` of the stage pending, as
+    for a NexKit 6 round that the import placed in its checks, gets the conflict as an
+    observation of the head instead (`changeObserved`), as `base_moved` sends it. The engine
+    then leaves its checks pending when no conflict round is left, and the host does not decide
+    for it: that raises `Refused`, which leaves the round to a person, as it does for a hold.
+    With `write`, which only `report` passes, the answer is stored (`decide_all`). Raises
     `Refused`."""
     number = decision["issue"]
     stage = "fix" if decision["action"] == "fix" else "implement"
-    before = {"id": str(pr), "version": str(decision.get("head"))} if stage == "fix" else None
-
-    def built(state):
-        doc = _pull_doc(cfg, number, pr, None, RUNS_OF[stage], 0)
-        doc.update(change=before, observed=None, hold=bool(held))
-        doc["rounds"]["counted"] = _stored_count(state, 0, "counted")
-        doc["rounds"]["conflicts"] = 0 if held else _stored_count(state, used, "conflicts")
-        doc["pending"] = [
-            {"id": first_state.RUN_ID, "next": None, "kind": "publish", "stage": stage}
-        ]
-        return doc
-
     seen = {"changeId": str(pr), "version": head, "conflicts": True}
     seen.update(merged=False, empty=False)
     result = {"change": {"id": str(pr), "version": head}, "refused": None, "observed": seen}
+    # The round's run names both events: a fix round that changed nothing publishes the head that
+    # an earlier event named, and the engine takes a repeated id for a duplicate. The observation
+    # has an id of its own, so that a later move of the base branch on this head is no repeat.
+    run = _run_event_id()
     fields = {"action": first_state.RUN_ID, "changeVersion": None, "result": result}
-    event = _event("actionFinished", number, None, f"publish-{pr}-{head}", **fields)
-    state, actions = decide(
-        gh, cfg, number, event, built, pull=pr, action=("publish", stage), write=write
+    finished = _event("actionFinished", number, None, f"publish-{pr}-{head}-{run}", **fields)
+    observed = _event("changeObserved", number, None, f"conflict-{pr}-{head}-{run}", **seen)
+
+    def row(state):
+        publishing = any(
+            action["kind"] == "publish" and action.get("stage") == stage
+            for action in (state or {}).get("pending") or []
+        )
+        return _hold_row(number, held, finished if publishing else observed)(state)
+
+    state, answers = decide_all(
+        gh, cfg, number, row, None, pull=pr, action=("publish", stage), write=write
     )
-    kinds = {action["kind"]: action for action in actions}
+    kinds = {action["kind"]: action for _, found in answers for action in found}
     if (kinds.get("runAgent") or {}).get("stage") == "fix":
         return "round"
     if state["state"] == "checking" and state["hold"] and not state["pending"]:

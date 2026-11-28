@@ -9,7 +9,20 @@ import json
 from datetime import UTC, datetime
 from unittest import mock
 
-from common import HEAD, TOK, WAIT, WORKFLOW, Artifacts, after, attempt, quiet, seed, snapshot
+from common import (
+    FIX_OUTPUT,
+    HEAD,
+    IMPLEMENT_OUTPUT,
+    TOK,
+    WAIT,
+    WORKFLOW,
+    Artifacts,
+    after,
+    attempt,
+    quiet,
+    seed,
+    snapshot,
+)
 
 from nexkit import autopilot, progress
 from nexkit import report as report_module
@@ -99,7 +112,13 @@ def run(sc):
         else:
             kind = sc["path"].split("_")[1]
             auto = sc["path"].endswith("auto")
-            art.agent({"status": "done", "tokens": TOK})
+            art.agent(
+                {
+                    "status": "done",
+                    "tokens": TOK,
+                    "output": FIX_OUTPUT if kind == "fix" else IMPLEMENT_OUTPUT,
+                }
+            )
             art.checks(
                 [{"name": "test", "run": "make test", "exit_code": 0, "passed": True, "output": ""}]
             )
@@ -122,10 +141,9 @@ def run(sc):
             pub = {"published": True, "pr": 6, "head": HEAD}
             needs = {"publish": {"outputs": {"result": json.dumps(pub)}}}
 
-            seed(gh, cfg)
-
             def first_round():
                 progress.start(gh, d)
+                seed(gh, cfg)
                 return report(
                     gh, d, cfg, needs, art.path, workflow_ref=WORKFLOW, default_branch="main"
                 )

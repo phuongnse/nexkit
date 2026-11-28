@@ -37,9 +37,16 @@ state comment at revision 1 (`common.seed`), as a run in the item's group does
 are used up, so that every later comment has the same id on both trees. The state comment is not
 compared, since NexKit 6 never posts it. The harness records each write of it apart, and counts a
 problem when an item's revision moves backward within a scenario. The line of each family says how
-many of its scenarios stored an item (`seeded k of n`). The `stop`, `pause` and `ended` families
-store the import just after the stage's `progress.start`, so that the stored state holds the agent
-run on its way, as it does when a stage stops in production.
+many of its scenarios stored an item (`seeded k of n`). The `stop`, `pause` and `ended` families,
+and every family whose report plays an implement, fix or review round, store the import just
+after the round's `progress.start`, so that the stored state holds the agent run on its way, as
+it does when a run in the item's group stores it. The scripted agents of those rounds give output
+that fits the stage's result schema, so that the report stores the agent result and the publish
+result (`host.round_published`) before it decides on the stored state. A fix round publishes a new
+head, unless it changed nothing: the pull request is at the head the round started from until the
+import, and at the published head after it. The `diag` family's `route` stores each round itself
+before its `progress.start`, and `refusals` stores the import before the patches that make GitHub
+fail. An implement round starts from the import of a pull request already in its checks.
 
 `--fallbacks` lists under each family the decisions that `host.resync` took from the document that
 NexKit 6's markers give, instead of from the stored state, counted by the host function that

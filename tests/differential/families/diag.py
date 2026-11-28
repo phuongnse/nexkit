@@ -20,6 +20,7 @@ from unittest import mock
 from common import (
     APPROVE,
     FAILED,
+    FIX_OUTPUT,
     PAUSED,
     REQUEST_CHANGES,
     TOK,
@@ -193,7 +194,7 @@ def run(sc):
             art = Artifacts()
             needs = {}
             if d["action"] == "fix":
-                agent = {"status": "done", "tokens": TOK, "output": {"cause": "Env"}}
+                agent = {"status": "done", "tokens": TOK, "output": {**FIX_OUTPUT, "cause": "Env"}}
                 if step["kind"] == "conflicts":
                     agent["start_base"] = "e" * 40
                 art.agent(agent)

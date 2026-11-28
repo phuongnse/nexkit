@@ -23,6 +23,11 @@ HEAD = "c" * 40
 # A failure the base branch has too, as `autopilot.ci_wait` finds it.
 WAIT = {"bug": 77, "workflow": "ci.yml", "branch": "main", "run": 50}
 ENV = {"GITHUB_REPOSITORY": "acme/app", "GITHUB_RUN_ID": "4242"}
+# What a scripted agent gives so that its output fits its stage's result schema
+# (`nexkit/protocol/v1/results/`), and the round's report stores the agent result and then the
+# publish result (`host.round_published`) instead of finding the engine refuse them.
+FIX_OUTPUT = {"status": "done", "summary": "Done.", "checks_run": []}
+IMPLEMENT_OUTPUT = {**FIX_OUTPUT, "changes": ["Add it."], "testing": "Ran make test."}
 
 TS = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)?")
 MARK = re.compile(r"<!-- nexkit:([a-z-]+) ([A-Za-z0-9+/=]+) -->")
@@ -186,11 +191,12 @@ def seed(gh, cfg):
     """Store the import of each open item (`items`) on the tree as the App's state comment at
     revision 1, as a run in the item's group does before its first event (`host.store_import`),
     and record the comment's writes in `STATES`. Call it once, after the fixtures and before
-    the first event, or, for a stage that stops, just after the run's `progress.start`, so that
-    the stored state holds the run on its way as a run in the item's group stores it. NexKit 6
-    has no stored state, so nothing is stored there. Each item uses up one comment id on both
-    trees, so that the comments after it have the same ids, and the issue keeps its
-    `updated_at`: the seed must leave nothing that NexKit 6's tree lacks."""
+    the first event, or, for a stage that stops or a round whose report the family plays, just
+    after the run's `progress.start`, so that the stored state holds the run on its way as a
+    run in the item's group stores it. NexKit 6 has no stored state, so nothing is stored
+    there. Each item uses up one comment id on both trees, so that the comments after it have
+    the same ids, and the issue keeps its `updated_at`: the seed must leave nothing that
+    NexKit 6's tree lacks."""
     global SEEDED
     try:
         from nexkit import host, item_state
@@ -224,24 +230,6 @@ def seed(gh, cfg):
                 else:
                     gh.issues[number]["updated_at"] = stamp
         gh._next = before + 1
-
-
-def count_dispatched_round(gh, number):
-    """Store the conflict round that is about to report as the run of its dispatch stores it,
-    one more conflict round used in the item's state (`host.command`): the round's comment is a
-    fixture that the import before it did not count, and the report of a round that NexKit's
-    own dispatch started finds the round counted. NexKit 6 has no stored state, so nothing is
-    stored there."""
-    try:
-        from nexkit import item_state
-    except ImportError:
-        return
-    comment, stored = item_state.read(gh, number)
-    if stored is None:
-        return
-    found = {**stored, "revision": stored["revision"] + 1}
-    found["rounds"] = {**stored["rounds"], "conflicts": stored["rounds"]["conflicts"] + 1}
-    item_state.write(gh, number, found, (comment, stored))
 
 
 def attempt(fn, *args, **kwargs):

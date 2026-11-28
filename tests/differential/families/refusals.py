@@ -13,6 +13,7 @@ from unittest import mock
 
 from common import (
     HEAD,
+    IMPLEMENT_OUTPUT,
     TOK,
     WORKFLOW,
     Artifacts,
@@ -93,7 +94,7 @@ def run(sc):
         stack.enter_context(quiet())
         refuse(gh, refusal, stack)
         if sc["path"] == "first":
-            art.agent({"status": "done", "tokens": TOK})
+            art.agent({"status": "done", "tokens": TOK, "output": IMPLEMENT_OUTPUT})
             art.checks(
                 [{"name": "test", "run": "make test", "exit_code": 0, "passed": True, "output": ""}]
             )

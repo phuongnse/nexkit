@@ -13,6 +13,7 @@ from unittest import mock
 
 from common import (
     HEAD,
+    IMPLEMENT_OUTPUT,
     TOK,
     WORKFLOW,
     Artifacts,
@@ -100,7 +101,7 @@ def run(sc):
         quiet(),
     ):
         if sc["path"] == "first":
-            art.agent({"status": "done", "tokens": TOK})
+            art.agent({"status": "done", "tokens": TOK, "output": IMPLEMENT_OUTPUT})
             art.checks(
                 [{"name": "test", "run": "make test", "exit_code": 0, "passed": True, "output": ""}]
             )
@@ -121,10 +122,9 @@ def run(sc):
             pub = {"published": True, "pr": 6, "head": HEAD}
             needs = {"publish": {"outputs": {"result": json.dumps(pub)}}}
 
-            seed(gh, cfg)
-
             def first_round():
                 progress.start(gh, d)
+                seed(gh, cfg)
                 return report(
                     gh, d, cfg, needs, art.path, workflow_ref=WORKFLOW, default_branch="main"
                 )

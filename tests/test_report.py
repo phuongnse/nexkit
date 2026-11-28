@@ -438,6 +438,10 @@ class ReportTests(ReportCase):
             "publish": {"outputs": {"result": json.dumps({"published": False, "no_change": True})}}
         }
         os.environ["GITHUB_RUN_ID"] = str(next(self.run_ids))
+        # The implement round is on its way, which the stored state holds, and runs only while no
+        # NexKit pull request is open.
+        self.gh.pulls[6]["state"] = self.gh.issues[6]["state"] = "closed"
+        progress.start(self.gh, decision())
         return report(
             self.gh,
             decision(),

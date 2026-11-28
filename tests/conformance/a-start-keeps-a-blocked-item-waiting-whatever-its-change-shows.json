@@ -1,0 +1,48 @@
+{
+  "policies": {
+    "conflicts": "resolve",
+    "conflictRounds": 2
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "created",
+        "change": {
+          "id": "5",
+          "version": "v1"
+        },
+        "blockers": [
+          "7"
+        ]
+      },
+      "state": "new",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "waits.1.for": "blocker",
+        "waits.1.on": "7"
+      }
+    },
+    {
+      "event": {
+        "kind": "changeObserved",
+        "conflicts": true
+      },
+      "state": "new",
+      "changed": true,
+      "actions": [],
+      "expect": {
+        "observed.conflicts": true
+      }
+    },
+    {
+      "event": {
+        "kind": "requested",
+        "what": "start"
+      },
+      "state": "new",
+      "changed": false,
+      "actions": []
+    }
+  ]
+}

@@ -73,9 +73,6 @@ job holds, and the plugin are described in [Architecture](docs/architecture.md).
 - A session outside NexKit takes only `hand-made` issues, and never merges, pushes a tag or
   releases. See [NexKit on this repository](docs/delivery.md#nexkit-on-this-repository) and
   [D11](docs/decisions/d11-nexkit-works-its-own-issues-on-a-release.md).
-- A change that moves a decision of NexKit 6 into the engine keeps GitHub's behaviour, as [Moving
-  decisions into the engine](docs/testing.md#moving-decisions-into-the-engine) says, and
-  [D10](docs/decisions/d10-an-engine-decides-hosts-carry-out.md) gives the reason.
 
 ## Verify
 

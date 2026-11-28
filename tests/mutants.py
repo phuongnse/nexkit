@@ -1,6 +1,6 @@
 """Mutation check of the engine: break one rule in a copy of the tree, and see the conformance
 suite or the walker report it. A check that reports nothing for a broken rule does not check that
-rule. It needs no checkout of NexKit 6, and the copy has none of NexKit 6's checks.
+rule. It needs no other checkout.
 
 usage: python3 tests/mutants.py [--walks N] [--jobs J] [NAME ...]
 
@@ -538,15 +538,32 @@ MUTANTS = {
             return True
         busy =""",
     },
+    # A start resumes a blocked item's work when its change is observed conflicting, where a
+    # blocker keeps the item waiting whatever its change shows. The case
+    # `a-start-keeps-a-blocked-item-waiting-whatever-its-change-shows` sees it.
+    "start-resumes-a-blocked-item-on-a-conflict": {
+        "path": MACHINE,
+        "old": """or not self.waiting("start") or self.waiting("blocker"):
+                return False""",
+        "new": """or not self.waiting("start"):
+                return False
+            if self.waiting("blocker") and not (self.observed() or {}).get("conflicts"):
+                return False""",
+    },
+    # A round that ran out of time asks for a plan without `supersede`, so the plan of an item
+    # with a change that is split does not withdraw that change (#413). The conformance cases
+    # that name a timed-out fix round in their titles see it.
+    "timed-out-change-asks-no-supersede": {
+        "path": MACHINE,
+        "old": """            if self.s["change"] and "supersede" not in self.s["asked"]:""",
+        "new": """            if False:""",
+    },
 }
 
 
 def _ignored(folder, names):
-    """What the copy leaves out: no history or cache, and no check of NexKit 6's."""
-    skipped = shutil.ignore_patterns(".git", "__pycache__", ".ruff_cache")(folder, names)
-    if Path(folder) == ROOT / "tests":
-        skipped |= {name for name in names if name == "differential"}
-    return skipped
+    """What the copy leaves out: no history or cache."""
+    return shutil.ignore_patterns(".git", "__pycache__", ".ruff_cache")(folder, names)
 
 
 def build(name, folder):

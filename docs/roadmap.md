@@ -35,7 +35,7 @@ These features make up NexKit 6, released from 1.0.0 (2026-10-05) to 6.13.1 (202
 | [Engine and hosts](https://github.com/phuongnse/nexkit/milestone/1) | The loop's decisions in one engine that any host runs, as [The engine](engine.md) describes. NexKit 7.0 ships when the GitHub host runs only through it | In progress |
 
 Built so far: the protocol's schemas, `nexkit-engine step`, `prompt`, `sweep` and `serve`, the state
-document and its import from NexKit 6's markers, and the differential check against NexKit 6. The
+document and its import from NexKit 6's markers. The
 GitHub host runs the engine only as the `nexkit-engine` program and imports none of its code. It
 sends the engine every decision that moves an item. That covers a person's command and
 a closing command, a plan and what follows it, and a new issue's first plan. It also covers a

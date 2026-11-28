@@ -377,6 +377,8 @@ class Item:
             for number in list(dict.fromkeys(waited))[:BLOCKERS]:
                 self.wait("blocker", on=str(number))
         if self.on_its_way:
+            target = self.record.get("target") or self.issue["number"]
+            self.keep_losses(self.record["command"], target)
             return self.running("started", OF_COMMAND.get(self.record["command"], "planning"))
         if last and not handed_on and last.get("status") in autopilot.ACTIVE:
             return self.active(last_comment, last, OF_COMMAND.get(last["command"], "planning"))
@@ -562,6 +564,7 @@ class Item:
                 and self.checking(latest.get("url"))
             ):
                 self.keep_retries(latest.get("retry"))
+                self.keep_losses(*self.of_round(latest))
                 return self.running("started", "checking", automatic=counted_fix(latest))
             return self.active(comment, latest, name, automatic=counted_fix(latest))
         if outcome in CHAINED:
@@ -700,9 +703,16 @@ class Item:
     def active(self, comment, run, name, automatic=False):
         """A run that runs, continues in another, or paused, as `autopilot._stalled` reads it.
         `automatic` marks a run that runs as an automatic fix round. A run that runs again after
-        a transient error keeps the count of its runs again."""
+        a transient error keeps the count of its runs again. One whose comment says it runs also
+        keeps autopilot's count of lost starts of its command, as `keep_losses` says."""
         if run.get("status") != PAUSED:
             self.keep_retries(run.get("retry"))
+            if run.get("status") == RUNNING:
+                if "round" in run and self.pull:
+                    self.keep_losses(*self.of_round(run))
+                else:
+                    command = run.get("command") or self.of_round(run)[0]
+                    self.keep_losses(command, self.issue["number"])
             return self.running("started", name, automatic)
         if run.get("verdict") == "paused":
             # A round paused at its review.
@@ -728,11 +738,40 @@ class Item:
         self.wait("usageLimit", until=iso(at))
         return self.be("paused", name)
 
+    def of_round(self, run):
+        """The command and target that autopilot starts again for a round on the pull request,
+        as `autopilot._reportless` names them: `fix` for a fix round, `review` for any other."""
+        command = "fix" if run_action(run) == "fix" else "review"
+        return command, (self.pull or self.issue)["number"]
+
     def keep_retries(self, count):
         """The engine counts the runs again after a transient error on from `count`, when it is
-        a positive number, as NexKit 6 does."""
+        a positive number, as NexKit 6 does. It is kept next to the count of lost starts."""
         if isinstance(count, int) and not isinstance(count, bool) and count >= 1:
-            self.doc["again"] = {"transient": min(count, 10)}
+            self.doc.setdefault("again", {})["transient"] = min(count, 10)
+
+    def counted_record(self, command, target):
+        """Autopilot's record, when it is of the same `command` and `target` and started within
+        six hours: the only record that counts. Otherwise nothing."""
+        record = self.record
+        at = parse_iso(record.get("at"))
+        same = (record.get("command"), str(record.get("target"))) == (command, str(target))
+        return record if same and at is not None and self.now - at <= autopilot.LOST else {}
+
+    def keep_losses(self, command, target):
+        """The engine counts the starts of `command` on `target` that were lost on from
+        autopilot's record, as NexKit 6 does: `again.lost` is its `tries` (at most 10, when at
+        least 1) and `again.once` says that the start may run only once more."""
+        record = self.counted_record(command, target)
+        tries = record.get("tries")
+        tries = tries if isinstance(tries, int) and not isinstance(tries, bool) else 0
+        again = self.doc.get("again") or {}
+        if tries >= 1:
+            again["lost"] = min(tries, 10)
+        if record.get("once"):
+            again["once"] = True
+        if again:
+            self.doc["again"] = again
 
     def lost(self, run, command, target):
         """A run that ended without a report: one NexKit started by itself starts its
@@ -743,10 +782,8 @@ class Item:
         automatic = bool(run.get("autopilot")) or bool(
             autopilot.run_kinds(run) & {"auto", "autopilot"}
         )
-        record = self.record
+        record = self.counted_record(command, target)
         at = parse_iso(record.get("at"))
-        same = (record.get("command"), str(record.get("target"))) == (command, str(target))
-        record = record if same and at is not None and self.now - at <= autopilot.LOST else {}
         tries = record.get("tries")
         tries = tries if isinstance(tries, int) and not isinstance(tries, bool) else 0
         limit = 1 if record.get("once") else len(autopilot.AGAIN)

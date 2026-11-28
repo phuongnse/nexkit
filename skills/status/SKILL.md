@@ -25,6 +25,10 @@ trust that repository; only on their word, run it again with
    open issues and pull requests in a few batched queries, and says on stderr how far it
    got, so give it a minute on a large repository before you take it for stuck. It
    returns:
+   - `repository`: the repository it read, as `OWNER/REPO`.
+   - `configuration`: the path of the configuration it judged with, and whether it came
+     from the default branch, with that branch's name, or from the checkout with
+     `--local-config`.
    - `issues`: open issues NexKit worked on, each with a `state` (`planning`, `planned`
      with the plan's link and profile, `implementing`, `paused`, `retrying` with its
      `retry_at`, `failed`, `in_pull_request`, `implemented`) and the link to its last run
@@ -46,7 +50,8 @@ trust that repository; only on their word, run it again with
      issue closed as completed) and the `commit` that brought the change, when known.
    - `needs_person`: only the items that need a person, with the reason: what to do, why
      NexKit does not do it itself, and what to look at, such as the question to answer,
-     the failing checks or the files a code owner reviews.
+     the failing checks or the files a code owner reviews. An entry about a setting rather
+     than an item, of kind `setting`, has no number.
    - `autopilot`, only with `autopilot.enabled`: the scope, `max_parallel`, and for each
      open issue in scope what the next sweep does with it, a `state` (`start` with its
      `command`, `split`, `close`, `merge`, `active`, `waits`, `held`) and the `reason`.

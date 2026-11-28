@@ -428,6 +428,9 @@ when a list of what the code defines misses an entry. These rules close each of 
      `nexkit/host.py`.
    - `test_the_skill_lists_each_pull_request_state_the_code_gives_and_no_other`: the pull request
      states that the status skill lists are those that `pull_state` and `pull_item` give.
+   - `test_the_skill_lists_each_key_status_returns_and_no_other`: the keys that [the status
+     skill](../skills/status/SKILL.md) says `nexkit status --json` returns are those that
+     `collect` in `nexkit/status.py` and `cmd_status` in `nexkit/cli.py` write.
    - `test_the_page_lists_each_outcome_an_approval_merges_after_and_no_other`: the outcomes after
      which a writer's approval merges, which [work without a
      command](work-without-a-command.md#work-without-a-command) lists, are those of `APPROVABLE` in

@@ -441,7 +441,7 @@ current format and reads that one from then on.
 On each open issue, and on each person's pull request that gets a non-approving review or a
 `/nexkit` command, the App also keeps one `### NexKit state` comment, which the first run of the
 item posts. It holds the engine's state document and its revision. The first run of an open item builds
-that document from NexKit 6's markers, as [the import](engine.md#versions) describes. The runs of the item take its comments, reviews and hold labels from after that
+that document from NexKit 6's markers, as [the import](engine.md#getting-there) describes. The runs of the item take its comments, reviews and hold labels from after that
 comment, a hold label's adding only when autopilot takes the issue. Every decision that moves the item reads this document and stores the engine's answer in it.
 While no comment is stored, it decides on the import in memory, as [the engine's
 page](engine.md#getting-there) says. A comment of it that someone other than the App

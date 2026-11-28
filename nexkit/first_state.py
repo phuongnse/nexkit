@@ -1,4 +1,4 @@
-"""The first state document of a work item that NexKit 6 left (docs/engine.md#versions).
+"""The first state document of a work item that NexKit 6 left (docs/engine.md#getting-there).
 
 NexKit 6 names no state: it reads where an item is from its comments, as `autopilot.assess`
 does. The import reads the same markers, the open pull request, paused runs and waits, and

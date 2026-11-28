@@ -1989,6 +1989,11 @@ LISTED_STATE = re.compile(r"(?:^|, )`(\w+)`")
 # The status skill's list of autopilot states: the `autopilot` bullet names them after
 # "a `state` (".
 AUTOPILOT_STATES = re.compile(r"- `autopilot`(?:(?!- `).)*?a `state` \(([^)]*)\)")
+# The keys that the status skill says `nexkit status --json` returns: the bullets between "It
+# returns:" and "Rely on these states". The page wraps "It returns:", and its bullets are told apart
+# by their line starts, so the text is searched as it is, not with its whitespace collapsed.
+STATUS_KEYS = re.compile(r"It\s+returns:\n(.*?)\n\s*Rely on these states", re.S)
+LISTED_KEY = re.compile(r"^\s*- `(\w+)`[:,]", re.M)
 # The page and the sentence that list the outcomes after which a writer's approval merges. The
 # group keeps the word `as` before the first outcome, which the outcomes are found after.
 APPROVAL_PAGE = DOCS / "work-without-a-command.md"
@@ -2440,6 +2445,36 @@ def pull_states_of_code():
     return states | states_set_in(status.pull_item)
 
 
+def status_keys_of_code():
+    """The top-level keys of `nexkit status --json`: those of the `data` dict that
+    `status.collect` builds, and each `data[KEY] = ...` there and in `cli.cmd_status`."""
+    keys = set()
+    for fn in (status.collect, cli.cmd_status):
+        for node in ast.walk(ast.parse(inspect.getsource(fn))):
+            if not isinstance(node, ast.Assign):
+                continue
+            for target in node.targets:
+                if (
+                    isinstance(target, ast.Name)
+                    and target.id == "data"
+                    and isinstance(node.value, ast.Dict)
+                ):
+                    keys.update(
+                        k.value
+                        for k in node.value.keys
+                        if isinstance(k, ast.Constant) and isinstance(k.value, str)
+                    )
+                elif (
+                    isinstance(target, ast.Subscript)
+                    and isinstance(target.value, ast.Name)
+                    and target.value.id == "data"
+                    and isinstance(target.slice, ast.Constant)
+                    and isinstance(target.slice.value, str)
+                ):
+                    keys.add(target.slice.value)
+    return keys
+
+
 class StatusSkillTests(unittest.TestCase):
     def test_the_skill_lists_each_issue_state_the_code_sets_and_no_other(self):
         # The page wraps its lines, so the regex reads the text with one space between words.
@@ -2516,6 +2551,33 @@ class StatusSkillTests(unittest.TestCase):
                 self.fail(
                     f"skills/status/SKILL.md lists {pull_state!r}, "
                     "which status.pull_state or status.pull_item does not give"
+                )
+
+    def test_the_skill_lists_each_key_status_returns_and_no_other(self):
+        match = STATUS_KEYS.search(STATUS_SKILL.read_text())
+        if not match:
+            self.fail("skills/status/SKILL.md has no list of keys after its 'It returns:' line")
+        listed_keys = LISTED_KEY.findall(match.group(1))
+        if not listed_keys:
+            self.fail("skills/status/SKILL.md lists no key that `nexkit status --json` returns")
+        for key in sorted({k for k in listed_keys if listed_keys.count(k) > 1}):
+            with self.subTest(key=key):
+                self.fail(f"skills/status/SKILL.md lists {key!r} more than once")
+        listed = set(listed_keys)
+        code = status_keys_of_code()
+        if not code:
+            self.fail("status.collect and cli.cmd_status write no key that the test can read")
+        for key in sorted(code - listed):
+            with self.subTest(key=key):
+                self.fail(
+                    f"skills/status/SKILL.md does not list {key!r}, "
+                    "which status.collect or cli.cmd_status writes"
+                )
+        for key in sorted(listed - code):
+            with self.subTest(key=key):
+                self.fail(
+                    f"skills/status/SKILL.md lists {key!r}, "
+                    "which status.collect and cli.cmd_status do not write"
                 )
 
 

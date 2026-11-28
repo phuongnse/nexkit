@@ -51,8 +51,8 @@ TIMED = ("time", "usageLimit", "requiredChecks")
 # The states of a fix round: a count it took stands only once its review ends.
 COUNTING = ("fixing", "checking", "reviewing")
 # How long after the first refusal for required checks that have not passed the item stops
-# trying the merge and waits for a person (`autopilot.LOST`), and how long a refused accept
-# waits before the host's tick tries it again.
+# trying the accept and waits for a person, since required checks that never pass in that time
+# are taken as lost, and how long a refused accept waits before the host's tick tries it again.
 CHECKS_END = 6 * 3600
 CHECKS_RETRY = 3600
 # The reasons a change in `ready` waits for its accept, which a person's approval may start.
@@ -60,10 +60,11 @@ ACCEPT_WAITS = ("accept", "acceptRefused", "reopened")
 # How many event ids the state keeps, to take each event once.
 RECENT = 20
 UNTRUSTED = "An edit by someone without write access stopped it, and a writer vouches for it again."
-# A host's policies when it leaves one out: NexKit 6's on GitHub without autopilot, as
-# `policies.schema.json` gives each as its default
-# (docs/engine-hosts.md#what-a-host-decides), except
-# `parentEnd`, which keeps the engine's rule: GitHub's `close_parent_issues` is off by default.
+# A host's policies when it leaves one out: the values below, which `policies.schema.json` gives
+# as each `default` (docs/engine-hosts.md#what-a-host-decides). Plans, accepts, conflicts and
+# failures wait for a person, and splits are off. Two fix rounds and three retries run
+# automatically. `parentEnd` ends a split parent once a part was accepted, since nothing is
+# left to do then.
 DEFAULTS = {
     "planApproval": "person",
     "reviewAfterFailingChecks": "always",
@@ -84,9 +85,9 @@ DEFAULTS = {
     "parentEnd": "whenPartAccepted",
 }
 # The policies read as the host gives them at each step, even in a round that keeps the others
-# as it started with them: NexKit 6 reads autopilot's waits at each sweep, and the state keeps
-# none of them. A run's budget, agent, model and effort are read the same way, so a lowered budget
-# or another model applies to the next run.
+# as it started with them: the state keeps none of the waits, the budgets or the agents, so a
+# change to one applies to the next run. A run's budget, agent, model and effort are read the
+# same way, so a lowered budget or another model applies to the next run.
 NOW = ("lostWaits", "budgets", "agents")
 # The policies a round keeps. A round never reads a parent's end: only a split parent does, and a
 # parent is never in a round.
@@ -100,13 +101,13 @@ CONFLICT_AT_ONCE = ("ready", "accepting")
 # The fields of a changeObserved event that the state keeps as its `observed`.
 OBSERVED = ("changeId", "version", "conflicts", "merged", "empty")
 # What a title may end with that does not make it another: ASCII punctuation and whitespace,
-# as `string.punctuation` and `string.whitespace` hold them (`autopilot.repeated_titles`).
+# as `string.punctuation` and `string.whitespace` hold them.
 ENDS = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~ \t\n\r\x0b\x0c"
 # Who may close the item by an answer: closing is a write, so a reader's answer that picks
-# the option that only closes it plans it again (`autopilot._closing_comment`).
+# the option that only closes it plans it again.
 WRITERS = ("decides", "writer")
 # What the engine's answers to a round's questions keep in `asked`: that it answered, and that
-# its answers started a new plan, whose round they start too (`autopilot.asked_again`).
+# its answers started a new plan, whose round they start too.
 ANSWERED = ("answers", "replan")
 # Why an item fails when its own budget runs out (`Step.stop_for_budget`).
 BUDGET_TEXT = {
@@ -114,7 +115,7 @@ BUDGET_TEXT = {
     "time": "The work item's time budget ran out.",
 }
 # What the engine asks a plan once more for, when a plan that is too large is not split, and
-# the attention after a second such plan (`autopilot._split`).
+# the attention after a second such plan.
 AGAIN_FOR = {
     "fewer": ("tooManyParts", "The plan has more parts than a split files, again."),
     "parts": ("noParts", "The plan is too large and names no parts, again."),
@@ -280,8 +281,7 @@ class Step:
 
     def give_back(self, action):
         """An automatic fix round that the engine stops before its review ends gives its count
-        back: it can no longer lead to an accept, and its work was not judged
-        (`report._stop_round`, `maintain._give_back`)."""
+        back: it can no longer lead to an accept, and its work was not judged."""
         rounds = self.s["rounds"]
         work = action["kind"] in ("runChecks", "publish") or (
             action["kind"] == "runAgent" and action["stage"] in ("fix", "review")
@@ -305,9 +305,9 @@ class Step:
         return began is not None and now is not None and now - began > CHECKS_END
 
     def behind_exempt(self):
-        """Whether the six hours of a wait for required checks do not end the merge: this
-        version is observed behind its base, and the conflict policy updates it
-        (`autopilot._merge_step` keeps trying it, since an update brings checks that pass)."""
+        """Whether the six hours of a wait for required checks do not end the accept: this
+        version is observed behind its base, and the conflict policy updates it. The accept keeps
+        being tried then, since an update brings checks that pass."""
         observed = self.s["observed"]
         return bool(
             observed
@@ -386,7 +386,7 @@ class Step:
     def run(self, stage, again=False, diagnose=False, by=None, note=""):
         """Run `stage`'s agent. A fix round names the checks it looks into first: with
         `diagnose`, an automatic fix round, those that failed the same way before and after the
-        fix round before it, as NexKit 6's `route` makes it a diagnosis round; a person's round,
+        fix round before it, which makes it a diagnosis round; a person's round,
         a conflict round and the round that the engine's answers run again name none. A new fix
         round keeps who started it (`by`, a person, or the engine when none), whether it
         diagnoses and the request's `note` until its result records it (`finished_change`)."""
@@ -396,7 +396,7 @@ class Step:
             return False
         if not again and stage != "review":
             # New work starts the count of runs again afresh; a review handed on within the
-            # round keeps it, as NexKit 6's `retry` goes through the stages of one command.
+            # round keeps it, since the stages of one run go on from one another.
             self.forget_retries()
         self.s["rounds"]["started"] += stage in ("implement", "fix") and not again
         if stage in ("implement", "fix") and not again and "supersede" in self.s["asked"]:
@@ -461,7 +461,7 @@ class Step:
 
     def close(self, outcome, finding=None):
         if self.review_only:
-            # A person's own pull request stays theirs, merged, emptied or dropped: the engine
+            # A person's own change stays theirs, accepted, emptied or dropped: the engine
             # never closes it (docs/engine-states.md#states).
             return
         self.do("close", outcome=outcome, finding=finding)
@@ -510,8 +510,8 @@ class Step:
             self.s["asked"].remove("supersede")
 
     def next_fix(self):
-        """The checks or the review fail: an automatic fix round while one is left
-        (`report._report`). A fix round that changed nothing is not run again, since another
+        """The checks or the review fail: an automatic fix round while one is left.
+        A fix round that changed nothing is not run again, since another
         could only change nothing too. The round waits while the base branch has the same
         failure, for the item about it to close or the base to pass again, since a fix here
         would only fix that again; and while a hold is on, as nothing new starts by itself
@@ -532,7 +532,7 @@ class Step:
             rounds["due"] = True
             if base:
                 # The failure is the base branch's, which its own item fixes: the round after
-                # the wait looks into nothing that repeated (`report._report`, `ci_waiting`).
+                # the wait looks into nothing that repeated.
                 rounds.pop("repeated", None)
                 self.wait("baseFailure", base)
             elif not self.s["hold"]:
@@ -543,8 +543,7 @@ class Step:
     def issue_fix(self, fresh=False):
         """Issue the automatic fix round that is due, counted now, while `fixRounds` has one
         left; otherwise a person decides. `fresh`: the round was kept back, so it starts with
-        the policies the host gives now, as NexKit 6 reads `fix.max_auto_rounds` again when
-        it starts it (`autopilot._released`, `_ci_step`)."""
+        the policies the host gives now, so a change of `fixRounds` while it waited applies."""
         rounds = self.s["rounds"]
         rounds.pop("due", None)
         # An automatic fix round is the engine's own work.
@@ -585,7 +584,7 @@ class Step:
 
     def accept_or_ask(self):
         """Accept the change by the accept policy, or ask a person. A hold keeps the engine's
-        accept back until it ends (`report._report`)."""
+        accept back until it ends."""
         if self.p["accept"] == "autoWhenPassed":
             self.move("accepting")
             if not self.s["hold"]:
@@ -617,15 +616,15 @@ class Step:
 
     def reconcile(self, whole=True):
         """Bring the item in line with the latest observation of its change; doing so again
-        changes nothing (docs/engine-states.md#states). Not `whole`, only a merge or an emptied
+        changes nothing (docs/engine-states.md#states). Not `whole`, only an accepted or an emptied
         change acts. Whether it did anything."""
         observed = self.observed()
         if self.final() or self.coming() or not observed:
             return False
         # A failed item waits for a person whatever is observed, and so does one in `new`, but a
         # review-only item that waits to start: a newer version waits for the request that takes
-        # it on. A split parent waits for its parts whatever is pushed to its change, as the
-        # autopilot reads a parent's parts before its pull request (docs/engine-states.md#states).
+        # it on. A split parent waits for its parts whatever its change shows, since its parts
+        # decide it before its change does (docs/engine-states.md#states).
         starting = self.review_only and self.waiting("start")
         whole = whole and self.state not in ("failed", "split")
         whole = whole and (self.state != "new" or starting)
@@ -638,16 +637,15 @@ class Step:
         elif not whole:
             return False
         elif observed["version"] != self.version:
-            # A person's push: what acts on the old version stops, and the new one is checked.
+            # A person's new version: what acts on the old one stops, and the new one is checked.
             self.s["change"] = {**self.s["change"], "version": observed["version"]}
-            # A person's push is checked as the engine's own work.
+            # A person's new version is checked as the engine's own work.
             self.by = None
             self.s.pop("checksSince", None)
             self.s.pop("refusedAcceptable", None)
             if self.state != "fixing":
-                # The round published: its change stays under the push, and the push's checks
-                # judge it, so its count stands, as NexKit 6 keeps it (`report._head_moved`,
-                # `publish.BranchMovedError`). In `fixing`, `move` still cancels the agent and
+                # The round published: its change stays under the new version, and its checks
+                # judge it, so its count stands. In `fixing`, `move` still cancels the agent and
                 # `give_back` returns the count.
                 self.s["rounds"].pop("automatic", None)
             self.check()
@@ -670,8 +668,8 @@ class Step:
         """Whether an accept that was refused and waits for a person is tried again: the latest
         observation says that this version would be accepted now and does not conflict, and
         this version was not refused while an observation said so already, so that it is tried
-        once. It reads no `accept` policy, as NexKit 6 tries a refused merge again after a
-        writer's approval whatever `merge.auto` says (`autopilot._refused_step`)."""
+        once. It reads no `accept` policy: a writer's approval of a refused accept lets the engine
+        try it again whatever `accept` says."""
         observed = self.s["observed"]
         attention = self.s["attention"] or {}
         return bool(
@@ -736,7 +734,7 @@ class Step:
     def at_once(self):
         """Whether a conflict acts now: where nothing runs that it must wait for, and in checks
         when a conflict round can start, since those checks can no longer lead to an accept;
-        NexKit 6 lets them end otherwise."""
+        otherwise they run to their end."""
         if self.state in CONFLICT_AT_ONCE:
             return True
         return (
@@ -767,7 +765,7 @@ class Step:
             rounds["conflicts"] += 1
             self.move("fixing")
             # The round that resolves the conflict is no automatic fix round: the count of
-            # one whose change conflicts stands, as it published (`report._skipped_conflicting`).
+            # one whose change conflicts stands, since the round published it.
             rounds.pop("automatic", None)
             self.run("fix")
         else:
@@ -786,7 +784,7 @@ class Step:
 
     def conflict_held(self):
         """A hold keeps the round that the conflict policy would start back, whatever rounds
-        are left, as NexKit 6's hold label does (`report._skipped_conflicting`): the item waits
+        are left, since nothing new starts by itself under a hold: the item waits
         in `checking`, with nothing running, and the policy applies with its count once the
         hold ends (`resume`). In `ready` and `accepting`, it applies when the hold ends, as
         the reconcile after `released` finds the conflict. Whether it did anything."""
@@ -843,15 +841,15 @@ class Step:
             self.do("accept", changeVersion=self.version, by="engine")
 
     def timed_out(self):
-        """An implement or fix agent ran out of time. With splits on, as autopilot does, the
+        """An implement or fix agent ran out of time. With splits on, the
         item asks once for a plan that splits it; otherwise, the second time, or for an item
         at the deepest level of parts, which is not split, a person decides
-        (`autopilot._stopped`, `split_refused`). An item with a change marks that plan
-        `supersede`: if it is too large, its split withdraws the change."""
+        (a split that is refused or not allowed ends in `failed`). An item with a change
+        marks that plan `supersede`: if it is too large, its split withdraws the change."""
         self.by = None
         deepest = self.s.get("depth", 0) >= self.p["splitDepth"]
         if self.p["splits"] and "split" not in self.s["asked"] and not deepest:
-            # NexKit 6 asks after a fix round too. The plan of an item with a change is split
+            # A fix round that ran out of time asks too. The plan of an item with a change is split
             # only while this mark stands; otherwise it goes on as one change, revised.
             self.s["asked"].append("split")
             if self.s["change"] and "supersede" not in self.s["asked"]:
@@ -883,7 +881,7 @@ class Step:
             # Only a failed or reopened item keeps a version observed meanwhile, for the request
             # that takes it on: the work it asks for starts on that version
             # (docs/engine-states.md#states). A refused request changes nothing, as `step` keeps the
-            # state it got unless reconciling acts, which a merge or an emptied change alone do.
+            # state it got unless reconciling acts, which an accepted or an emptied change alone do.
             self.s["change"] = {**self.s["change"], "version": observed["version"]}
         self.take_place(event)
         # A request with a person starts a person's work, and a sweep's the engine's own.
@@ -896,7 +894,7 @@ class Step:
         self.forget_retries()
         self.forget_lost()
         # A request starts work anew: what a fix round that changed nothing left is no longer
-        # the last word on its version (`report._report` reads `recheck` of a fix round only),
+        # the last word on its version (`next_fix` reads `recheck` of a fix round only),
         # and checks it asks for are not a fix round's, whatever ran last.
         self.s["rounds"].pop("recheck", None)
         self.s["rounds"].pop("fixed", None)
@@ -918,8 +916,8 @@ class Step:
         what, state, change = event["what"], self.state, self.s["change"]
         if what == "start":
             # Only an item that waits to start starts, and a hold or a blocker keeps it
-            # waiting. One that waits in a later state, as an import leaves a round that a
-            # hold kept back, starts that state's work again.
+            # waiting. One that waits in a later state, as a host's first state document may
+            # leave a round that a hold kept back, starts that state's work again.
             if self.review_only or not self.waiting("start") or self.waiting("blocker"):
                 return False
             if state == "new" and not self.s["hold"]:
@@ -991,8 +989,8 @@ class Step:
 
     def waits_to_run_again(self):
         """Whether the item's plan or implement run waits to run again, after a transient stop or
-        a usage limit: a person's `plan` or `go` replaces that wait, as a new command replaces it
-        in NexKit 6, so the run that waits starts nothing once its time comes."""
+        a usage limit: a person's `plan` or `go` replaces that wait, so the run that waits starts
+        nothing once its time comes."""
         return (
             self.state in ("planning", "working")
             and any(wait["for"] in ("time", "usageLimit") for wait in self.s["waits"])
@@ -1001,9 +999,9 @@ class Step:
 
     def vouched(self, event):
         """A writer's `/nexkit trust` after an untrusted edit stopped the item
-        (`autopilot._vouched_again`): the next command that NexKit 6 starts then. A plan on
+        starts the work that a person's next command would start. A plan on
         an item with no change; on one with a change, an automatic fix round, counted, or a
-        person when none is left; the checks and review of a merge that stopped, in `ready`.
+        person when none is left; the checks and review of an accept that stopped, in `ready`.
         A request from anyone else, or on any other stop, changes nothing."""
         by = event["by"]
         if (
@@ -1035,7 +1033,7 @@ class Step:
     def takes_request(self, states):
         """Whether a person's fix or review request is taken: in `states`, or in `fixing`
         while no run is pending there, as when a fix round waits for a hold or the base
-        branch: NexKit 6 runs a person's command then."""
+        branch: nothing runs that the request would cancel."""
         if self.state in states:
             return True
         busy = ("runAgent", "publish", "replaceChange")
@@ -1053,10 +1051,10 @@ class Step:
         )
 
     def unsplit(self):
-        """Why the parts of the plan, which is too large, are not filed, as NexKit 6 decides
-        it (`autopilot._split`), or None: `depth` for an item at the deepest level of parts,
-        or what a plan would need for a split: `fewer` parts than the most a split files,
-        `parts` at all, or parts that do not repeat the item's own `titles`."""
+        """Why the parts of the plan, which is too large, are not filed, or None: `depth` for
+        an item at the deepest level of parts, or what a plan would need for a split: `fewer`
+        parts than the most a split files, `parts` at all, or parts that do not repeat the
+        item's own `titles`."""
         plan = self.s["plan"]
         if self.s.get("depth", 0) >= self.p["splitDepth"]:
             return "depth"
@@ -1088,8 +1086,8 @@ class Step:
         plan["approved"] = True
         self.by = "person"
         self.forget_answers()
-        # A split that its rules refuse goes on as one change, as a person's `/nexkit go` on
-        # such a plan does in NexKit 6.
+        # A split that its rules refuse goes on as one change, as a person's go on such a plan
+        # does.
         if self.splits(plan):
             self.start_split()
         else:
@@ -1141,7 +1139,7 @@ class Step:
 
     def picks_closing(self, answers, asked):
         """Whether `answers` pick, for a question of those `asked` that attention waits for,
-        the option that only closes the item (`state.closing_answer`)."""
+        the option that only closes the item."""
         return any(
             0 < answer["question"] <= len(asked)
             and 0 < answer["option"] == asked[answer["question"] - 1].get("closes", 0)
@@ -1182,10 +1180,10 @@ class Step:
     def approved_accept(self, event, reason):
         """A person's approval of a change that waits for its accept: under `autoWhenPassed` it
         is accepted, and under `person` the approval changes nothing, since that person accepts
-        it themselves. After a refused accept or a reopened pull request, an approval of any
-        version of the change starts it, as NexKit 6 tries a merge again on the head that passed;
-        only an approval of the change's own version accepts a change that waits for its accept.
-        A conflict that the host observed is the conflict policy's, never an approval's."""
+        it themselves. After a refused accept or a reopened change, an approval of any
+        version of the change starts it, since the accept is tried again on the version that
+        passed; only an approval of the change's own version accepts a change that waits for its
+        accept. A conflict that the host observed is the conflict policy's, never an approval's."""
         if (
             self.review_only
             or self.p["accept"] != "autoWhenPassed"
@@ -1198,7 +1196,7 @@ class Step:
 
     def on_dropRequested(self, event):
         self.move("dropped")
-        # A person's own pull request stays theirs: `close` leaves a review-only item open.
+        # A person's own change stays theirs: `close` leaves a review-only item open.
         self.close("notPlanned")
         return True
 
@@ -1285,12 +1283,12 @@ class Step:
         checks = wait["for"] == "requiredChecks" and self.state == "accepting"
         if checks and self.checks_waited() and not self.behind_exempt():
             # Required checks that neither pass nor fail are a person's to look into, and the
-            # merge is not tried again (`autopilot._merge_step`).
+            # accept is not tried again.
             self.move("ready")
             self.need("acceptRefused", "The required checks have not passed for six hours.")
             return True
-        # A step that runs goes on under a hold, as NexKit 6's `maintain.resume_paused` reads no
-        # hold label: a run paused at a usage limit or after a transient stop runs again at its
+        # A step that runs goes on under a hold, since a pause only delays work that already
+        # started: a run paused at a usage limit or after a transient stop runs again at its
         # tick. A fix round that is due, an accept, a conflict round and the restart of lost
         # work (a `time` wait while the count of lost work stands) wait for `released`.
         restart = wait["for"] == "time" and self.s.get("again", {}).get("lost")
@@ -1338,8 +1336,8 @@ class Step:
     def on_commented(self, event):
         """A person's comment: the engine may answer the next plan's questions again, and with
         automatic approval a plan that waits for a person on an item with no change is
-        planned again, since the plan did not hold what the comment says
-        (`autopilot._commented_after`). An item that failed for nothing is planned again
+        planned again, since the plan did not hold what the comment says.
+        An item that failed for nothing is planned again
         under `afterFailure` `replan` (`fails_for_nothing`)."""
         if event["by"]["role"] == "outside":
             return False
@@ -1366,8 +1364,8 @@ class Step:
         """A person's comment on the questions of a round that wait, with automatic approval.
         On an item with no change, questions the engine could not answer are planned again,
         since the round stopped where the plan did not say what the comment says; questions
-        it answered once in a row are answered again, since a person acted
-        (`autopilot._stopped`). Whether it did either."""
+        it answered once in a row are answered again, since a person acted.
+        Whether it did either."""
         if self.p["planApproval"] != "autoWhenClean":
             return False
         if self.round_waits("question") and not self.s["change"]:
@@ -1379,8 +1377,8 @@ class Step:
         return False
 
     def on_blockerClosed(self, event):
-        """An item that blocks this one ended, or the bug issue of a failure that the base
-        branch has: the waits on it end. With automatic approval, the questions of a round on
+        """An item that blocks this one ended, or the blocker for a failure of the
+        base branch: the waits on it end. With automatic approval, the questions of a round on
         an item with no change, which the engine could not answer, are planned again: the
         round may have stopped for that work. An item that failed for
         nothing is planned again whether or not it waited on that blocker
@@ -1415,8 +1413,9 @@ class Step:
         attention = self.s["attention"] or {}
         told = (attention.get("reason"), attention.get("text"), attention.get("ref"))
         # The engine's own states never reach this: `need` and `move` cancel or withdraw a
-        # notice whenever attention changes. It guards a state that a host or an import wrote
-        # (docs/engine.md#the-state-document), so that a stale notice is not sent again.
+        # notice whenever attention changes. It guards a state that a host wrote, such as its first
+        # state document (docs/engine.md#the-state-document), so that a stale notice is not sent
+        # again.
         if action["kind"] == "needPerson" and told != (
             action["reason"],
             action["text"],
@@ -1437,8 +1436,7 @@ class Step:
     def restarts(self, action):
         """Whether lost work starts again: an agent run or checks that the engine started by
         itself, in the state that runs them. A person's work waits for a person, and a lost
-        publish, replace, update, accept or parts creation fails, as it writes
-        (`autopilot._reportless`)."""
+        publish, replace, update, accept or parts creation fails, as it writes."""
         if action.get("by") == "person":
             return False
         if action["kind"] == "runAgent":
@@ -1447,8 +1445,8 @@ class Step:
 
     def lost(self, action, event):
         """Lost work starts again after each wait of `lostWaits` in turn, a wait of 0 at once,
-        counting nothing again, and a person decides after the last (`autopilot._again`). A run
-        whose agent spent tokens ran, so it starts only once more (`_agent_ran`). A hold keeps
+        counting nothing again, and a person decides after the last. A run
+        whose agent spent tokens ran, so it starts only once more. A hold keeps
         the start back until `released`."""
         waits = self.p["lostWaits"]
         again = self.s.get("again", {})
@@ -1599,7 +1597,7 @@ class Step:
         """The agent stopped at a usage limit: the item waits for its reset, and then the same
         stage runs again at its tick, counting nothing again and even under a hold (`on_tick`).
         A limit whose reset the host does not give, as when it does not resume such runs, waits
-        for a person (`report.pause`)."""
+        for a person."""
         if limit["reset"] is None:
             self.move("failed")
             self.need("failed", limit["message"] or "The agent stopped at its usage limit.")
@@ -1610,8 +1608,8 @@ class Step:
 
     def transient(self, stage):
         """The agent stopped on a transient error: after each wait of `retryWaits` in turn the
-        same stage runs again, counting nothing again, and after the last a person decides
-        (`report._retry`). A wait of 0 runs it again at once."""
+        same stage runs again, counting nothing again, and after the last a person decides.
+        A wait of 0 runs it again at once."""
         waits = self.p["retryWaits"]
         count = self.s.get("again", {}).get("transient", 0)
         if count >= len(waits):
@@ -1631,13 +1629,13 @@ class Step:
         self.do("wait", wait=wait["id"], until=until)
 
     def finished_plan(self, output, number):
-        """What follows a plan, as NexKit 6 decides it (`autopilot._planned`). With automatic
+        """What follows a plan. With automatic
         approval: a plan that is too large is split, or planned once more for what a split
         needs; one that finds no change ends the item; one that needs paths only a person
         changes waits; questions are answered by the `answers` policy, at most once in a row,
         or wait; and a clean plan starts the change. Otherwise a person decides every plan,
-        one that finds no change too, as NexKit 6 closes an item by itself only with
-        autopilot."""
+        one that finds no change too, since the engine closes an item by itself only with
+        automatic approval."""
         # What follows a plan is the engine's own work, whoever asked for the plan.
         self.by = None
         # Whether the engine's answers started this plan, with no person acting since. Answers
@@ -1682,7 +1680,7 @@ class Step:
         """Answer the plan's questions with their recommended options and plan again, when the
         `answers` policy lets the engine and every question has one, at most once in a row:
         when the plan its answers started asks again and no person acted since, a person
-        decides (`autopilot.asked_again`). A recommended option that only closes the item is
+        decides. A recommended option that only closes the item is
         a person's to pick."""
         asked = self.s["plan"]["questions"]
         if self.p["answers"] != "recommended" or not all(item["recommended"] for item in asked):
@@ -1700,7 +1698,7 @@ class Step:
     def split_or_ask(self):
         """File the parts of a plan that is too large, all of them, or plan once more for what
         a split needs; after a second such plan, or at the deepest level of parts, a person
-        decides (`autopilot._split`)."""
+        decides."""
         plan = self.s["plan"]
         why = self.unsplit()
         if why is None:
@@ -1715,10 +1713,9 @@ class Step:
             self.start_plan()
 
     def plan_waits(self):
-        """The plan waits for a person, for what NexKit 6 asks of them first
-        (`report.needs_person`): its approval, of a plan that is too large or finds no change;
-        a hand-made change; answers; or its approval. A person answers a plan's questions
-        whatever attention says first."""
+        """The plan waits for a person, for what the engine asks of them first: its
+        approval, of a plan that is too large or finds no change; a hand-made change; answers;
+        or its approval. A person answers a plan's questions whatever attention says first."""
         plan = self.s["plan"]
         ref = plan["text"]["ref"]
         self.move("awaitingApproval")
@@ -1774,14 +1771,13 @@ class Step:
     def blocked(self, output, number, stage, again):
         """A round that stopped as blocked: one whose change needs paths only a person changes
         waits for that person, whatever it asks; one that asks waits for answers, which the
-        engine may give (`answer_round`); one that neither asks nor needs such paths fails
-        (`autopilot._stopped`)."""
+        engine may give (`answer_round`); one that neither asks nor needs such paths fails."""
         conflicts = [
             {**item, "question": f"`{item['file']}`: {item['question']}"}
             for item in output.get("open_conflicts", [])
         ]
         named = [*output.get("questions", []), *conflicts]
-        # A question with no text asks nothing (`state.questions`).
+        # A question with no text asks nothing.
         asked = [_question(item) for item in named if str(item["question"]).strip()]
         asked = asked[: MOST["questions"]]
         if not asked and not output.get("protected_paths"):
@@ -1790,7 +1786,7 @@ class Step:
             return
         self.move("awaitingApproval")
         # The round's finding that no change is needed counts only with an implement round's
-        # recommendation to close the item (`report._autopilot_fields`).
+        # recommendation to close the item.
         found = stage == "implement" and bool(filled(output.get("no_change")))
         self.s["questions"] = {"ref": number, "stage": stage, "items": asked, "noChange": found}
         if output.get("protected_paths"):
@@ -1803,7 +1799,7 @@ class Step:
     def answer_round(self, again):
         """Answer a blocked round's questions with their recommended options, with automatic
         approval when the `answers` policy lets the engine and every question has one, at most
-        once in a row, as `answer_or_ask` does for a plan (`autopilot._stopped`): an implement
+        once in a row, as `answer_or_ask` does for a plan: an implement
         round that found no change is needed and recommends only closing the item ends it, unless
         a change exists, which a person then closes; a
         recommended option that only closes the item is a person's to pick; one that changes
@@ -1861,8 +1857,8 @@ class Step:
             {"severity": item["severity"], "text": clip(item["body"], "finding")}
             for item in findings[: MOST["findings"]]
         ]
-        # The verdict and the criteria decide, as in NexKit 6: a blocking finding of a review
-        # that approves goes to the next fix round only if one runs (`report.apply_criteria`).
+        # The verdict and the criteria decide: a blocking finding of a review that approves goes
+        # to the next fix round only if one runs.
         if (
             output["verdict"] == "request_changes"
             or "unmet" in rounds["criteria"]
@@ -1874,9 +1870,8 @@ class Step:
 
     def keep_review(self, output):
         """Keep the review as the last one, for the prompts of the next review and fix
-        rounds: its findings with file, line and body, as NexKit 6 keeps them
-        (`report._kept_findings`): all of them up to the most, else the blocking ones first,
-        each group in the reviewer's order."""
+        rounds: its findings with file, line and body. All of them are kept up to the most,
+        else the blocking ones first, each group in the reviewer's order."""
         rounds = self.s["rounds"]
         found = output["findings"]
         kept = found
@@ -1924,7 +1919,7 @@ class Step:
             self.check()
         if not any(item["kind"] == "runChecks" for item in self.s["pending"]):
             # The change conflicts, so its checks do not run: the checks after the next round
-            # have none of this round's to compare with (`report._skipped_conflicting`).
+            # have none of this round's to compare with.
             for key in ("failing", "repeated", "fixed"):
                 rounds.pop(key, None)
 
@@ -1968,9 +1963,8 @@ class Step:
     def repeats(self, failing):
         """Keep the failing checks, each by the digest of its name and signature, and, for the
         checks of a fix round, which of them failed with the same signature before it: the
-        next automatic fix round diagnoses those first (`report._report`'s
-        `feedback.repeated`). A check that fails twice in one result counts by its last
-        failing result."""
+        next automatic fix round diagnoses those first. A check that fails twice in one result
+        counts by its last failing result."""
         rounds = self.s["rounds"]
         before = set(rounds.pop("failing", []))
         now = {check["name"]: check["signature"] or check["name"] for check in failing}
@@ -2004,16 +1998,16 @@ class Step:
             self.on_conflict_found()
         elif result["refusal"] == "checkFailed":
             # A required check failed at the accept: a fix round, as after the round's own
-            # checks, which waits while that failure is the base branch's
-            # (`report._required_failed`). Not a recheck: those checks are not the round's.
+            # checks, which waits while that failure is the base branch's. Not a recheck: those
+            # checks are not the round's.
             rounds = self.s["rounds"]
             rounds["baseFailure"] = result.get("baseFailure") or None
             rounds.pop("recheck", None)
             self.next_fix()
         elif result["refusal"] == "behind":
             # The branch is behind its base: an update brings it up to date without an agent,
-            # while `conflictRounds` has one left, counted apart from conflict rounds
-            # (`report._update_branch`). Under `person`, or with none left, a person decides.
+            # while `conflictRounds` has one left, counted apart from conflict rounds. Under
+            # `person`, or with none left, a person decides.
             limit = self.p["conflictRounds"]
             if self.p["conflicts"] == "person":
                 self.move("ready")
@@ -2044,8 +2038,7 @@ class Step:
             self.need("untrusted", result["text"] or UNTRUSTED)
         elif result["refusal"] in ("transient", "headMoved", "needsPerson"):
             # A newer version observed first was already checked by the reconcile, which
-            # cancelled this accept: what is left waits for a person (`report._refused`,
-            # `report._head_moved`).
+            # cancelled this accept: what is left waits for a person.
             self.move("ready")
             self.need("acceptRefused", result["text"] or "The accept was refused.")
         else:
@@ -2185,8 +2178,7 @@ def _bare(title):
 def _question(question):
     """A question as the state keeps it: its texts clipped, at most MOST["options"] options,
     and no number that names an option it left out. A round's question keeps the options that
-    only a new plan carries out, but the one that only closes the item
-    (`state.replanning_options`)."""
+    only a new plan carries out, but the one that only closes the item."""
     options = [clip(option, "option") for option in question["options"][: MOST["options"]]]
     kept = {
         "question": clip(question["question"], "question"),
@@ -2214,9 +2206,9 @@ def _closes(question):
 
 
 def newest(rounds):
-    """The number of the newest round that the state keeps a record of, or 0: records that an
-    import made carry NexKit 6's numbers, which count every run on a pull request, so the
-    numbers that the engine gives go on from them."""
+    """The number of the newest round that the state keeps a record of, or 0: a host's first
+    state document may carry round numbers that count more runs than the engine's, so the
+    numbers that the engine gives go on after them."""
     found = [record["round"] for record in rounds.get("fixes") or []]
     if rounds.get("lastReview"):
         found.append(rounds["lastReview"]["round"])

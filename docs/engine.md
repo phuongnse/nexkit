@@ -343,8 +343,8 @@ The protocol is built for delivery at least once, in any order a host's queues g
 ## The sweep
 
 Waits, holds and *blocked by* links live in each item's state, so `step` decides whether an item
-may start. `sweep` only chooses among the items that may: it orders them by priority, wave,
-milestone and age, applies how many items run at once and which accounts are at a usage limit,
+may start. `sweep` only chooses among the items that may: it orders them by priority, group,
+wave and age, applies how many items run at once and which accounts are at a usage limit,
 and answers the items to start. The host sends each a `requested` event of the kind `start`,
 which `step` takes only for an item in `new` that waits to start and is not held, so a late or
 repeated start changes nothing. A host that starts each item when it is made, as an application
@@ -352,12 +352,12 @@ may, needs no sweep, but still sends `blockerClosed` when a part's earlier part 
 observes every open change from time to time.
 
 The `sweep` call trusts its items. The host lists, oldest first, only the items that may start,
-and gives each its labels, the index of its milestone in the host's milestone order (none when it
-has no milestone), its wave, whether other changes wait for it (`awaited`) and its account. The
-call refuses only a request that breaks its schema or names one item twice. It orders the items by
-the first of the `priority` labels that an item has, then by milestone with no milestone last, then
-by wave among items of the same milestone, then by the order the host listed them in. An item with
-no milestone ignores its wave.
+and gives each its `tags`, the rank of its group in the host's order (`group`, none when it has no
+group), its wave within the group, whether other changes wait for it (`awaited`) and its account.
+The call refuses only a request that breaks its schema or names one item twice. It orders the items
+by the first of the `priority` tags that an item has, then by group with no group last, then by
+wave among items of the same group, then by the order the host listed them in. An item with no
+group ignores its wave.
 
 Starts stay within `maxParallel`, counting the items that already run. Each start takes a place. An
 `awaited` item starts even when the limit is reached, and its start is flagged `beyondLimit`. An

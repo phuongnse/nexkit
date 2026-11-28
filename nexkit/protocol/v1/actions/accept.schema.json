@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/phuongnse/nexkit/protocol/v1/actions/accept.schema.json",
-  "$comment": "Accept the change: a merge, or an accept of a draft.",
+  "$comment": "Accept the change: such as a merge or an accept of a draft.",
   "type": "object",
   "properties": {
     "id": {

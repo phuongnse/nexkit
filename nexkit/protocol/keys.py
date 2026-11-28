@@ -1,6 +1,6 @@
 """The protocol names keys in camelCase; NexKit's records, as the engine's, use snake_case. These
 two converters rename every key of a record, so the host and the engine share them. Standard
-library only, as `nexkit.textutil` is."""
+library only (D8)."""
 
 from __future__ import annotations
 

@@ -13,8 +13,8 @@ from .machine import EngineError
 def sweep(items, policies, running, limited):
     """`(starts, waits)` for `items`, listed oldest first, with `running` items already running.
 
-    The order is the item's first `priority` label, then its milestone with none last, then its
-    wave within the milestone, then its place in `items`. Starts stay within `maxParallel`,
+    The order is the item's first `priority` tag, then its group with none last, then its
+    wave within the group, then its place in `items`. Starts stay within `maxParallel`,
     counting `running`, except an `awaited` item, which starts beyond it. An item on an account
     in `limited` never starts and takes no place."""
     seen = set()
@@ -27,11 +27,11 @@ def sweep(items, policies, running, limited):
 
     def key(pair):
         position, item = pair
-        labels = set(item.get("labels") or [])
-        rank = next((n for n, label in enumerate(priority) if label in labels), len(priority))
-        milestone = item.get("milestone")
-        wave = item.get("wave", 0) if milestone is not None else 0
-        return (rank, milestone is None, milestone or 0, wave, position)
+        tags = set(item.get("tags") or [])
+        rank = next((n for n, tag in enumerate(priority) if tag in tags), len(priority))
+        group = item.get("group")
+        wave = item.get("wave", 0) if group is not None else 0
+        return (rank, group is None, group or 0, wave, position)
 
     starts, waits = [], []
     for _, item in sorted(enumerate(items), key=key):

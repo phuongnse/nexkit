@@ -1,8 +1,9 @@
 {
-  "note": "The host's milestone order decides, an item with no milestone goes last and ignores its wave, and a priority item with no milestone goes first.",
+  "note": "The highest listed priority tag goes first, then the others in the list's order, then the items with none, each set oldest first.",
   "policies": {
     "priority": [
-      "bug"
+      "bug",
+      "security"
     ]
   },
   "running": 0,
@@ -10,45 +11,41 @@
   "items": [
     {
       "item": "1",
-      "milestone": null,
-      "wave": 3
+      "tags": []
     },
     {
       "item": "2",
-      "milestone": 2
+      "tags": [
+        "security"
+      ]
     },
     {
       "item": "3",
-      "milestone": 0
+      "tags": [
+        "bug"
+      ]
     },
     {
       "item": "4",
-      "labels": [
-        "bug"
-      ],
-      "milestone": null
+      "tags": [
+        "bug",
+        "security"
+      ]
     },
     {
       "item": "5",
-      "milestone": 1
-    },
-    {
-      "item": "6",
-      "milestone": null,
-      "wave": 0
+      "tags": [
+        "docs"
+      ]
     }
   ],
   "starts": [
     {
-      "item": "4",
-      "beyondLimit": false
-    },
-    {
       "item": "3",
       "beyondLimit": false
     },
     {
-      "item": "5",
+      "item": "4",
       "beyondLimit": false
     },
     {
@@ -60,7 +57,7 @@
       "beyondLimit": false
     },
     {
-      "item": "6",
+      "item": "5",
       "beyondLimit": false
     }
   ],

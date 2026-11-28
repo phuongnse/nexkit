@@ -1,32 +1,32 @@
 {
-  "note": "Within one milestone a lower wave goes first, but an earlier milestone's higher wave still goes before a later milestone's lower wave.",
+  "note": "Within one group a lower wave goes first, but an earlier group's higher wave still goes before a later group's lower wave.",
   "policies": {},
   "running": 0,
   "limited": [],
   "items": [
     {
       "item": "1",
-      "milestone": 1,
+      "group": 1,
       "wave": 0
     },
     {
       "item": "2",
-      "milestone": 0,
+      "group": 0,
       "wave": 2
     },
     {
       "item": "3",
-      "milestone": 0,
+      "group": 0,
       "wave": 0
     },
     {
       "item": "4",
-      "milestone": 0,
+      "group": 0,
       "wave": 1
     },
     {
       "item": "5",
-      "milestone": 1,
+      "group": 1,
       "wave": 1
     }
   ],

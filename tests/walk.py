@@ -92,7 +92,7 @@ INVARIANTS = {
     "in `ready` with `acceptRefused`",
     "sweep": "a sweep answers every item once, starts within `maxParallel` except an awaited item "
     "(always started, flagged beyond the limit), none on a limited account, in the order of "
-    "priority, milestone, wave and place, and each wait counts those running before it",
+    "priority, group, wave and place, and each wait counts those running before it",
     "required-checks": "a start of the wait for required checks lives only in `accepting`, on "
     "the change's version; a refusal for them that have not passed leaves one wait, a tick and "
     "the first start of that version; a tick more than six hours after it needs a person, "
@@ -1460,12 +1460,12 @@ class Walker:
         that the walk's events stay as they were, and check the answer against the sweep's
         rules."""
         rng = random.Random(f"sweep-{seed}-{w}")
-        labels = ["urgent", "later", "docs", "x"]
+        words = ["urgent", "later", "docs", "x"]
         items = [
             {
                 "item": str(number),
-                "labels": rng.sample(labels, rng.randrange(3)),
-                "milestone": rng.choice([None, 0, 1, 2]),
+                "tags": rng.sample(words, rng.randrange(3)),
+                "group": rng.choice([None, 0, 1, 2]),
                 "wave": rng.randrange(3),
                 "awaited": rng.random() < 0.2,
                 "account": rng.choice([None, None, "a", "b"]),
@@ -1477,7 +1477,7 @@ class Walker:
             "call": "sweep",
             "policies": {
                 "maxParallel": rng.choice([None, 1, 2, 3, 4]),
-                "priority": rng.sample(labels, rng.randrange(4)),
+                "priority": rng.sample(words, rng.randrange(4)),
             },
             "running": rng.randrange(5),
             "limited": rng.sample(["a", "b"], rng.randrange(3)),
@@ -1520,16 +1520,16 @@ class Walker:
 
         def key(name):
             item = by_item[name]
-            labels_ = set(item["labels"])
-            rank = next((n for n, label in enumerate(priority) if label in labels_), len(priority))
-            milestone = item["milestone"]
-            wave = item["wave"] if milestone is not None else 0
-            return (rank, milestone is None, milestone or 0, wave, position[name])
+            tags = set(item["tags"])
+            rank = next((n for n, tag in enumerate(priority) if tag in tags), len(priority))
+            group = item["group"]
+            wave = item["wave"] if group is not None else 0
+            return (rank, group is None, group or 0, wave, position[name])
 
         everyone = sorted(by_item, key=key)
         order = [entry["item"] for entry in starts]
         if order != [name for name in everyone if name in set(order)]:
-            flag("starts are not in the order of priority, milestone, wave and place", info)
+            flag("starts are not in the order of priority, group, wave and place", info)
         # Each wait counts the items running at its turn: those that ran and the starts before it.
         before = {}
         count = running

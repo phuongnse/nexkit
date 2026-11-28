@@ -86,7 +86,7 @@
   },
   "$defs": {
     "number": {
-      "$comment": "An id as the host shows it to people, such as an issue's number.",
+      "$comment": "An id as the host shows it to people, such as a number.",
       "type": [
         "string",
         "integer"

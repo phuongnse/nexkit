@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/phuongnse/nexkit/protocol/v1/actions/publish.schema.json",
-  "$comment": "Make the agent's work the change: a commit and a pull request, or a draft.",
+  "$comment": "Make the agent's work the change: a new change from the agent's work, such as a commit on a branch or a draft.",
   "type": "object",
   "properties": {
     "id": {

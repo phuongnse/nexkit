@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/phuongnse/nexkit/protocol/v1/state.schema.json",
-  "$comment": "One work item's state document, which the host stores and passes back. It holds decisions and the history that the prompts show, not other prose. As `protocol.size` measures it, JSON in UTF-8 with sorted keys and no spaces, it is at most 48,000 bytes, so that its base64 fits one GitHub comment. Each list the results and events fill has the most items it keeps (`maxItems`), and its texts are clipped as they come in. When a document would still pass the limit, the engine shortens the findings, the questions and options, the protected paths, the attention's text and the repeated checks' names, then the last review's findings, the fix records' texts and, last, the names and signatures of the checks and the conflicting files in them, to fit, and, if that is not enough, the oldest fix records leave out the checks that still failed after them.",
+  "$comment": "One work item's state document, which the host stores and passes back. It holds decisions and the history that the prompts show, not other prose. As `protocol.size` measures it, JSON in UTF-8 with sorted keys and no spaces, it is at most 48,000 bytes, so that its base64 fits a text field of 65,536 characters. Each list the results and events fill has the most items it keeps (`maxItems`), and its texts are clipped as they come in. When a document would still pass the limit, the engine shortens the findings, the questions and options, the protected paths, the attention's text and the repeated checks' names, then the last review's findings, the fix records' texts and, last, the names and signatures of the checks and the conflicting files in them, to fit, and, if that is not enough, the oldest fix records leave out the checks that still failed after them.",
   "type": "object",
   "properties": {
     "schemaVersion": {
@@ -511,7 +511,7 @@
           "const": true
         },
         "automatic": {
-          "$comment": "The fix round under way is an automatic one that `counted` holds, until its review ends: one that the engine stops before then gives its count back, such as when a conflict round takes over or a person pushes while its agent runs. A person's push after the round published keeps the count.",
+          "$comment": "The fix round under way is an automatic one that `counted` holds, until its review ends: one that the engine stops before then gives its count back, such as when a conflict round takes over or a person makes a new version while its agent runs. A person's new version after the round published keeps the count.",
           "const": true
         },
         "failing": {
@@ -561,7 +561,7 @@
           "additionalProperties": false
         },
         "fixes": {
-          "$comment": "The latest five fix rounds, oldest first, as the fix prompt shows them: `round` is the engine's count of started rounds, or the next number after an imported record's; `auto` whether the engine started it, `diagnosis` whether it looked into repeated checks; the note, the agent's summary and the cause it found are clipped to 2,000, 4,000 and 2,000 characters. `failing` lists the checks that still failed after the round, by name and failure signature (at most 200 characters), and is left out until its checks end; empty when every check passed. `conflicts` names the files of a merge of the base branch that conflicted, which only an imported record has. Left out until the first round.",
+          "$comment": "The latest five fix rounds, oldest first, as the fix prompt shows them: `round` is the engine's count of started rounds, or the next number after a record of a host's first document; `auto` whether the engine started it, `diagnosis` whether it looked into repeated checks; the note, the agent's summary and the cause it found are clipped to 2,000, 4,000 and 2,000 characters. `failing` lists the checks that still failed after the round, by name and failure signature (at most 200 characters), and is left out until its checks end; empty when every check passed. `conflicts` names the files of a merge of the base branch that conflicted, which only a record of a host's first document has. Left out until the first round.",
           "type": "array",
           "items": {
             "type": "object",

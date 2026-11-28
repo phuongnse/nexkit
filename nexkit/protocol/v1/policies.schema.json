@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/phuongnse/nexkit/protocol/v1/policies.schema.json",
-  "$comment": "A host's policies, which come with every call, as docs/engine-hosts.md#what-a-host-decides lists them. A policy left out takes its default, NexKit 6's on GitHub without autopilot, except `parentEnd`, which keeps the engine's rule (GitHub's `close_parent_issues` is off by default). These are the policies the engine decides with.",
+  "$comment": "A host's policies, which come with every call, as docs/engine-hosts.md#what-a-host-decides lists them. A policy left out takes its `default`. Plans, accepts, conflicts and failures wait for a person, splits are off, two fix rounds and three retries run automatically, and a split parent ends once a part was accepted, since nothing is left to do then. These are the policies the engine decides with.",
   "type": "object",
   "properties": {
     "planApproval": {
@@ -68,7 +68,7 @@
       "default": "never"
     },
     "afterFailure": {
-      "$comment": "What follows a failed round that has nothing for a person to answer. Under `replan`, an item that failed because its round was blocked with nothing to answer, on no change, is planned again after a person's comment or a blocker's close; the GitHub host sends `replan` with autopilot.",
+      "$comment": "What follows a failed round that has nothing for a person to answer. Under `replan`, an item that failed because its round was blocked with nothing to answer, on no change, is planned again after a person's comment or a blocker's close.",
       "enum": [
         "person",
         "replan"
@@ -90,7 +90,7 @@
       "maximum": 10
     },
     "parentEnd": {
-      "$comment": "Whether a split parent ends when its parts did: whenPartAccepted ends it as accepted once every part ended and one was accepted, and person leaves it to a person (splitIncomplete). Only a split parent reads it, so a round's stored policies leave it out. A host that leaves it out gets the first; the GitHub host sends person when `close_parent_issues` is off.",
+      "$comment": "Whether a split parent ends when its parts did: whenPartAccepted ends it as accepted once every part ended and one was accepted, and person leaves it to a person (splitIncomplete). Only a split parent reads it, so a round's stored policies leave it out. A host that leaves it out gets whenPartAccepted.",
       "enum": [
         "whenPartAccepted",
         "person"

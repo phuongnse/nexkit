@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The differential check as CI and NexKit's checks run it: a fixed sample of the engine against
+# The differential check, run by hand: a fixed sample of the engine against
 # NexKit 6 at harness.V6, and then the random walks of the engine (tests/walk.py), which need no
 # NexKit 6 and stay after 7.0. NEXKIT_V6 names a checkout of that commit to use; otherwise one is
 # made in a temporary folder.

@@ -23,8 +23,8 @@
       "timeout_minutes": 10
     },
     {
-      "name": "differential",
-      "run": "tests/differential/check.sh",
+      "name": "walks",
+      "run": "python3 tests/walk.py --walks 1000",
       "timeout_minutes": 20,
       "slow": true,
       "unaffected_by": [
@@ -68,7 +68,7 @@
       }
     },
     "hard": {
-      "when": "Everything that is not standard. That covers a change to the engine's states or decisions, the protocol's schemas, the GitHub host's calls of the engine, the import of NexKit 6's markers, prompts and their goldens, runtimes and pins, publishing, merging, retries and autopilot, and anything a mistake in which could let an agent write with a token, leak a secret, pass a marker that NexKit did not write, or start, repeat or merge work no rule allows. When unsure between standard and hard, choose hard.",
+      "when": "Everything that is not standard. That covers a change to the engine's states or decisions, the protocol's schemas, the GitHub host's calls of the engine and the state it stores, prompts and their goldens, runtimes and pins, publishing, merging, retries and autopilot, and anything a mistake in which could let an agent write with a token, leak a secret, pass a marker that NexKit did not write, or start, repeat or merge work no rule allows. When unsure between standard and hard, choose hard.",
       "stages": {
         "plan": {
           "model": "claude-opus-5-5"

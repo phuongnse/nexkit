@@ -298,6 +298,18 @@ class ClosingAnswerTests(unittest.TestCase):
         self.assertIn("Pull request #6 is already open for this issue", decision["reason"])
         self.assertEqual(decision["reply_to"], 5)
 
+    def test_a_failed_item_plans_again_beside_its_open_pull_request(self):
+        gh = self.gh = FakeGitHub()
+        gh.add_issue(5)
+        gh.add_pull(6, 5)
+        reported(gh, 6, "a" * 40)
+        self.assertTrue(host.store_import(gh, self.cfg, 5))
+        read = item_state.read(gh, 5)
+        failed = {**read[1], "state": "failed", "waits": [], "revision": read[1]["revision"] + 1}
+        self.assertTrue(item_state.write(gh, 5, failed, read))
+        decision = self.decide("/nexkit plan Split the work")
+        self.assertEqual(decision["action"], "plan")
+
     def test_a_closing_command_is_the_engines_to_close_on_the_stored_state(self):
         # The engine is asked once, with the answer, and the stored state is not changed.
         before = item_state.read(self.gh, 5)

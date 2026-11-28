@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
-from nexkit import autopilot, first_state, host, item_state, state
+from nexkit import autopilot, first_state, host, item_state, progress, state
 from nexkit import maintain as maintain_module
 from nexkit.github import GitHubError
 from nexkit.maintain import maintain
@@ -1950,6 +1950,14 @@ class WaitTests(AnswerAndSplitCase):
         row = {"round": 1, "trigger": "implement", "url": f"u{pull}", "status": "success"}
         self.gh.comment(pull, render_run({**row, **run}))
 
+    def fix_runs(self, issue, pull):
+        """A fix round of `pull` is on its way, and the item's state is stored while it runs, as
+        `nexkit route` stores it: the stored state waits for the agent that stops."""
+        head = self.gh.pulls[pull]["head"]["sha"]
+        decision = {"action": "fix", "issue": issue, "pr": pull, "head": head, "run_id": "7"}
+        progress.start(self.gh, decision)
+        host.store_import(self.gh, self.cfg, issue)
+
     def test_a_pull_request_that_needs_a_person_waits_and_leaves_its_place(self):
         from nexkit.status import collect
 
@@ -2032,9 +2040,10 @@ class WaitTests(AnswerAndSplitCase):
         self.assertNotIn("Needs a person\n  nothing", render(data))
 
     def test_a_fix_round_out_of_time_is_carried_on_as_report_promised(self):
-        decision = {"action": "fix", "issue": 5, "pr": 9}
+        decision = {"action": "fix", "issue": 5, "pr": 9, "head": "a" * 40}
         agent = {"status": "error", "timed_out": True}
         self.with_pull(5, 9)
+        self.fix_runs(5, 9)
         self.assertTrue(autopilot.carries_on(self.gh, self.cfg, decision, "agent_error", agent))
         round_ = {
             "trigger": "fix",

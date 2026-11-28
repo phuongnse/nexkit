@@ -2474,61 +2474,96 @@ class AfterRoundTest(ReportCase):
 
 class StoppedTest(HostCase):
     """What follows a fix round that stopped as blocked, and a round that ran out of time, is
-    the engine's answer, in NexKit 6's words."""
+    the engine's answer on the item's stored state, in NexKit 6's words. The state is stored
+    while the round runs, as `nexkit route` stores it, so that it waits for the round's agent;
+    a round that the import placed after the upgrade waits for autopilot's start instead."""
 
-    def fix_stopped(self, number, pull, asked=(), **fields):
-        """A plan, a pull request, and its fix round that stopped with the questions `asked`."""
+    def fix_stopped(self, number, pull, asked=(), cfg=None, **fields):
+        """A plan, a pull request, and its fix round that stopped with the questions `asked`.
+        With `cfg`, the item's state is stored while the round runs, and the round stops after."""
         self.issue(number)
         self.plan(number)
         self.gh.add_pull(pull, number, head_sha="c" * 40)
         self.run_comment(number, "go", outcome="pr_opened")
         found = questions([dict(item) for item in asked])
         row = {"round": 2, "trigger": "fix", "url": "https://github.com/acme/app/actions/runs/9"}
-        row["head"] = "c" * 40
-        row.update(status="failure", action="fix", outcome="agent_blocked", questions=found)
-        self.gh.comment(pull, render_run({**row, **fields}, "Stopped."))
+        row.update(head="c" * 40, action="fix")
+        running = self.gh.comment(pull, render_run({**row, "status": "running"}, "Running."))
+        if cfg is not None:
+            seed(self.gh, cfg, number)
+        row.update(status="failure", outcome="agent_blocked", questions=found)
+        self.gh.update_comment(running["id"], render_run({**row, **fields}, "Stopped."))
+
+    def timed_out(self, number, cfg=None, **fields):
+        """A plan, then a `/nexkit go` that ran out of time. With `cfg`, the item's state is
+        stored while the round runs, and the round stops after."""
+        self.issue(number)
+        self.plan(number)
+        url = f"https://github.com/acme/app/actions/runs/{number}"
+        started = {"url": url, "command": "go", "status": "running"}
+        comment = self.gh.comment(number, render_run(started, "Running."))
+        if cfg is not None:
+            seed(self.gh, cfg, number)
+        ended = {"status": "failure", "outcome": "agent_error", "timed_out": True, **fields}
+        self.gh.update_comment(comment["id"], render_run({**started, **ended}, "Done."))
 
     def test_the_engine_answers_a_fix_round_on_its_change(self):
         cfg = pilot(answer="recommended")
-        self.fix_stopped(5, 6, [{**ASKED, "closes": 0}])
+        self.fix_stopped(5, 6, [{**ASKED, "closes": 0}], cfg)
         with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
             step = self.step(5, cfg)
-        # The import of the item, which places this round too, asks the engine first.
-        request = answer.call_args_list[-1].args[0]
+        # The stored state waits for the fix run, and the result goes to it.
+        request = asked_step(answer)[-1]
         self.assertEqual(
             (request["state"]["state"], request["state"]["change"]["id"]), ("fixing", "6")
         )
+        self.assertEqual(request["event"]["kind"], "actionFinished")
+        self.assertEqual((step["state"], step["command"], step["target"]), ("start", "fix", 6))
+        self.assertEqual(step["answers"], [{"question": ASKED["question"], "answer": "Keep it"}])
+
+    def test_an_imported_fix_round_that_autopilot_answers_waits_for_its_start(self):
+        cfg = pilot(answer="recommended")
+        # No state stored while it ran: the import places the round, and the sweep starts it.
+        self.fix_stopped(5, 6, [{**ASKED, "closes": 0}])
+        request = self.requests(5, cfg)[-1]
+        self.assertEqual(request["event"]["kind"], "requested")
+        self.assertEqual(request["state"]["state"], "fixing")
+        step = self.step(5, cfg)
         self.assertEqual((step["state"], step["command"], step["target"]), ("start", "fix", 6))
         self.assertEqual(step["answers"], [{"question": ASKED["question"], "answer": "Keep it"}])
 
     def test_each_wait_after_a_fix_round_is_said_in_nexkit_6_s_words(self):
         cfg = pilot(answer="recommended")
         replans = {**ASKED, "closes": 0, "recommended": 2, "replans": [2]}
-        self.fix_stopped(5, 6, [replans])
+        self.fix_stopped(5, 6, [replans], cfg)
         self.assertEqual(self.step(5, cfg)["reason"], autopilot.REPLAN_IN_PULL)
-        self.fix_stopped(7, 8, [{**ASKED, "recommended": 3}])
+        self.fix_stopped(7, 8, [{**ASKED, "recommended": 3}], cfg)
         self.assertEqual(self.step(7, cfg)["reason"], autopilot.CLOSE_UNFOUNDED)
-        self.fix_stopped(9, 10, [ASKED], protected_paths=["a.yml"])
+        self.fix_stopped(9, 10, [ASKED], cfg, protected_paths=["a.yml"])
         self.assertEqual(self.step(9, cfg)["reason"], autopilot.protected_reason(["a.yml"]))
-        self.fix_stopped(11, 12, [{**ASKED, "recommended": 0}], attention="Answer them.")
+        self.fix_stopped(11, 12, [{**ASKED, "recommended": 0}], cfg, attention="Answer them.")
         self.assertEqual(self.step(11, cfg)["reason"], "Answer them.")
 
     def test_a_round_that_ran_out_of_time_asks_once_for_a_split(self):
-        self.issue(5)
-        self.plan(5)
-        self.run_comment(5, "go", status="failure", outcome="agent_error", timed_out=True)
+        self.timed_out(5, self.cfg)
         with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
             step = self.step(5)
-        # The import of the item, which places this round too, asks the engine first.
         request = asked_step(answer)[-1]
         self.assertTrue(request["event"]["result"]["timedOut"])
         self.assertEqual((step["command"], step["remember"]), ("plan", {"split_asked": True}))
         self.assertEqual(step["note"], autopilot.SPLIT_NOTE)
-        real, stub = host.step, {"actions": [], "state": {}}
-        # The import of the item, which places this round too, asks first and gets the real one.
-        answers = [lambda *args: real(*args), lambda *args: stub]
-        with mock.patch.object(host, "step", side_effect=lambda *a: answers.pop(0)(*a)):
+        stub = {"actions": [], "state": {}}
+        with mock.patch.object(host, "step", return_value=stub):
             self.assertIn("refused to decide", self.step(5)["reason"])
+
+    def test_an_imported_time_out_starts_the_split_with_autopilot_s_start(self):
+        # No state stored while it ran: the import asks for the split, and the sweep starts it.
+        self.timed_out(5)
+        request = self.requests(5)[-1]
+        self.assertEqual(request["event"]["kind"], "requested")
+        step = self.step(5)
+        self.assertEqual((step["command"], step["remember"]), ("plan", {"split_asked": True}))
+        self.assertEqual(step["note"], autopilot.SPLIT_NOTE)
 
     def test_a_part_whose_parent_asked_for_a_split_waits_for_a_person(self):
         self.issue(4)
@@ -2537,37 +2572,60 @@ class StoppedTest(HostCase):
         self.issue(5, body="<!-- nexkit:part 4 -->\nPart.", user=BOT_LOGIN)
         self.gh.parents[5] = 4
         self.plan(5)
-        self.run_comment(5, "go", status="failure", outcome="agent_error", timed_out=True)
+        url = "https://github.com/acme/app/actions/runs/5"
+        started = {"url": url, "command": "go", "status": "running"}
+        comment = self.gh.comment(5, render_run(started, "Running."))
+        seed(self.gh, self.cfg, 5)
+        ended = {**started, "status": "failure", "outcome": "agent_error", "timed_out": True}
+        self.gh.update_comment(comment["id"], render_run(ended, "Done."))
         request = self.requests(5)[-1]
         self.assertIn("split", request["state"]["asked"])
         self.assertIn("after #4 asked for a split", self.step(5)["reason"])
 
+    def running(self, number, action, cfg):
+        """The decision of a round of `action`, 'fix' or 'implement', that is running on item
+        `number`, whose state is stored while it runs, as `nexkit route` stores it."""
+        self.issue(number)
+        self.plan(number)
+        url = f"https://github.com/acme/app/actions/runs/{number}"
+        if action == "implement":
+            self.gh.comment(number, render_run({"url": url, "command": "go", "status": "running"}))
+            decision = {"issue": number, "pr": None, "action": "implement"}
+        else:
+            pull = number + 1
+            self.gh.add_pull(pull, number, head_sha="c" * 40)
+            self.run_comment(number, "go", outcome="pr_opened")
+            row = {"round": 2, "trigger": "fix", "url": url, "head": "c" * 40, "action": "fix"}
+            self.gh.comment(pull, render_run({**row, "status": "running"}, "Running."))
+            decision = {"issue": number, "pr": pull, "action": "fix", "head": "c" * 40}
+        seed(self.gh, cfg, number)
+        return decision
+
     def test_the_round_carries_on_as_the_engine_answers_it(self):
         cfg = pilot(answer="recommended")
-        self.issue(5)
-        self.gh.add_pull(6, 5)
-        fix = {"issue": 5, "pr": 6, "action": "fix", "head": "c" * 40}
+        numbers = iter(range(5, 60, 2))
 
-        def carries_on(decision, outcome, **agent):
+        def carries_on(action, outcome, decision=None, **agent):
+            decision = decision or self.running(next(numbers), action, cfg)
             return autopilot.carries_on(self.gh, cfg, decision, outcome, agent)
 
         output = {"questions": [{**ASKED, "closes": 0}]}
-        self.assertTrue(carries_on(fix, "agent_blocked", status="blocked", output=output))
+        self.assertTrue(carries_on("fix", "agent_blocked", status="blocked", output=output))
         replans = {"questions": [{**ASKED, "closes": 0, "recommended": 2, "replans": [2]}]}
-        self.assertFalse(carries_on(fix, "agent_blocked", status="blocked", output=replans))
+        self.assertFalse(carries_on("fix", "agent_blocked", status="blocked", output=replans))
         closes = {"questions": [{**ASKED, "recommended": 3}]}
-        self.assertFalse(carries_on(fix, "agent_blocked", status="blocked", output=closes))
+        self.assertFalse(carries_on("fix", "agent_blocked", status="blocked", output=closes))
         # One answer only closes the issue and another needs a new plan: a person decides.
         both = {"questions": closes["questions"] + replans["questions"]}
-        self.assertFalse(carries_on(fix, "agent_blocked", status="blocked", output=both))
-        self.assertTrue(carries_on(fix, "agent_error", timed_out=True))
-        go = {"issue": 5, "pr": None, "action": "implement"}
-        self.assertTrue(carries_on(go, "agent_error", timed_out=True))
+        self.assertFalse(carries_on("fix", "agent_blocked", status="blocked", output=both))
+        self.assertTrue(carries_on("fix", "agent_error", timed_out=True))
+        self.assertTrue(carries_on("implement", "agent_error", timed_out=True))
         # After a `/nexkit go` too, a wait for a person is one `report` mentions.
-        self.assertFalse(carries_on(go, "agent_blocked", status="blocked", output=both))
-        self.assertFalse(carries_on(go, "agent_blocked", status="blocked", output=closes))
+        self.assertFalse(carries_on("implement", "agent_blocked", status="blocked", output=both))
+        self.assertFalse(carries_on("implement", "agent_blocked", status="blocked", output=closes))
+        go = self.running(next(numbers), "implement", cfg)
         with mock.patch.object(host, "step", side_effect=host.Refused("no")):
-            self.assertFalse(carries_on(go, "agent_error", timed_out=True))
+            self.assertFalse(carries_on("implement", "agent_error", go, timed_out=True))
 
 
 class WaitEndTest(HostCase):
@@ -5560,7 +5618,8 @@ class StoredStopsTest(HostCase):
         return self.going(attention="Answer them.", **run)
 
     def timed_out(self):
-        return self.run_comment(5, "go", status="failure", outcome="agent_error", timed_out=True)
+        """A `/nexkit go` that runs now and runs out of time once the item's state is stored."""
+        return self.going(outcome="agent_error", timed_out=True)
 
     def after_go(self, write=False):
         comments = self.gh.comments(5)
@@ -5571,11 +5630,11 @@ class StoredStopsTest(HostCase):
             self.gh, self.cfg, issue, comment, run, record, self.START, comments, write=write
         )
 
-    def stopped(self, write=False):
-        comments = self.gh.comments(5)
+    def stopped(self, write=False, number=5):
+        comments = self.gh.comments(number)
         _, run = [(c, r) for c, r in run_comments(comments) if "command" in r][-1]
         record = autopilot.find_record(comments)[1]
-        issue = self.gh.issues[5]
+        issue = self.gh.issues[number]
         return host.stopped(
             self.gh, self.cfg, issue, run, record, self.START, comments, write=write
         )
@@ -5750,6 +5809,119 @@ class StoredStopsTest(HostCase):
 
     def agent(self):
         return {"status": "blocked", "output": {"questions": [{**ASKED, "closes": 0}]}}
+
+    def sent(self):
+        """The events that reach `step`, in order, and the patch that records them."""
+        sent, real = [], host.step
+
+        def spy(state, event, found_policies):
+            sent.append(event["kind"])
+            return real(state, event, found_policies)
+
+        return sent, mock.patch.object(host, "step", spy)
+
+    def test_the_sweep_starts_the_split_that_report_stored_with_no_second_result(self):
+        self.timed_out()
+        self.stored()
+        timed_out = {"timed_out": True}
+        with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": str(self.runs)}):
+            self.assertTrue(
+                host.stop_carried_on(
+                    self.gh, self.cfg, self.gh.issues[5], self.GO, timed_out, write=True
+                )
+            )
+        stored = self.read()[1]
+        self.assertIn(f"run-{self.runs}", stored["recentEvents"])
+        self.assertEqual(stored["state"], "planning")
+        sent, spy = self.sent()
+        with spy:
+            step = self.stopped(write=True)
+        # Nothing reaches the engine: the step is the split plan that `report` stored.
+        self.assertEqual(sent, [])
+        self.assertEqual((step["state"], step["command"]), ("start", "plan"))
+        self.assertEqual(step["remember"], {"split_asked": True})
+        self.assertEqual(self.read()[1], stored)
+
+    def test_the_sweep_sends_the_result_that_report_did_not_store(self):
+        self.timed_out()
+        self.stored()
+        before = self.read()[1]
+        sent, spy = self.sent()
+        with spy:
+            step = self.stopped(write=True)
+        self.assertEqual(sent, ["actionFinished"])
+        self.assertEqual((step["state"], step["command"]), ("start", "plan"))
+        self.assertEqual(self.read()[1]["revision"], before["revision"] + 1)
+
+    def test_a_part_at_the_deepest_level_waits_for_a_person_after_a_time_out(self):
+        self.issue(12)
+        for number in (13, 14, 15):
+            body = f"<!-- nexkit:part {number - 1} -->\nPart."
+            self.issue(number, body=body, user=BOT_LOGIN)
+            self.gh.parents[number] = number - 1
+        self.plan(15)
+        url = "https://github.com/acme/app/actions/runs/15"
+        started = {"url": url, "command": "go", "status": "running"}
+        comment = self.gh.comment(15, render_run(started, "Running."))
+        seed(self.gh, self.cfg, 15, now=self.NOW)
+        ended = {**started, "status": "failure", "outcome": "agent_error", "timed_out": True}
+        self.gh.update_comment(comment["id"], render_run(ended, "Done."))
+        with mock.patch.object(host.engine, "answer", wraps=ANSWER) as answer:
+            step = self.stopped(write=True, number=15)
+        # The depth is the stored one: the sweep reads no parent of the part.
+        request = asked_step(answer)[-1]
+        self.assertGreaterEqual(request["state"]["depth"], autopilot.MAX_DEPTH)
+        self.assertEqual(step["state"], "waits")
+        reason = autopilot.person(autopilot.TIMED_OUT_DO, autopilot.DEPTH_REASON)
+        self.assertEqual(step["reason"], reason)
+        self.assertEqual(item_state.read(self.gh, 15)[1]["state"], "failed")
+
+    def fix_running(self):
+        """Issue 5's pull request 6, whose fix round is running with its state stored, and the
+        decision of that round."""
+        self.gh.add_pull(6, 5, head_sha="c" * 40)
+        self.run_comment(5, "go", outcome="pr_opened")
+        decision = {"action": "fix", "issue": 5, "pr": 6, "head": "c" * 40, "run_id": "7"}
+        progress.start(self.gh, {**decision, "target": 6, "branch": "nexkit/issue-5"})
+        seed(self.gh, self.cfg, 5, now=self.NOW)
+        return decision
+
+    def test_the_count_of_a_blocked_fix_round_sends_nothing_after_report_stored_its_stop(self):
+        fix = self.fix_running()
+        blocked = {"status": "blocked", "output": {"questions": [{**ASKED, "closes": 0}]}}
+        with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": "7"}):
+            self.assertTrue(
+                host.stop_carried_on(self.gh, self.cfg, self.gh.issues[5], fix, blocked, write=True)
+            )
+            stored = self.read()[1]
+            self.assertIn("run-7", stored["recentEvents"])
+            self.assertIn("answers", stored["asked"])
+            sent, spy = self.sent()
+            with spy:
+                counted = host.stopped_counts(self.gh, self.cfg, 5, 6, "c" * 40, False, write=True)
+        self.assertEqual(sent, [])
+        self.assertEqual(counted, stored["rounds"]["counted"])
+        self.assertEqual(self.read()[1], stored)
+
+    def test_the_count_of_a_stopped_round_that_report_did_not_store_sends_its_event(self):
+        self.fix_running()
+        before = self.read()[1]
+        sent, spy = self.sent()
+        with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": "7"}), spy:
+            host.stopped_counts(self.gh, self.cfg, 5, 6, "c" * 40, False, write=True)
+        self.assertEqual(sent, ["actionFinished"])
+        self.assertEqual(self.read()[1]["revision"], before["revision"] + 1)
+
+    def test_a_blocked_fix_round_that_needs_protected_paths_stores_the_wait_for_a_person(self):
+        fix = self.fix_running()
+        output = {"questions": [{**ASKED, "closes": 0}], "protected_paths": [".github/x.yml"]}
+        blocked = {"status": "blocked", "output": output}
+        with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": "7"}):
+            carried = autopilot.carries_on(self.gh, self.cfg, fix, "agent_blocked", blocked)
+        self.assertFalse(carried)
+        doc = self.read()[1]
+        self.assertEqual(doc["attention"]["reason"], "handMadeChange")
+        self.assertIn("run-7", doc["recentEvents"])
 
     def test_an_edited_state_comment_refuses_each_decision(self):
         for name, setup, call in self.calls():

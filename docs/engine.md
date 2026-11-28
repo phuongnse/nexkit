@@ -520,9 +520,13 @@ adapter's tests and the answers as what its adapter carries out.
    decision of the loop is now its own. Most of the GitHub host's decisions still build the
    item's document from NexKit 6's markers, as its import reads them. The ones that follow a plan,
    start a new issue's first plan, follow a merge and its refusals,
-   follow a blocked or stopped round, answer a lost command, and end a pull request's round, a
-   conflict or a wait read the stored document, which they use only where it says what the
-   markers say, and store the engine's answer in the item's group, a row of events as one write.
+   answer a lost command, and end a pull request's round, a conflict or a wait read the stored
+   document, which they use only where it says what the markers say, and store the engine's answer
+   in the item's group, a row of events as one write. A blocked or failed `/nexkit go`, a fix round
+   that stopped as blocked and a round that ran out of time decide on the stored document alone
+   too, including its `depth` and `asked`: `report` sends the round's result on the state that
+   waits for the round's agent run, and the sweep sends it only while the state still waits for
+   that run and does not hold the result, and otherwise carries out what the state holds.
    A usage limit, a transient error and a resume that comes due decide on the stored document
    alone: its pending agent run, its count of runs again and its wait. So does a writer's vouch
    after an untrusted edit: when the item's own run already took it, the step carries out what

@@ -11,7 +11,7 @@ from unittest import mock
 
 from nexkit import autopilot, engine, host
 from nexkit.report import report
-from nexkit.state import PLAN_MARKER
+from nexkit.state import PLAN_MARKER, render_run
 from tests.test_autopilot import WORKFLOW, pilot
 from tests.test_host import ASKED, HostCase
 from tests.test_report import ReportCase
@@ -170,17 +170,28 @@ class AfterPlanTest(HostCase):
 
 
 class StoppedTest(HostCase):
-    def carries_on(self, decision, outcome, ran=RUN, running=False, **agent):
+    def carries_on(self, decision, outcome, ran=RUN, **agent):
         """The stopped round's event and whether autopilot carries on, in a fresh repository.
-        With `running`, the item's state was stored while its `/nexkit go` ran, as the decision
-        after a blocked `/nexkit go` reads it."""
+        The item's state was stored while the round of `decision` ran, as `nexkit route` stores
+        it: the decision after a stopped round reads the agent run that it waits for."""
         self.setUp()
         self.issue(5)
         cfg = pilot(answer="recommended")
-        if running:
+        if decision["action"] == "fix":
+            self.gh.add_pull(6, 5, head_sha="c" * 40)
+            self.run_comment(5, "go", outcome="pr_opened")
+            row = {
+                "round": 2,
+                "trigger": "fix",
+                "url": "https://github.com/acme/app/actions/runs/9",
+            }
+            row.update(head="c" * 40, action="fix", status="running")
+            self.gh.comment(6, render_run(row, "Running."))
+        else:
             self.run_comment(5, "go", status="running")
-            host.store_import(self.gh, cfg, 5)
-        self.gh.add_pull(6, 5)
+        host.store_import(self.gh, cfg, 5)
+        if decision["action"] != "fix":
+            self.gh.add_pull(6, 5, head_sha="c" * 40)
         with finished() as events, mock.patch.dict(os.environ, {"GITHUB_RUN_ID": "9"}):
             carried = autopilot.carries_on(self.gh, cfg, decision, outcome, agent, ran=ran)
         return one(events, "run-"), carried
@@ -188,7 +199,7 @@ class StoppedTest(HostCase):
     def test_a_blocked_go_sends_the_runner_s_tokens(self):
         go = {"issue": 5, "pr": None, "action": "implement"}
         output = {"questions": [{**ASKED, "closes": 0}]}
-        found = self.carries_on(go, "agent_blocked", running=True, status="blocked", output=output)
+        found = self.carries_on(go, "agent_blocked", status="blocked", output=output)
         event, carried = found
         self.assertTrue(carried)
         self.assertEqual(spending(event), SPENT)

@@ -14,7 +14,7 @@ from unittest import mock
 from common import HEAD, attempt, planned_issue, quiet, seed, snapshot, sweep
 
 import tests.support as support
-from nexkit import autopilot
+from nexkit import autopilot, progress
 from nexkit import report as report_module
 from nexkit.maintain import close_on_base, maintain
 from nexkit.state import PLAN_DATA_PREFIX, PLAN_MARKER, _encode, render_run
@@ -129,6 +129,23 @@ def run(sc):
     if sc["path"] == "merge":
         # The round that the approval follows ended before the item's state was stored.
         gh.comment(6, render_run(row))
+    if sc["path"] == "no_change":
+        # The implement round is on its way when it finds that no change is needed, and its
+        # import stores that run, as production does.
+        implement = {
+            "action": "implement",
+            "issue": PART,
+            "pr": None,
+            "target": PART,
+            "branch": f"nexkit/issue-{PART}",
+            "base": "main",
+            "head": None,
+            "note": "",
+            "auto": True,
+            "autopilot": "true",
+            "run_id": 4242,
+        }
+        progress.start(gh, implement)
     # Before the ticking clock, which moves with each read: the seed must leave it where NexKit 6's
     # tree has it. The part's close then follows its import, as it does on GitHub.
     seed(gh, cfg)

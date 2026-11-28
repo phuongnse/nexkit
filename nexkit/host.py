@@ -155,14 +155,18 @@ it: the merge's `report`, the `step` run of a parent that its last part closed
 closed item keeps no `close` pending. A close that failed stays pending. An implement round that
 finds no change is needed (`no_change_found`, called by `report._no_change`) and a fix round that
 finds its change on the base branch (`on_base_found`, called by `report._already_on_base`) reach it
-too, and close only when it ends the item as `noChange`; the `report` of the item's group stores the
-answer of both in the item's state. Every parent's end goes through it: `part_ended` sends the end
-of a part to its parent's stored state, at every level and on every close of the part (a merge, a
-person's close, a change already on the base branch, no change needed, autopilot's sweep), and
-the parent ends only when every part ended and one was completed, under `parentEnd`. It builds no
-document from GitHub's sub-issues. Before the part's own end, one row sends the end of every other
-sub-issue that GitHub shows closed and the stored parts still hold as open, so that an end that
-never reached the parent's group still counts, and, while the stored state waits for its parts to
+too, and close only when it ends the item as `noChange`; both decide on the stored state alone.
+`no_change_found` sends the round's result, with the agent's finding, as the result of the implement
+`runAgent` that the stored state has pending, and `on_base_found` sends the empty change on the
+stored fix round. The `report` of the item's group stores the answer of both in the item's state;
+with no configuration, or with no state to decide on, both raise `Refused`. Every parent's end
+goes through it: `part_ended` sends the end of a part to its parent's stored state, at every level
+and on every close of the part (a merge, a person's close, a change already on the base branch, no
+change needed, autopilot's sweep), and the parent ends only when every part ended and one was
+completed, under `parentEnd`. It builds no document from GitHub's sub-issues. Before the part's
+own end, one row sends the end of every other sub-issue that GitHub shows closed and the stored
+parts still hold as open, so that an end that never reached the parent's group still counts, and,
+while the stored state waits for its parts to
 be filed (`createParts`), the result that names the sub-issues autopilot filed. Two guards only
 keep a parent open: a sub-issue that GitHub shows open and the stored parts do not list, such as
 an eleventh or one added after the split, keeps it open, and a parent whose stored state is not
@@ -331,7 +335,8 @@ result, and a second send of one event, such as the plan's result that `report` 
 both send, would be a duplicate. A plan's result keeps the marks of the answers that the engine
 gave to a round's questions (`_carry_replan`), which the markers cannot say, so that a round that
 asks again after such a re-plan is not answered twice in a row. `after_go` and `round_carried_on`
-no longer go through it: they pass no document of the markers. Nor do `stage_limited`,
+no longer go through it: they pass no document of the markers. Nor do `no_change_found`,
+`on_base_found`, `stage_limited`,
 `stage_transient` and `resumes`, which decide on the stored state alone, and neither do `command`,
 `_on_base` and `closing_command`. So do `checks_waited`, `refusal_cleared` and `change_seen`: the
 sweep's looks at a merge that waits for required checks or that GitHub refused, and what the
@@ -3542,18 +3547,19 @@ def change_seen(gh, cfg, issue, pr, seen, write=False):
 def no_change_found(gh, cfg, decision, finding, write=False):
     """`noChange` when the engine ends the item of `decision`, an implement round whose agent
     found that no change is needed, with `finding`, where the issue or its plan says to stop
-    then (`report._no_change`): the host sends the round's result, which holds the finding, and
-    closes the issue only as the engine ends the item. With `write`, which only the `report` of
-    the item's group passes, the engine's answer is stored in the item's state (`decide`).
-    Raises `Refused` for any other answer, and for an item that is not final."""
+    then (`report._no_change`): the host sends the round's result, which holds the finding, as
+    the result of the implement `runAgent` that the item's stored state has pending, and closes
+    the issue only as the engine ends the item. With `write`, which only the `report` of the
+    item's group passes, the engine's answer is stored in the item's state (`decide`). Raises
+    `Refused` for any other answer, for an item with no state to decide on, and with no
+    configuration, before anything is read or written."""
     number = decision["issue"]
-    doc, _ = _stage_doc("implement", number, None, int(decision.get("retry") or 0))
     output = {**round_output({}), "status": "done", "no_change": finding}
     result = {**AGENT, "changeVersion": None, "output": output}
     fields = {"action": first_state.RUN_ID, "changeVersion": None, "result": result}
     event = _event("actionFinished", number, None, _run_event_id(), **fields)
     state, actions = decide(
-        gh, cfg, number, event, doc, action=("runAgent", "implement"), write=write
+        gh, cfg, number, event, None, action=("runAgent", "implement"), write=write
     )
     if state["state"] == "noChange" and any(action["kind"] == "close" for action in actions):
         return "noChange"
@@ -3565,33 +3571,17 @@ def on_base_found(gh, cfg, decision, write=False):
     """`noChange` when the engine ends the item of `decision`, a fix round that found, before
     its agent, that its base branch already holds the pull request's change
     (`report._already_on_base`): the host sends the observation that the change is empty, as
-    the merge does (`change_seen`), but while the fix round's agent is pending, and closes the
-    pull request and its issue only as the engine ends the item. With `write`, which only the
-    `report` of the item's group passes, the engine's answer is stored in the item's state
-    (`decide`). Raises `Refused` for any other answer."""
-    number, pr, head = decision["issue"], decision["pr"], decision.get("head")
-    change = {"id": pr, "version": head or pr}
-    retry = int(decision.get("retry") or 0)
-    version = _stage_doc("fix", number, change, retry)[1]
-
-    def built(state):
-        doc = _stage_doc("fix", number, change, retry)[0]
-        doc["observed"] = {
-            "changeId": str(pr),
-            "version": version,
-            "conflicts": False,
-            "merged": False,
-            "empty": False,
-        }
-        # The round's own mark, so that the engine's cancel of its agent gives its count back.
-        if state is not None and (state.get("rounds") or {}).get("automatic"):
-            doc["rounds"]["automatic"] = True
-        return doc
-
+    the merge does (`change_seen`), on the item's stored fix round, and closes the pull request
+    and its issue only as the engine ends the item. With `write`, which only the `report` of
+    the item's group passes, the engine's answer is stored in the item's state (`decide`).
+    Raises `Refused` for any other answer, for an item with no state to decide on, and with no
+    configuration, before anything is read or written."""
+    number, pr = decision["issue"], decision["pr"]
+    version = _stage_version(decision)
     seen = {"conflicts": False, "version": version, "merged": False, "empty": True}
     name = f"onbase-{pr}-{version}"
     event = _event("changeObserved", number, None, name, changeId=str(pr), **seen)
-    state, actions = decide(gh, cfg, number, event, built, pull=pr, write=write)
+    state, actions = decide(gh, cfg, number, event, None, pull=pr, write=write)
     if state["state"] == "noChange" and any(action["kind"] == "close" for action in actions):
         return "noChange"
     kinds = sorted({action["kind"] for action in actions})

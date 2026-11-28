@@ -8,7 +8,10 @@ protocol's call sends them in camelCase, and `answer` converts them. The earlier
 the last review are not an input: they come from the call's `state`, as `rounds.fixes` and
 `rounds.lastReview`. The host's own words for its work item, its change and where people read
 come with the call, as `words`: the templates and the code here read them in place of any
-host's (`template_words`), and the engine refuses a stage's prompt without them.
+host's (`template_words`), and the engine refuses a stage's prompt without them. The host's
+own sentences on how the agent sees and edits the change come in the `workspace` input, as its
+`text` (`WORKSPACE_TEXTS`): the plan, implement and review templates read them in place of any
+host's, and the call's schema refuses a `workspace` without them.
 
 A prompt is written in two internal steps, which `write` runs one after the other: `texts`,
 from what the host read about the work item, and `finish`, from what its round adds: the
@@ -77,6 +80,24 @@ WORDS = (
     "approve",
     "fix_round",
     "commands",
+)
+# The host's texts of a `workspace` input (`workspace.text` in the protocol), in the engine's
+# snake_case: the sentences on how the agent sees and edits the change that the templates read.
+WORKSPACE_TEXTS = (
+    "location",
+    "review_location",
+    "candidate",
+    "instructions",
+    "saving",
+    "leftovers",
+    "summary_use",
+    "checks_on",
+    "diff_heading",
+    "pipeline",
+    "pipeline_files",
+    "pipeline_file",
+    "protected_example",
+    "person_change",
 )
 # How the prompts mark a checklist item that a person decides.
 PERSON_MARK = "(a person decides)"
@@ -1039,19 +1060,21 @@ def triage_extras(context, profiles, previous):
 
 def build(stage, context, settings, extra=None):
     """The prompt of `stage` from its texts. `settings` holds the workspace's `checks`,
-    `protected_paths` and `implement_minutes`, and the host's `checklist`."""
+    `protected_paths`, `text` and `implement_minutes`, and the host's `checklist`."""
+    text = {key: str(value) for key, value in (settings.get("text") or {}).items()}
     protected = ", ".join(f"`{p}`" for p in settings.get("protected_paths") or [])
     person = bool(context.get("person"))
     limits = template("review_limits_person" if person else "review_limits")
     checks = settings.get("checks") or []
     values = {
         **context,
+        **text,
         "checks": _checks_text(checks),
         "round_checks": _round_checks_text(checks),
         "writing": fill(template("writing"), context),
         "protected": protected,
-        "limits": fill(limits, context, protected=protected).rstrip(),
-        "person": fill(template("review_person"), context) if person else "",
+        "limits": fill(limits, context, protected=protected, **text).rstrip(),
+        "person": fill(template("review_person"), context, **text) if person else "",
         "implement_minutes": settings.get("implement_minutes"),
         "checklist": checklist_text(stage, settings.get("checklist"), context),
         "earlier_parts": earlier_parts_text(context),
@@ -1094,13 +1117,14 @@ def _implement_seconds(policies):
 
 
 def settings(inputs, policies):
-    """What `build` reads beside the texts: the workspace's `checks` and `protected_paths`,
-    the implement stage's time and the host's `checklist`."""
+    """What `build` reads beside the texts: the workspace's `checks`, `protected_paths` and
+    `text`, the implement stage's time and the host's `checklist`."""
     workspace = inputs.get("workspace") or {}
     seconds = _implement_seconds(policies)
     return {
         "checks": workspace.get("checks") or [],
         "protected_paths": workspace.get("protected_paths") or [],
+        "text": dict(workspace.get("text") or {}),
         "implement_minutes": seconds // 60 if seconds is not None else None,
         "checklist": policies.get("checklist") or [],
     }

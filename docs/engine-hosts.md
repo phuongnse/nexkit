@@ -89,6 +89,13 @@ policies of the engine, and each has its place:
   as they always did. It builds them from the numbers of the issue and the pull request and
   from fixed text, never from what anyone wrote. An application might send "request R-42",
   "draft 3" and "in the app". See [The prompt](engine.md#the-prompt).
+- **Workspace text** is the `workspace` input's `text`: the host's sentences on how the agent
+  sees and edits the change, which the plan, implement and review prompts read in place of any
+  host's own, and the engine refuses a `workspace` without them. GitHub sends "working in a
+  checkout of the repository", "CI configuration", "workflows" and "`.github/workflows/ci.yml`",
+  with its other texts, as fixed strings, so its prompts read as they always did. An application
+  might send "working through the application's tools", "the application's validation rules" and
+  "`settings/limits`". See [The prompt](engine.md#the-prompt).
 - **`maxParallel` and `priority`** are the `sweep` call's policies: the most items that run at
   once, and the tags that go first. Neither is in `policies.schema.json`, so no state document
   keeps them.

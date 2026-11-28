@@ -847,6 +847,17 @@ class PromptCallTests(StageCase):
         self.assertEqual(request["words"]["change"], "")
         self.assertEqual(request["words"]["item"], "GitHub issue #5")
 
+    def test_the_request_holds_githubs_workspace_texts(self):
+        cfg = make_config()
+        added = {"diff": {"base": "main"}, "workspace": agent.workspace(cfg)}
+        request = agent.prompt_request("implement", CONTEXT, added, cfg, self.out / "texts")
+        text = request["inputs"]["workspace"]["text"]
+        self.assertEqual(text, agent.camel(agent.WORKSPACE_TEXT))
+        self.assertEqual(text["location"], "working in a checkout of the repository")
+        self.assertEqual(text["protectedExample"], "`.github/workflows/ci.yml`")
+        self.assertEqual(text["diffHeading"], "Diff against")
+        self.assertEqual(protocol.check(request, "calls/prompt.schema.json", "request"), [])
+
     def test_the_diff_the_context_step_fetched_keeps_what_the_agent_step_adds_to_it(self):
         merged = {"head": "a" * 40, "base": "b" * 40, "conflicts": ["calc.py"]}
         context = context_with({"diff": {"merged": merged}})

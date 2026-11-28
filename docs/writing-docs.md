@@ -389,6 +389,10 @@ when a list of what the code defines misses an entry. These rules close each of 
    - `test_the_run_table_has_a_row_for_each_job_of_the_pipeline`: the job table of [how it
      works](how-it-works.md#one-run-ten-jobs) has a row for each job of `pipeline.yml`, with the
      permissions its rows name and the number in its heading.
+   - `test_the_artifact_table_lists_what_report_downloads_for_each_command`: the table of the
+     artifacts that `report` reads in [how it works](how-it-works.md#logs-summary-and-artifacts)
+     lists, for each command, each artifact that `report` downloads, and marks with a condition
+     each one whose job does not always run for it.
    - `test_each_decision_file_follows_the_template`: each file under `decisions/` follows the
      template.
    - `test_the_index_has_one_row_for_each_decision_file`: the [index](decisions.md) has one row for

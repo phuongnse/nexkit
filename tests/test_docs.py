@@ -133,6 +133,13 @@ MODULES_HEADER = "| Module | Purpose |"
 SCRIPTS_HEADER = "| Script | Purpose |"
 RUN_JOBS_HEADER = "| Job | Runs for | Does |"
 RUN_HEADING = re.compile(r"^## One run, (\w+) jobs$", re.M)
+REPORT_ARTIFACTS_HEADER = "| Command | Artifacts `report` reads |"
+# An `if:` that tests the action, as a list of actions or as one action.
+ACTION_TEST = re.compile(
+    r"contains\(fromJSON\('(\[[^']*\])'\), needs\.route\.outputs\.action\)"
+    r"|needs\.route\.outputs\.action == '(\w+)'"
+)
+JOB_IF = re.compile(r"^    if: (?:>-\n((?:      .*\n)+)|(.*)\n)", re.M)
 NUMBERS = (
     "zero",
     "one",
@@ -1650,6 +1657,44 @@ class ArchitectureTests(unittest.TestCase):
                     self.fail(f"{name} waits for {other} in {side} only, not in the other")
 
 
+def job_if(job):
+    """The `if:` of a job's text, one line or folded over lines, with its words joined by spaces."""
+    match = JOB_IF.search(job)
+    return " ".join((match.group(1) or match.group(2) or "").split()) if match else ""
+
+
+def actions_named(text):
+    """The actions that the `if:` text `text` tests as `needs.route.outputs.action`."""
+    named = set()
+    for match in ACTION_TEST.finditer(text):
+        if match.group(1):
+            named.update(json.loads(match.group(1)))
+        else:
+            named.add(match.group(2))
+    return named
+
+
+def job_actions(jobs, name, seen):
+    """The actions that run the job `name`: those its `if:` tests, or, when it tests none, those of
+    the jobs its `if:` reads, other than route."""
+    seen.add(name)
+    text = job_if(jobs[name])
+    named = actions_named(text)
+    if named:
+        return named
+    actions = set()
+    for other in re.findall(r"needs\.(\w+)\.", text):
+        if other != "route" and other not in seen:
+            actions |= job_actions(jobs, other, seen)
+    return actions
+
+
+def always_runs(jobs, name):
+    """Whether the job `name` runs for each action it runs for: its `if:` tests nothing else."""
+    rest = ACTION_TEST.sub("", job_if(jobs[name]))
+    return not re.sub(r"always\(\)|&&|\|\||[()\s]", "", rest)
+
+
 class HowItWorksTests(unittest.TestCase):
     def test_the_run_table_has_a_row_for_each_job_of_the_pipeline(self):
         rows = {row[0]: row for row in table(HOW_IT_WORKS_PAGE, RUN_JOBS_HEADER)}
@@ -1681,6 +1726,58 @@ class HowItWorksTests(unittest.TestCase):
             f"the heading of docs/how-it-works.md says {match.group(1)} jobs; "
             f"pipeline.yml has {len(jobs)}",
         )
+
+    def test_the_artifact_table_lists_what_report_downloads_for_each_command(self):
+        commands = {**route.ISSUE_COMMANDS, **route.PR_COMMANDS}
+        rows = table(HOW_IT_WORKS_PAGE, REPORT_ARTIFACTS_HEADER)
+        self.assertTrue(rows, "docs/how-it-works.md has no table of the artifacts report reads")
+        # {(action, artifact): True when the page says the artifact is read under a condition}
+        page = {}
+        for row in rows:
+            for command in re.findall(r"`(\w+)`", row[0]):
+                if command not in commands:
+                    self.fail(f"docs/how-it-works.md lists {command}, which is no command")
+                for part in row[1].split(";"):
+                    conditional = bool(re.sub(r"`[^`]*`|\band\b|,", "", part).strip())
+                    for artifact in re.findall(r"`(nexkit-[\w-]+)`", part):
+                        page[(commands[command], artifact)] = conditional
+        jobs = jobs_of((ROOT / ".github/workflows/pipeline.yml").read_text())
+        downloads = [
+            step
+            for step in jobs["report"].split("\n      - ")
+            if "actions/download-artifact@" in step
+        ]
+        self.assertTrue(downloads, "the report job of pipeline.yml downloads no artifact")
+        # {(action, artifact): True when the job that report waits for may not run for it}
+        code = {}
+        for step in downloads:
+            artifact = re.search(r"^\s+name: (\S+)$", step, re.M)
+            producer = re.search(r"if: needs\.(\w+)\.result != 'skipped'", step)
+            if not artifact or not producer:
+                self.fail(f"a download step of the report job names no artifact or no job:\n{step}")
+            for action in job_actions(jobs, producer.group(1), set()):
+                pair = (action, artifact.group(1))
+                code[pair] = not always_runs(jobs, producer.group(1))
+        for key in sorted(set(code) - set(page)):
+            with self.subTest(pair=key):
+                self.fail(
+                    f"docs/how-it-works.md does not list {key[1]} for {key[0]}, "
+                    "which report downloads"
+                )
+        for key in sorted(set(page) - set(code)):
+            with self.subTest(pair=key):
+                self.fail(
+                    f"docs/how-it-works.md lists {key[1]} for {key[0]}, "
+                    "which report never downloads"
+                )
+        when = {True: "under a condition", False: "always"}
+        for key in sorted(set(code) & set(page)):
+            if code[key] != page[key]:
+                with self.subTest(pair=key):
+                    self.fail(
+                        f"docs/how-it-works.md has {key[1]} read {when[page[key]]} for {key[0]}, "
+                        f"but the job that report waits for has it read {when[code[key]]}"
+                    )
 
 
 def decision(path):

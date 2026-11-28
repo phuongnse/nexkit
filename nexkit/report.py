@@ -1143,6 +1143,22 @@ def _retried(gh, decision, error, message):
     return message
 
 
+def _untrusted_stop(gh, cfg, decision, reason):
+    """Send the engine the stop of an implement or fix round that an untrusted edit stopped
+    before its agent started, and store its answer (`host.stage_untrusted`): `failed` with
+    attention `untrusted`, so that a writer's vouch ends it. The round's comment, outcome and
+    mention keep their words. A run that cannot read GitHub or store the answer, or whose
+    engine refuses to decide, only prints a warning: a person is needed either way."""
+    from .host import Refused, stage_untrusted
+
+    try:
+        stage_untrusted(gh, cfg, decision, reason, write=True)
+    except (GitHubError, Refused) as error:
+        why = autopilot.quoted(str(error), 300)
+        number = decision["issue"]
+        print(f"::warning::The state of #{number} does not hold the untrusted stop: {why}")
+
+
 def _stop_round(gh, cfg, decision, agent, outcome, message, reason=None, **fields):
     """Show a pull request round that published nothing, with the reason. An automatic
     fix round that NexKit stopped, for a reason outside the agent's work, gives its round
@@ -1419,7 +1435,16 @@ def merge_pull(gh, cfg, target, row, message, workflow, default_branch):
             f" NexKit did not merge it: {edited}. Read #{target['issue']}, and comment "
             f"`/nexkit trust` there if you trust it; NexKit then reviews this pull request again."
         )
-        return _guarded(gh, cfg, target, autopilot.UNTRUSTED_MERGE, message.strip())
+        person = needs_person(autopilot.UNTRUSTED_MERGE, cfg, found={"pull": True})
+        return _guarded(
+            gh,
+            cfg,
+            target,
+            autopilot.UNTRUSTED_MERGE,
+            message.strip(),
+            refusal="untrusted",
+            text=person,
+        )
     merge_base = on_base(gh, target["base"], head)
     if merge_base:
         empty = {"version": head, "merged": False, "empty": True}
@@ -1588,15 +1613,25 @@ def _passed_but(head, ended):
     return f"✅ Checks and AI review passed on `{head[:7]}`. {ended}"
 
 
-def _guarded(gh, cfg, target, outcome, message, found=None):
+def _guarded(
+    gh,
+    cfg,
+    target,
+    outcome,
+    message,
+    found=None,
+    refusal="needsPerson",
+    text="NexKit did not try the merge.",
+):
     """`(outcome, message)` of a merge that one of its guards stopped: a closed issue, one
-    edited after a writer vouched for it, or one NexKit could not read. A person decides each,
-    as the engine does when it is sent as a refusal only a person clears. `found` is what the
-    round's comment says a person does, when it says one."""
+    edited after a writer vouched for it, or one NexKit could not read. A person decides each.
+    The engine hears it as a refusal only a person clears (`needsPerson`), and an issue edited
+    after a vouch as `untrusted`, which a writer's vouch ends, with `text` as its words. `found`
+    is what the round's comment says a person does, when it says one."""
     from .host import Refused
 
     try:
-        end = _engine_accept(gh, cfg, target, "needsPerson", "NexKit did not try the merge.")
+        end = _engine_accept(gh, cfg, target, refusal, text)
         if end != "person":
             raise Refused(f"The engine answers {end!r} to a merge that a guard stopped.")
     except Refused as error:
@@ -2567,6 +2602,8 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
                 reason = autopilot.protected_reason(protected)
             if refused:
                 reason = refused
+            if outcome == autopilot.UNTRUSTED_ROUND and action in ("implement", "fix"):
+                _untrusted_stop(gh, cfg, decision, reason)
             if reason and autopilot.carries_on(gh, cfg, decision, outcome, agent, ran=agent_ran):
                 reason = None
                 message += "\n\nNexKit autopilot carries on from here."

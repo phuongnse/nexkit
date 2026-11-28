@@ -97,6 +97,7 @@ CHECKS_RETRY = 3600
 ACCEPT_WAITS = ("accept", "acceptRefused", "reopened")
 # How many event ids the state keeps, to take each event once.
 RECENT = 20
+UNTRUSTED = "An edit by someone without write access stopped it, and a writer vouches for it again."
 # A host's policies when it leaves one out: NexKit 6's on GitHub without autopilot, as
 # `policies.schema.json` gives each as its default
 # (docs/engine-hosts.md#what-a-host-decides), except
@@ -1357,7 +1358,8 @@ class Step:
         failed on an error, on no change, and `afterFailure` plans it again: the item waits in
         `failed` with attention `blocked` or `roundFailed`, which only those rounds give. A
         time-out, a usage limit and a failed plan keep `failed`, and an untrusted stop has its
-        own attention, `untrusted`, which a writer's vouch ends (`vouched`): a comment does
+        own attention, `untrusted`, which a writer's vouch ends (`vouched`). The host reports
+        it, as a run's `untrusted` result or an accept refused as `untrusted`: a comment does
         not plan any of them again."""
         return (
             self.state == "failed"
@@ -1582,6 +1584,14 @@ class Step:
             # `move` cancels the agent of a state the item leaves, so this is a state that a
             # host changed by hand.
             raise EngineError(f"{action['id']} runs {stage}, which {self.state} does not run.")
+        if result.get("untrusted"):
+            # The host stopped the run before its agent started, because someone without write
+            # access edited what it reads. An automatic fix round gives its count back, which
+            # `move` would not: it drops `automatic` and keeps the count.
+            self.give_back(action)
+            self.move("failed")
+            self.need("untrusted", result["error"] or UNTRUSTED)
+            return
         stopped = stage != "plan" and self.stopped_without_result(result, stage)
         if stopped and self.stop_for_budget():
             return
@@ -2018,7 +2028,7 @@ class Step:
             self.s["refusedAcceptable"] = self.version
 
     def finished_accept(self, result, action):
-        if not result["accepted"]:
+        if not result["accepted"] and result["refusal"] != "untrusted":
             self.refused_acceptable()
         if result["accepted"]:
             self.move("accepted")
@@ -2060,6 +2070,11 @@ class Step:
             until = self.later(CHECKS_RETRY)
             wait = self.wait("requiredChecks", until=until)
             self.do("wait", wait=wait["id"], until=until)
+        elif result["refusal"] == "untrusted":
+            # The host did not try the accept: an edit by someone without write access stopped
+            # it, and a writer's vouch ends the attention (`vouched`).
+            self.move("ready")
+            self.need("untrusted", result["text"] or UNTRUSTED)
         elif result["refusal"] in ("transient", "headMoved", "needsPerson"):
             # A newer version observed first was already checked by the reconcile, which
             # cancelled this accept: what is left waits for a person (`report._refused`,

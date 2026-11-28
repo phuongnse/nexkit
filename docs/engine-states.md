@@ -88,9 +88,11 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
     again. On an item with a change a person decides (`replanRecommended`), since a new plan
     would leave the change behind.
   - Otherwise the round runs again with the answers.
-- **An untrusted edit stops a round or a merge.** The host marks the item with attention
-  `untrusted`, in `failed` for a round and in `ready` for a merge, and the engine never marks it
-  by itself, since only the host sees who edited the item. A comment does not plan it again. A
+- **An untrusted edit stops a round or a merge.** Only the host sees who edited the item, so it
+  reports the stop: a `runAgent` result with `untrusted` true, which says the host stopped the
+  run before its agent, or an accept refused as `untrusted`. The engine marks the item with
+  attention `untrusted`, in `failed` for a round and in `ready` for a merge. An automatic fix
+  round that stopped this way gives its count back. A comment does not plan it again. A
   `trust` request from a writer, sent after the stop, ends it as NexKit 6 does: an item with no
   change plans again, an item with a change starts an automatic fix round, counted, and a
   stopped merge runs its checks and review again. Where no automatic fix round is left, a
@@ -237,7 +239,9 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   `acceptRefused`. An observation that arrives while an update is on its way is no person's push.
 - **An accept refused for a reason that waits for a person** (`headMoved`, `transient` and
   `needsPerson`) goes to `ready` with `acceptRefused`, and one that was not accepted
-  (`notAccepted`) to `failed`. A host that read a newer version of the change sends it as an
+  (`notAccepted`) to `failed`. One that the host did not try, because an untrusted edit stopped it
+  (`untrusted`), goes to `ready` with attention `untrusted`, and it does not count as a refusal
+  that GitHub gave. A host that read a newer version of the change sends it as an
   observation before the refusal, which the engine checks as any push: the item goes to
   `checking`, the pending accept is cancelled, and the refusal that follows changes nothing. A
   `headMoved` with no newer observation waits for a person, since the engine has no version to
@@ -344,12 +348,12 @@ Three things sit beside the state, never in place of it:
 
 | Action | The host | Its result |
 | --- | --- | --- |
-| `runAgent` | Runs a runner for a stage, see [runners](engine-hosts.md#runners); for a fix round, the checks it diagnoses first | The stage's result, tokens, a usage limit with its reset, a transient stop |
+| `runAgent` | Runs a runner for a stage, see [runners](engine-hosts.md#runners); for a fix round, the checks it diagnoses first | The stage's result, tokens, a usage limit with its reset, a transient stop, or that the host stopped it before its agent for an untrusted edit |
 | `publish` | Makes the agent's work the change: a commit and a pull request, or a draft | The change's id and version, or why it could not |
 | `replaceChange` | Drops the change and starts a new one from what is current | The new change |
 | `updateChange` | Brings the change up to date with the branch it was made on, without an agent: the same change at a new version | The change's id and new version, or why it could not |
 | `runChecks` | Runs its checks on a version of the change | Each result, its failure signature, and whether the failure matches a known failure of the base; the item about that failure when every failing check matches it |
-| `accept` | Accepts the change: a merge, or an accept of a draft | `accepted`, or refused with a kind: `transient`, `waitingForChecks`, `checkFailed`, `behind`, `headMoved`, `conflict`, `notAccepted` or `needsPerson`; for `checkFailed`, the item about a failure the base branch has when every check that failed fails as it does there |
+| `accept` | Accepts the change: a merge, or an accept of a draft | `accepted`, or refused with a kind: `transient`, `waitingForChecks`, `checkFailed`, `behind`, `headMoved`, `conflict`, `notAccepted`, `needsPerson` or `untrusted`; for `checkFailed`, the item about a failure the base branch has when every check that failed fails as it does there |
 | `createParts` | Makes the parts of a split, each blocked by the earlier parts it needs | The parts' ids |
 | `withdrawChange` | Withdraws the change that a split replaces, such as closing its pull request as superseded | Done |
 | `close` | Ends the work item with its outcome | Done |

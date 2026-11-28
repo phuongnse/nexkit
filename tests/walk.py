@@ -112,8 +112,9 @@ INVARIANTS = {
     "under `person`, `changeApproved` never issues an `accept` and changes nothing of a change "
     "that waits for its accept",
     "refusals": "a refused accept that no one retries, a moved head, a refusal after the base "
-    "branch kept moving or one only a person clears, waits for a person in `ready`; one that "
-    "was not accepted fails the item",
+    "branch kept moving or one only a person clears, waits for a person in `ready`, and one "
+    "that an untrusted edit stopped does so with `untrusted`; one that was not accepted fails "
+    "the item",
 }
 
 # What each agent run spends in a walk: the item's own budget counts it.
@@ -379,7 +380,7 @@ class Walker:
                 if isinstance(r, str) and r.startswith("@agent:" + stage)
             ]
             if stage != "review":
-                pool += ["@timeout", "@error"]
+                pool += ["@timeout", "@error", "@untrusted"]
             return tc.result_of(rng.choice(pool or ["@error"]))
         if kind == "runChecks":
             if rng.random() < 0.6:
@@ -387,7 +388,7 @@ class Walker:
         if kind == "accept" and rng.random() < 0.6:
             refusal = rng.choice(
                 ["checkFailed", "checkFailed", "conflict", "behind", "notAccepted"]
-                + ["transient", "headMoved", "needsPerson"] * 2
+                + ["transient", "headMoved", "needsPerson", "untrusted"] * 2
                 + ["waitingForChecks"] * 8
             )
             found = {"accepted": False, "refusal": refusal, "text": "x"}
@@ -1413,12 +1414,18 @@ class Walker:
     def refusals(self, state, event, answer, done, flag, info):
         """The invariant of the refusals that wait for a person: with a calm observation, an
         accept refused as `transient`, `headMoved` or `needsPerson` leaves the item in `ready`
-        with `acceptRefused`, and `notAccepted` in `failed`."""
+        with `acceptRefused`, and `notAccepted` in `failed`. An accept refused as `untrusted`
+        leaves it in `ready` with `untrusted`, whatever the observation says."""
         if state is None or not answer["changed"] or state["state"] != "accepting":
             return
         if done is None or done["kind"] != "accept":
             return
         refusal = (event.get("result") or {}).get("refusal")
+        if refusal == "untrusted":
+            new = answer["state"]
+            if new["state"] != "ready" or (new["attention"] or {}).get("reason") != "untrusted":
+                flag("refusals", "an untrusted refusal does not wait for a person", info)
+            return
         seen = state["observed"]
         calm = bool(seen) and not (seen["conflicts"] or seen["merged"] or seen["empty"])
         calm = calm and seen["version"] == state["change"]["version"] and not state["hold"]

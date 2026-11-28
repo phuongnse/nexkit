@@ -1081,6 +1081,60 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(played[2:], [("plan", 5), ("go", 5)])
         self.assertEqual(pipe.gh.issues[5]["state"], "closed")
 
+    def test_an_untrusted_edit_that_stops_a_go_is_stored_as_the_next_revision(self):
+        during = []
+
+        def at(days):
+            return (datetime.now(UTC) + timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        def working(pipe):
+            # The agent works: the stored state has its stage pending, and the author edits.
+            doc = item_state.read(pipe.gh, 5)[1]
+            during.append((doc["state"], [a["stage"] for a in doc["pending"] if "stage" in a]))
+            during.append(doc["revision"])
+            pipe.gh.edits[5] = [("bob", at(1))]
+
+        def script(pipe, inputs):
+            if inputs["command"] == "plan":
+                return plan()
+            agent = {"status": "untrusted", "error": "@bob edited it"}
+            return {"agent": agent, "working": working}
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5, user="bob")
+        pipe.gh.human_comment(5, "/nexkit trust", "olivia", "OWNER")
+        pipe.take_run(5)
+        self.assertEqual(pipe.play(), [("plan", 5), ("go", 5)])
+        self.assertEqual(pipe.played[-1][2], "agent_untrusted")
+        self.assertEqual(during[0], ("working", ["implement"]))
+        state = item_state.read(pipe.gh, 5)[1]
+        self.assertEqual(state["state"], "failed")
+        self.assertEqual(state["attention"]["reason"], "untrusted")
+        self.assertEqual(state["revision"], during[1] + 1)
+        self.assertEqual(pipe.gh.pulls, {})
+
+    def test_an_untrusted_edit_that_stops_a_merge_is_stored_as_ready_for_a_person(self):
+        def at(days):
+            return (datetime.now(UTC) + timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        def working(pipe):
+            pipe.gh.edits[5] = [("bob", at(1))]
+
+        def script(pipe, inputs):
+            return plan() if inputs["command"] == "plan" else {**done(), "working": working}
+
+        pipe = Pipeline(self, config(), script)
+        pipe.issue(5, user="bob")
+        pipe.gh.human_comment(5, "/nexkit trust", "olivia", "OWNER")
+        pipe.take_run(5)
+        pipe.play()
+        self.assertEqual(pipe.gh.merged, [])
+        self.assertIn("merge_untrusted", [outcome for _, _, outcome in pipe.played])
+        self.assertEqual(pipe.played[-1][2], "merge_untrusted")
+        state = item_state.read(pipe.gh, 5)[1]
+        self.assertEqual(state["state"], "ready")
+        self.assertEqual(state["attention"]["reason"], "untrusted")
+
     def test_an_app_that_may_not_read_alerts_opens_nothing_and_the_other_work_goes_on(self):
         def script(pipe, inputs):
             return plan() if inputs["command"] == "plan" else done()

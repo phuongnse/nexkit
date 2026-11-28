@@ -85,8 +85,9 @@ It decides what follows the other refusals of a merge (`report._refused`, `repor
 `report._guarded`): a head that moved, which the host sends as an observation of the new head
 first, so that the engine checks it, or a person decides when none was read or it is the head
 the round checked; the last refusal after the base branch kept moving through the host's quick
-tries; the checks before the merge, an issue closed, edited after a vouch or unreadable; and
-any other refusal GitHub gives that only a person clears.
+tries; the checks before the merge, an issue closed or unreadable; and any other refusal GitHub
+gives that only a person clears. An issue edited after a vouch goes as an `untrusted` refusal,
+which the engine answers with `ready` and attention `untrusted`, as the import does.
 
 It decides what follows a merge that GitHub refused for a conflict (`report._refused`):
 `accept_answer` sends it as a `conflict` result, and the engine answers a conflict round while
@@ -137,6 +138,13 @@ stop's result answers, the `again.transient` count that the runs again are count
 `usageLimit` or `time` wait that a resume's tick names. A hold goes first as `held` only when the
 stored state is not held already, as the engine ignores a second one. A transient stop of publish
 goes as a transient stop of the stage's agent. A reset stays the host's to give.
+
+It decides what follows an untrusted edit that stopped the implement or fix round of a `/nexkit go`
+or a fix command before its agent started (`stage_untrusted`, called by `report._untrusted_stop`):
+the host sends the stop, which only it sees from who edited the issue, as an `untrusted` result of
+the round's pending agent run, and the engine answers `failed` with attention `untrusted`, giving
+an automatic fix round's count back. It decides on the stored state alone. A plan's untrusted stop
+does not reach the engine.
 
 It decides what follows a command that autopilot started and lost, whose run GitHub never
 started, or that ended without a report, or that handed the work on to a run that never started
@@ -324,26 +332,26 @@ The decisions after a plan (`after_plan`, `plan_carried_on`, `plan_waits_for`), 
 first plan (`first_plan`), after a writer's vouch (`vouched`), at a merge (`required_failed`,
 `accept_answer`, `checks_waited`, `refusal_cleared`, `update_failed`, `change_seen`), after a
 blocked or failed `/nexkit go` (`after_go`, `round_carried_on`), after a stopped or timed-out round
-(`stopped`, `stop_carried_on`), at a usage limit or a transient error (`stage_limited`,
-`stage_transient`), when a resume comes due (`resumes`), for a lost command (`lost_again`), on a
-person's command (`command`), on a closing command (`closing_command`, which carries out the
-`close` that `take` stored, or previews when nothing was taken, and the `maintain` job closes), on
-an approval (`approved`: the `step` run of the item's group stores it, and the approval's own run
-in `approved-N` previews), at an item's end and a parent's end (`no_change_found`, `on_base_found`,
-`part_ended`, as above) and about a pull request's rounds read the item's stored state document
-(`stored`: the document in its state comment, or the import in memory when it has none) and send
-their event through `decide`, or their events in a row through `decide_all`. The ones about its
-rounds are a round's end (`after_round`, `round_ended`), a conflict (`conflicting`,
-`conflicts_released`, `base_moved`), the end of a wait for a hold or the base branch (`released`,
-`base_passes`), the checks that a fix round diagnoses (`diagnosis`) and which rounds count
-(`stopped_counts`). The checks and the review of a round are two events that GitHub shows apart, so
-`round_ended` stores two revisions, and so does a wait's end that has a head to observe first. The
-automatic fix rounds and the conflict rounds used are the stored `rounds` (`_stored_count`), and
-NexKit 6's count only when no state can be read, for example with no configuration, except in the
-decisions that pass no document of the markers (below), which read the stored `rounds` alone. A
-conflict round that the push run, the schedule, another item's merge or a round's report starts is
-counted by the run it starts (`command`), so the stored count is current when the next decision
-reads it.
+(`stopped`, `stop_carried_on`), at a usage limit, a transient error or an untrusted edit
+(`stage_limited`, `stage_transient`, `stage_untrusted`), when a resume comes due (`resumes`), for a
+lost command (`lost_again`), on a person's command (`command`), on a closing command
+(`closing_command`, which carries out the `close` that `take` stored, or previews when nothing was
+taken, and the `maintain` job closes), on an approval (`approved`: the `step` run of the item's
+group stores it, and the approval's own run in `approved-N` previews), at an item's end and a
+parent's end (`no_change_found`, `on_base_found`, `part_ended`, as above) and about a pull request's
+rounds read the item's stored state document (`stored`: the document in its state comment, or the
+import in memory when it has none) and send their event through `decide`, or their events in a row
+through `decide_all`. The ones about its rounds are a round's end (`after_round`, `round_ended`), a
+conflict (`conflicting`, `conflicts_released`, `base_moved`), the end of a wait for a hold or the
+base branch (`released`, `base_passes`), the checks that a fix round diagnoses (`diagnosis`) and
+which rounds count (`stopped_counts`). The checks and the review of a round are two events that
+GitHub shows apart, so `round_ended` stores two revisions, and so does a wait's end that has a head
+to observe first. The automatic fix rounds and the conflict rounds used are the stored `rounds`
+(`_stored_count`), and NexKit 6's count only when no state can be read, for example with no
+configuration, except in the decisions that pass no document of the markers (below), which read the
+stored `rounds` alone. A conflict round that the push run, the schedule, another item's merge or a
+round's report starts is counted by the run it starts (`command`), so the stored count is current
+when the next decision reads it.
 
 While other decisions still build their document from NexKit 6's markers, `resync` uses the stored
 document only when it says what the markers' document says, apart from its revision, its events
@@ -357,9 +365,9 @@ both send, would be a duplicate. A plan's result keeps the marks of the answers 
 gave to a round's questions (`_carry_replan`), which the markers cannot say, so that a round that
 asks again after such a re-plan is not answered twice in a row. `after_go` and `round_carried_on`
 no longer go through it: they pass no document of the markers. Nor do `no_change_found`,
-`on_base_found`, `stage_limited`,
-`stage_transient` and `resumes`, which decide on the stored state alone, and neither do `command`,
-`_on_base` and `closing_command`. So do `checks_waited`, `refusal_cleared` and `change_seen`: the
+`on_base_found`, `stage_limited`, `stage_transient`, `stage_untrusted` and `resumes`, which decide
+on the stored state alone, and neither do `command`, `_on_base` and `closing_command`. So do
+`checks_waited`, `refusal_cleared` and `change_seen`: the
 sweep's looks at a merge that waits for required checks or that GitHub refused, and what the
 merge finds. So do `required_failed`, `accept_answer` and `update_failed`. `first_plan` and
 `approved` pass none either; `vouched` still goes through it.
@@ -3870,6 +3878,36 @@ def stage_transient(gh, cfg, decision, now, error, label=None, write=False):
     )
     actions = [action for _, found in answers for action in found]
     return _transient_answer(state, actions, decision["action"])
+
+
+def stage_untrusted(gh, cfg, decision, text, write=False):
+    """The state after an untrusted edit stopped the implement or fix round of `decision`
+    before its agent started (`report._untrusted_stop`), as the engine decides it: `failed`,
+    with attention `untrusted` and `text` as its words, and an automatic fix round's count
+    given back. The host sends the stop as an `untrusted` result of the round's pending agent
+    run, since only it sees who edited the issue. It decides on the stored state alone. With
+    `write`, which the `report` of the item's group passes, the answer is stored
+    (`decide`). Raises `Refused` for any other answer, for an item with no state to decide on,
+    and with no configuration, before anything is read or written."""
+    number = decision["issue"]
+    version = _stage_version(decision)
+    result = {**AGENT, "changeVersion": version, "output": None, "untrusted": True}
+    result["error"] = str(text or "") or None
+    fields = {"action": first_state.RUN_ID, "changeVersion": version, "result": result}
+    event = _event("actionFinished", number, None, _run_event_id(), **fields)
+    state, _ = decide(
+        gh,
+        cfg,
+        number,
+        event,
+        None,
+        pull=decision.get("pr"),
+        action=("runAgent", decision["action"]),
+        write=write,
+    )
+    if state["state"] != "failed" or (state["attention"] or {}).get("reason") != "untrusted":
+        raise Refused(f"The engine answers {state['state']} to an untrusted stop of a round.")
+    return state
 
 
 def _transient_answer(state, actions, stage):

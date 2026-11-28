@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
-from nexkit import cli, host, progress
+from nexkit import cli, host, item_state, progress
 from nexkit.context import gather
 from nexkit.github import GitHubError
 from nexkit.maintain import WAIT_INPUTS
@@ -201,6 +201,9 @@ class EditedIssueTests(ReportCase):
         self.assertEqual(self.gh.dispatches, [])
         self.assertEqual(read_state(self.gh.comments(6))[1]["auto_fixes"], 0)
         self.assertIn("/nexkit trust", outcome["attention"])
+        stored = item_state.read(self.gh, 5)[1]
+        self.assertEqual(stored["state"], "failed")
+        self.assertEqual(stored["attention"]["reason"], "untrusted")
 
 
 class MergeGuardTests(ReportCase):
@@ -232,11 +235,11 @@ class MergeGuardTests(ReportCase):
     def unreadable(self):
         return mock.patch.object(self.gh, "issue", side_effect=GitHubError(502, "down"))
 
-    def assertNeedsPerson(self, events):
+    def assertNeedsPerson(self, events, refusal="needsPerson"):
         [event] = events
         self.assertEqual(event["kind"], "actionFinished")
         result = event["result"]
-        self.assertEqual((result["accepted"], result["refusal"]), (False, "needsPerson"))
+        self.assertEqual((result["accepted"], result["refusal"]), (False, refusal))
         self.assertEqual(self.gh.merged, [])
 
     def test_a_closed_issue_sends_a_refusal_only_a_person_clears(self):
@@ -245,11 +248,12 @@ class MergeGuardTests(ReportCase):
         self.assertEqual(outcome, "merge_issue_closed")
         self.assertNeedsPerson(events)
 
-    def test_an_issue_edited_after_a_vouch_sends_a_refusal_only_a_person_clears(self):
+    def test_an_issue_edited_after_a_vouch_sends_an_untrusted_refusal(self):
         self.edited()
         outcome, _, events = self.merge()
         self.assertEqual(outcome, "merge_untrusted")
-        self.assertNeedsPerson(events)
+        self.assertNeedsPerson(events, "untrusted")
+        self.assertIn("/nexkit trust", events[0]["result"]["text"])
 
     def test_an_unreadable_issue_sends_a_refusal_only_a_person_clears(self):
         with self.unreadable():

@@ -18,8 +18,9 @@ are the stage's values in the `agents` policy, each null when the host gives non
 the stage's result schema what the `prompt` call's `checklist` and `profiles` add: a checklist
 field, and the names of triage's profiles. Its result gives the stage's result, the tokens as input,
 cached and output, the seconds it spent, a usage limit with its reset, whether the stop was
-transient, whether it ran out of time, whether no result fit the schema, and the version of the
-change it produced.
+transient, whether it ran out of time, whether no result fit the schema, whether the host stopped
+the run before its agent because someone without write access edited what it reads, and the
+version of the change it produced.
 
 An agent's fallbacks stay the runner's: it runs them in turn within the one action. GitHub's agent
 job builds the same action from its configuration with `agent.action_for`, and `run_action` refuses

@@ -271,7 +271,8 @@ def setup(cfg, cwd, redact=str, commits=None):
 def failure_signature(output):
     """What tells one failure of a check from another: the first line of its output that
     reports a failure (FAIL, Error, failed, AssertionError, ✘), or else its last line,
-    without ids, durations, numbers and runs of whitespace, which differ between runs."""
+    without ids, durations, numbers and runs of whitespace, which differ between runs, and
+    cut to SIGNATURE_LIMIT characters."""
     lines = [line for line in (output or "").splitlines() if line.strip()]
     line = next((x for x in lines if FAILURE_LINE.search(x)), lines[-1] if lines else "")
     for pattern in VOLATILE:

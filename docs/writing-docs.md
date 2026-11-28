@@ -409,6 +409,9 @@ when a list of what the code defines misses an entry. These rules close each of 
    - `test_each_page_lists_the_words_of_failure_line_and_no_other`: the words that [agents and
      profiles](agents-and-profiles.md) and [failure handling](failure-handling.md#failure-handling)
      list as marking a failing line are those of `FAILURE_LINE`.
+   - `test_the_page_lists_what_a_failure_signature_removes_and_no_other`: what [failure
+     handling](failure-handling.md#failure-handling) lists as removed from a failure signature
+     matches the patterns of `checks.VOLATILE`, one for each, in their order.
    - `test_the_page_lists_the_check_jobs_and_no_other`: the jobs in which
      [autopilot](work-without-a-command.md#autopilot) stops a round are those of `CHECK_JOBS`, and
      no other.

@@ -73,8 +73,9 @@ in two rounds in a row, NexKit asks for the cause first.
 - *The same failure* is the same check with the same failure signature: the first line of
   the check's output that reports a failure (it contains `fail`, `error`, `✘` or `✗`, in
   any case, such as `FAIL`, `AssertionError` or `2 tests failed`), or the last non-empty
-  line when none does. UUIDs, hex ids, durations and other numbers are removed and runs of
-  whitespace become one space, so the same failure in another run keeps its signature.
+  line when none does. UUIDs, hex numbers with `0x`, hex ids, durations and other numbers are
+  removed, runs of whitespace become one space, and the signature keeps at most its first 200
+  characters, so the same failure in another run has the same signature.
 - `report` compares the failing checks that a fix round was asked to fix with the checks
   after it. When a check fails with the same signature in both, the state comment records
   it, and `route` makes the next automatic fix round a diagnosis round. A round that a

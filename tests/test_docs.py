@@ -1864,6 +1864,7 @@ VALUES = (
     ("work-without-a-command.md", f"at most {autopilot.ISSUES_LIMIT:,} of each"),
     ("work-without-a-command.md", f"{restart_delays()} after its last start"),
     ("failure-handling.md", f"{restart_delays()} after its last start"),
+    ("failure-handling.md", f"its first {checks.SIGNATURE_LIMIT} characters"),
     ("autopilot.md", f"more than {NUMBERS[textutil.MAX_PARTS]} parts"),
     ("autopilot.md", f"within {NUMBERS[machine.CHECKS_END // 3600]} hours"),
     ("autopilot.md", f"more than {NUMBERS[autopilot.CI_NEW_ISSUES]} issues"),
@@ -1987,6 +1988,16 @@ PUBLISH_DELAYS = re.compile(r"Tries again after ([\d, and]+?) seconds, (\w+) tri
 OTHER_DELAYS = re.compile(
     r"[Ee]very other GitHub API call .*?tries (\w+) more .*?after ([\d, and]+?) seconds"
 )
+# What failure handling lists as removed from a failure signature, after "none does. ". Each item
+# has a sample, in the order of checks.VOLATILE, that its pattern removes and no earlier one does.
+VOLATILE_LIST = re.compile(r"the last non-empty line when none does\. (.+?) are removed")
+VOLATILE_SAMPLES = {
+    "UUIDs": "123e4567-e89b-12d3-a456-426614174000",
+    "hex numbers with `0x`": "0x7ffe0a",
+    "hex ids": "3f9c2a1",
+    "durations": "250ms",
+    "other numbers": "42",
+}
 
 
 class LayoutTests(unittest.TestCase):
@@ -2120,6 +2131,60 @@ class FailureWordsTests(unittest.TestCase):
             for word in sorted(set(listed) - set(code)):
                 with self.subTest(page=name, word=word):
                     self.fail(f"docs/{name} lists {word!r}, which FAILURE_LINE does not match")
+
+
+class FailureSignatureTests(unittest.TestCase):
+    def test_the_page_lists_what_a_failure_signature_removes_and_no_other(self):
+        # Lines are wrapped, so the page is searched with its spaces made one each.
+        text = " ".join(FAILURE_PAGE.read_text().split())
+        page = f"docs/{FAILURE_PAGE.name}"
+        match = VOLATILE_LIST.search(text)
+        if match is None:
+            self.fail(f"{page} does not list what a failure signature removes")
+        listed = re.split(r", | and ", match.group(1))
+        for item in listed:
+            if item not in VOLATILE_SAMPLES:
+                with self.subTest(item=item):
+                    self.fail(f"{page} lists {item!r}, and the test has no sample for it")
+        for item in VOLATILE_SAMPLES:
+            if item not in listed:
+                with self.subTest(item=item):
+                    self.fail(f"{page} does not list {item!r}, which checks.VOLATILE removes")
+        self.assertEqual(
+            listed,
+            list(VOLATILE_SAMPLES),
+            f"{page} lists what a failure signature removes in another order than checks.VOLATILE",
+        )
+        self.assertEqual(
+            len(VOLATILE_SAMPLES),
+            len(checks.VOLATILE),
+            f"checks.VOLATILE has {len(checks.VOLATILE)} patterns and the test has "
+            f"{len(VOLATILE_SAMPLES)} samples; each pattern needs one listed item and a sample",
+        )
+        for index, (item, sample) in enumerate(VOLATILE_SAMPLES.items()):
+            with self.subTest(item=item):
+                self.assertIsNotNone(
+                    checks.VOLATILE[index].search(sample),
+                    f"checks.VOLATILE[{index}] does not remove {sample!r}, the sample of {item!r}",
+                )
+                for earlier in checks.VOLATILE[:index]:
+                    self.assertIsNone(
+                        earlier.search(sample),
+                        f"an earlier pattern of checks.VOLATILE removes {sample!r}, "
+                        f"the sample of {item!r}, before its own pattern does",
+                    )
+                self.assertEqual(
+                    checks.failure_signature(f"Error: step {sample} failed"),
+                    "Error: step failed",
+                    f"a failure signature keeps {sample!r}, the sample of {item!r}",
+                )
+        text_phrase = "runs of whitespace become one space"
+        self.assertIn(text_phrase, text, f"{page} does not say {text_phrase!r}")
+        self.assertEqual(
+            checks.failure_signature("Error:  a\t b"),
+            "Error: a b",
+            "a failure signature does not turn each run of whitespace into one space",
+        )
 
 
 class StopJobsTests(unittest.TestCase):

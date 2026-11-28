@@ -10,9 +10,7 @@ hosts](engine-hosts.md) holds what a host brings.
 
 ## States
 
-A work item is always in one state. NexKit 6 has no field for it and reads it from its comments;
-the engine makes it explicit. Beside the state, the item has a **change** or none, so that a
-re-plan, a question or a failure keeps the pull request or draft that exists.
+A work item is always in one state. The state document names it, so every decision reads it rather than working it out. Beside the state, the item has a **change** or none, so that a re-plan, a question or a failure keeps the change that exists.
 
 | State | What happens | Next |
 | --- | --- | --- |
@@ -39,12 +37,12 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   on as one change too when its rules refuse it, as below. A plan that asks questions waits for
   answers, even one an item was made with.
 - **What follows a plan.** Under `person`, every plan waits for a person, a plan that finds no
-  change too, for what NexKit 6 asks of them first: the approval of a plan that is too large or
+  change too, for what they decide first: the approval of a plan that is too large or
   finds no change, a hand-made change, answers, or the approval of a clean plan. A person may
   answer a plan's questions whatever its attention names first, under `autoWhenClean` too. A
   writer's answer that picks the option that only closes the item drops it under either policy,
   with no agent run, since another plan could only stop at the same place; on an item with a
-  change, the answer goes to the next plan. Under `autoWhenClean`, as NexKit 6's autopilot decides:
+  change, the answer goes to the next plan. Under `autoWhenClean`, the engine decides in the person's place:
   - A plan that is too large is split into its parts, all of them, when splits are on and the
     item has no change, or has one and the plan is the one that a round which ran out of time
     asked for (`supersede`). A split of an item with a change withdraws the change. A split is
@@ -93,11 +91,8 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   run before its agent, or an accept refused as `untrusted`. The engine marks the item with
   attention `untrusted`, in `failed` for a round and in `ready` for a merge. An automatic fix
   round that stopped this way gives its count back. A comment does not plan it again. A
-  `trust` request from a writer, sent after the stop, ends it as NexKit 6 does: an item with no
-  change plans again, an item with a change starts an automatic fix round, counted, and a
-  stopped merge runs its checks and review again. Where no automatic fix round is left, a
-  person decides (`roundsUsedUp`) instead of a round that goes past `fixRounds`, which NexKit 6
-  would start. A `trust` from anyone else, or on any other stop, changes nothing.
+  `trust` request from a writer, sent after the stop, ends it, since a writer vouches for what the agent reads: an item with no change plans again, an item with a change starts an automatic fix round, counted, and a
+  stopped merge runs its checks and review again. Where no automatic fix round is left, a person decides (`roundsUsedUp`), since no round goes past `fixRounds`. A `trust` from anyone else, or on any other stop, changes nothing.
 - **What a person does on a round's questions.** A writer's answer that picks the option that
   only closes the item drops it, on an item with no change, as for a plan; any other answer
   plans the item again. Under `autoWhenClean`, a person's comment on questions the engine could
@@ -105,14 +100,13 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   did not say what the comment says, and so does the end of an item that blocks it; a comment on
   questions asked again lets the engine answer them again.
 - **What follows a round's checks and review.** The review runs after failing checks too, by
-  `reviewAfterFailingChecks`. Its verdict and its criteria decide, as in NexKit 6: a review that
+  `reviewAfterFailingChecks`. Its verdict and its criteria decide: a review that
   requests changes, an `unmet` criterion or a failing check leads to a fix round, and a blocking
   finding of a review that approves does not. A fix round follows while `fixRounds` has one
   left; then a person decides, in `ready` or, by `whenRoundsRunOut`, in `failed`
   (`roundsUsedUp`). The fix round waits while every failing check fails as the base branch
   does, which the checks' result says with the item about that failure, until that failure
-  ends (see *Wait* below); and while a hold is on, until it ends. It is counted when its run
-  is issued, as NexKit 6 counts it when it starts it: one that waited (`rounds.due`) runs only
+  ends (see *Wait* below); and while a hold is on, until it ends. It is counted when its run is issued, since a round that never runs spends nothing: one that waited (`rounds.due`) runs only
   while `fixRounds`, as the host gives it then, has one left, and otherwise a person decides
   (`roundsUsedUp`). A fix round that left the change as it was, having found the cause outside
   it, is followed by no other: what still fails on that version is a person's (`roundsUsedUp`),
@@ -126,8 +120,7 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   signature, at most 300 of them, which 15 checks of 20 shards each reach. When a check of the
   checks after a fix round fails with the same signature as in the checks before it, the fix round
   did not find its cause, so the next automatic fix round looks into that cause first: its
-  `runAgent` names those checks in `diagnose`, as NexKit 6's `route` makes it a diagnosis round, the
-  first ten of them as NexKit 6 does. The checks after an implement round, a person's push or a
+  `runAgent` names those checks in `diagnose`, the first ten of them, so that its prompt stays focused. The checks after an implement round, a person's push or a
   person's request for a review are no fix round's, so nothing repeats in them; a conflict round
   that resolves the conflict is a fix round, and its checks compare too. A conflict round that makes
   the change again starts a new change with an implement run, so its checks have no earlier checks
@@ -137,12 +130,11 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   forgets what repeated, since that failure is the base branch's, and a round whose change conflicts
   at its publish runs no checks, so the checks after the next round have none of it to compare with.
   A hold keeps a diagnosis round back as any fix round, and it diagnoses when it runs. The host's
-  automatic fix request is no such round: it runs, counts and diagnoses under a hold, as NexKit 6
-  runs a round that NexKit dispatches.
+  automatic fix request is no such round: it runs, counts and diagnoses under a hold, since the engine already issued that round.
 - **While a fix round waits** for a hold or the base branch, a person's push is checked, and so
   is a person's request for a review; a person's request for a fix runs that fix. The round
   that waited no longer waits, and none of these counts: the checks and the review that follow
-  decide the next round, as in NexKit 6.
+  decide the next round.
 - **Which rounds count.** Only an automatic fix round counts toward `fixRounds`. It is the round
   that the engine issues itself, or a `fix` request with `automatic` true that the host sends with
   `by` null for NexKit's own dispatch. Such a request is counted, marked automatic and diagnoses the
@@ -150,26 +142,23 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   `fix` request without `automatic` is a person's and counts nothing. One that is
   stopped before its review ends gives its count back, since it could no longer lead to an
   accept and its work was not judged: the engine stops it when a conflict round takes over, or
-  when a person pushes while its agent runs, and the host may stop it (`stopped`), as GitHub does
-  for an agent it may not run, a change already on the base branch, or checks that the base
-  branch's move stopped. Once the round has published, a person's push keeps its count, since its
-  change stays under the push and the push's checks judge it, as NexKit 6 keeps it. One whose
+  when a person pushes while its agent runs, and the host may stop it (`stopped`), such as for an agent it may not run. Once the round has published, a person's push keeps its count, since its
+  change stays under the push and the push's checks judge it. One whose
   agent stopped by itself, such as blocked, out of time or with an error, keeps its count.
 - **From every state that has a change,** the engine reconciles the item with the latest observation
   of that change after each event, once no publish or replace is on its way. A change that was
   merged, such as by a person's hand, goes to `accepted`; one that became empty, because the same
   change landed another way, goes to `noChange`; a version other than the engine's, such as a
   person's push, withdraws or cancels what acts on the old version and goes to `checking`, or
-  follows the conflict policy when that version conflicts. A split parent keeps waiting for its
-  parts instead, as NexKit 6 reads a parent's parts before its pull request. A change that conflicts follows the
+  follows the conflict policy when that version conflicts. A split parent keeps waiting for its parts instead, since its parts carry its work. A change that conflicts follows the
   conflict policy at once where nothing runs that it must wait for: in `ready` and `accepting`, and
   in `checking` when a conflict round can start (`resolve` or `redo` with rounds left), since those
   checks can no longer lead to an accept. Otherwise the policy applies when the item would next go
-  to its checks or be ready, as NexKit 6 starts no conflict round while another runs, and only if
+  to its checks or be ready, since one round at a time works on a change, and only if
   the latest observation still says that version conflicts; a question or a failure keeps its
   attention meanwhile. A person told of a conflict on a version is told once, and the item stays in
   `ready` for them even if the conflict clears without a push. A hold keeps the round that the
-  conflict policy would start back, whatever rounds are left, as NexKit 6's hold label does: the
+  conflict policy would start back, whatever rounds are left: the
   item waits in `checking` with nothing running, and the policy applies, with its count then, once
   the hold ends; in `ready` and `accepting` it applies when the hold ends. A round that resolves a
   conflict is no automatic fix round: the count of an automatic fix round whose change conflicts at
@@ -191,16 +180,14 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   `updateChange`, and the item stays in `checking`, since the update's result goes to its checks
   again, as after an update at the accept. Checks that the engine asked for in the same step are
   withdrawn instead, since they never started. Under `person`, under a hold, or once the updates
-  used reach `conflictRounds`, the checks run to their end, as NexKit 6 lets them, and the
-  merge's own `behind` refusal decides what follows. A conflict is the conflict rounds' to answer
+  used reach `conflictRounds`, the checks run to their end, and the merge's own `behind` refusal decides what follows. A conflict is the conflict rounds' to answer
   instead, and wins over `behind`. A version that a person pushed and that is observed behind is
-  updated as soon as it would be checked. NexKit 6 reads `behind` here only from the base
-  branch's rules and a comparison with its tip (`maintain.stop_superseded`).
+  updated as soon as it would be checked.
 - **From every state that is not final:** `dropRequested` goes to `dropped`, and the engine cancels
   the step that runs. A host's `stopped` event, such as a key that its provider refused or a
   person who was disabled, goes to `failed`.
 - **A review-only item** comes with its change and is never planned, fixed, replaced or accepted
-  by the engine: a person's own pull request, which NexKit only checks and reviews. Each review
+  by the engine: a person's own change, which the engine only checks and reviews. Each review
   request takes it to `checking`, and a drop, a merge or an emptied change ends the engine's work
   without closing it, because the person's change stays theirs. A review-only item that waits to
   start is checked at once when a push is observed; one that a person reopened waits for their
@@ -220,8 +207,7 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   round on an item with no change. The count of runs again goes on through
   the stages of one round, so a review handed on keeps it, and starts afresh when a request is
   taken or a new plan, implement or fix run starts.
-  A person's `plan`, or `go` for an implement run, replaces such a wait, as a new command does in
-  NexKit 6: the item starts that work again, and the tick of the wait it replaced changes nothing.
+  A person's `plan`, or `go` for an implement run, replaces such a wait, as a new command does: the item starts that work again, and the tick of the wait it replaced changes nothing.
   A usage limit's wait is replaced the same way.
 - **An accept refused because required checks have not passed yet** (`waitingForChecks`) keeps
   the item in `accepting`, with a wait for them (`requiredChecks`) and a `wait` action whose tick
@@ -230,7 +216,7 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
   version and the event's time, and the engine drops it when the item leaves `accepting`. A start
   recorded for another version counts as missing. A tick that ends the wait more than
   `CHECKS_END` after that start goes to `ready` with `acceptRefused` instead of trying the accept
-  again, so checks that never end are looked into by a person, as NexKit 6's autopilot does. The
+  again, so checks that never end are looked into by a person. The
   time is the tick's own: the engine reads no clock, and a refusal that comes in never ends the
   wait. A branch that is behind its base keeps being tried past `CHECKS_END` while the conflict
   policy is not `person`: an update brings checks that can pass. The engine knows it from the
@@ -246,39 +232,32 @@ re-plan, a question or a failure keeps the pull request or draft that exists.
 - **An accept refused for a reason that waits for a person** (`headMoved`, `transient` and
   `needsPerson`) goes to `ready` with `acceptRefused`, and one that was not accepted
   (`notAccepted`) to `failed`. One that the host did not try, because an untrusted edit stopped it
-  (`untrusted`), goes to `ready` with attention `untrusted`, and it does not count as a refusal
-  that GitHub gave. A host that read a newer version of the change sends it as an
+  (`untrusted`), goes to `ready` with attention `untrusted`, and it does not count as a refusal that the host gave. A host that read a newer version of the change sends it as an
   observation before the refusal, which the engine checks as any push: the item goes to
   `checking`, the pending accept is cancelled, and the refusal that follows changes nothing. A
   `headMoved` with no newer observation waits for a person, since the engine has no version to
   check.
 - **An accept refused and waiting for a person is tried again** once an observation of the
-  current version says that it is acceptable and does not conflict (`acceptable`, which GitHub
-  gives when `mergeable_state` is `clean`, `unstable` or `has_hooks`). It applies in `ready` with
+  current version says that it is acceptable and does not conflict (`acceptable`). It applies in `ready` with
   `acceptRefused`, to an item that is not review-only and has no hold. The item goes to
-  `accepting` and the engine asks for the accept, whatever the `accept` policy says, as NexKit 6
-  tries a refused merge again after a writer's approval whatever `merge.auto` says. A version
+  `accepting` and the engine asks for the accept, whatever the `accept` policy says, since the refusal, not the policy, held it back. A version
   whose accept was refused while an observation said it was acceptable (`refusedAcceptable`) is
   not tried again, so each version is tried once. The engine drops `refusedAcceptable` with the
   version.
 - **A person's approval of a change that waits for its accept** (`changeApproved` in `ready`
   with attention `accept`, `acceptRefused` or `reopened`) accepts it under the `autoWhenPassed`
   accept policy and changes nothing under `person`, where that person accepts it themselves. An
-  approval after `acceptRefused` or `reopened` is of any version of the change, as NexKit 6 tries
-  a refused merge again on the head that passed. One for `accept` is of the change's version,
+  approval after `acceptRefused` or `reopened` is of any version of the change, since the change passed and only the refusal held it back. One for `accept` is of the change's version,
   and another version changes nothing. It changes nothing while the latest observation says the
   change conflicts, which is the conflict policy's, and for an item that is only reviewed. It
   goes to `accepting` with an `accept`, which a hold keeps back.
-- **An agent that runs out of time** in an implement or fix stage: with splits on, as autopilot
-  has them, the item asks once for a plan that splits it, and the state records that it asked;
+- **An agent that runs out of time** in an implement or fix stage: with splits on, the item asks once for a plan that splits it, and the state records that it asked;
   otherwise, the second time, and for an item at `splitDepth` levels of parts, which is not
-  split, it goes to `failed` for a person, as NexKit 6 does. A host marks a part whose parent
-  already asked as having asked, since NexKit 6's parts inherit that. An item that has a change
-  asks too, as NexKit 6 does after a fix round, and marks the plan `supersede`. If that plan is
+  split, it goes to `failed` for a person. A host marks a part whose parent already asked as having asked, since a part carries its parent's work. An item that has a change asks too, after a fix round, and marks the plan `supersede`. If that plan is
   too large, the split rules apply and `withdrawChange` ends the change. Any other plan goes on
   as one change on it. The mark is dropped once a fix or implement run starts, or the item is
   split.
-- **A final item that a person reopens** waits for a person, with attention, as NexKit 6 does.
+- **A final item that a person reopens** waits for a person, with attention, since its outcome was already decided.
   One whose change went in or became empty, as its state or the latest observation says, such
   as a change merged after a person dropped the item, starts again without it and with its rounds
   counted afresh.
@@ -304,31 +283,25 @@ Three things sit beside the state, never in place of it:
   (`roundFailed`), a round that an untrusted edit stopped (`untrusted`), a final item opened
   again (`reopened`), or an
   action the host lost (`outage`).
-- **Hold:** nothing new starts by itself: the sweep's start waits, while a person's own request
-  still runs, as NexKit 6's hold label does. A step that runs finishes and records what it held
+- **Hold:** nothing new starts by itself: the sweep's start waits, while a person's own request still runs. A step that runs finishes and records what it held
   back. A request that would lead to the conflict policy's work, such as a person's request for a
   review of a change that conflicts, is taken but that work still waits: the hold wins, and the item
   waits in `checking` until it ends. A hold does not stop a step that runs: a run paused at a usage
-  limit or waiting after a transient stop runs again at its tick, as NexKit 6's resume does under
-  the label (`maintain.resume_paused`). A fix round that is due, an accept, a conflict round
-  and the start again of lost work wait until the hold ends, which starts the work again. The
-  host's automatic fix request, which carries out a round NexKit already dispatched, runs and
-  counts under a hold, as NexKit 6 runs a dispatched round.
+  limit or waiting after a transient stop runs again at its tick, since that run already started. A fix round that is due, an accept, a conflict round
+  and the start again of lost work wait until the hold ends, which starts the work again. The host's automatic fix request, which carries out a round the engine already issued, runs and counts under a hold, since that round is already under way.
 - **Wait:** the next step waits for something named: a request to start (`start`); a time, such
   as after a transient stop (`time`); the reset of a usage limit (`usageLimit`); an item that
   blocks it (`blocker`); the parts of a split (`parts`); a failure the base branch has
   (`baseFailure`); or required checks before a merge (`requiredChecks`), whose first start is
   kept beside the waits, as the bullet on a refused accept above says. Each wait has an id that
   is new each time, and the event that ends it names it. A tick ends only a wait for a time:
-  `time`, `usageLimit` or `requiredChecks`. When a blocker, or the bug issue of a base failure,
-  closes, the waits on it end, and an item does not start while a blocker is open. A host
+  `time`, `usageLimit` or `requiredChecks`. When a blocker, or the item about a base failure, closes, the waits on it end, and an item does not start while a blocker is open. A host
   reports that the base branch passes again, so that its failure is gone though its item is
   open, as the end of that item too, naming it. A base failure whose record names no item of
-  its own waits on the word "none", which the host ends the first time it looks, as NexKit 6
-  treats such a wait as over. An end that comes before the
+  its own waits on the word "none", since no item's end could end it, so the host ends it the first time it looks. An end that comes before the
   engine recorded a wait on that item changes nothing, so a host sends it again, as a new
   event, each time it finds the item closed or the base passing while a wait on the item
-  stands, such as on each sweep, as NexKit 6's sweep looks at each wait. When the last wait or
+  stands, such as on each sweep. When the last wait or
   hold on a state whose work does not run ends, as after a usage limit, a transient stop or a
   hold that kept a round back, the engine starts that state's work again: the same round,
   which counts nothing again, but for a fix round that waited to be issued, which is counted
@@ -341,7 +314,7 @@ Three things sit beside the state, never in place of it:
 | --- | --- |
 | `created` | A work item is made, with its kind, its title and text, how deep a part it is, who does each stage and, for an item made with a plan, the plan |
 | `textChanged`, `commented` | A work item's text is edited, or a person writes on it, with their role |
-| `requested` | A person or the sweep asks for something: `plan`, `planFromScratch`, `go`, `fix`, `review`, `retry`, `trust` or `start`, with a note, and the item's title and depth again when the host gives them. A fix request with no person that says it is automatic is the host's own automatic fix round: the engine counts and marks it as its own due round. The engine takes `trust` only from a writer on an item that an untrusted edit stopped (the attention of that name), and starts the next command as the rule on an untrusted stop says. For any other `trust` it changes nothing, since whom a host trusts is its own check, as [vouching for an issue](autopilot.md#vouching-for-an-issue) says |
+| `requested` | A person or the sweep asks for something: `plan`, `planFromScratch`, `go`, `fix`, `review`, `retry`, `trust` or `start`, with a note, and the item's title and depth again when the host gives them. A fix request with no person that says it is automatic is the host's own automatic fix round: the engine counts and marks it as its own due round. The engine takes `trust` only from a writer on an item that an untrusted edit stopped (the attention of that name), and starts the next command as the rule on an untrusted stop says. For any other `trust` it changes nothing, since whom a host trusts is its own check, as [Hosts](engine-hosts.md#hosts) says |
 | `planApproved`, `answered`, `changesRequested`, `changeApproved`, `dropRequested` | A person decides: the plan, its questions, the change, a person-only checklist item or criterion on the change's version, or the end |
 | `actionFinished` | An action ended, with its id, the change version and its result |
 | `actionLost` | An action the host started never reported, with any tokens it is known to have used |
@@ -357,13 +330,13 @@ Three things sit beside the state, never in place of it:
 | Action | The host | Its result |
 | --- | --- | --- |
 | `runAgent` | Runs a runner for a stage, see [runners](engine-hosts.md#runners); for a fix round, the checks it diagnoses first | The stage's result, tokens, a usage limit with its reset, a transient stop, or that the host stopped it before its agent for an untrusted edit |
-| `publish` | Makes the agent's work the change: a commit and a pull request, or a draft | The change's id and version, or why it could not |
+| `publish` | Makes the agent's work the change, such as a commit on a new branch, or a draft | The change's id and version, or why it could not |
 | `replaceChange` | Drops the change and starts a new one from what is current | The new change |
 | `updateChange` | Brings the change up to date with the branch it was made on, without an agent: the same change at a new version | The change's id and new version, or why it could not |
 | `runChecks` | Runs its checks on a version of the change | Each result, its failure signature, and whether the failure matches a known failure of the base; the item about that failure when every failing check matches it |
 | `accept` | Accepts the change: a merge, or an accept of a draft | `accepted`, or refused with a kind: `transient`, `waitingForChecks`, `checkFailed`, `behind`, `headMoved`, `conflict`, `notAccepted`, `needsPerson` or `untrusted`; for `checkFailed`, the item about a failure the base branch has when every check that failed fails as it does there |
 | `createParts` | Makes the parts of a split, each blocked by the earlier parts it needs | The parts' ids |
-| `withdrawChange` | Withdraws the change that a split replaces, such as closing its pull request as superseded | Done |
+| `withdrawChange` | Withdraws the change that a split replaces, such as closing it as superseded | Done |
 | `close` | Ends the work item with its outcome | Done |
 | `cancel` | Stops an action that runs | Done |
 | `needPerson` | Tells the people who decide, once, with the reason and what they decide on (`ref`) | Done |

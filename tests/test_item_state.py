@@ -531,7 +531,7 @@ def decisions(state):
 # here: the page's phrase, with `{}` where it writes the value.
 BOUNDS = {
     "STATE_LIMIT": "{} bytes as JSON",
-    "TEXT_LIMIT": "one GitHub comment of {} characters",
+    "TEXT_LIMIT": "a text field of {} characters",
     "MOST.questions": "{} questions of",
     "MOST.options": "of {} options each",
     "MOST.protectedPaths": "{} protected paths",

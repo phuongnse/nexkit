@@ -1041,7 +1041,7 @@
           "maxLength": 500
         },
         "saving": {
-          "$comment": "The rule on how the agent's edits are kept, a whole sentence, such as \"Do not publish the draft. NexKit saves your edits.\".",
+          "$comment": "The rule on how the agent's edits are kept, a whole sentence, such as \"Do not publish the draft. The application saves your edits.\".",
           "type": "string",
           "maxLength": 500
         },
@@ -1056,7 +1056,7 @@
           "maxLength": 500
         },
         "checksOn": {
-          "$comment": "Where the checks ran, after \"Project checks,\" in a heading, such as \"run by NexKit on this exact draft\".",
+          "$comment": "Where the checks ran, after \"Project checks,\" in a heading, such as \"run on this exact draft\".",
           "type": "string",
           "maxLength": 500
         },

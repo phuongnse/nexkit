@@ -35,7 +35,15 @@ from nexkit.state import (
     render_state,
 )
 from nexkit.usage import parse_iso, shown
-from tests.support import FakeGitHub, interpret_claude, make_config, prompt_texts, store_pending
+from tests.support import (
+    FIX_OUTPUT,
+    IMPLEMENT_OUTPUT,
+    FakeGitHub,
+    interpret_claude,
+    make_config,
+    prompt_texts,
+    store_pending,
+)
 
 HEAD = "c" * 40
 WORKFLOW = "acme/app/.github/workflows/nexkit.yml@refs/heads/main"
@@ -101,6 +109,7 @@ class ReportCase(unittest.TestCase):
         self.artifacts = Path(self.tmp.name)
         # Each report is a separate workflow run, whatever the environment running the tests.
         self.run_ids = itertools.count(1)
+        self.started_run = None  # the run that `reopened` started, which its report is
         env = mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "acme/app"})
         env.start()
         self.addCleanup(env.stop)
@@ -113,8 +122,12 @@ class ReportCase(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(data))
 
-    def candidate(self, checks_pass=True, review=None):
-        self.write("nexkit-agent", "result.json", {"status": "done", "tokens": TOKENS})
+    def candidate(self, checks_pass=True, review=None, output=None):
+        agent = {"status": "done", "tokens": TOKENS}
+        if output:
+            # What the publish job stores in the item's state before the checks run.
+            agent["output"] = output
+        self.write("nexkit-agent", "result.json", agent)
         self.write(
             "nexkit-checks",
             "checks.json",
@@ -150,7 +163,8 @@ class ReportCase(unittest.TestCase):
             needs["publish"] = {
                 "outputs": {"result": json.dumps({"published": True, "pr": 6, "head": head})}
             }
-        os.environ["GITHUB_RUN_ID"] = str(next(self.run_ids))
+        os.environ["GITHUB_RUN_ID"] = self.started_run or str(next(self.run_ids))
+        self.started_run = None
         if start or stored:
             progress.start(self.gh, d or decision())
         if published or stored:
@@ -170,6 +184,22 @@ class ReportCase(unittest.TestCase):
 
     def statuses(self):
         return {(s["context"], s["state"]) for s in self.gh.statuses}
+
+    def reopened(self, cfg, d=None):
+        """A person reopens the merged pull request and its issue for another round, which starts
+        its run: the item's state is gone from GitHub with the old round, and the next run in its
+        group imports the item again from the markers (`host.store_import`), which holds the
+        round on its way."""
+        self.gh.reopen(6, 5)
+        for comment in list(self.gh.issue_comments[5]):
+            if item_state.PREFIX in comment["body"]:
+                self.gh.issue_comments[5].remove(comment)
+        # The new round's run has its own id, which its report keeps: a run that starts twice
+        # under one id keeps its first comment.
+        self.started_run = str(next(self.run_ids))
+        os.environ["GITHUB_RUN_ID"] = self.started_run
+        progress.start(self.gh, d or decision())
+        host.store_import(self.gh, cfg, 5)
 
 
 class EditedIssueTests(ReportCase):
@@ -307,15 +337,15 @@ class PersonsPullRequestTests(ReportCase):
         return decision("review", branch="upgrade/nexkit", **{**fields, **kw})
 
     def report_person(self, cfg=None, **kw):
-        return self.run_report(self.person(**kw), cfg or self.auto, published=False)
+        return self.run_report(self.person(**kw), cfg or self.auto, published=False, start=True)
 
     def test_an_approved_pull_request_gets_both_statuses_and_stays_as_it_is(self):
         self.candidate()
         outcome = self.report_person()
         self.assertEqual(outcome["outcome"], "person_reviewed")
-        self.assertEqual(
-            self.statuses(), {("nexkit/checks", "success"), ("nexkit/review", "success")}
-        )
+        # The run's own pending statuses came first.
+        last = {(s["context"], s["state"]) for s in self.gh.statuses[-2:]}
+        self.assertEqual(last, {("nexkit/checks", "success"), ("nexkit/review", "success")})
         self.assertEqual(self.gh.merged, [])
         self.assertEqual(self.gh.updated, [])
         self.assertEqual(self.gh.dispatches, [])
@@ -336,7 +366,7 @@ class PersonsPullRequestTests(ReportCase):
         error = 'evidence.artifacts: `*` may only end a name, such as "test-results-e2e-*"'
         outcome = self.report_person(config_error=error)
         self.assertEqual(outcome["outcome"], "person_reviewed")
-        [checks] = [s for s in self.gh.statuses if s["context"] == "nexkit/checks"]
+        checks = [s for s in self.gh.statuses if s["context"] == "nexkit/checks"][-1]
         self.assertEqual(checks["state"], "failure")
         self.assertEqual(checks["description"], f"NexKit would refuse .nexkit/config.json: {error}")
         self.assertIn(("nexkit/review", "success"), self.statuses())
@@ -354,7 +384,7 @@ class PersonsPullRequestTests(ReportCase):
         self.candidate(checks_pass=False)
         error = "Configuration keys were renamed: " + "; ".join(["'a' is now 'b'"] * 20)
         self.report_person(config_error=error)
-        [checks] = [s for s in self.gh.statuses if s["context"] == "nexkit/checks"]
+        checks = [s for s in self.gh.statuses if s["context"] == "nexkit/checks"][-1]
         self.assertEqual(len(checks["description"]), 140)
         self.assertTrue(checks["description"].endswith("…"))
         self.assertIn(error, self.gh.run_comments(6)[-1]["body"])
@@ -388,6 +418,7 @@ class PersonsPullRequestTests(ReportCase):
         self.candidate(review=False)
         needs = {"review": {"result": "failure"}}
         with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": "9"}):
+            progress.start(self.gh, self.person())
             found = report(
                 self.gh,
                 self.person(),
@@ -872,7 +903,7 @@ class ReportTests(ReportCase):
         self.assertEqual(trigger(decision("fix", auto=True, retry=True)), "fix (auto, retry 1)")
 
     def test_a_review_that_never_ran_is_retried_only_after_a_failed_verify_job(self):
-        self.candidate(review=False)
+        self.candidate(review=False, output=FIX_OUTPUT)
         fix = decision("fix", pr=6, target=6, head=HEAD)
         # With parallel checks, the combine job that joins them counts as theirs.
         cases = (
@@ -881,6 +912,7 @@ class ReportTests(ReportCase):
             ("failure", "skipped", "retry"),
         )
         for verify, combine, expected in cases:
+            self.reopened(ONCE, fix)
             os.environ["GITHUB_RUN_ID"] = str(next(self.run_ids))
             published = {"published": True, "pr": 6, "head": HEAD}
             needs = {
@@ -910,7 +942,9 @@ class ReportTests(ReportCase):
         # With it, the round is ready on the earlier approval, without a new PR review.
         os.environ["GITHUB_RUN_ID"] = str(next(self.run_ids))
         self.write("nexkit-review", "carry.json", {"from": "a" * 40, "carried": True, "why": ""})
-        outcome = self.run_report(d={**review, "carry_from": "a" * 40}, published=False)
+        carry = {**review, "carry_from": "a" * 40}
+        self.reopened(make_config(), carry)  # the new review starts its run
+        outcome = self.run_report(d=carry, published=False)
         self.assertEqual(outcome["outcome"], "ready")
         self.assertIn("The AI review of `aaaaaaa` carried over", outcome["summary"])
         self.assertFalse(self.gh.created_reviews)
@@ -1024,10 +1058,10 @@ class ReportTests(ReportCase):
         self.gh.add_issue(1, title="Epic")
         self.gh.add_issue(2, state="closed", reason="completed")
         self.gh.parents.update({2: 1, 5: 1})
-        self.candidate()
+        self.candidate(output=IMPLEMENT_OUTPUT)
         self.run_report(cfg=make_config(merge={"auto": True}))
         self.assertEqual(self.gh.issues[1]["state"], "open")  # the setting is off
-        self.gh.reopen(6, 5)
+        self.reopened(make_config(merge={"auto": True}, close_parent_issues=True))
         self.run_report(cfg=make_config(merge={"auto": True}, close_parent_issues=True))
         self.assertEqual(self.gh.issues[1]["state"], "closed")
         row = self.gh.run_comments(6)[-1]
@@ -1044,6 +1078,8 @@ class ReportTests(ReportCase):
                 self.gh = FakeGitHub()
                 self.gh.add_issue(5)
                 self.gh.add_pull(6, 5, head_sha=HEAD)
+                # The item's state was stored while its issue was open.
+                host.store_import(self.gh, cfg, 5)
                 # GitHub closed the issue through the pull request's `Closes` line.
                 self.gh.issues[5].update(state="closed", state_reason="completed")
                 self.gh.pulls[6].update(state="closed", merged=merged)
@@ -1132,11 +1168,11 @@ class ReportTests(ReportCase):
         )
 
     def test_auto_merge_deletes_its_branch_when_the_repository_deletes_merged_branches(self):
-        self.candidate()
+        self.candidate(output=IMPLEMENT_OUTPUT)
         self.run_report(cfg=make_config(merge={"auto": True}))
         self.assertEqual(self.gh.deleted, [])  # the setting is off
         self.gh.delete_on_merge = True
-        self.gh.reopen(6, 5)
+        self.reopened(make_config(merge={"auto": True}))
         self.run_report(cfg=make_config(merge={"auto": True}))
         self.assertEqual(self.gh.deleted, ["nexkit/issue-5"])
         row = self.gh.run_comments(6)[-1]
@@ -1146,9 +1182,9 @@ class ReportTests(ReportCase):
         self.gh.delete_on_merge = True
         own = dict(self.gh.pulls[6]["head"])
         for head in ({"ref": "feature/add"}, {"repo": {"full_name": "fork/app"}}):
-            self.candidate()
+            self.candidate(output=IMPLEMENT_OUTPUT)
             self.gh.pulls[6]["head"] = {**own, **head}
-            self.gh.reopen(6, 5)
+            self.reopened(make_config(merge={"auto": True}))
             self.assertEqual(
                 self.run_report(cfg=make_config(merge={"auto": True}))["outcome"], "merged"
             )
@@ -1156,10 +1192,10 @@ class ReportTests(ReportCase):
         self.assertEqual(self.gh.deleted, [])
         # A pull request that targets the branch would close with it.
         self.gh.pulls[6]["head"] = own
-        self.candidate()
+        self.candidate(output=IMPLEMENT_OUTPUT)
         self.gh.add_pull(7, 8)
         self.gh.pulls[7]["base"] = {"ref": "nexkit/issue-5"}
-        self.gh.reopen(6, 5)
+        self.reopened(make_config(merge={"auto": True}))
         self.run_report(cfg=make_config(merge={"auto": True}))
         self.assertEqual(self.gh.deleted, [])
         row = self.gh.run_comments(6)[-1]
@@ -1780,7 +1816,11 @@ class ReportTests(ReportCase):
         self.write("nexkit-checks", "checks.json", [{**check, "output": output}])
 
     def fix_round(self, output, head, cause=""):
-        agent = {"status": "done", "summary": "Wrapped the popup.", "output": {"cause": cause}}
+        agent = {
+            "status": "done",
+            "summary": "Wrapped the popup.",
+            "output": {**FIX_OUTPUT, "cause": cause},
+        }
         self.write("nexkit-agent", "result.json", agent)
         self.failing(output)
         d = decision("fix", pr=6, target=6, head=HEAD, auto=True)
@@ -1833,7 +1873,7 @@ class ReportTests(ReportCase):
 
         # Failing the same way after a fix compares by the recorded signatures, not by
         # what the state comment kept of the output.
-        agent = {"status": "done", "summary": "Wrapped the popup.", "output": {"cause": ""}}
+        agent = {"status": "done", "summary": "Fixed.", "output": {**FIX_OUTPUT, "cause": ""}}
         self.write("nexkit-agent", "result.json", agent)
         self.many_failing(2)
         d = decision("fix", pr=6, target=6, head=HEAD, auto=True)
@@ -1910,7 +1950,7 @@ class ReportTests(ReportCase):
         self.run_report(cfg=make_config(fix={"max_auto_rounds": 5}))
 
         # The fix made unit pass; e2e failed the same way.
-        agent = {"status": "done", "summary": "Fixed add.", "output": {"cause": ""}}
+        agent = {"status": "done", "summary": "Fixed.", "output": {**FIX_OUTPUT, "cause": ""}}
         self.write("nexkit-agent", "result.json", agent)
         checks(True, "  ✘ 3 desk.spec.ts:42 › picks an option (9.1s)\n")
         d = decision("fix", pr=6, target=6, head=HEAD, auto=True)

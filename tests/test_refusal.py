@@ -10,7 +10,7 @@ from nexkit.maintain import maintain
 from nexkit.refusal import codeowners, explain, owners_of
 from nexkit.state import render_run
 from nexkit.status import collect
-from tests.support import FakeGitHub, make_config, play_sweep
+from tests.support import IMPLEMENT_OUTPUT, FakeGitHub, make_config, play_sweep
 from tests.test_host import restate, seed
 from tests.test_report import HEAD, ReportCase, review_result
 
@@ -351,7 +351,8 @@ class ApprovedMergeTests(ReportCase):
             {"number": 1, "item": "Rule 1", "answer": "not_met", "evidence": "x", "person": True}
         ]
         self.gh.statuses.clear()
-        self.candidate(review=review)
+        self.reopened(cfg)  # a new round starts after the one whose merge was refused
+        self.candidate(review=review, output=IMPLEMENT_OUTPUT)
         self.assertEqual(self.run_report(cfg=cfg)["outcome"], "ready")
         return cfg
 
@@ -657,11 +658,12 @@ class ReviewFixTests(ReportCase):
         self.assertEqual(lines, ["#6: merged."])
 
     def test_a_conflict_without_auto_resolve_says_to_comment_fix(self):
-        self.candidate()
+        self.candidate(output=IMPLEMENT_OUTPUT)
         self.gh.pulls[6]["mergeable_state"] = "dirty"
         self.gh.merge_error = GitHubError(405, "Pull Request is not mergeable")
         outcome = self.run_report(cfg=make_config(merge={"auto": True}))
         self.assertTrue(outcome["attention"].startswith("comment `/nexkit fix` on the pull"))
+        self.reopened(make_config(merge={"auto": True}))  # the next round that ends
         self.gh.pulls[6]["mergeable_state"] = "behind"
         outcome = self.run_report(cfg=make_config(merge={"auto": True}))
         self.assertTrue(outcome["attention"].startswith("merge `main` into the pull request"))

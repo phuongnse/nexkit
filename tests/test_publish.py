@@ -1099,7 +1099,7 @@ class StoreRoundTests(unittest.TestCase):
         # An automatic fix round whose checks failed, as the report of an earlier round
         # stored it: the stored state waits for its agent.
         self.assertTrue(host.store_import(self.gh, self.cfg, 5))
-        args = (self.gh, self.cfg, self.found, 6, self.HEAD, 0, self.RED, None, self.REVIEW)
+        args = (self.gh, self.cfg, self.found, 6, self.HEAD, self.RED, self.REVIEW)
         self.assertEqual(host.round_ended(*args, write=True)[0], "auto_fix")
 
     def read(self):

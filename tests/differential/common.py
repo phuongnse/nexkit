@@ -187,7 +187,27 @@ def _recording(gh, item_state):
     cls.comment, cls.update_comment, cls._nexkit_recording = post, edit, True
 
 
-def seed(gh, cfg):
+def _restore(gh, cfg, number, host, item_state):
+    """Store the import of open item `number` as the next revision of its state comment, when it
+    has one, as the first state of a round that its dispatch starts. Answers whether it did."""
+    comment, doc = item_state.read(gh, number)
+    if doc is None:
+        return host.store_import(gh, cfg, number)
+    from nexkit import first_state
+
+    issue = gh.issue(number)
+    pull = number if "pull_request" in issue else None
+    if pull is None:
+        from nexkit.route import branch_for
+
+        found = gh.open_pulls(branch_for(number))
+        pull = found[0]["number"] if found else None
+    state = first_state.import_item(gh, cfg, number, pull)
+    state["revision"] = doc["revision"] + 1
+    return item_state.write(gh, number, state, (comment, doc))
+
+
+def seed(gh, cfg, again=False):
     """Store the import of each open item (`items`) on the tree as the App's state comment at
     revision 1, as a run in the item's group does before its first event (`host.store_import`),
     and record the comment's writes in `STATES`. Call it once, after the fixtures and before
@@ -196,7 +216,9 @@ def seed(gh, cfg):
     run in the item's group stores it. NexKit 6 has no stored state, so nothing is stored
     there. Each item uses up one comment id on both trees, so that the comments after it have
     the same ids, and the issue keeps its `updated_at`: the seed must leave nothing that
-    NexKit 6's tree lacks."""
+    NexKit 6's tree lacks. With `again`, an item that has a state comment gets the import as its
+    next revision instead: the round of a chain whose kind the rounds before did not decide, as
+    its dispatch stores the round in progress, which only moves the revision forward."""
     global SEEDED
     try:
         from nexkit import host, item_state
@@ -213,7 +235,7 @@ def seed(gh, cfg):
         kept = {k: set(v) for k, v in vars(gh).items() if isinstance(v, defaultdict)}
         if store is not None:
             try:
-                if store(gh, cfg, number):
+                if _restore(gh, cfg, number, host, item_state) if again else store(gh, cfg, number):
                     SEEDED += 1
             except Exception:  # noqa: BLE001
                 pass

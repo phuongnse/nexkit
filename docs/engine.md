@@ -549,15 +549,18 @@ adapter's tests and the answers as what its adapter carries out.
    out the action that the stored state has pending for it, and takes its diagnosed checks from
    that action; with nothing pending it is a new request, `dispatch-<run id>`, which for an
    automatic fix round says so, so that the engine counts it as its own round.
-   The automatic fix rounds and the conflict rounds that they count are the stored count, and
-   NexKit 6's only when no state can be read. The run of a conflict round that the push run, the
+   The automatic fix rounds that a round's end counts are the stored count alone, and so are a
+   transient review's runs again. The conflict rounds are the stored count, and NexKit 6's only when no
+   state can be read. The run of a conflict round that the push run, the
    schedule or another item's merge dispatches counts it before the round starts. The review that
    follows a branch update stores the update, and the run that the push run starts after it stopped
    a counted automatic fix round's checks gives that round's count back. The publish
    job of an implement or fix round stores the agent's result and the publish result of a commit
    that does not conflict, in one write, right after it pushes, so that the state waits for the
    round's checks while they run, and the round's checks and review then decide on the stored
-   state alone. The `report` finds the round stored, and stores it only when that job could not. The `report` of a round or a merge that an untrusted
+   state alone: with the checks pending, the checks' result and then the review's go, and with the
+   review's agent pending, as after a usage limit or a transient stop of the review, only the review's
+   result goes. A round whose stored state waits for neither waits for a person with that reason. The `report` finds the round stored, and stores it only when that job could not. The `report` of a round or a merge that an untrusted
    edit stopped stores that stop too: the round's result says `untrusted`, or the accept is
    refused as `untrusted`, and the engine answers `failed` or `ready` with attention `untrusted`. A decision that
    still falls back to the markers' document keeps the stored counts, so that no budget starts

@@ -61,9 +61,9 @@
     "tooLarge": false,
     "parts": 0,
     "noChange": false,
-    "protectedPaths": [],
     "approved": true,
-    "split": []
+    "split": [],
+    "protected": []
   },
   "rounds": {
     "started": 1,
@@ -80,21 +80,18 @@
       "findings": [
         {
           "severity": "blocking",
-          "file": "a.py",
-          "line": 3,
-          "body": "The total is wrong when the cart is empty."
+          "body": "The total is wrong when the cart is empty.",
+          "location": "a.py:3"
         },
         {
           "severity": "suggestion",
-          "file": "b.py",
-          "line": 0,
-          "body": "Name the helper after what it returns."
+          "body": "Name the helper after what it returns.",
+          "location": "b.py"
         },
         {
           "severity": "suggestion",
-          "file": "",
-          "line": 0,
-          "body": "The tests do not cover the empty cart."
+          "body": "The tests do not cover the empty cart.",
+          "location": ""
         }
       ]
     }

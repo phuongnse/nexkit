@@ -603,7 +603,7 @@ class SizeTest(unittest.TestCase):
         comment = {"id": 1, "body": body, "user": {"login": BOT_LOGIN}}
         self.assertEqual(item_state.find([comment])[1], state)
 
-    def test_a_state_comment_stored_with_used_usd_is_read_without_it(self):
+    def test_a_state_comment_whose_document_no_longer_fits_counts_as_none(self):
         state = {**blank("42"), "revision": 1}
         old = copy.deepcopy(state)
         old["used"]["usd"] = 2.37
@@ -611,7 +611,25 @@ class SizeTest(unittest.TestCase):
         data = base64.b64encode(encoded(old)).decode()
         body = f"### NexKit state\n\n{item_state.PREFIX}{data} -->"
         comment = {"id": 1, "body": body, "user": {"login": BOT_LOGIN}}
-        self.assertEqual(item_state.find([comment])[1], state)
+        self.assertEqual(item_state.find([comment]), (None, None))
+        # The next state comment counts, as the first write's new comment does.
+        data = base64.b64encode(encoded(state)).decode()
+        body = f"### NexKit state\n\n{item_state.PREFIX}{data} -->"
+        newer = {"id": 2, "body": body, "user": {"login": BOT_LOGIN}}
+        self.assertEqual(item_state.find([comment, newer]), (newer, state))
+
+    def test_a_state_comment_of_a_later_schema_version_is_not_none(self):
+        state = {**blank("42"), "revision": 1, "schemaVersion": item_state.CURRENT + 1}
+        data = base64.b64encode(encoded(state)).decode()
+        body = f"### NexKit state\n\n{item_state.PREFIX}{data} -->"
+        comment = {"id": 1, "body": body, "user": {"login": BOT_LOGIN}}
+        with self.assertRaisesRegex(item_state.StateError, "broken state document"):
+            item_state.find([comment])
+        for value in ([], "x", None, {"schemaVersion": True}):
+            data = base64.b64encode(encoded(value)).decode()
+            body = f"### NexKit state\n\n{item_state.PREFIX}{data} -->"
+            with self.subTest(value=value), self.assertRaises(item_state.StateError):
+                item_state.find([{"id": 1, "body": body, "user": {"login": BOT_LOGIN}}])
 
     def test_the_largest_state_the_schema_allows_is_shortened_to_fit(self):
         state = largest()

@@ -926,6 +926,31 @@ class StoreImportTest(TestCase):
         self.assertFalse(host.store_import(self.gh, self.CFG, 42, now=self.NOW))
         self.assertEqual(self.gh.comments(42), [])
 
+    def test_a_state_comment_in_an_older_shape_is_left_and_the_item_imported_again(self):
+        # The document as NexKit 6.13.1 stored it: a finding at `file` and `line`, the plan's
+        # `protectedPaths` and the money spent.
+        golden = Path(__file__).resolve().parent / "golden" / "state" / "v1"
+        old = json.loads((golden / "reviewing-with-findings.json").read_text())
+        old["item"] = "42"
+        for finding in old["rounds"]["lastReview"]["findings"]:
+            file, _, line = finding.pop("location").partition(":")
+            finding.update(file=file, line=int(line or 0))
+        old["plan"]["protectedPaths"] = old["plan"].pop("protected")
+        old["used"]["usd"] = 2.37
+        data = base64.b64encode(json.dumps(old).encode()).decode()
+        body = f"### NexKit state\n\n{item_state.PREFIX}{data} -->"
+        stale = self.gh.comment(42, body)
+        self.assertTrue(host.store_import(self.gh, self.CFG, 42, now=self.NOW))
+        [first, second] = self.states()
+        self.assertEqual(first["id"], stale["id"])
+        self.assertEqual(first["body"], body)
+        comment, doc = item_state.read(self.gh, 42)
+        self.assertEqual(comment["id"], second["id"])
+        self.assertEqual(doc, first_state.import_item(self.gh, self.CFG, 42, now=self.NOW))
+        # A second run finds the new comment and stores nothing.
+        self.assertFalse(host.store_import(self.gh, self.CFG, 42, now=self.NOW))
+        self.assertEqual(len(self.states()), 2)
+
     def test_a_state_comment_that_someone_else_changed_stores_and_takes_nothing(self):
         self.assertTrue(host.store_import(self.gh, self.CFG, 42, now=self.NOW))
         [comment] = self.states()

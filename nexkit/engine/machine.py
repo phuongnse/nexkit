@@ -130,7 +130,7 @@ class EngineError(ValueError):
 def blank(item):
     """The state document of a work item before its `created` event."""
     return {
-        "schemaVersion": 2,
+        "schemaVersion": 1,
         "revision": 0,
         "item": item,
         "itemKind": "change",

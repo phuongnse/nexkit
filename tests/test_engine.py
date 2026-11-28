@@ -332,16 +332,25 @@ class ProgramTest(unittest.TestCase):
 
 
 class OldDocumentTest(unittest.TestCase):
-    def test_a_state_stored_with_used_usd_is_read_without_it(self):
+    def test_a_state_with_used_usd_is_refused(self):
         state = json.loads((EXAMPLES / "state" / "planning.json").read_text())
         state["used"]["usd"] = 2.37
         event = json.loads((EXAMPLES / "events" / "commented.json").read_text())
         event["item"] = state["item"]
         answer = engine.answer({**request(state=state, event=event), "call": "step"})
-        self.assertNotIn("error", answer, answer)
-        self.assertNotIn("usd", answer["state"]["used"])
-        self.assertEqual(answer["state"]["used"]["seconds"], state["used"]["seconds"])
-        self.assertEqual(state["used"]["usd"], 2.37)  # the request is left as it was
+        self.assertIn("request.state.used", answer.get("error", ""), answer)
+
+    def test_a_state_with_a_finding_at_a_file_and_a_line_is_refused(self):
+        path = ROOT / "tests" / "golden" / "state" / "v1" / "reviewing-with-findings.json"
+        state = json.loads(path.read_text())
+        finding = state["rounds"]["lastReview"]["findings"][0]
+        placed = {"severity": "blocking", "file": "a.py", "line": 3, "body": finding["body"]}
+        state["rounds"]["lastReview"]["findings"][0] = placed
+        event = json.loads((EXAMPLES / "events" / "commented.json").read_text())
+        event["item"] = state["item"]
+        answer = engine.answer({**request(state=state, event=event), "call": "step"})
+        where = "request.state.rounds.lastReview.findings[0]"
+        self.assertIn(where, answer.get("error", ""), answer)
 
     def test_a_state_with_another_field_in_used_is_still_refused(self):
         state = json.loads((EXAMPLES / "state" / "planning.json").read_text())

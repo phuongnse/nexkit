@@ -1,13 +1,9 @@
 # Decisions
 
-A decision records a choice that NexKit made with real alternatives, which is costly to undo, and
-the reasons for it. Each decision has its own file in the `decisions/` folder, and the table lists them
-all. [Writing the docs](writing-docs.md#decisions) says how a decision is written and
-when a change needs one.
-
-Each status is **Agreed**, which the owner has accepted, or **Proposed**, a working default that
-can change. A decision that a newer one replaced has no file: its row names the decision that
-superseded it and links its last text in git.
+This page is the index of NexKit's decisions. Each decision has its own file in the `decisions/`
+folder, and the table lists them all with their status.
+[Writing the docs](writing-docs.md#decisions) says what a decision is, what each status means, how a
+superseded decision is listed and when a change needs one.
 
 | Decision | Title | Status |
 | --- | --- | --- |

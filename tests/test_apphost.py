@@ -8,9 +8,12 @@ asserts the request's final state and attention reason.
 import ast
 import contextlib
 import json
+import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests import apphost
 from tests.apphost import Engine, Host, ScriptedRunner
@@ -22,11 +25,23 @@ PLAN = {(ITEM, "plan"): ["@plan"]}
 IMPLEMENT = {(ITEM, "implement"): ["@implement"]}
 REVIEW = {(ITEM, "review"): ["@review"]}
 # The run that ends a request: the fixtures hold each stage's agent output.
+APP_PROMPTS = Path(apphost.ROOT) / "tests" / "app-prompts"
 ACTIONS = Path(apphost.ROOT) / "nexkit" / "protocol" / "v1" / "action.schema.json"
 SPENT = {"input": 190000, "cached": 0, "output": 20000}
 
 
 STAGES = ("plan", "implement", "review")
+
+
+def app_golden(stage, text, folder=None):
+    """The application host's golden prompt of `stage`; with NEXKIT_WRITE_APP_PROMPTS=1 a
+    missing one is written from `text`, once. An existing golden is never written again."""
+    folder = folder or APP_PROMPTS
+    path = folder / f"{stage}.md"
+    if os.environ.get("NEXKIT_WRITE_APP_PROMPTS") == "1" and not path.exists():
+        folder.mkdir(exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    return path.read_text(encoding="utf-8")
 
 
 def action_kinds():
@@ -108,6 +123,31 @@ class ApplicationHostTests(unittest.TestCase):
         self.assertEqual(
             host.stages[: reviews[0]], [(ITEM, "plan"), (ITEM, "implement"), (ITEM, "fix")]
         )
+
+    def test_each_stages_prompt_equals_its_golden(self):
+        scripts = {**PLAN, **IMPLEMENT, (ITEM, "fix"): ["@fix"], **REVIEW}
+        host = self.start(scripts, [False, True])
+        first = {}
+        for item, stage, text in host.prompts:
+            if item == ITEM:
+                first.setdefault(stage, text)
+        self.assertEqual(list(first), ["plan", "implement", "fix", "review"])
+        for stage, text in first.items():
+            with self.subTest(stage):
+                self.assertEqual(text, app_golden(stage, text))
+
+    def test_the_golden_helper_writes_a_missing_golden_once(self):
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder) / "goldens"
+            with mock.patch.dict(os.environ, {"NEXKIT_WRITE_APP_PROMPTS": "1"}):
+                self.assertEqual(app_golden("plan", "first", folder), "first")
+                self.assertEqual(app_golden("plan", "second", folder), "first")
+            self.assertEqual((folder / "plan.md").read_text(encoding="utf-8"), "first")
+            with mock.patch.dict(os.environ):
+                os.environ.pop("NEXKIT_WRITE_APP_PROMPTS", None)
+                with self.assertRaises(FileNotFoundError):
+                    app_golden("review", "text", folder)
+                self.assertFalse((folder / "review.md").exists())
 
     def test_the_fix_rounds_run_out(self):
         scripts = {**PLAN, **IMPLEMENT, (ITEM, "fix"): ["@fix"] * 3}

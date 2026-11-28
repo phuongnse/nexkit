@@ -18,6 +18,7 @@ rounds on this repository run the commands that `checks` in `.nexkit/config.json
 | Scenarios | `tests/test_scenarios.py` | Autopilot over many rounds and sweeps: every issue in scope is carried on or waits for a person, and budgets count as they should |
 | Conformance | `tests/conformance/` | Each rule of the engine, as a case of events and the actions and state they must give; every policy value, event kind and action kind of the protocol's schemas has a case that plays it; each kind of import (`first_state.KINDS`) has a case in `tests/conformance/imports/`; the `sweep` call has its cases in `tests/conformance/sweeps/`; `scripts/conformance.py` writes the cases as one file and plays it against an engine |
 | Prompt goldens | `tests/prompts/` | The prompt each stage writes, compared with NexKit 6's own record of it. A change to a prompt changes its golden by hand and says why. Never write them again with `NEXKIT_WRITE_PROMPTS` from today's code: set it only to add a case's file from NexKit 6's code |
+| Application prompt goldens | `tests/app-prompts/`, read by `tests/test_apphost.py` | The plan, implement, fix and review prompts that the application host of `tests/apphost.py` gets from `nexkit-engine serve`, in its own words and workspace texts. Written once with `NEXKIT_WRITE_APP_PROMPTS=1`, which writes only a golden that does not exist yet. A change to a prompt edits them by hand and says why |
 | Agent schemas | `tests/golden/agent-schemas.json`, read by `tests/test_protocol.py` | The result schema each stage gives its agent, as NexKit 6 gave it |
 | Random walks | `tests/walk.py`, a fixed sample in `tests/test_walk.py` | The engine against its invariants, which stays after 7.0. Unit tests play a fixed sample of walks of seed 349 in a few seconds, some with an application's policies, and fail on a broken invariant that `KNOWN` does not list. The script plays longer walks, and `check.sh` plays 1,000 of them until 7.0 |
 | Engine mutation check | `tests/mutants.py`, run by hand | Each mutant breaks one rule of the engine in a copy of the tree, and the conformance suite or the walker must see it. It needs no checkout of NexKit 6 and stays after 7.0. `tests/test_mutants.py` checks that each mutant still applies, since the check runs by hand |
@@ -44,8 +45,8 @@ mistake. A plan and a review check a change against each of them.
   played over many rounds. A new or changed rule of the engine comes with a case in
   `tests/conformance/`, invariants in `tests/walk.py` and mutants in `tests/mutants.py`. A new
   workflow job extends `tests/test_cli.py`, which checks which token and secret each job holds. A
-  prompt change edits its golden as the *Prompt goldens* row of [the
-  table](#which-check-covers-what) says.
+  prompt change edits its golden as the *Prompt goldens* and *Application prompt goldens* rows of
+  [the table](#which-check-covers-what) say.
 - **A move into the engine proves more.** A change that moves a decision of NexKit 6 into the engine
   also keeps GitHub's behaviour, as [Moving decisions into the
   engine](#moving-decisions-into-the-engine) says.

@@ -113,7 +113,7 @@ $writing
   the repository, such as $protected_example. Empty when the change needs none.
   When it is not empty, a person decides whether to make that change by hand.
 - `no_change`: only when no change is needed, as *When no change is needed* says: the
-  finding, followed by the evidence that shows it: the commit, or the log lines that name
+  finding, followed by the evidence that shows it: the $version_kind, or the log lines that name
   the outside cause and the run that passed since, with its link. Otherwise an empty
   string. With a finding, keep the other fields short: `summary` says that no change is
   needed, and `acceptance_criteria` may be empty.$checklist

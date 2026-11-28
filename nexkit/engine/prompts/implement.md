@@ -95,7 +95,7 @@ NexKit builds the $change_kind description from `summary`, `changes`, `testing`,
   "Split the work: plan the change to the stack as its own part first", and belongs here.
 - `checks_run`: a list of strings, one for each command you ran, with whether it passed.
 - `no_change`: only when you changed nothing because no change is needed: the finding,
-  followed by the evidence that shows it, such as the commit, log or test output lines,
+  followed by the evidence that shows it, such as the $version_kind, log or test output lines,
   and for an outside failure the run that passed since, with its link. Otherwise an empty
   string: when you are blocked for any other reason, such as work that is not merged yet,
   leave it empty, and never use it to say why there is no finding. Leave it empty in any

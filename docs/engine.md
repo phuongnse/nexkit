@@ -168,7 +168,8 @@ events and actions](engine-states.md). The runners, the policies a host decides 
   earlier work ("The draft already holds earlier edits."); `mergeRule`, the rule against merging
   by hand, a whole sentence; `versionKind` ("version") and `baseKind` ("published request"), the
   nouns for one version of the change and for what it is merged with, which the fix prompt, the
-  merge sections and the review's previous round use ("version 3a4b5c6", "merged the published
+  merge sections, the review's previous round and the plan and implement prompts' description of
+  `no_change` use ("version 3a4b5c6", "merged the published
   request"); `mergeInto` ("into the draft, without saving it"), `lastMerged` ("this draft last
   took it in") and `mergeUndo` ("do not discard or publish it."), how the base was merged, when
   it last reached the change and how the agent leaves a merge in place; `sideHistory`, how the

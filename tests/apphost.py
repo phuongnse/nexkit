@@ -179,6 +179,7 @@ class Row:
     started: bool = False
     running: dict = field(default_factory=dict)
     queue: collections.deque = field(default_factory=collections.deque)
+    checks: list = field(default_factory=list)  # the results of the last run of the checks
 
 
 class Host:
@@ -202,6 +203,7 @@ class Host:
         self.ticks = []  # (item, wait, time) of each tick sent
         self.withdrawn = []  # the ids of the drafts withdrawn
         self.replaced = {}  # item -> how many drafts were made again
+        self.prompts = []  # (item, stage, text) of each prompt the engine wrote
 
     # The engine's step, and what follows from it.
 
@@ -299,9 +301,11 @@ class Host:
         }
         inputs["workspace"] = {
             "checks": [{"name": "validate", "run": "validate"}],
-            "protectedPaths": [],
+            "protectedPaths": ["settings/limits"],
             "text": {
-                "location": "working through the application's tools on the request's records",
+                "location": (
+                    "reading and editing the request's records with the application's tools"
+                ),
                 "reviewLocation": "The review sees the draft as it is now.",
                 "candidate": "the candidate draft",
                 "instructions": "(the application's style notes)",
@@ -315,7 +319,7 @@ class Host:
                 "pipelineFile": "a validation rule",
                 "protectedExample": "`settings/limits`",
                 "personChange": "in this draft",
-                "fixLocation": "working through the application's tools on",
+                "fixLocation": "reading and editing, with the application's tools, the records of",
                 "earlierWork": "The draft already holds earlier edits.",
                 "mergeRule": (
                     "Do not take in the published request yourself. "
@@ -335,6 +339,7 @@ class Host:
         if stage in ("implement", "fix", "review"):
             inputs["plan"] = self.plan_text(state)
         if stage in ("fix", "review"):
+            inputs["checks"] = {"results": copy.deepcopy(row.checks) or None}
             inputs["diff"] = {"base": "release", "text": "--- a\n+++ b\n"}
         inputs = {name: inputs[name] for name in action["inputs"] if name in inputs}
         answer = self.engine.call(
@@ -348,6 +353,7 @@ class Host:
                 "texts": None,
             },
         )
+        self.prompts.append((row.id, stage, answer["text"]))
         self.stages.append((row.id, stage))
         self.order.append(("agent", stage))
         result = self.runner.run(row.id, stage, answer["text"])
@@ -397,6 +403,17 @@ class Host:
         if ok in ("behind", "conflict"):
             return self.observe(row, action, ok)
         self.checks_log.append((row.id, ok))
+        row.checks = [
+            {
+                "name": "validate",
+                "run": "validate",
+                "passed": ok,
+                "exitCode": 0 if ok else 1,
+                "output": "validate: every rule holds"
+                if ok
+                else "validate: rule `due-date` failed on record 3",
+            }
+        ]
         check = {
             "name": "validate",
             "passed": ok,

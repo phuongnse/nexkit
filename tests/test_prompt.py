@@ -1143,6 +1143,28 @@ class PromptInputTests(unittest.TestCase):
         context = {"merged": {"head": "c" * 7, "base": "b" * 40, "conflicts": ["a.py"]}}
         self.assertEqual(prompt.merge_review(context, "live", None, prompt.snake(APP_TEXT)), "")
 
+    def test_a_shortened_linked_change_gets_a_file_named_with_the_changes_noun(self):
+        texts = [
+            {"kind": "item", "id": 8, "title": "Draft", "change": True, "text": "C" * 70_000},
+            {"kind": "item", "id": 8, "title": "Request", "change": False, "text": "I" * 70_000},
+        ]
+        # An item and a change with one id never share a file. A noun with a space, such as
+        # GitHub's "pull request", gets a short hash, since the space is not safe in a name.
+        for kind, change_file in (("draft", "draft-8.md"), ("pull request", None)):
+            with self.subTest(kind):
+                inputs = self.needs("implement")
+                inputs["linked"] = {"texts": texts, "chain": [], "notRead": []}
+                words = {**OTHER_WORDS, "changeKind": kind}
+                answer = engine.answer(self.request("implement", inputs, words=words))
+                names = sorted(kept["path"].rsplit("/", 1)[1] for kept in answer["files"])
+                self.assertEqual(len(names), 2)
+                self.assertIn("request-8.md", names)
+                if change_file:
+                    self.assertIn(change_file, names)
+                else:
+                    other = next(name for name in names if name != "request-8.md")
+                    self.assertRegex(other, r"^pull-request-8-[0-9a-f]{8}\.md$")
+
     def test_a_host_with_other_words_gets_them_in_every_stage_and_no_github(self):
         entry = {"id": 1, "author": "ana", "at": "2026-11-23T15:01:11Z", "kind": "comment"}
         linked = {

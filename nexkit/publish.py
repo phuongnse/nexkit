@@ -515,7 +515,7 @@ def publish(gh, decision, result, context, cfg, repo, out_dir):
             pull_body(decision, result, cfg["merge"]["auto"]),
         )
         pr = pull["number"]
-        copy_issue_fields(gh, decision["issue"], pr)
+        copy_issue_fields(gh, cfg, decision["issue"], pr)
     return {"published": True, "pr": pr, "head": head, **found}
 
 
@@ -582,13 +582,21 @@ def issue_closed(gh, issue):
     return gh.issue(issue).get("state") != "open"
 
 
-def copy_issue_fields(gh, issue, pr):
-    """Give a new pull request the labels and milestone of its issue. The pull request
-    exists by now, so a failure only warns."""
+def copy_issue_fields(gh, cfg, issue, pr):
+    """Give a new pull request the labels and milestone of its issue, except the hold
+    labels: a hold describes the issue, not the change, so it stays on the issue. The pull
+    request exists by now, so a failure only warns."""
     try:
         found = gh.issue(issue)
         milestone = (found.get("milestone") or {}).get("number")
-        labels = [label["name"] for label in found.get("labels") or [] if label.get("name")]
+        holds = {
+            name for name, does in configuration.autopilot_labels(cfg).items() if does.get("hold")
+        }
+        labels = [
+            label["name"]
+            for label in found.get("labels") or []
+            if label.get("name") and label["name"] not in holds
+        ]
         if milestone is not None or labels:
             gh.update_issue(pr, milestone=milestone, labels=labels)
     except GitHubError as exc:

@@ -59,8 +59,8 @@ succeeds. Help the user write issues that one session can finish and test.
    (`gh api repos/{owner}/{repo}/milestones --jq '.[].title'`). With `null`, an issue
    starts as soon as it is open and nothing open blocks it, so open only the issues that
    may start, and give each the *blocked by* relationships it needs. With or without
-   autopilot, the pull request NexKit opens for an issue gets that issue's labels and
-   milestone, so give each issue the ones its change should carry.
+   autopilot, the pull request NexKit opens for an issue gets that issue's labels, except
+   those with `"hold": true`, and its milestone, so give each issue the ones its change should carry.
 
 5. **Decide what waits for what.** Mark an issue *blocked by* another open issue when, and
    only when:

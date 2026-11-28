@@ -444,6 +444,25 @@ class PublishTests(unittest.TestCase):
         self.assertEqual(pull["milestone"], {"number": 3})
         self.assertEqual([label["name"] for label in pull["labels"]], ["bug", "nexkit"])
 
+    def test_pull_request_does_not_get_the_hold_labels_of_its_issue(self):
+        self.cfg = make_config(
+            autopilot={
+                "enabled": True,
+                "labels": {"on-hold": {"hold": True}, "journey": {"wave": 1}},
+            }
+        )
+        self.gh.add_issue(5, milestone=3, labels=("bug", "on-hold", "journey"))
+        outcome = self.publish_implement(self.make_patch({"calc.py": "x\n"}))
+        self.assertEqual(self.gh.updates, [(outcome["pr"], 3, ["bug", "journey"])])
+        pull = self.gh.issue(outcome["pr"])
+        self.assertEqual([label["name"] for label in pull["labels"]], ["bug", "journey"])
+
+    def test_pull_request_of_an_issue_with_only_a_hold_label_is_left_alone(self):
+        self.cfg = make_config(autopilot={"enabled": True, "labels": {"on-hold": {"hold": True}}})
+        self.gh.add_issue(5, labels=("on-hold",))
+        self.publish_implement(self.make_patch({"calc.py": "x\n"}))
+        self.assertEqual(self.gh.updates, [])
+
     def test_pull_request_of_an_issue_without_labels_or_milestone_is_left_alone(self):
         self.publish_implement(self.make_patch({"calc.py": "x\n"}))
         self.assertEqual(self.gh.updates, [])

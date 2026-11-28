@@ -180,7 +180,7 @@ None.
 
 ## Texts this prompt shortened
 
-These texts from GitHub are longer than this prompt keeps, so it has only their start, or
+These texts on GitHub are longer than this prompt keeps, so it has only their start, or
 leaves them out when they are older comments of a long discussion. NexKit wrote each whole
 text, before this session, to a file outside the working tree:
 

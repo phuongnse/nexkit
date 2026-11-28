@@ -196,9 +196,11 @@ events and actions](engine-states.md). The runners, the policies a host decides 
 - **Limits.** The engine applies them: how much of each text and block a prompt keeps, how many
   comments, and in what order. A text that a prompt keeps only the start of, or leaves out, goes
   whole to a file in the folder that `texts` names, an absolute path outside the working tree,
-  POSIX or Windows, where the agent reads it. The engine names each file from the host's id,
-  and adds a short hash of the id when the id holds a character a file name cannot, so two ids
-  never share a file. So the texts come whole, but a diff and a check's output come cut to what
+  POSIX or Windows, where the agent reads it. The engine names the file of an item or a linked
+  change from the host's noun for it (`itemKind`, or `changeKind` for a change) and its id, such
+  as `request-12.md`. A comment keeps its own name, such as `comment-4.md`. It adds a short hash when
+  the name holds a character a file name cannot, such as the space in a noun like "pull
+  request", so two names never share a file. So the texts come whole, but a diff and a check's output come cut to what
   a prompt shows of them, and the schema refuses more.
 - **The answer** holds the prompt, the texts it shortened or left out, the links it lists as not
   read, and the files with their texts, which the host writes before the agent runs. A host

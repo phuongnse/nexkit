@@ -1076,6 +1076,88 @@ class PromptInputTests(unittest.TestCase):
         self.assertNotIn("#### Fix 2", text)
         self.assertIn("resolved conflicts in `a.py`", text)
 
+    def test_a_host_with_other_words_gets_them_in_the_merge_previous_round_and_shortened_sections(
+        self,
+    ):
+        last = {"round": 3, "version": "a" * 40, "verdict": "request_changes", "findings": []}
+        fix = {
+            "round": 4,
+            "auto": False,
+            "diagnosis": False,
+            "summary": "Merged the base.",
+            "note": "",
+            "cause": "",
+        }
+        # A review after a fix round that merged the base, with the changes since and each side.
+        inputs = self.needs("review")
+        inputs["item"]["change"] = "3"
+        inputs["workspace"]["text"] = APP_TEXT
+        inputs["diff"] = {
+            **inputs["diff"],
+            "since": "y",
+            "sides": ["s", "t"],
+            "merged": {"base": "b" * 40, "head": "c" * 40, "conflicts": ["a.py"]},
+        }
+        state = self.fix_state("v", [fix], last)
+        review = engine.answer(self.request("review", inputs, state))["text"]
+        # A fix round that merges the base into the change.
+        inputs = self.needs("fix")
+        inputs["workspace"]["text"] = APP_TEXT
+        inputs["diff"] = {**inputs["diff"], "merging": {"commit": "b" * 40, "files": ["a.py"]}}
+        fixed = engine.answer(self.request("fix", inputs))["text"]
+        # An implement stage with a text and a linked item that the prompt shortens.
+        inputs = self.needs("implement")
+        inputs["workspace"]["text"] = APP_TEXT
+        inputs["item"]["id"] = 5
+        inputs["item"]["body"] = "B" * 70_000
+        inputs["linked"] = {
+            "texts": [],
+            "chain": [{"id": 9, "title": "Parent", "body": "P" * 70_000, "discussion": []}],
+            "notRead": [],
+        }
+        answer = engine.answer(self.request("implement", inputs))
+        paths = {kept["path"] for kept in answer["files"]}
+        self.assertEqual(paths, {"/runner/texts/request-5.md", "/runner/texts/request-9.md"})
+        for name, text, phrases in (
+            ("review", review, ("already reviewed this draft", "This draft conflicted with")),
+            ("fix", fixed, ("This draft no longer merges cleanly",)),
+            ("implement", answer["text"], ("These texts in the app are longer",)),
+        ):
+            with self.subTest(name):
+                flat = " ".join(text.split())
+                for phrase in phrases:
+                    self.assertIn(phrase, flat)
+                for word in ("GitHub", "pull request", "issue"):
+                    self.assertNotIn(word, flat)
+        self.assertIn("/runner/texts/request-5.md", answer["text"])
+        # A merge section needs both commits in full, otherwise there is none.
+        context = {"merged": {"head": "c" * 40, "base": "b" * 7, "conflicts": ["a.py"]}}
+        self.assertEqual(prompt.merge_review(context, "live", None, prompt.snake(APP_TEXT)), "")
+        context = {"merged": {"head": "c" * 7, "base": "b" * 40, "conflicts": ["a.py"]}}
+        self.assertEqual(prompt.merge_review(context, "live", None, prompt.snake(APP_TEXT)), "")
+
+    def test_a_shortened_linked_change_gets_a_file_named_with_the_changes_noun(self):
+        texts = [
+            {"kind": "item", "id": 8, "title": "Draft", "change": True, "text": "C" * 70_000},
+            {"kind": "item", "id": 8, "title": "Request", "change": False, "text": "I" * 70_000},
+        ]
+        # An item and a change with one id never share a file. A noun with a space, such as
+        # GitHub's "pull request", gets a short hash, since the space is not safe in a name.
+        for kind, change_file in (("draft", "draft-8.md"), ("pull request", None)):
+            with self.subTest(kind):
+                inputs = self.needs("implement")
+                inputs["linked"] = {"texts": texts, "chain": [], "notRead": []}
+                words = {**OTHER_WORDS, "changeKind": kind}
+                answer = engine.answer(self.request("implement", inputs, words=words))
+                names = sorted(kept["path"].rsplit("/", 1)[1] for kept in answer["files"])
+                self.assertEqual(len(names), 2)
+                self.assertIn("request-8.md", names)
+                if change_file:
+                    self.assertIn(change_file, names)
+                else:
+                    other = next(name for name in names if name != "request-8.md")
+                    self.assertRegex(other, r"^pull-request-8-[0-9a-f]{8}\.md$")
+
     def test_a_host_with_other_words_gets_them_in_every_stage_and_no_github(self):
         entry = {"id": 1, "author": "ana", "at": "2026-11-23T15:01:11Z", "kind": "comment"}
         linked = {
@@ -1505,10 +1587,10 @@ class PromptInputTests(unittest.TestCase):
         }
         answer = engine.answer(self.request("implement", inputs))
         [kept] = answer["files"]
-        key = "issue-/../../../home/runner/.bashrc#"
+        key = "request-/../../../home/runner/.bashrc#"
         short = hashlib.sha256(key.encode()).hexdigest()[:8]
         self.assertEqual(
-            kept["path"], f"/runner/texts/issue--..-..-..-home-runner-.bashrc--{short}.md"
+            kept["path"], f"/runner/texts/request--..-..-..-home-runner-.bashrc--{short}.md"
         )
         for folder in ("out/texts", "out\\texts", "C:texts", "C:", "\\\\server", "\\foo"):
             with self.subTest(folder=folder):
@@ -1531,19 +1613,19 @@ class PromptInputTests(unittest.TestCase):
     def test_two_ids_that_differ_in_unsafe_characters_get_two_files(self):
         slash, dash = self.long_item("a/b"), self.long_item("a-b")
         self.assertNotEqual(slash["path"], dash["path"])
-        self.assertRegex(slash["path"], r"^/runner/texts/issue-a-b-[0-9a-f]{8}\.md$")
+        self.assertRegex(slash["path"], r"^/runner/texts/request-a-b-[0-9a-f]{8}\.md$")
         # An id that already ends like a hash does not share a name with one that gets it.
         short = slash["path"].removesuffix(".md")[-8:]
         ends_like = self.long_item(f"a-b-{short}")
         self.assertNotEqual(ends_like["path"], slash["path"])
         # An id that is safe keeps its name.
-        self.assertEqual(self.long_item("5")["path"], "/runner/texts/issue-5.md")
+        self.assertEqual(self.long_item("5")["path"], "/runner/texts/request-5.md")
 
     def test_a_windows_folder_names_its_files_with_backslashes(self):
         for folder in ("C:\\nexkit\\texts", "c:/nexkit/texts", "\\\\server\\share\\texts"):
             with self.subTest(folder=folder):
                 kept = self.long_item("5", texts=folder)
-                self.assertEqual(kept["path"], folder + "\\issue-5.md")
+                self.assertEqual(kept["path"], folder + "\\request-5.md")
 
     def test_diffs_and_outputs_come_no_longer_than_a_prompt_shows(self):
         defs = self.defs

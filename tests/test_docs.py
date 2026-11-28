@@ -41,7 +41,7 @@ from nexkit import (
 )
 from nexkit.engine import machine, prompt
 from nexkit.runtimes import claude_code
-from tests import walk
+from tests import test_conformance, walk
 from tests.support import make_config, with_claude
 from tests.test_cli import jobs_of, permissions_of
 
@@ -123,6 +123,7 @@ TEST_NAME = re.compile(r"`(test_\w+)`")
 WORKFLOWS = ("pipeline.yml", "pipeline-agent.yml", "pipeline-review.yml")
 JOBS_HEADER = "| Workflow | Job | Job token | App token | Secrets |"
 MODULES_HEADER = "| Module | Purpose |"
+SCRIPTS_HEADER = "| Script | Purpose |"
 RUN_JOBS_HEADER = "| Job | Runs for | Does |"
 RUN_HEADING = re.compile(r"^## One run, (\w+) jobs$", re.M)
 NUMBERS = (
@@ -168,6 +169,13 @@ TESTING_PAGE = DOCS / "testing.md"
 WALK_INVARIANTS = re.compile(
     r"`INVARIANTS` in that file says what each one guards, and names them: "
     r"((?:`[\w-]+`(?:, | and )?)+)\."
+)
+ENGINE_PAGE = DOCS / "engine.md"
+# The actions that carry an item on, in the conformance rule of docs/engine.md. The page's
+# whitespace is collapsed first, since the list wraps across lines.
+ENGINE_WORK = re.compile(
+    r"every item that is not final has an action that works on it "
+    r"\(((?:`\w+`(?:, | or )?)+)\)"
 )
 
 
@@ -260,6 +268,31 @@ class WalkInvariantsTests(unittest.TestCase):
         for name in sorted(set(listed) - set(walk.INVARIANTS)):
             with self.subTest(invariant=name):
                 self.fail(f"{page} names {name!r}, which tests/walk.py's INVARIANTS lacks")
+
+
+class EngineWorkTests(unittest.TestCase):
+    def test_the_page_lists_each_action_that_carries_an_item_on_and_no_other(self):
+        # Lines are wrapped, so the page is searched with its spaces made one each.
+        text = " ".join(ENGINE_PAGE.read_text().split())
+        page = f"docs/{ENGINE_PAGE.name}"
+        found = ENGINE_WORK.search(text)
+        if found is None:
+            self.fail(f"{page} does not list the actions that carry an item on")
+        listed = re.findall(r"`(\w+)`", found.group(1))
+        for name in sorted({n for n in listed if listed.count(n) > 1}):
+            with self.subTest(action=name):
+                self.fail(f"{page} lists {name!r} more than once")
+        sources = (
+            ("nexkit/engine/machine.py's WORK", machine.WORK),
+            ("tests/test_conformance.py's WORK", test_conformance.WORK),
+        )
+        for source, defined in sources:
+            for name in sorted(set(defined) - set(listed)):
+                with self.subTest(action=name, source=source):
+                    self.fail(f"{page} does not list {name!r}, which {source} has")
+            for name in sorted(set(listed) - set(defined)):
+                with self.subTest(action=name, source=source):
+                    self.fail(f"{page} lists {name!r}, which {source} lacks")
 
 
 class DocsMapTests(unittest.TestCase):
@@ -1437,6 +1470,20 @@ class ArchitectureTests(unittest.TestCase):
                 any(f"`{name}`" in cell for cell in firsts),
                 f"docs/architecture.md has no row for nexkit/{name}",
             )
+
+    def test_the_script_table_lists_each_file_of_scripts_and_no_other(self):
+        rows = table(ARCH, SCRIPTS_HEADER)
+        self.assertTrue(rows, "docs/architecture.md has no script table")
+        bare = [row[0] for row in rows if not re.fullmatch(r"`[^`]+`", row[0])]
+        self.assertEqual(bare, [], "docs/architecture.md's script table names no file in backticks")
+        listed = {row[0].strip("`") for row in rows}
+        files = {p.name for p in (ROOT / "scripts").iterdir() if p.is_file()}
+        for name in sorted(files - listed):
+            with self.subTest(script=name):
+                self.fail(f"docs/architecture.md has no row for scripts/{name}")
+        for name in sorted(listed - files):
+            with self.subTest(script=name):
+                self.fail(f"docs/architecture.md has a row for scripts/{name}, which is not a file")
 
     def test_the_job_diagram_shows_each_job_of_the_pipeline_and_the_order_it_waits_in(self):
         lines = job_diagram(ARCH)

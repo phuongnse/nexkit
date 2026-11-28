@@ -390,7 +390,13 @@ class Item:
             self.keep_losses(self.record["command"], target)
             return self.running("started", OF_COMMAND.get(self.record["command"], "planning"))
         if last and not handed_on and last.get("status") in autopilot.ACTIVE:
-            return self.active(last_comment, last, OF_COMMAND.get(last["command"], "planning"))
+            command = last["command"]
+            # A continued run that recorded the command it started (`next`) waits for that
+            # command's run, which `autopilot._handed_on` starts again when it does not come.
+            found = last.get("next") if last.get("status") == autopilot.CONTINUED else None
+            if isinstance(found, dict) and found.get("command") in ("plan", "go"):
+                command = found["command"]
+            return self.active(last_comment, last, OF_COMMAND.get(command, "planning"))
         if last and not handed_on and last.get("outcome") == "lost":
             return self.lost(last, last["command"], self.issue["number"])
         if self.pull and (handed_on or last is None or last["command"] != "plan"):
@@ -1123,13 +1129,14 @@ def _latest(rows):
 
 
 def _next_state(row, name):
-    """The state of the run that a round started next: a fix round, its own command again,
-    or a review of the head that a branch update or a moved head gave."""
-    if row.get("outcome") in ("auto_fix", "conflict_fix"):
-        return "fixing"
+    """The state of the run that a round started next: the command it recorded (`next`), which
+    autopilot starts again when it does not come, else a fix round, or a review of the head that
+    a branch update or a moved head gave."""
     command = (row.get("next") or {}).get("command")
     if command in OF_COMMAND and command != "plan":
         return OF_COMMAND[command]
+    if row.get("outcome") in ("auto_fix", "conflict_fix"):
+        return "fixing"
     if row.get("outcome") in ("branch_updated", "head_moved", "superseded"):
         return "checking"
     return name

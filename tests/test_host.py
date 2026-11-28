@@ -5529,7 +5529,8 @@ class MergeStepTest(ReportCase):
 
 class LostAgainTest(TestCase):
     """A command that autopilot started and that was lost starts again, waits, or waits for a
-    person as the engine decides, with NexKit 6's words, due times and counts."""
+    person as the engine decides on the item's stored state, with NexKit 6's words, due times and
+    counts. The count of losses is the stored `again.lost`, never autopilot's record."""
 
     CFG = make_config(autopilot={"enabled": True})
     NOW = datetime(2099, 1, 1, 12, 0, tzinfo=UTC)
@@ -5549,9 +5550,34 @@ class LostAgainTest(TestCase):
         gh.add_pull(6, 5)
         return gh
 
+    def stored(self, gh, command, count=0):
+        """Store the state that comes before the loss of `command`: the item waits for the run
+        that it started, with `count` earlier losses of it counted, as the engine and the import
+        leave it."""
+        doc = seed(gh, self.CFG, 5, now=self.NOW)[1]
+        stage = {"plan": "plan", "go": "implement", "fix": "fix"}.get(command)
+        version = (doc["change"] or {}).get("version") if command in ("fix", "review") else None
+        fields = {
+            "state": first_state.OF_COMMAND[command],
+            "change": {"id": "6", "version": version} if version else None,
+            "attention": None,
+            "waits": [],
+            "again": {"lost": count} if count else {},
+        }
+        if stage:
+            fields["pending"] = [first_state.agent_run(stage, version)]
+        else:
+            run = {"id": first_state.RUN_ID, "next": None, "kind": "runChecks"}
+            fields["pending"] = [{**run, "changeVersion": version}]
+        return restate(gh, 5, **fields)
+
     def lost(self, command="plan", target=5, tries=0, now=None, at=None, **kwargs):
+        """The step of the loss of `command`, after `tries` losses stored, and the (state, event,
+        policies) that reached `step`."""
         gh = kwargs.pop("gh", None) or self.github()
-        record = {"command": command, "target": target, "at": at or self.AT, "tries": tries}
+        if not kwargs.pop("unstored", False):
+            self.stored(gh, command, tries)
+        record = {"command": command, "target": target, "at": at or self.AT}
         record.update(kwargs.pop("record", {}))
         fields = {"command": command, "target": target, "note": "", "remember": {}}
         fields.update(kwargs.pop("fields", {}))
@@ -5560,6 +5586,7 @@ class LostAgainTest(TestCase):
             found = host.lost_again(
                 gh, self.CFG, self.ISSUE, record, now, self.WHAT, fields, **kwargs
             )
+        self.gh = gh
         return found, [call.args for call in sent.call_args_list]
 
     def test_a_lost_command_starts_again_when_it_is_due(self):
@@ -5591,17 +5618,28 @@ class LostAgainTest(TestCase):
                     self.assertIn(f"again after {due:%H:%M} UTC", found["reason"])
                     self.assertIn(f"`/nexkit {command}`", found["reason"])
 
-    def test_the_loss_is_sent_at_the_last_start_and_a_run_again_after_its_wait(self):
-        _, requests = self.lost("fix", 6, 2, now=self.NOW + timedelta(hours=2))
+    def test_the_loss_is_sent_at_the_last_start_and_its_tick_goes_with_it_as_one_write(self):
+        gh = self.github()
+        before = self.stored(gh, "fix", 2)
+        found, requests = self.lost(
+            "fix", 6, 2, now=self.NOW + timedelta(hours=2), gh=gh, unstored=True, write=True
+        )
+        self.assertEqual(found["state"], "start")
         lost, tick = [event for _, event, _ in requests]
         self.assertEqual((lost["kind"], lost["at"]), ("actionLost", self.AT))
         self.assertEqual((lost["tokens"], lost["action"]), (None, "a1.1"))
+        self.assertEqual((lost["id"], tick["id"]), ("lost-5-2", "lost-tick-5-2"))
         self.assertEqual(tick["kind"], "tick")
         self.assertEqual(tick["at"], autopilot.iso(self.NOW + timedelta(hours=2)))
-        document = requests[0][0]
-        self.assertEqual(document["state"], "fixing")
-        self.assertEqual(document["again"], {"lost": 2})
-        self.assertEqual(document["change"], {"id": "6", "version": "6"})
+        # The loss is decided on the stored state: a fix round of the pull request's head.
+        stored = requests[0][0]
+        self.assertEqual((stored["state"], stored["again"]), ("fixing", {"lost": 2}))
+        self.assertEqual(lost["changeVersion"], before["change"]["version"])
+        # The loss and its tick are one write, which counts the loss once.
+        doc = item_state.read(gh, 5)[1]
+        self.assertEqual(doc["revision"], before["revision"] + 1)
+        self.assertEqual(doc["again"], {"lost": 3})
+        self.assertEqual(doc["waits"], [])
 
     def test_a_loss_without_a_usable_record_is_sent_at_the_sweeps_time(self):
         found, requests = self.lost("plan", 5, 0, record={"at": "soon"})
@@ -5609,11 +5647,45 @@ class LostAgainTest(TestCase):
         self.assertEqual(requests[0][1]["at"], autopilot.iso(self.NOW))
 
     def test_a_review_runs_the_checks_again(self):
-        _, requests = self.lost("review", 6, 1, now=self.NOW + timedelta(hours=1))
-        document = requests[0][0]
-        self.assertEqual(document["state"], "checking")
-        self.assertEqual(document["pending"][0]["kind"], "runChecks")
-        self.assertEqual(requests[0][1]["changeVersion"], "6")
+        gh = self.github()
+        before = self.stored(gh, "review", 1)
+        _, requests = self.lost(
+            "review", 6, 1, now=self.NOW + timedelta(hours=1), gh=gh, unstored=True
+        )
+        stored = requests[0][0]
+        self.assertEqual(stored["state"], "checking")
+        self.assertEqual(stored["pending"][0]["kind"], "runChecks")
+        self.assertEqual(requests[0][1]["changeVersion"], before["change"]["version"])
+
+    def test_a_review_that_a_branch_update_started_stores_the_update_before_its_loss(self):
+        gh = self.github()
+        head = gh.pull(6)["head"]["sha"]
+        old = "9" * 40
+        update = {"id": "a9.1", "kind": "updateChange", "next": None, "changeVersion": old}
+        self.stored(gh, "review")
+        restate(gh, 5, state="accepting", pending=[update], again={})
+        found, requests = self.lost("review", 6, gh=gh, unstored=True, write=True)
+        self.assertEqual((found["state"], found["command"]), ("start", "review"))
+        self.assertEqual([r[1]["kind"] for r in requests], ["actionFinished", "actionLost"])
+        state = item_state.read(gh, 5)[1]
+        self.assertEqual(state["again"]["lost"], 1)
+        self.assertEqual(state["rounds"]["updates"], 1)
+        self.assertEqual([a["kind"] for a in state["pending"]], ["runChecks"])
+        self.assertEqual(state["pending"][0]["changeVersion"], head)
+        # The review that starts again finds the update stored, and sends nothing for it.
+        change = {"id": "6", "version": head}
+        self.assertIsNone(host._branch_updated(gh, self.CFG, 5, change, state))
+
+    def test_the_one_run_that_the_state_holds_is_lost_whatever_its_stage(self):
+        # An imported round that its comment shows as an implement round is started again as a
+        # review, as NexKit 6 does for the round of a pull request.
+        gh = self.github()
+        self.stored(gh, "go")
+        found, requests = self.lost("review", 6, gh=gh, unstored=True, write=True)
+        self.assertEqual((found["state"], found["command"]), ("start", "review"))
+        self.assertEqual(found["remember"]["tries"], 1)
+        self.assertEqual(item_state.read(gh, 5)[1]["again"]["lost"], 1)
+        self.assertEqual([r[1]["kind"] for r in requests], ["actionLost"])
 
     def test_what_a_start_carried_stays(self):
         fields = {"auto": "autopilot", "note": "Mind the cache.", "remember": {"split_asked": 1}}
@@ -5638,29 +5710,43 @@ class LostAgainTest(TestCase):
                 )
                 self.assertIn("GitHub created no job for it", found["reason"])
 
-    def test_a_run_whose_agent_ran_starts_once_more_only(self):
+    def test_the_stored_count_decides_and_not_autopilots_record(self):
+        # The record says four starts; the stored state counted none, so the loss starts again.
+        found, requests = self.lost("go", 5, 0, record={"tries": 4})
+        self.assertEqual((found["state"], found["remember"]["tries"]), ("start", 1))
+        self.assertEqual(requests[0][1]["id"], "lost-5-0")
+        # The record says none; the stored state counted four, so a person decides.
+        found, _ = self.lost("go", 5, 4, record={"tries": 0})
+        self.assertEqual(found["state"], "waits")
+
+    def test_a_start_that_may_run_once_more_gets_only_the_first_wait(self):
         found, requests = self.lost("fix", 6, 0, record={"once": True})
         self.assertEqual(found["state"], "start")
         self.assertEqual(found["remember"], {"tries": 1, "once": True})
-        self.assertEqual(requests[0][0]["again"], {"once": True})
-        found, _ = self.lost("fix", 6, 1, record={"once": True})
+        self.assertEqual(requests[0][2]["lostWaits"], [0])
+        self.assertEqual(requests[0][1]["tokens"], None)
+        found, requests = self.lost("fix", 6, 1, record={"once": True})
         self.assertEqual(found["state"], "waits")
         self.assertIn("after autopilot started it once more", found["reason"])
         self.assertTrue(found["reason"].startswith(autopilot.LOST_DO))
+        found, requests = self.lost("fix", 6, 0)
+        self.assertEqual(requests[0][2]["lostWaits"], [0, 30, 60, 120])
 
-    def test_a_persons_command_waits_for_that_person(self):
+    def test_a_persons_command_waits_for_that_person_at_its_first_loss(self):
         stale = {"number": 6, "comment": 9}
         found, requests = self.lost("fix", 6, 0, extra={"stale": stale}, person=True)
         self.assertEqual(found["state"], "waits")
         self.assertEqual(found["reason"], autopilot.person(autopilot.LOST_DO, self.WHAT))
         self.assertEqual(found["stale"], stale)
-        self.assertEqual(requests[0][0]["pending"][0]["by"], "person")
+        self.assertEqual(requests[0][2]["lostWaits"], [])
         found, _ = self.lost("fix", 6, 0, person=True)
         self.assertIsNone(found)
 
     def test_a_hold_label_is_sent_and_a_held_restart_answers_held(self):
         found, requests = self.lost("plan", 5, 0, label="on-hold")
-        self.assertEqual([r[1]["kind"] for r in requests], ["held", "actionLost"])
+        # A restart that is due at once is held back, so the row goes on to a tick that ends no
+        # timed wait, which the engine ignores.
+        self.assertEqual([r[1]["kind"] for r in requests], ["held", "actionLost", "tick"])
         self.assertEqual(found["state"], "held")
         self.assertIn("`on-hold`", found["reason"])
         due = self.NOW + timedelta(hours=1)
@@ -5670,13 +5756,132 @@ class LostAgainTest(TestCase):
 
     def test_a_command_nexkit_never_writes_is_refused(self):
         with self.assertRaises(host.Refused):
-            self.lost("close", 5, 0)
+            self.lost("close", 5, 0, unstored=True)
+
+    def test_with_no_configuration_it_is_refused_and_nothing_is_read_or_written(self):
+        gh = self.github()
+        self.stored(gh, "go", 1)
+        before = copy.deepcopy(gh.comments(5))
+        fields = {"command": "go", "target": 5, "note": "", "remember": {}}
+        record = {"command": "go", "target": 5, "at": self.AT}
+        calls = len(gh.calls)
+        with self.assertRaises(host.Refused):
+            host.lost_again(gh, None, self.ISSUE, record, self.NOW, self.WHAT, fields, write=True)
+        self.assertEqual(gh.comments(5), before)
+        self.assertEqual(len(gh.calls), calls)
+
+    def test_an_item_with_no_state_to_decide_on_is_refused(self):
+        gh = self.github()
+        with mock.patch.object(host, "stored", return_value=(None, None)):
+            with self.assertRaises(host.Refused):
+                self.lost("go", 5, 0, gh=gh, unstored=True)
+
+    def test_three_losses_count_each_once_and_the_third_waits_for_a_person(self):
+        gh = self.github()
+        self.stored(gh, "go", 2)
+        later = self.NOW + timedelta(hours=5)
+        for before, after in ((2, 3), (3, 4)):
+            with self.subTest(count=before):
+                found, previewed = self.lost("go", 5, gh=gh, unstored=True, now=later)
+                self.assertEqual(item_state.read(gh, 5)[1]["again"], {"lost": before})
+                found, sent = self.lost("go", 5, gh=gh, unstored=True, now=later, write=True)
+                self.assertEqual((found["state"], found["remember"]["tries"]), ("start", after))
+                self.assertEqual(
+                    [event["id"] for _, event, _ in previewed],
+                    [event["id"] for _, event, _ in sent],
+                )
+                self.assertEqual(sent[0][1]["id"], f"lost-5-{before}")
+                self.assertEqual(sent[1][1]["id"], f"lost-tick-5-{before}")
+                self.assertEqual(item_state.read(gh, 5)[1]["again"], {"lost": after})
+        found, _ = self.lost("go", 5, gh=gh, unstored=True, now=later)
+        self.assertEqual(found["state"], "waits")
+        found, sent = self.lost("go", 5, gh=gh, unstored=True, now=later, write=True)
+        self.assertEqual(found["state"], "waits")
+        self.assertIn("5 times", found["reason"])
+        doc = item_state.read(gh, 5)[1]
+        self.assertEqual((doc["again"], doc["attention"]["reason"]), ({"lost": 4}, "outage"))
+        self.assertEqual(sent[-1][1]["id"], "lost-5-4")
+        # The next sweep finds the stored outage and sends nothing more.
+        found, sent = self.lost("go", 5, gh=gh, unstored=True, now=later, write=True)
+        self.assertEqual((found["state"], sent), ("waits", []))
+
+    def imported(self, now):
+        """The item as the import stores it for an automatic `/nexkit go` whose run ended
+        without a report, which autopilot started twice already: `lost`, its second start
+        waiting for a time."""
+        gh = self.github()
+        gh.comment(5, render_run({"url": "u", "command": "plan", "status": "success"}, "Done."))
+        gh.comment(5, f"{PLAN_MARKER}\n## Plan\n\nAdd it.")
+        run = {"url": "u2", "command": "go", "status": "failure", "outcome": "lost"}
+        gh.comment(5, render_run({**run, "autopilot": True}, "Done."))
+        record = {"command": "go", "target": 5, "at": self.AT, "tries": 1}
+        gh.comment(5, "NexKit autopilot record\n\n" + autopilot.record_marker(record))
+        doc = seed(gh, self.CFG, 5, now=now)[1]
+        return gh, record, doc
+
+    def test_a_loss_that_the_import_counted_sends_only_the_tick_once_it_is_due(self):
+        gh, record, doc = self.imported(self.NOW)
+        self.assertEqual(doc["again"], {"lost": 2})
+        [wait] = doc["waits"]
+        self.assertEqual((wait["for"], wait["until"]), ("time", "2099-01-01T12:20:00Z"))
+        fields = {"command": "go", "target": 5, "note": "", "remember": {}}
+        before = item_state.read(gh, 5)[1]
+        with mock.patch.object(host, "step", wraps=host.step) as sent:
+            found = host.lost_again(
+                gh,
+                self.CFG,
+                self.ISSUE,
+                record,
+                self.NOW + timedelta(minutes=10),
+                self.WHAT,
+                fields,
+                write=True,
+            )
+        self.assertEqual(found["state"], "active")
+        self.assertIn("again after 12:20 UTC", found["reason"])
+        self.assertEqual(sent.call_args_list, [])
+        self.assertEqual(item_state.read(gh, 5)[1], before)
+        with mock.patch.object(host, "step", wraps=host.step) as sent:
+            found = host.lost_again(
+                gh,
+                self.CFG,
+                self.ISSUE,
+                record,
+                self.NOW + timedelta(minutes=30),
+                self.WHAT,
+                fields,
+                write=True,
+            )
+        self.assertEqual((found["state"], found["command"]), ("start", "go"))
+        self.assertEqual(found["remember"]["tries"], 2)
+        self.assertEqual([call.args[1]["kind"] for call in sent.call_args_list], ["tick"])
+        self.assertEqual(sent.call_args_list[0].args[1]["id"], "lost-tick-5-1")
+        doc = item_state.read(gh, 5)[1]
+        self.assertEqual((doc["waits"], doc["again"]), ([], {"lost": 2}))
+
+    def test_a_stored_outage_is_carried_out_and_nothing_is_sent(self):
+        gh = self.github()
+        self.stored(gh, "go", 4)
+        self.lost("go", 5, gh=gh, unstored=True, write=True)
+        found, sent = self.lost("go", 5, gh=gh, unstored=True, write=True)
+        self.assertEqual((found["state"], sent), ("waits", []))
+        self.assertIn("5 times", found["reason"])
+
+    def test_nexkit_has_no_builder_of_a_lost_run_s_document(self):
+        self.assertFalse(hasattr(host, "_lost_doc"))
+        self.assertFalse(hasattr(host, "_stage_doc"))
 
     def test_autopilot_waits_for_a_person_when_the_engine_refuses(self):
         fields = {"command": "close", "target": 5, "note": "", "remember": {}}
         found = autopilot._again(
             self.github(), self.CFG, self.ISSUE, {}, self.NOW, self.WHAT, fields
         )
+        self.assertEqual(found["state"], "waits")
+        self.assertIn("refused to decide", found["reason"])
+
+    def test_autopilot_waits_for_a_person_when_there_is_no_configuration(self):
+        fields = {"command": "go", "target": 5, "note": "", "remember": {}}
+        found = autopilot._again(self.github(), None, self.ISSUE, {}, self.NOW, self.WHAT, fields)
         self.assertEqual(found["state"], "waits")
         self.assertIn("refused to decide", found["reason"])
 
@@ -5829,7 +6034,7 @@ class StoredStopsTest(HostCase):
                     self.gh, self.cfg, {"resume": self.resume_record()}, 5, self.NOW, write=write
                 ),
             ),
-            ("lost_again", lambda: None, self.lost),
+            ("lost_again", self.going, self.lost),
         ]
 
     def resume_record(self):
@@ -5871,18 +6076,21 @@ class StoredStopsTest(HostCase):
                 self.assertEqual(self.gh.comments(5), before)
                 self.assertEqual(self.read()[1]["revision"], 1)
 
-    def test_a_due_tick_of_a_lost_command_is_a_second_answer_stored_after_the_first(self):
+    def test_a_due_tick_of_a_lost_command_is_stored_with_the_loss_as_one_write(self):
+        self.going()
         self.stored()
-        before = self.read()[1]["revision"]
+        # One start was lost already, so this loss waits, and its tick is due long after.
+        before = restate(self.gh, 5, again={"lost": 1})["revision"]
         seen, spy = self.spied()
         with mock.patch.object(host, "step", spy):
-            # Due: the loss is answered with a wait, and its tick, named by that wait, starts it.
             step = self.lost(write=True, now=self.NOW + timedelta(hours=5))
         self.assertEqual((step["state"], step["command"]), ("start", "go"))
-        self.assertEqual([found["state"]["revision"] for found in seen], [before + 1, before + 2])
+        # Two events reach the engine, and one write stores the state after the last of them.
+        self.assertEqual(len(seen), 2)
         doc = self.read()[1]
-        self.assertEqual(doc, seen[-1]["state"])
-        self.assertEqual([w for w in doc["waits"]], [])
+        self.assertEqual(doc["revision"], before + 1)
+        self.assertEqual({**doc, "revision": 0}, {**seen[-1]["state"], "revision": 0})
+        self.assertEqual((doc["waits"], doc["again"]), ([], {"lost": 2}))
 
     def test_a_decision_with_no_state_comment_stores_nothing(self):
         self.blocked()

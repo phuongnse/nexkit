@@ -683,7 +683,10 @@ class SweepTests(AutopilotCase):
         step = autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {5: 6}, now=soon)
         self.assertEqual(step["state"], "active")
         late = datetime(2026, 1, 1, 0, 31, tzinfo=UTC)
-        step = autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {5: 6}, now=late)
+        # The item's state is stored, as the run in its group does, and the step run that starts
+        # the command counts the loss in it.
+        self.assertTrue(host.store_import(self.gh, self.cfg, 5, now=soon))
+        step = autopilot.assess(self.gh, self.cfg, self.gh.issues[5], {5: 6}, now=late, write=True)
         self.assertEqual((step["state"], step["command"], step["target"]), ("start", "review", 6))
         self.assertEqual(step["auto"], "true,retry,autopilot")
         self.assertIn("did not start within 30 minutes", step["reason"])

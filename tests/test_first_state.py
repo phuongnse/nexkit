@@ -331,6 +331,37 @@ class ImportTest(unittest.TestCase):
         self.assertEqual(imported(retry=2, tries=1)["again"], {"transient": 2, "lost": 1})
         self.assertEqual(imported(retry=2)["again"], {"transient": 2})
 
+    def test_a_run_that_handed_on_waits_for_the_command_it_recorded(self):
+        # A continued go that recorded a plan as its next run waits for that plan's run, which
+        # autopilot starts again when it does not come (`autopilot._handed_on`).
+        run = {"command": "go", "status": "continued", "outcome": "retry", "url": "u"}
+        run["next"] = {"command": "plan", "number": "5", "note": "", "auto": "true"}
+        given = {"issue": {"number": 5}, "comments": [{"run": run}]}
+        state = first_state.imported(**situation({"nexkit6": given}))
+        self.assertEqual(state["state"], "planning")
+        self.assertEqual([action["stage"] for action in working(state)], ["plan"])
+        # One that recorded no command waits for its own.
+        del run["next"]
+        state = first_state.imported(**situation({"nexkit6": given}))
+        self.assertEqual(state["state"], "working")
+
+    def test_a_round_that_started_a_review_next_waits_for_the_review(self):
+        head = "b" * 40
+        row = {"round": 2, "trigger": "fix (auto)", "action": "fix", "head": head, "url": "u"}
+        row.update(status="success", outcome="auto_fix", kinds=["auto"])
+        nexts = {"review": "checking", "fix": "fixing", None: "fixing"}
+        for command, name in nexts.items():
+            with self.subTest(command=command):
+                found = {"command": command, "number": "6", "note": "", "auto": "true"}
+                given = {
+                    "issue": {"number": 5},
+                    "comments": [{"run": {"command": "go", "status": "success", "url": "u"}}],
+                    "pull": {"number": 6, "head": head},
+                    "pullComments": [{"run": {**row, **({"next": found} if command else {})}}],
+                }
+                state = first_state.imported(**situation({"nexkit6": given}))
+                self.assertEqual(state["state"], name)
+
     def test_a_fix_round_on_its_way_waits_on_the_pull_request_s_head(self):
         head = "b" * 40
         gh = FakeGitHub()

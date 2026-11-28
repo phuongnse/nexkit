@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Lint as CI and NexKit's checks do: ruff at its pin, then actionlint. Installs either into
 # ~/.cache/nexkit-lint when it is missing there. The two pins are this repository's own tool
-# versions, which D9 leaves here.
+# versions, which D14 leaves here.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 RUFF_VERSION=0.13.3

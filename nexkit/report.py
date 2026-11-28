@@ -2625,7 +2625,10 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
             output = agent.get("output")
             reason = needs_person("planned", cfg, plan=output, gh=gh, number=decision["issue"])
             summary = f"[Plan]({plan}) posted." if plan else ""
-            if reason and autopilot.carries_on(gh, cfg, decision, "planned", agent, ran=agent_ran):
+            # The plan's result goes to the engine once for every plan of an issue that autopilot
+            # takes, and its answer is stored, whether or not the plan needs a person.
+            carried = autopilot.carries_on(gh, cfg, decision, "planned", agent, ran=agent_ran)
+            if reason and carried:
                 reason = None
                 summary += " NexKit autopilot carries on from here."
             if shortened:

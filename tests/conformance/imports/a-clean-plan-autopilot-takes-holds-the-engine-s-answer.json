@@ -1,0 +1,160 @@
+{
+  "kind": "plan answered",
+  "nexkit6": {
+    "issue": {
+      "number": 42
+    },
+    "comments": [
+      {
+        "plan": {
+          "criteria": [
+            "A test shows the round says the issue is closed."
+          ],
+          "record": {
+            "questions": [],
+            "too_large": false
+          }
+        }
+      },
+      {
+        "run": {
+          "command": "plan",
+          "status": "success",
+          "url": "https://github.com/acme/app/actions/runs/1",
+          "outcome": "planned"
+        }
+      }
+    ]
+  },
+  "config": {
+    "autopilot": {
+      "enabled": true
+    }
+  },
+  "state": {
+    "schemaVersion": 1,
+    "revision": 1,
+    "item": "42",
+    "itemKind": "change",
+    "state": "working",
+    "change": null,
+    "observed": null,
+    "attention": null,
+    "hold": false,
+    "waits": [],
+    "pending": [
+      {
+        "id": "a2.1",
+        "kind": "show",
+        "next": null,
+        "text": {
+          "name": "plan",
+          "ref": "a1.1"
+        },
+        "what": "plan"
+      },
+      {
+        "access": "write",
+        "agent": "claude",
+        "budget": {
+          "seconds": 2700,
+          "tokens": null
+        },
+        "changeVersion": null,
+        "effort": null,
+        "id": "a2.2",
+        "inputs": [
+          "item",
+          "discussion",
+          "notes",
+          "plan",
+          "linked",
+          "evidence",
+          "workspace"
+        ],
+        "kind": "runAgent",
+        "model": "sonnet",
+        "next": null,
+        "result": "results/implement.schema.json",
+        "resume": false,
+        "session": null,
+        "stage": "implement"
+      }
+    ],
+    "actors": {
+      "change": "engine",
+      "plan": "engine",
+      "review": "engine"
+    },
+    "plan": {
+      "approved": true,
+      "criteria": 0,
+      "noChange": false,
+      "parts": 0,
+      "protectedPaths": [],
+      "questions": [],
+      "split": [],
+      "text": {
+        "name": "plan",
+        "ref": "a1.1"
+      },
+      "tooLarge": false
+    },
+    "rounds": {
+      "checklist": [],
+      "conflicts": 0,
+      "counted": 0,
+      "criteria": [],
+      "findings": [],
+      "signatures": [],
+      "started": 1
+    },
+    "used": {
+      "seconds": 0,
+      "since": "2026-11-23T10:00:00Z",
+      "tokens": {
+        "cached": 0,
+        "input": 0,
+        "output": 0
+      }
+    },
+    "asked": [],
+    "parts": [],
+    "policies": {
+      "accept": "person",
+      "afterFailure": "replan",
+      "answers": "never",
+      "conflictRounds": 3,
+      "conflicts": "person",
+      "fixRounds": 2,
+      "planApproval": "autoWhenClean",
+      "retryWaits": [
+        15,
+        30,
+        60
+      ],
+      "reviewAfterFailingChecks": "always",
+      "splitDepth": 3,
+      "splitParts": 10,
+      "splits": true,
+      "whenRoundsRunOut": "person"
+    },
+    "recentEvents": [
+      "run-1"
+    ]
+  },
+  "steps": [
+    {
+      "event": {
+        "kind": "actionFinished",
+        "action": "runAgent",
+        "result": "@agent:implement"
+      },
+      "state": "working",
+      "changed": true,
+      "actions": [
+        "publish"
+      ]
+    }
+  ]
+}

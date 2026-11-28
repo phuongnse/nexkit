@@ -124,6 +124,11 @@ hosts](engine-hosts.md)) and [security](security.md) are reference pages.
   test compares the page with the code.
 - **Describe NexKit for any repository.** The docs name no product or repository that uses NexKit,
   except the README's *Built with NexKit* list and the changelog, which may cite a case.
+- **Describe the engine for any host.** _(planned, #867)_ The engine's pages, its protocol's
+  schemas and its code use the engine's words and name no host, no product and no implementation
+  that the engine was built from. Each rule gives its own reason, and a host's page says how its
+  platform maps onto the engine's words. The reasons are in
+  [D15](decisions/d15-the-engine-assumes-no-host-and-no-kind-of-change.md).
 
 ### Planned work
 

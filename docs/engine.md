@@ -34,7 +34,9 @@ fix and each lesson has to be made twice.
 The engine holds the loop once. A host decides only where the work lives and how each step is
 carried out.
 
-The reasons for this split are in [D10](decisions/d10-an-engine-decides-hosts-carry-out.md).
+The reasons for this split are in [D10](decisions/d10-an-engine-decides-hosts-carry-out.md). Why
+the engine and its protocol assume no host and no kind of change, so that a change may be files
+or records, is in [D15](decisions/d15-the-engine-assumes-no-host-and-no-kind-of-change.md).
 
 ## Words
 

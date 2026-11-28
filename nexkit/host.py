@@ -387,11 +387,12 @@ seen and the ids of its outbox, and does not hold the event yet, or any event of
 the decision is the markers' document at the stored revision, with the stored `counted`,
 `conflicts` and `updates` wherever the markers' are lower, so that a document made from
 `first_state.empty` never gives a budget back, and so that NexKit 6's answers stay
-exactly as they are: a finished plan's import is `awaitingApproval`, which cannot take the plan's
-result, and a second send of one event, such as the plan's result that `report` and the step run
-both send, would be a duplicate. A plan's result keeps the marks of the answers that the engine
-gave to a round's questions (`_carry_replan`), which the markers cannot say, so that a round that
-asks again after such a re-plan is not answered twice in a row. `after_go`, `round_carried_on`,
+exactly as they are: the import of a finished plan that waits (one of an issue that autopilot does
+not take, or with a collaborator's comment after it) is `awaitingApproval`, which cannot take the
+plan's result, and a second send of one event, such as the plan's result that `report` and the
+step run both send, would be a duplicate. A plan's result keeps the marks of the answers that the
+engine gave to a round's questions (`_carry_replan`), which the markers cannot say, so that a round
+that asks again after such a re-plan is not answered twice in a row. `after_go`, `round_carried_on`,
 `stopped` and `stop_carried_on` no longer go through it: they pass no document of the markers.
 Nor do `no_change_found`, `on_base_found`, `stage_limited`, `stage_transient`, `stage_untrusted`
 and `resumes`, which decide on the stored state alone, and neither do `command`, `_on_base`,
@@ -399,7 +400,15 @@ and `resumes`, which decide on the stored state alone, and neither do `command`,
 `checks_waited`, `refusal_cleared` and `change_seen`: the
 sweep's looks at a merge that waits for required checks or that GitHub refused, and what the
 merge finds. So do `required_failed`, `accept_answer` and `update_failed`. `first_plan` and
-`approved` pass none either, and neither does `vouched`. Nor does `lost_again`.
+`approved` pass none either, and neither does `vouched`. Nor does `lost_again`. Nor do
+`plan_carried_on` and `plan_waits_for`: the plan's `report` sends the plan's result once for every
+plan of an issue that autopilot takes, naming the plan run that the stored outbox holds
+(`pending_id`) and echoing its change version, and stores the answer, whatever it is. The import of
+a finished plan of such an issue, with no collaborator's comment after it, plays that result
+through the engine under the item's own policies (`first_state.Item.play_plan`), so the stored
+state already holds the answer: its outbox, such as the implement run of a clean plan, and the plan
+run's id among the events seen. The sweep and the step run (`after_plan`) still build their
+document from the markers.
 So do `released`, `base_passes` and `conflicts_released`: the end of a wait is the release of a
 stored hold (`_release_row`), autopilot's start for an import made after the label was gone, or,
 when `take` released the hold already, the stored pending action. `stopped_counts` too: whether a
@@ -418,14 +427,18 @@ with `item_state.apply`: a write that lost reads the state again, waits and deci
 every try lost, the run warns and carries out the answer anyway, which the next decision stores
 again. A run outside that group only previews: the sweep, `nexkit status`, the push run, the
 hourly schedule and another item's merge, which decide `base_moved` and `stopped_counts` in groups
-of their own, `plan_waits_for`, which asks what a plan waits for under no automatic approval, and
+of their own, `plan_waits_for`, which asks what a plan waits for under no automatic approval on
+the stored state and stores nothing, and
 `diagnosis` of a round whose action is not stored yet, which sends a tick that is no event of the
 item's own, and the `resume` run, which only sends the `step`. None of them is an answer of the
 item, so the conflict round that the push run, the schedule or a merge dispatches, the review
 after a branch update and the give-back of a stopped automatic fix round are stored by the run that
 they start in the item's group (`command`), so that the stored `counted`, `conflicts` and `updates`
-are current after such a stop. With no configuration, `lost_again` and `resumes` raise `Refused`,
-before they read or store anything. An item with no state comment stores nothing here, since only
+are current after such a stop. With no configuration, `lost_again`, `resumes`, `plan_carried_on`
+and `plan_waits_for` raise `Refused`, before they read or store anything, the last also without
+GitHub or an item number, and the engine is not asked. `plan_carried_on` and `plan_waits_for` raise
+it too when the engine takes the plan's result for nothing, since no plan run of the item waits
+for it. An item with no state comment stores nothing here, since only
 `store_import` posts the first one, and one whose state
 comment someone other than the App changed is refused (`autopilot.changed_comment`). `pending_id`
 names the action of the outbox that a result answers. A merge that waits for required checks keeps
@@ -1590,35 +1603,57 @@ def _carry_replan(gh, cfg, number, doc):
     return doc
 
 
+def _plan_version(gh, cfg, number):
+    """The change version that the plan run of work item `number`'s stored state acts on, which
+    the plan's result echoes: the head of the pull request that a plan after a round that ran
+    out of time withdraws, and None for any other plan. None too when no state or plan run is
+    stored, which the engine then refuses."""
+    doc = stored(gh, cfg, number)[1]
+    for action in (doc or {}).get("pending") or []:
+        if action["kind"] == "runAgent" and action.get("stage") == "plan":
+            return action.get("changeVersion")
+    return None
+
+
 def plan_carried_on(gh, cfg, issue, decision, output, ran=None, write=False):
     """Whether autopilot carries on after the plan `output` that a run of `decision` posted,
-    as the engine decides what follows it, so that `report` mentions nobody. A plan that finds
-    no change carries on whatever else it says. A recommended answer that only closes the
-    issue needs a person, whom `report` mentions: the sweep finds that mention since the run
-    (`autopilot.mentioned`), so it mentions nobody again. With `write`, which only `report`
-    passes, the engine's answer is stored (`decide`). Raises `Refused`."""
-    if filled(output.get("no_change")):
-        return True
+    as the engine decides what follows it, so that `report` mentions nobody. The plan's result
+    is sent once, naming the plan run that the item's stored state holds (`pending_id`), and the
+    engine's answer is stored (`decide`) whatever it is: a clean plan and one that finds no
+    change too. A plan that finds no change carries on whatever else it says, also when the
+    engine refuses it. A recommended answer that only closes the issue needs a person, whom
+    `report` mentions: the sweep finds that mention since the run (`autopilot.mentioned`), so it
+    mentions nobody again. With `write`, which only `report` passes, the answer is stored.
+    Raises `Refused`: with no configuration, and when the engine takes the result for nothing,
+    since no plan run of the item waits for it."""
+    if cfg is None:
+        raise Refused(NO_CONFIG)
     number = issue["number"]
-    comments = gh.comments(number)
-    pr = decision.get("pr")
-    target = gh.comments(pr) if pr else comments
-    again = autopilot.asked_again(target, comments if pr else ())
     data = plan_record(output)
-    doc = _document(issue, autopilot.find_record(comments)[1])
-    doc = _planning(doc, _depth(gh, issue, data), again)
-    doc = _carry_replan(gh, cfg, number, doc)
-    result = {**spent(ran), "output": plan_output({}, data, {})}
+    version = _plan_version(gh, cfg, number)
+    result = {**spent(ran), "changeVersion": version, "output": plan_output({}, data, {})}
     event = _event(
         "actionFinished",
         number,
         None,
         _run_event_id(),
         action=first_state.RUN_ID,
-        changeVersion=None,
+        changeVersion=version,
         result=result,
     )
-    _, actions = decide(gh, cfg, number, event, doc, action=("runAgent", "plan"), write=write)
+    sent = ("runAgent", "plan")
+    try:
+        _, actions, changed = decide(
+            gh, cfg, number, event, None, action=sent, write=write, with_changed=True
+        )
+        if not changed:
+            raise Refused("The item has no plan run that this result answers.")
+    except Refused:
+        if filled(output.get("no_change")):
+            return True
+        raise
+    if filled(output.get("no_change")):
+        return True
     kinds = {action["kind"]: action for action in actions}
     if "runAgent" in kinds:
         return kinds["runAgent"]["stage"] == "plan"
@@ -1629,28 +1664,41 @@ def plan_waits_for(output, gh=None, cfg=None, number=None):
     """Why the plan `output` that a run posted waits for a person without automatic approval,
     as the engine's attention names it: `approval`, of a plan that is too large, finds no
     change or is clean, `handMadeChange` or `question`. A plan whose questions name no
-    question still asks, as NexKit 6 reads it. With `gh`, `cfg` and the item's `number` it is
-    decided on the item's stored document (`decide`), and it never stores: it asks what the
-    plan waits for under no automatic approval, which is not the item's own answer. Raises
-    `Refused`."""
+    question still asks, as NexKit 6 reads it. It is decided on the item's stored document
+    (`decide`), and it never stores: it asks what the plan waits for under no automatic
+    approval, which is not the item's own answer. Raises `Refused`: without GitHub, a
+    configuration or an item number, where the engine is not asked, and when the engine takes
+    the result for nothing, since no plan run of the item waits for it."""
+    if gh is None or cfg is None or number is None:
+        raise Refused(NO_CONFIG)
     data = plan_record(output)
     found = plan_output({}, data, {})
     if output.get("questions") and not found["questions"]:
         found["questions"] = [{"question": "", "options": [], "recommended": 0, "closes": 0}]
-    item = 0 if number is None else number
-    doc = _planning(_document({"number": item}, {}), 0, False)
-    result = {**AGENT, "output": found}
-    event = _event("actionFinished", item, None, "plan", action=first_state.RUN_ID, **_NO_CHANGE)
-    event = {**event, "result": result}
-    if gh is None or cfg is None or number is None:
-        answer = step(doc, event, {})["state"]
-    else:
-        action = ("runAgent", "plan")
-        answer, _ = decide(gh, cfg, number, event, doc, found_policies={}, action=action)
+    version = _plan_version(gh, cfg, number)
+    result = {**AGENT, "changeVersion": version, "output": found}
+    event = _event(
+        "actionFinished",
+        number,
+        None,
+        "plan",
+        action=first_state.RUN_ID,
+        changeVersion=version,
+        result=result,
+    )
+    answer, _, changed = decide(
+        gh,
+        cfg,
+        number,
+        event,
+        None,
+        found_policies={},
+        action=("runAgent", "plan"),
+        with_changed=True,
+    )
+    if not changed:
+        raise Refused("The item has no plan run that this result answers.")
     return (answer["attention"] or {}).get("reason")
-
-
-_NO_CHANGE = {"changeVersion": None}
 
 
 def first_plan(gh, cfg, issue, record, start, write=False):

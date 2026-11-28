@@ -773,10 +773,11 @@ def mention_texts():
         f"`{outcome}`": (do, why[:1].upper() + why[1:])
         for outcome, (do, why) in report.NEEDS_PERSON.items()
     }
+    # What the engine says a plan with questions waits for, which needs an item's stored state.
+    with mock.patch.object(host, "plan_waits_for", return_value="question"):
+        asked = report.needs_person("planned", cfg, plan={"questions": ["Which?"]})
     texts |= {
-        "plan with questions": (
-            report.needs_person("planned", cfg, plan={"questions": ["Which?"]}).split(":\n\n")[0],
-        ),
+        "plan with questions": (asked.split(":\n\n")[0],),
         "plan too large": (report.TOO_LARGE,),
         "plan finds no change": (report.NO_CHANGE_PLAN,),
         "a recommended close": (autopilot.CLOSE_UNFOUNDED,),

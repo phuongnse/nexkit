@@ -16,7 +16,7 @@ from nexkit.report import (
     report,
 )
 from nexkit.status import collect, render, to_json
-from tests.support import CLAUDE, make_config
+from tests.support import CLAUDE, FakeGitHub, make_config, plan_running
 from tests.test_report import HEAD, LIMIT, ReportCase, decision, review_result
 
 WITH_CLAUDE = {"agents": CLAUDE}
@@ -28,6 +28,13 @@ class RuleTests(unittest.TestCase):
 
     def setUp(self):
         self.cfg = make_config()
+        # A plan's result answers the plan run that the item's stored state holds.
+        self.gh = FakeGitHub()
+        self.gh.add_issue(5)
+        plan_running(self.gh, self.cfg, 5)
+
+    def planned(self, plan):
+        return needs_person("planned", self.cfg, plan=plan, gh=self.gh, number=5)
 
     def assertReason(self, reason, do, why):
         self.assertTrue(reason.startswith(do), reason)
@@ -35,18 +42,18 @@ class RuleTests(unittest.TestCase):
 
     def test_planned_with_questions_or_too_large(self):
         self.assertEqual(
-            needs_person("planned", self.cfg, plan={"questions": ["Which?"]}),
+            self.planned({"questions": ["Which?"]}),
             "answer the plan's questions with `/nexkit plan <answers>`. The plan asks for "
             "decisions that are the owner's to make:\n\n1. `Which?`",
         )
         self.assertReason(
-            needs_person("planned", self.cfg, plan={"too_large": True}),
+            self.planned({"too_large": True}),
             "split the issue by hand",
             "The plan says the issue is too large for one session",
         )
 
     def test_planned_without_either(self):
-        self.assertIsNone(needs_person("planned", self.cfg, plan={"questions": []}))
+        self.assertIsNone(self.planned({"questions": []}))
 
     def test_agent_blocked_names_the_decision_and_the_command(self):
         found = {"questions": [{"question": "Keep @alice's API?"}, {"question": "Rename it?"}]}
@@ -283,6 +290,7 @@ class MentionTests(ReportCase):
             "nexkit-agent", "result.json", {"status": "done", "output": {"questions": ["?"]}}
         )
         d = decision("plan")
+        plan_running(self.gh, make_config(notify=["owner"]), 5)
         needs = {"publish": {"outputs": {"result": '{"published": true, "comment": "u"}'}}}
         report(
             self.gh,
@@ -379,6 +387,7 @@ class MentionTests(ReportCase):
         self.write(
             "nexkit-agent", "result.json", {"status": "done", "output": {"questions": asked}}
         )
+        plan_running(self.gh, make_config(notify=["owner"]), 5)
         needs = {"publish": {"outputs": {"result": '{"published": true, "comment": "u"}'}}}
         report(
             self.gh,

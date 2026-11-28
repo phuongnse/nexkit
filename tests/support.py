@@ -828,6 +828,35 @@ def store_fields(gh, number, **fields):
     return doc
 
 
+def plan_running(gh, cfg, number, **fields):
+    """Store a state of item `number` while its plan runs, which the plan's result answers:
+    `planning` with the plan run pending and no earlier answers, as the engine's answer to a
+    plan's start leaves it. With no state stored, it is the first state at revision 1
+    (`host.store_import`), the import made over; otherwise the stored state at the next
+    revision (`store_fields`). `fields` replace fields of the document, such as `asked`, which
+    is empty unless the marks of an earlier plan fill it. Gives the stored document."""
+    from nexkit import first_state, host, item_state
+
+    def planning(doc):
+        version = (doc["change"] or {}).get("version")
+        stored = {
+            "state": "planning",
+            "plan": None,
+            "pending": [first_state.agent_run("plan", version)],
+            "attention": None,
+            "asked": [],
+            "recentEvents": [],
+        }
+        return {**doc, **stored, **fields}
+
+    if item_state.read(gh, number)[1] is not None:
+        return store_fields(gh, number, **planning(item_state.read(gh, number)[1]))
+    real = first_state.import_item
+    with mock.patch.object(first_state, "import_item", lambda *a, **k: planning(real(*a, **k))):
+        assert host.store_import(gh, cfg, number), f"#{number} cannot store its state"
+    return item_state.read(gh, number)[1]
+
+
 def store_pending(gh, cfg, number, pull, head, kind="accept", action_id="a2.1", **fields):
     """Store the state of item `number` as a merge on its way leaves it: `accepting` its pull
     request `pull` on `head`, with an action of `kind` (`accept`, or `updateChange`) pending, as

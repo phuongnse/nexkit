@@ -434,7 +434,9 @@ class TakeTest(TestCase):
     """A run takes its item's events from their sources, after the state comment's cursor
     (docs/engine-hosts.md#hosts)."""
 
-    CFG = make_config(autopilot={"enabled": True, "labels": {"on-hold": {"hold": True}}})
+    CFG = make_config(
+        autopilot={"enabled": True, "scope": None, "labels": {"on-hold": {"hold": True}}}
+    )
 
     def setUp(self):
         self.gh = FakeGitHub()
@@ -473,6 +475,24 @@ class TakeTest(TestCase):
         with mock.patch.object(host, "step", step):
             self.assertEqual(host.take(self.gh, self.CFG, 42), [])
         return events
+
+    def test_a_hold_label_added_counts_only_when_autopilot_takes_the_issue(self):
+        gh = self.gh
+        cfg = make_config(autopilot={"enabled": False, "labels": {"on-hold": {"hold": True}}})
+        gh.label_event(42, "on-hold", "labeled", at=LATER)
+        freed = gh.label_event(42, "on-hold", "unlabeled", at=LATER)
+        events = []
+
+        def step(state, event, found_policies):
+            events.append(event)
+            return {"state": state, "actions": [], "changed": False}
+
+        with mock.patch.object(host, "step", step):
+            self.assertEqual(host.take(gh, cfg, 42), [])
+        self.assertEqual(
+            [(e["kind"], e["id"]) for e in events], [("released", f"issue-event-{freed['id']}")]
+        )
+        self.assertFalse(self.state()["hold"])
 
     def test_a_writer_s_command_a_remark_a_review_and_a_hold_label_each_give_an_event(self):
         gh = self.gh
@@ -3915,7 +3935,7 @@ class RoundDecideTest(ReportCase):
         self.cfg = make_config(
             fix={"max_auto_rounds": 3},
             conflicts={"auto_resolve": True, "max_rounds": 2},
-            autopilot={"enabled": True, "labels": {"on-hold": {"hold": True}}},
+            autopilot={"enabled": True, "scope": None, "labels": {"on-hold": {"hold": True}}},
         )
         seed(self.gh, self.cfg, 5)
 

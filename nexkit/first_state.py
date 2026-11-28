@@ -206,13 +206,15 @@ def situation(
     request for a review-only item, and its first state document. It reads the item's
     `comments`; its NexKit pull request `pull` and that pull request's `pull_comments`; its
     sub-issues `parts`; the open issues that block it, `blockers`; whether a label holds it,
-    `held`; how many levels of parts the issue is below the issue first split, `depth`, as
-    `autopilot.depth` gives it; the numbers of the open issues of a lower wave that it waits for,
-    `waves`; the configuration `cfg`; the time `now`, and whether autopilot takes the issue,
-    `taken`, where None means `autopilot.takes(cfg)`; whether an issue above it asked for a
-    split, `split_above`, which a part inherits (`autopilot.split_refused`); and `checking`, a
-    function from a run's URL to whether that run is in its check jobs, where None means never. A
-    round whose run is in its check jobs is placed in `checking` on the pull request's head."""
+    `held`, which the import passes only when autopilot takes the issue, as NexKit 6 reads a
+    hold label (`autopilot.held`); how many levels of parts the issue is below the issue first
+    split, `depth`, as `autopilot.depth` gives it; the numbers of the open issues of a lower wave
+    that it waits for, `waves`; the configuration `cfg`; the time `now`, and whether autopilot
+    takes the issue, `taken`, where None means `autopilot.takes(cfg)`; whether an issue above it
+    asked for a split, `split_above`, which a part inherits (`autopilot.split_refused`); and
+    `checking`, a function from a run's URL to whether that run is in its check jobs, where None
+    means never. A round whose run is in its check jobs is placed in `checking` on the pull
+    request's head."""
     doc = empty(str(issue["number"]))
     if issue.get("title") is not None:
         doc["title"] = str(issue["title"])[: LONGEST["title"]]
@@ -1182,7 +1184,7 @@ def import_item(gh, cfg, number, pull=None, now=None):
         pull_comments,
         gh.sub_issues(number),
         blockers,
-        bool(autopilot.hold_label(cfg, issue)),
+        bool(taken and autopilot.hold_label(cfg, issue)),
         autopilot.depth(issue, above),
         (waited[2] or []) if waited else [],
         taken,

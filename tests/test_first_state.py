@@ -206,11 +206,30 @@ class ImportTest(unittest.TestCase):
         gh.add_issue(42, labels=["on-hold"])
         gh.add_issue(41)
         gh.blockers[42] = [41]
-        cfg = make_config(autopilot={"enabled": True, "labels": {"on-hold": {"hold": True}}})
+        cfg = make_config(
+            autopilot={"enabled": True, "scope": None, "labels": {"on-hold": {"hold": True}}}
+        )
         state = first_state.import_item(gh, cfg, 42)
         self.assertEqual(state["state"], "new")
         self.assertTrue(state["hold"])
         self.assertEqual([wait["for"] for wait in state["waits"]], ["blocker", "start"])
+
+    def test_a_hold_label_holds_the_import_only_when_autopilot_takes_the_issue(self):
+        labels = {"on-hold": {"hold": True}}
+        for name, autopilot, milestone, held in (
+            ("autopilot off", {"enabled": False, "scope": None, "labels": labels}, None, False),
+            ("taken", {"enabled": True, "scope": None, "labels": labels}, None, True),
+            ("out of scope", {"enabled": True, "labels": labels}, None, False),
+            ("in the milestone", {"enabled": True, "labels": labels}, 1, True),
+        ):
+            with self.subTest(name):
+                gh = FakeGitHub()
+                gh.add_milestone(1)
+                gh.add_milestone(2)
+                gh.add_issue(41, milestone=1)
+                gh.add_issue(42, labels=["on-hold"], milestone=milestone or 2)
+                state = first_state.import_item(gh, make_config(autopilot=autopilot), 42)
+                self.assertIs(state["hold"], held)
 
     def test_a_go_on_its_way_that_runs_again_keeps_its_count(self):
         def imported(**fields):

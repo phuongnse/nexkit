@@ -175,9 +175,11 @@ events and actions](engine-states.md). The runners, the policies a host decides 
   it last reached the change and how the agent leaves a merge in place; `sideHistory`, how the
   agent sees what each side changed in a conflicted file, a whole sentence; `sideNote`, a
   sentence that a side's note is not an answer; `otherVersions`, a sentence for a review after no
-  fix round ("Any later versions were saved without a fix round."); and `workspaceName`, where
+  fix round ("Any later versions were saved without a fix round."); `workspaceName`, where
   the agent reads the change, which the engine's notes name when a version or a diff is not
-  there ("this draft's history"). Each is a string of at most 500 characters, and every field is
+  there ("this draft's history"); and `locationForm`, how the agent writes where a review finding
+  points, after "`location` is" in the review prompt ("the record and its field, such as `form
+  Customer › field Phone`, or an empty string when it is about no record"). Each is a string of at most 500 characters, and every field is
   required in every call with a `workspace`. A text holds no line break, except `mergeRule` and
   `sideHistory`: each is one sentence that a template wraps over two lines, and a host whose
   text spans lines indents each further line by two spaces, as the bullet it sits in does. The
@@ -237,8 +239,10 @@ Every decision of the loop is the engine's: plans, questions and answers, splits
   agents spent. It also keeps the history that the next fix and review prompts show: the latest
   fix rounds' records, each with its number, who started it, whether it diagnosed, its note, the
   agent's summary and cause, and the checks that still failed after it with their failure
-  signatures, and the last review's round, version, verdict and findings with file, line and
-  body. The engine records a fix round when its agent returns a result that is not blocked, and
+  signatures, and the last review's round, version, verdict and findings with severity, location
+  and body. A location is the host's own text for where a finding points, which the agent writes in
+  the form that `locationForm` gives. The engine keeps it as it came, clipped, without reading it,
+  and shows it to the next fix and review prompts, or shows "general" when it is empty. The engine records a fix round when its agent returns a result that is not blocked, and
   the checks after it complete the record. A round under way keeps who started it, whether it
   diagnoses and its note until then (`rounds.fixRound`). Other long texts, such as a plan's prose,
   check output, a discussion and evidence, stay with the host as texts that the state names, and
@@ -251,7 +255,7 @@ Every decision of the loop is the engine's: plans, questions and answers, splits
   150 checks that repeated, and 50 criteria and 50 checklist answers with those a decision reads
   first. A split of more parts keeps none of them, only how many it named, so a split is never filed
   cut. Each text is clipped to what a person needs to read: a question at 1,500 characters, an option at 500,
-  the item's title and a part's at 256, a path at 300, a finding at 300, a reason for a person at
+  the item's title and a part's at 256, a path at 300, a finding at 300, a finding's location at 300, a reason for a person at
   1,000 and a check's name at 40, enough to compare failures by. The history is clipped as the
   prompts clip it: a note at 2,000 characters, a summary at 4,000, a cause at 2,000, a finding's
   body at 1,500 and the failure signature of a fix record at 200. The state keeps the latest 5 fix
@@ -264,8 +268,8 @@ Every decision of the loop is the engine's: plans, questions and answers, splits
   past the 10 that a diagnosis round looks into, which only the host keeps for people. Only
   then does it shorten the history: the last review's suggestions and then its blocking findings,
   the fix records' notes, summaries and causes and the note of the round under way, the check
-  names, failure signatures and conflicting files of the fix records, and the files of the last
-  review's findings. If the document still does not fit, the oldest fix records leave out the
+  names, failure signatures and conflicting files of the fix records, and the locations of the
+  last review's findings. If the document still does not fit, the oldest fix records leave out the
   checks that still failed after them, which a prompt then shows as unknown. It never shortens a
   count, a status, an id, a title or a signature, which decisions read, and a host that builds a
   first document keeps it the same way. The engine never answers a state that its own schema refuses, such as an outbox past its
@@ -450,8 +454,12 @@ adapter's tests and the answers as what its adapter carries out.
   and so does every check of `schema.problems`, the agents' results included.
 - **Two versions.** The protocol has a version, and the state document has a schema version of its
   own. The engine moves an older state document to the current schema when it reads one, and
-  refuses one that is newer than it knows, so an engine rolled back never guesses. Before 1.0, a
-  document of schema version 1 that still holds `used.usd` is read without it.
+  refuses one that is newer than it knows, so an engine rolled back never guesses. A document of
+  schema version 1 moves to version 2, which gives each finding of the last review a `location`
+  in place of its `file` and `line`, and names the plan's list of protected paths `protected`
+  in place of `protectedPaths`. A finding's location is its `file` and `line` as `file:line`, its
+  `file` alone when the line is 0, and an empty string when it has no file (`protocol.upgrade`).
+  Before 1.0, a document of schema version 1 that still holds `used.usd` is read without it.
   `tests/golden/state/v<N>/` keeps a document of each state for each schema version, from 1, and
   a test steps each one with a `tick`: the engine must read it and answer at the current version.
 - **Major and minor.** Every message carries the protocol's major version, `"protocol": 1`.

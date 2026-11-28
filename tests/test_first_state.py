@@ -778,8 +778,8 @@ class ImportTest(unittest.TestCase):
                 "version": "b" * 40,
                 "verdict": "request_changes",
                 "findings": [
-                    {"severity": "suggestion", "file": "a.py", "line": 3, "body": "Name it."},
-                    {"severity": "blocking", "file": "", "line": 0, "body": "The close is lost."},
+                    {"severity": "suggestion", "location": "a.py:3", "body": "Name it."},
+                    {"severity": "blocking", "location": "", "body": "The close is lost."},
                 ],
                 "leftOut": 2,
             },

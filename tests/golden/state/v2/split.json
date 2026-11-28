@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 2,
+  "revision": 7,
+  "item": "42",
+  "itemKind": "change",
+  "state": "split",
+  "change": null,
+  "observed": null,
+  "attention": null,
+  "hold": false,
+  "waits": [
+    {
+      "id": "w7.1",
+      "for": "parts",
+      "until": null,
+      "on": null
+    }
+  ],
+  "pending": [],
+  "actors": {
+    "plan": "engine",
+    "change": "engine",
+    "review": "engine"
+  },
+  "plan": {
+    "text": {
+      "name": "plan-1",
+      "ref": "issue-42/plan-1"
+    },
+    "questions": [],
+    "criteria": 1,
+    "tooLarge": true,
+    "parts": 2,
+    "noChange": false,
+    "protected": [],
+    "approved": true,
+    "split": [
+      {
+        "key": 1,
+        "title": "The schemas",
+        "needs": []
+      },
+      {
+        "key": 2,
+        "title": "The step",
+        "needs": [
+          1
+        ]
+      }
+    ]
+  },
+  "rounds": {
+    "started": 0,
+    "counted": 0,
+    "conflicts": 0,
+    "signatures": [],
+    "findings": [],
+    "criteria": [],
+    "checklist": []
+  },
+  "used": {
+    "tokens": {
+      "input": 0,
+      "cached": 0,
+      "output": 0
+    },
+    "seconds": 640,
+    "since": null
+  },
+  "asked": [
+    "split"
+  ],
+  "parts": [
+    {
+      "item": "43",
+      "state": "accepted"
+    },
+    {
+      "item": "44",
+      "state": null
+    }
+  ],
+  "policies": {},
+  "recentEvents": [
+    "d-1",
+    "d-2",
+    "d-3",
+    "d-4",
+    "d-5",
+    "d-6",
+    "d-7"
+  ]
+}

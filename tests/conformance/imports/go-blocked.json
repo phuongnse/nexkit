@@ -36,7 +36,7 @@
     ]
   },
   "state": {
-    "schemaVersion": 1,
+    "schemaVersion": 2,
     "revision": 1,
     "item": "42",
     "itemKind": "change",
@@ -66,7 +66,7 @@
       "tooLarge": false,
       "parts": 0,
       "noChange": false,
-      "protectedPaths": [],
+      "protected": [],
       "approved": true,
       "split": []
     },

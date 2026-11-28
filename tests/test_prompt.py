@@ -770,12 +770,16 @@ APP_TEXT = {
     "sideNote": "A side's note is not an answer.",
     "otherVersions": "Any later versions were saved without a fix round.",
     "workspaceName": "this draft's history",
+    "locationForm": (
+        "the record and its field, such as `form Customer › field Phone`, "
+        "or an empty string when it is about no record"
+    ),
 }
 # What each stage's prompt reads of `APP_TEXT`, by the text's name.
 APP_TEXT_READ = {
     "plan": ("location", "candidate", "protectedExample"),
     "implement": ("location", "instructions", "saving", "leftovers", "summaryUse"),
-    "review": ("reviewLocation", "checksOn", "diffHeading", "pipeline"),
+    "review": ("reviewLocation", "checksOn", "diffHeading", "pipeline", "locationForm"),
     "person": ("reviewLocation", "personChange", "pipeline", "pipelineFiles", "pipelineFile"),
 }
 # A word that belongs to git or GitHub, which a host of another kind of change never sends.
@@ -1029,8 +1033,8 @@ class PromptInputTests(unittest.TestCase):
             "version": "v",
             "verdict": "request_changes",
             "findings": [
-                {"severity": "blocking", "file": "calc.py", "line": 2, "body": "Sign is wrong"},
-                {"severity": "suggestion", "file": "", "line": 0, "body": "Docs"},
+                {"severity": "blocking", "location": "calc.py:2", "body": "Sign is wrong"},
+                {"severity": "suggestion", "location": "", "body": "Docs"},
             ],
         }
         inputs = self.needs("fix")

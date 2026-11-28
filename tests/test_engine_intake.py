@@ -83,7 +83,7 @@ class IntakeTest(unittest.TestCase):
         criterion = review["criteria"][0]
         statuses = ["met"] * 60 + ["unverifiable"]
         review["criteria"] = [{**criterion, "status": status} for status in statuses]
-        finding = {"severity": "suggestion", "file": "a.py", "line": 1, "body": "x" * 1000}
+        finding = {"severity": "suggestion", "location": "a.py:1", "body": "x" * 1000}
         review["findings"] = [finding] * 40 + [{**finding, "severity": "blocking"}]
         review["verdict"] = "request_changes"
         state = example("reviewing")

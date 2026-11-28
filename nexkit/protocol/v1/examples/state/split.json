@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "revision": 7,
   "item": "42",
   "itemKind": "change",
@@ -32,7 +32,7 @@
     "tooLarge": true,
     "parts": 2,
     "noChange": false,
-    "protectedPaths": [],
+    "protected": [],
     "approved": true,
     "split": [
       {

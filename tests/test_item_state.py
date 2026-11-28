@@ -353,8 +353,7 @@ def history():
         "findings": [
             {
                 "severity": "blocking" if n % 2 else "suggestion",
-                "file": worst(LONGEST["path"]),
-                "line": 9999,
+                "location": worst(LONGEST["location"]),
                 "body": clipped(HISTORY["body"]),
             }
             for n in range(most("rounds.lastReview.findings"))
@@ -419,7 +418,7 @@ def largest(with_history=True):
         "tooLarge": True,
         "parts": 10,
         "noChange": False,
-        "protectedPaths": [worst(LONGEST["path"])] * most("plan.protectedPaths"),
+        "protected": [worst(LONGEST["path"])] * most("plan.protected"),
         "approved": True,
         "split": [
             {"key": n, "title": worst(LONGEST["title"]), "needs": list(range(1, n))}
@@ -500,17 +499,14 @@ def decisions(state):
         ],
         state["questions"]["noChange"],
         plan["split"],
-        len(plan["protectedPaths"]),
+        len(plan["protected"]),
         [item["severity"] for item in state["rounds"]["findings"]],
         [
             (record["round"], record["auto"], record["diagnosis"], len(record["failing"]))
             for record in state["rounds"].get("fixes", [])
         ],
         state["rounds"].get("fixRound"),
-        [
-            (item["severity"], item["line"])
-            for item in state["rounds"].get("lastReview", {}).get("findings", [])
-        ],
+        [item["severity"] for item in state["rounds"].get("lastReview", {}).get("findings", [])],
         {
             key: state["rounds"].get("lastReview", {}).get(key)
             for key in ("round", "version", "verdict", "leftOut")
@@ -534,7 +530,7 @@ BOUNDS = {
     "TEXT_LIMIT": "a text field of {} characters",
     "MOST.questions": "{} questions of",
     "MOST.options": "of {} options each",
-    "MOST.protectedPaths": "{} protected paths",
+    "MOST.protected": "{} protected paths",
     "MOST.split": "{} split parts",
     "MOST.findings": "{} findings with the blocking ones first",
     "MOST.signatures": "{} failure signatures",
@@ -548,6 +544,7 @@ BOUNDS = {
     "LONGEST.title": "a part's at {}",
     "LONGEST.path": "a path at {}",
     "LONGEST.finding": "a finding at {}",
+    "LONGEST.location": "a finding's location at {}",
     "LONGEST.reason": "a reason for a person at {}",
     "LONGEST.check": "a check's name at {}",
     "HISTORY.note": "a note at {} characters",
@@ -676,8 +673,7 @@ class SizeTest(unittest.TestCase):
             "findings": [
                 {
                     "severity": "blocking" if number % 2 else "suggestion",
-                    "file": f"file{number}.py",
-                    "line": number,
+                    "location": f"file{number}.py:{number}",
                     "body": "b" * HISTORY["body"],
                 }
                 for number in range(MOST["findings"])
@@ -699,7 +695,7 @@ class SizeTest(unittest.TestCase):
                     for fix in rounds["fixes"]
                 ],
                 {key: value for key, value in review.items() if key != "findings"},
-                [(item["severity"], item["file"], item["line"]) for item in review["findings"]],
+                [(item["severity"], item["location"]) for item in review["findings"]],
             )
 
         self.assertEqual(protocol.check(state, "state.schema.json"), [])
@@ -754,7 +750,7 @@ class SizeTest(unittest.TestCase):
         self.assertEqual(protocol.check(state, "state.schema.json"), [])
         plan = state["plan"]
         self.assertEqual(len(plan["questions"]), MOST["questions"])
-        self.assertEqual(len(plan["protectedPaths"]), MOST["protectedPaths"])
+        self.assertEqual(len(plan["protected"]), MOST["protected"])
         # Each part needs only the earlier parts, and its title is clipped, never cut further.
         self.assertEqual([part["needs"] for part in plan["split"]][:3], [[], [1], [1, 2]])
         self.assertEqual({len(part["title"]) for part in plan["split"]}, {LONGEST["title"] + 3})

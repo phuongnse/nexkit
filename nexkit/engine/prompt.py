@@ -111,6 +111,7 @@ WORKSPACE_TEXTS = (
     "side_note",
     "other_versions",
     "workspace_name",
+    "location_form",
 )
 # How the prompts mark a checklist item that a person decides.
 PERSON_MARK = "(a person decides)"
@@ -383,7 +384,7 @@ def feedback(checks=None, required=None, review=None, people=None, shelf=None):
     if findings:
         lines = ["### Blocking findings from the NexKit review"]
         for f in findings:
-            where = f"{f.get('file')}:{f.get('line')}" if f.get("file") else "general"
+            where = f.get("location") or "general"
             lines.append(f"- `{where}`: {f.get('body')}")
         parts.append("\n".join(lines))
     entries = []
@@ -416,7 +417,7 @@ def previous_review(last, fixes=(), merged=None, text=None):
     version = text["version_kind"]
     lines = [f"### Findings of the review of {version} {last['head'][:7]} ({last['verdict']})", ""]
     for number, f in enumerate(last["findings"], 1):
-        where = f"{f['file']}:{f['line']}" if f.get("file") else "general"
+        where = f.get("location") or "general"
         lines.append(f"{number}. {f['severity']}, `{where}`: {clip(f['body'], 1500)}")
     if not last["findings"]:
         lines.append("No findings.")

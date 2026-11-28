@@ -258,11 +258,45 @@ def _show_agents(row, *results):
         row["agents"] = entries
 
 
+# A finding's `location` in GitHub's form: a file, then a colon and a line.
+FILE_LINE = re.compile(r"^(.+):(\d+)$")
+
+
+def place(item):
+    """The (file, line) that a review finding points at, as GitHub shows it. A finding with a
+    `location` gives it: the file and line of `file:line`, otherwise the whole text as the file
+    and line 0, as a finding that is not about one line is shown. One with `file` and `line`,
+    which stored results and comments hold, gives those."""
+    if "location" not in item:
+        return item.get("file") or "", item.get("line") or 0
+    text = str(item["location"] or "")
+    found = FILE_LINE.match(text)
+    return (found[1], int(found[2])) if found else (text, 0)
+
+
+def _stored_finding(item):
+    """A finding as the state comment keeps it: its file and line."""
+    file, line = place(item)
+    return {
+        "severity": item["severity"],
+        "file": file,
+        "line": line,
+        "body": clip(item.get("body"), 1500),
+    }
+
+
+def _placed(item):
+    """A finding with `file` and `line` in place of its `location`, as markers keep it."""
+    file, line = place(item)
+    kept = {key: value for key, value in item.items() if key not in ("location", "file", "line")}
+    return {**kept, "file": file, "line": line}
+
+
 def _location(item):
-    if not item.get("file"):
+    file, line = place(item)
+    if not file:
         return ""
-    line = f":{item['line']}" if item.get("line") else ""
-    return f" (`{item['file']}{line}`)"
+    return f" (`{file}{f':{line}' if line else ''}`)"
 
 
 def _part(title, lines):
@@ -297,6 +331,9 @@ def apply_criteria(review):
     not met that a person decides is no finding: it goes to `decide`, and when nothing else
     blocks, the review approves, so that no fix round starts and a person's approval
     merges (see `to_decide`), with what the review found for each in `decide_evidence`."""
+    if isinstance(review.get("findings"), list):
+        # Markers and comments keep a finding's `file` and `line`, whatever the result gave.
+        review = {**review, "findings": [_placed(item) for item in review["findings"]]}
     unmet = _criteria(review, "unmet")
     not_met = _not_met(review)
     decided = [
@@ -927,8 +964,8 @@ def needs_person(
         if findings:
             plural = "s" if len(findings) > 1 else ""
             first = findings[0]
-            where = first.get("file") or ""
-            where += f":{first['line']}" if where and first.get("line") else ""
+            where, line = place(first)
+            where += f":{line}" if where and line else ""
             at = f", the first at {autopilot.quoted(where, 120)}" if where else ""
             what.append(f"the review has {len(findings)} blocking finding{plural}{at}")
         if what:
@@ -2330,15 +2367,7 @@ def _record(state, decision, row, agent, review, checks):
             "round": row["round"],
             "head": row["head"],
             "verdict": review["verdict"],
-            "findings": [
-                {
-                    "severity": f["severity"],
-                    "file": f.get("file") or "",
-                    "line": f.get("line") or 0,
-                    "body": clip(f.get("body"), 1500),
-                }
-                for f in kept
-            ],
+            "findings": [_stored_finding(f) for f in kept],
         }
         if len(findings) > len(kept):
             # How many the next review's prompt is told were left out; older records lack it.

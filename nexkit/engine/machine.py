@@ -130,7 +130,7 @@ class EngineError(ValueError):
 def blank(item):
     """The state document of a work item before its `created` event."""
     return {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "revision": 0,
         "item": item,
         "itemKind": "change",
@@ -1517,7 +1517,7 @@ class Step:
             }
             for number, part in enumerate(named if len(named) <= MOST["split"] else [], 1)
         ]
-        paths = output.get("protected_paths", [])[: MOST["protectedPaths"]]
+        paths = output.get("protected_paths", [])[: MOST["protected"]]
         self.s["plan"] = {
             "text": text,
             "questions": questions,
@@ -1525,7 +1525,7 @@ class Step:
             "tooLarge": bool(output.get("too_large")),
             "parts": len(named),
             "noChange": bool(filled(output.get("no_change"))),
-            "protectedPaths": [clip(path, "path") for path in paths],
+            "protected": [clip(path, "path") for path in paths],
             "approved": False,
             "split": split,
         }
@@ -1659,7 +1659,7 @@ class Step:
         elif plan["noChange"]:
             self.move("noChange")
             self.close("completed", {"name": "noChange", "ref": number})
-        elif plan["protectedPaths"]:
+        elif plan["protected"]:
             self.ask("handMadeChange", "The change needs paths that only a person changes.")
         elif plan["questions"]:
             self.answer_or_ask(again)
@@ -1724,7 +1724,7 @@ class Step:
         elif plan["noChange"]:
             text = "The plan finds that no change is needed, and a person decides."
             self.need("approval", text, ref)
-        elif plan["protectedPaths"]:
+        elif plan["protected"]:
             self.need("handMadeChange", "The change needs paths that only a person changes.", ref)
         elif plan["questions"]:
             self.need("question", "The plan has questions for a person.", ref)
@@ -1870,7 +1870,7 @@ class Step:
 
     def keep_review(self, output):
         """Keep the review as the last one, for the prompts of the next review and fix
-        rounds: its findings with file, line and body. All of them are kept up to the most,
+        rounds: its findings with severity, location and body. All of them are kept up to the most,
         else the blocking ones first, each group in the reviewer's order."""
         rounds = self.s["rounds"]
         found = output["findings"]
@@ -1885,8 +1885,7 @@ class Step:
             "findings": [
                 {
                     "severity": item["severity"],
-                    "file": clip(item["file"], "path"),
-                    "line": item["line"],
+                    "location": clip(item["location"], "location"),
                     "body": clip_text(item["body"], HISTORY["body"]),
                 }
                 for item in kept

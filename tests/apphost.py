@@ -334,6 +334,10 @@ class Host:
                 "sideNote": "A side's note is not an answer.",
                 "otherVersions": "Any later versions were saved without a fix round.",
                 "workspaceName": "this draft's history",
+                "locationForm": (
+                    "the record and its field, such as `form Customer › field Phone`, "
+                    "or an empty string when it is about no record"
+                ),
             },
         }
         if stage in ("implement", "fix", "review"):

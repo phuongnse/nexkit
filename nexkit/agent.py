@@ -86,12 +86,28 @@ OPTIONAL = {
 }
 
 
+def with_location(finding):
+    """A review finding with `location`, when it has `file` and `line` instead, which the
+    result files of an earlier NexKit hold: the location in GitHub's form."""
+    if not isinstance(finding, dict) or "location" in finding or "file" not in finding:
+        return finding
+    line = finding.get("line", 0)
+    if not isinstance(finding["file"], str) or not isinstance(line, int):
+        return finding
+    kept = {key: value for key, value in finding.items() if key not in ("file", "line")}
+    return {**kept, "location": protocol.finding_location(finding["file"], line)}
+
+
 def with_defaults(output, stage):
-    """`output` with the empty value of each optional field it left out."""
+    """`output` with the empty value of each optional field it left out, and, for a review,
+    each finding at a `location`."""
     if not isinstance(output, dict):
         return output
     missing = {key: value for key, value in OPTIONAL.get(stage, {}).items() if key not in output}
-    return {**output, **copy.deepcopy(missing)}
+    output = {**output, **copy.deepcopy(missing)}
+    if stage == "review" and isinstance(output.get("findings"), list):
+        output["findings"] = [with_location(item) for item in output["findings"]]
+    return output
 
 
 # What a plan and a review return for `review.checklist`, only when it has items.
@@ -528,6 +544,10 @@ WORKSPACE_TEXT = {
     "side_note": "A commit message on one side is not an answer.",
     "other_versions": "Any later commits were pushed without a NexKit fix round.",
     "workspace_name": "this checkout",
+    "location_form": (
+        "the file and line, such as `nexkit/report.py:262`, the file alone when it is not about "
+        "one line, or an empty string when it is about no file"
+    ),
 }
 
 

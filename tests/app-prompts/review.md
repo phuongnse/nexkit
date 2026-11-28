@@ -96,9 +96,9 @@ A person reads the review to decide what to do next. NexKit shows the verdict an
 
 - `verdict`: `approve` or `request_changes`.
 - `summary`: one or two sentences: the main reason for the verdict.
-- `findings`: each with `severity`, `file`, `line` (0 when not line-specific) and `body`.
-  In `body`, say what goes wrong and when, then what to change, in one to three
-  sentences. NexKit shows the file and line.
+- `findings`: each with `severity`, `location` and `body`. `location` is
+  the record and its field, such as `form Customer › field Phone`, or an empty string when it is about no record. In `body`, say what goes wrong and when, then what to change, in one
+  to three sentences. NexKit shows the location.
 - `criteria`: one entry for each acceptance criterion in the plan:
   - `criterion`: the criterion, shortened to about ten words.
   - `status`: `met` when the diff, its tests or the check results show the code meets

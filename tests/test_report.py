@@ -18,6 +18,7 @@ from nexkit.report import (
     apply_criteria,
     criterion_status,
     linked_line,
+    place,
     report,
     retry_line,
     review_body,
@@ -2575,6 +2576,44 @@ class LinkedTextsTests(ReportCase):
         self.assertIn("**Read for the agent:** `#3 with its discussion`.", body)
         self.assertNotIn("Linked but not read", body)
         self.assertEqual(linked_line(None, {"linked": "x"}, {"linked": {"read": [1]}}), "")
+
+
+class FindingPlaceTests(unittest.TestCase):
+    """A finding points at a `location`, which GitHub's comments and markers show as the
+    `file` and `line` they always held."""
+
+    def test_a_location_is_a_file_and_a_line_or_the_file_alone(self):
+        self.assertEqual(place({"location": "nexkit/report.py:262"}), ("nexkit/report.py", 262))
+        self.assertEqual(place({"location": "a.py"}), ("a.py", 0))
+        self.assertEqual(place({"location": ""}), ("", 0))
+        # A location in no file's form is shown whole, as the file of no line.
+        self.assertEqual(
+            place({"location": "form Customer › field Phone"}),
+            (
+                "form Customer › field Phone",
+                0,
+            ),
+        )
+        self.assertEqual(place({"file": "a.py", "line": 3}), ("a.py", 3))
+        self.assertEqual(place({"file": None, "line": None}), ("", 0))
+
+    def test_a_review_with_locations_gives_the_comment_and_the_marker_of_a_file_and_a_line(self):
+        findings = [
+            {"severity": "blocking", "location": "a.py:3", "body": "Wrong."},
+            {"severity": "suggestion", "location": "b.py", "body": "Name it."},
+        ]
+        old = [
+            {"severity": "blocking", "file": "a.py", "line": 3, "body": "Wrong."},
+            {"severity": "suggestion", "file": "b.py", "line": 0, "body": "Name it."},
+        ]
+        new = {**review_result()["output"], "findings": findings}
+        before = {**review_result()["output"], "findings": old}
+        self.assertEqual(apply_criteria(new), apply_criteria(before))
+        self.assertEqual(apply_criteria(new)["findings"], old)
+        text = review_body({"output": new}, [])
+        self.assertIn("Wrong. (`a.py:3`)", text)
+        self.assertIn("Name it. (`b.py`)", text)
+        self.assertEqual(text, review_body({"output": before}, []))
 
 
 if __name__ == "__main__":

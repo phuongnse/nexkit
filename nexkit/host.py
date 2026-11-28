@@ -2877,8 +2877,7 @@ def _review_output(review):
     findings = [
         {
             "severity": "blocking" if item.get("severity") == "blocking" else "suggestion",
-            "file": "",
-            "line": 0,
+            "location": "",
             "body": str(item.get("body") or ""),
         }
         for item in review.get("findings") or []

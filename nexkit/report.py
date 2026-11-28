@@ -2760,7 +2760,8 @@ def _report(gh, decision, cfg, needs, artifacts, workflow_ref, default_branch):
 
     from .host import Refused, after_round, round_ended, round_published
 
-    # The round's agent and publish results reach the stored state before its checks do.
+    # The publish job stored the round's agent and publish results before its checks ran. This
+    # call finds them stored and sends nothing, or stores them when that job could not.
     stored_round = False
     if action in ("implement", "fix"):
         try:

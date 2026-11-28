@@ -32,6 +32,7 @@ from .state import (
     COMMIT,
     FAILURE,
     PAUSED,
+    RUNNING,
     SUCCESS,
     answers_record,
     by_bot,
@@ -192,6 +193,7 @@ def situation(
     depth=0,
     waves=(),
     taken=None,
+    checking=None,
 ):
     """(kind, document): where the import puts `issue`, a GitHub issue, or a person's pull
     request for a review-only item, and its first state document. It reads the item's
@@ -200,7 +202,9 @@ def situation(
     `held`; how many levels of parts the issue is below the issue first split, `depth`, as
     `autopilot.depth` gives it; the numbers of the open issues of a lower wave that it waits for,
     `waves`; the configuration `cfg`; the time `now`, and whether autopilot takes the issue,
-    `taken`, where None means `autopilot.takes(cfg)`."""
+    `taken`, where None means `autopilot.takes(cfg)`; and `checking`, a function from a run's URL
+    to whether that run is in its check jobs, where None means never. A round whose run is in
+    its check jobs is placed in `checking` on the pull request's head."""
     doc = empty(str(issue["number"]))
     if issue.get("title") is not None:
         doc["title"] = str(issue["title"])[: LONGEST["title"]]
@@ -216,7 +220,7 @@ def situation(
         doc["change"] = {"id": str(pull["number"]), "version": pull["head"]["sha"]}
         doc["observed"] = observed(pull)
     taken = autopilot.takes(cfg) if taken is None else taken
-    item = Item(doc, issue, list(comments), pull, list(pull_comments), cfg, now, taken)
+    item = Item(doc, issue, list(comments), pull, list(pull_comments), cfg, now, taken, checking)
     item.place(list(parts), list(blockers), list(waves))
     if doc["state"] in ANSWERING and "answers" not in doc["asked"] and item.answered():
         doc["asked"].append("answers")
@@ -253,8 +257,9 @@ def imported(*args, **fields):
 class Item:
     """One item's NexKit 6 comments, read once, and the document that the import fills."""
 
-    def __init__(self, doc, issue, comments, pull, pull_comments, cfg, now, taken):
+    def __init__(self, doc, issue, comments, pull, pull_comments, cfg, now, taken, checking=None):
         self.doc, self.issue, self.pull, self.cfg, self.now = doc, issue, pull, cfg, now
+        self.checking = checking or (lambda url: False)
         self.comments, self.taken = comments, taken
         self.kind = None
         review_only = doc["itemKind"] == "reviewOnly"
@@ -476,13 +481,22 @@ class Item:
 
     def round(self, comment, latest):
         """Place an item whose NexKit pull request is open by its latest round, as
-        `autopilot._pull_step` reads it."""
+        `autopilot._pull_step` reads it. An implement or fix round that runs and whose workflow
+        run is in its check jobs waits for its checks on the pull request's head, as the stored
+        state does while a round's checks run, and not for its agent."""
         if latest is None:
             # The round that opened it has not reported yet.
             return self.running("no round yet", "checking")
         status, outcome = latest.get("status"), latest.get("outcome")
         name = OF_ACTION.get(run_action(latest), "checking")
         if status in autopilot.ACTIVE:
+            if (
+                status == RUNNING
+                and name in ("working", "fixing")
+                and self.checking(latest.get("url"))
+            ):
+                self.keep_retries(latest.get("retry"))
+                return self.running("started", "checking", automatic=counted_fix(latest))
             return self.active(comment, latest, name, automatic=counted_fix(latest))
         if outcome in CHAINED:
             started = latest.get("outcome") == "auto_fix"
@@ -690,10 +704,10 @@ class Item:
 
     def running(self, kind, name, automatic=False):
         """A command or round on its way: the action the engine waits for. An `automatic` fix
-        round that holds a count is marked, so that a stop gives the count back, as NexKit 6
-        does (`report._stop_round`)."""
+        round that holds a count is marked, in its agent run and in its checks, so that a stop
+        gives the count back, as NexKit 6 does (`report._stop_round`)."""
         rounds = self.doc["rounds"]
-        if automatic and name == "fixing" and rounds["counted"] >= 1:
+        if automatic and name in ("fixing", "checking") and rounds["counted"] >= 1:
             rounds["automatic"] = True
         version = (self.doc["change"] or {}).get("version")
         if name == "checking":
@@ -1035,6 +1049,8 @@ def import_item(gh, cfg, number, pull=None, now=None):
     comments = gh.comments(number)
     if "pull_request" in issue:
         return imported(issue, comments, cfg, now, gh.pull(number))
+    from . import maintain  # maintain imports route, which imports host, which imports this
+
     taken = autopilot.takes(cfg) and autopilot.taken(gh, cfg, issue)
     details = gh.pull(pull) if pull else None
     pull_comments = gh.comments(pull) if pull else []
@@ -1055,4 +1071,5 @@ def import_item(gh, cfg, number, pull=None, now=None):
         autopilot.depth(issue, autopilot.lineage(gh, issue)),
         (waited[2] or []) if waited else [],
         taken,
+        (lambda url: maintain.checking(gh, url) is not None) if details else None,
     )

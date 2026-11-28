@@ -24,8 +24,9 @@ The detail is in [Security notes](../how-it-works.md#security-notes) and
 
 - A change to the pipeline always passes through a person, who makes it by hand.
 - NexKit cannot upgrade itself. A NexKit upgrade is a person's pull request.
-- The review reads protected paths like any other code, so a person sees each change to the
-  pipeline before it merges.
+- The review of a person's pull request, on `/nexkit review`, reads protected paths like any
+  other code. The review of NexKit's own pull requests leaves them out, since no agent's patch
+  can change them.
 
 ## Alternatives
 

@@ -152,7 +152,8 @@ order: *Summary* (two or three sentences, also the commit message), *What change
 behaviour), *How it is tested*, and, only when needed, *Outside the plan* and *Notes for
 the reviewer*. A fix round's summary becomes its commit message.
 
-The new pull request also gets the issue's labels and milestone. A failure there only
+The new pull request also gets the issue's labels, except those that `autopilot.labels` gives
+`"hold": true`, and its milestone. A hold describes the issue, so it stays there. A failure there only
 warns, since the pull request already exists. Later rounds leave them to people. Autopilot takes only issues, so its
 scope's milestone on the pull request changes nothing.
 

@@ -128,7 +128,8 @@ every open issue in scope, in order, and starts the one command that moves it on
     `/nexkit review` when the pull request got a new commit meanwhile or no longer
     conflicts. A held issue takes no place within `max_parallel` once no run on it is
     under way, and a person's own commands still run. `nexkit status` shows it as `held`. It needs autopilot to take
-    the issue, since only its sweeps start what was kept back.
+    the issue, since only its sweeps start what was kept back. The pull request NexKit opens
+    for the issue does not get the label.
   - **Labels never grant trust.** Anyone with triage access can add one, so trust stays
     with markers, authors and [`/nexkit trust`](#vouching-for-an-issue).
   - `nexkit doctor` reports a label in `priority` or `labels` that the repository lacks,

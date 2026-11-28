@@ -42,6 +42,10 @@ MOST = {
     "fixes": 5,
     "fixFailing": 30,
 }
+# The most blockers that `created` names, as `maxItems` in `created.schema.json`. The state
+# holds at most 64 waits, and this leaves room for the start wait, the plan's waits, usage
+# limits and holds.
+BLOCKERS = 32
 # The most characters of each text that comes in: long enough for a question, an option or a
 # reason that a person must read, and for a check's name, which rounds compare failures by.
 LONGEST = {

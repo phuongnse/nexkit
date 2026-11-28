@@ -16,6 +16,7 @@ from unittest import mock
 import nexkit
 from nexkit import engine, protocol
 from nexkit.engine import cli, machine
+from nexkit.protocol import size
 from tests.test_conformance import AGENT
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -329,6 +330,28 @@ class ProgramTest(unittest.TestCase):
                 self.assertIn(problem, protocol.check(broken, "state.schema.json"))
         answer = engine.answer({**request(event={**created(), "depth": -1}), "call": "step"})
         self.assertIn("request.event.depth must be at least 0", answer["error"])
+
+
+class CreatedBlockersTest(unittest.TestCase):
+    def test_created_takes_at_most_size_blockers_and_refuses_them_on_a_review_only_item(self):
+        event = {**created(), "item": "42"}
+        ids = [str(number) for number in range(size.BLOCKERS + 1)]
+        answer = engine.answer({**request(event={**event, "blockers": ids}), "call": "step"})
+        self.assertIn("blockers", answer["error"])
+        answer = engine.answer({**request(event={**event, "blockers": ids[:-1]}), "call": "step"})
+        waits = [wait for wait in answer["state"]["waits"] if wait["for"] == "blocker"]
+        self.assertEqual(len(waits), size.BLOCKERS)
+        change = json.loads((EXAMPLES / "state" / "ready.json").read_text())["change"]
+        review = {**event, "itemKind": "reviewOnly", "change": change}
+        answer = engine.answer({**request(event={**review, "blockers": ["7"]}), "call": "step"})
+        self.assertIn("A review-only item has no blockers.", answer["error"])
+        answer = engine.answer({**request(event=review), "call": "step"})
+        self.assertIn("state", answer)
+
+    def test_the_schema_bound_of_blockers_is_size_blockers(self):
+        path = protocol.ROOT / "events" / "created.schema.json"
+        schema = json.loads(path.read_text())
+        self.assertEqual(schema["properties"]["blockers"]["maxItems"], size.BLOCKERS)
 
 
 class OldDocumentTest(unittest.TestCase):

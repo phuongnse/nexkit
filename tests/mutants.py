@@ -503,6 +503,22 @@ MUTANTS = {
 """,
         "new": "",
     },
+    # A new item's blockers add no wait (#914).
+    "created-drops-blockers": {
+        "path": MACHINE,
+        "old": """        for blocker in dict.fromkeys(event.get("blockers") or []):
+            self.wait("blocker", on=blocker)
+""",
+        "new": "",
+    },
+    # A part whose item above asked for a split asks again (#914).
+    "created-drops-splitAsked": {
+        "path": MACHINE,
+        "old": """        if event.get("splitAsked") and "split" not in self.s["asked"]:
+            self.s["asked"].append("split")
+""",
+        "new": "",
+    },
     # An approval of another version accepts a change that waits for its accept, where NexKit 6
     # merges a ready round only on the head that passed (#569).
     "approval-of-another-version-accepts": {

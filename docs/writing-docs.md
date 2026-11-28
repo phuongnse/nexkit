@@ -394,6 +394,12 @@ when a list of what the code defines misses an entry. These rules close each of 
      [stages](stages.md) lists the sections that `publish.render_plan` writes.
    - `test_the_review_layout_lists_the_parts_the_code_writes`: the review layout of
      [stages](stages.md) lists the parts that `report.review_body` writes.
+   - `test_the_resolution_table_lists_each_mark_the_code_writes_and_no_other`: the table of
+     previous-finding resolutions in [stages](stages.md) lists each mark `nexkit/report.py`
+     writes for an earlier finding, and no other.
+   - `test_the_review_layout_gives_each_mark_the_code_writes_and_no_other`: the review layout of
+     [stages](stages.md) gives each criterion and checklist mark `nexkit/report.py` writes, and
+     no other.
    - `test_each_value_a_page_repeats_is_its_constant`: each value that [agents and
      profiles](agents-and-profiles.md), [how it works](how-it-works.md), [work without a
      command](work-without-a-command.md), [failure handling](failure-handling.md),

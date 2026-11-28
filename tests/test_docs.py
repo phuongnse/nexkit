@@ -2028,6 +2028,10 @@ INSTALL_DELAYS = re.compile(
 )
 
 
+# The header of the table of resolutions on the stages page, whose first cells are marks.
+MARKS_HEADER = "| Mark | Meaning |"
+
+
 class LayoutTests(unittest.TestCase):
     def test_the_plan_layout_lists_the_sections_the_code_writes(self):
         block = block_after(STAGES, "**Plan.**")
@@ -2058,6 +2062,62 @@ class LayoutTests(unittest.TestCase):
             f"docs/stages.md says the review's parts are {listed}; "
             f"report.review_body writes {written}",
         )
+
+    def test_the_resolution_table_lists_each_mark_the_code_writes_and_no_other(self):
+        listed = [row[0] for row in table(STAGES, MARKS_HEADER)]
+        defined = [*report.OPEN.values(), *report.RESOLUTIONS.values()]
+        for mark in sorted({m for m in listed if listed.count(m) > 1}):
+            with self.subTest(mark=mark):
+                self.fail(f"docs/stages.md lists {mark!r} more than once")
+        for mark in defined:
+            with self.subTest(mark=mark):
+                self.assertIn(
+                    mark,
+                    listed,
+                    f"docs/stages.md does not list {mark!r}, which report.RESOLUTIONS "
+                    "or report.OPEN has",
+                )
+        for mark in listed:
+            with self.subTest(mark=mark):
+                self.assertIn(
+                    mark,
+                    defined,
+                    f"docs/stages.md lists {mark!r}, which report.RESOLUTIONS "
+                    "and report.OPEN do not have",
+                )
+
+    def test_the_review_layout_gives_each_mark_the_code_writes_and_no_other(self):
+        block = block_after(STAGES, "The pull request review starts with")
+        code = {
+            "Acceptance criteria": [
+                f"{mark} {status}" for status, mark in report.CRITERION_MARKS.items()
+            ],
+            "Checklist": [*report.CHECKLIST_MARKS.values(), report.PERSON_NOT_MET],
+        }
+        for part, entries in code.items():
+            with self.subTest(part=part):
+                line = next((x for x in block.splitlines() if x.startswith(f"**{part}**")), None)
+                self.assertIsNotNone(line, f"docs/stages.md's review layout has no **{part}** line")
+                for entry in entries:
+                    with self.subTest(entry=entry):
+                        self.assertIn(
+                            entry,
+                            line,
+                            f"docs/stages.md's review layout does not give {entry!r}, "
+                            "which report writes",
+                        )
+                # Each run of non-ASCII characters on the line is a mark, emoji with its variation.
+                marks = re.findall(r"[^\x00-\x7F]+", line)
+                written = [entry.split(" ", 1)[0] for entry in entries]
+                for mark in sorted(set(marks) - set(written)):
+                    with self.subTest(mark=mark):
+                        self.fail(
+                            f"docs/stages.md's review layout gives {mark!r} to {part}, "
+                            "which report does not write"
+                        )
+                for mark in sorted({m for m in marks if marks.count(m) > 1}):
+                    with self.subTest(mark=mark):
+                        self.fail(f"docs/stages.md's review layout gives {mark!r} twice to {part}")
 
 
 class ValuesTests(unittest.TestCase):

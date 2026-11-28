@@ -201,7 +201,10 @@ there](engine.md#getting-there) lists them.
 
 The `nexkit-engine` program runs the same calls for a host that reads JSON, one request on standard
 input and one answer on standard output. `nexkit-engine serve` answers the same calls over HTTP. The
-GitHub host runs only the program, for `step`, `sweep` and `prompt`. The protocol, in
+GitHub host runs only the program, for `step`, `sweep` and `prompt`. Like any host, it imports
+none of the engine's code, as [the parts](engine.md#the-parts) says, and a test in
+`tests/test_engine.py` reads every module outside `nexkit/engine/`, and `bin/nexkit`, and fails on an
+import of the engine. The protocol, in
 `nexkit/protocol/`, holds the JSON Schemas of the events, actions and state that pass between a host
 and the engine. The conformance suite in `tests/conformance/` holds cases, each an event with the
 answers it must give, and checks the engine against them. `scripts/conformance.py` can also write

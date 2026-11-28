@@ -11,7 +11,8 @@ item's concurrency group stores as the item's state comment, and its taking of a
 from their sources (`host.take`), which `route` calls at the start of each run in that group; and
 the GitHub host's decisions, which NexKit 6's autopilot, `route`, `report` and `maintain` take from
 `step` and which store the engine's answer in the item's concurrency group (see
-[getting there](#getting-there) for the decisions that read the stored state). The rest of this
+[getting there](#getting-there) for the decisions that read the stored state); and the GitHub host
+runs the engine only as that program, for `step`, `sweep` and `prompt`, and imports none of its code. The rest of this
 page is not built yet, and NexKit 6 runs as [How it works](how-it-works.md) says._
 
 NexKit 7 splits NexKit into an **engine** that decides what happens to a piece of work, and

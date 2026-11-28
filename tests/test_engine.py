@@ -412,44 +412,57 @@ class PurityTest(unittest.TestCase):
         self.assertEqual(found, ["nexkit.engine.machine calls open"])
 
 
+def engine_imports(module, source):
+    """The engine modules that `source`, the code of `module`, imports."""
+    return {
+        n for n in imports(module, source) if n == "nexkit.engine" or n.startswith("nexkit.engine.")
+    }
+
+
+def host_modules():
+    """(module name, source) of each module outside the engine, and of `bin/nexkit`."""
+    for path in sorted((ROOT / "nexkit").rglob("*.py")):
+        rel = path.relative_to(ROOT).with_suffix("")
+        if rel.parts[1] == "engine":
+            continue
+        yield ".".join(rel.parts).removesuffix(".__init__"), path.read_text()
+    yield "bin.nexkit", (ROOT / "bin" / "nexkit").read_text()
+
+
 class ImportsOutsideTheEngineTest(unittest.TestCase):
-    def test_no_module_outside_the_engine_imports_its_text_helpers_or_its_machine(self):
-        banned = {"nexkit.engine.textutil", "nexkit.engine.machine"}
-        for path in sorted((ROOT / "nexkit").rglob("*.py")):
-            rel = path.relative_to(ROOT).with_suffix("")
-            if rel.parts[1] == "engine":
-                continue
-            module = ".".join(rel.parts).removesuffix(".__init__")
-            found = imports(module, path.read_text()) & banned
-            self.assertFalse(found, f"{module} imports {sorted(found)}")
+    def test_no_module_outside_the_engine_imports_it(self):
+        read = set()
+        for module, source in host_modules():
+            read.add(module)
+            with self.subTest(module=module):
+                found = engine_imports(module, source)
+                self.assertFalse(found, f"{module} imports {sorted(found)}")
+        self.assertLessEqual({"nexkit.host", "nexkit.agent", "nexkit.context", "bin.nexkit"}, read)
 
-    def test_the_context_and_agent_steps_import_nothing_from_the_engine(self):
-        for name in ("context", "agent"):
-            source = (ROOT / "nexkit" / f"{name}.py").read_text()
-            found = {
-                n
-                for n in imports(f"nexkit.{name}", source)
-                if n == "nexkit.engine" or n.startswith("nexkit.engine.")
-            }
-            self.assertFalse(found, f"nexkit.{name} imports {sorted(found)}")
+    def test_an_import_of_the_engine_fails_the_test(self):
+        for module, source in (
+            ("nexkit.host", "from .engine import prompt"),
+            ("nexkit.host", "from . import engine, protocol"),
+            ("nexkit.runlog", "from .engine.textutil import fence"),
+            ("nexkit.runtimes.claude_code", "from ..engine import prompt"),
+            ("nexkit.runtimes.claude_code", "from .. import engine"),
+            ("nexkit.autopilot", "def f():\n    from .engine import sweep\n"),
+            ("bin.nexkit", "import nexkit.engine"),
+            ("bin.nexkit", "from nexkit.engine.cli import main"),
+            ("nexkit.agent", "from nexkit import engine"),
+        ):
+            with self.subTest(module=module, source=source):
+                self.assertTrue(engine_imports(module, f"{source}\n"))
 
-    def test_an_import_of_the_engine_puts_the_context_or_agent_step_in_the_test(self):
-        for module in ("nexkit.context", "nexkit.agent"):
-            for line in (
-                "from .engine import prompt",
-                "from . import engine, protocol",
-                "from nexkit.engine import prompt",
-                "import nexkit.engine",
-            ):
-                found = imports(module, f"{line}\n")
-                self.assertTrue(
-                    any(n == "nexkit.engine" or n.startswith("nexkit.engine.") for n in found),
-                    f"{module}: {line}",
-                )
-
-    def test_an_import_of_the_engine_s_text_helpers_fails_the_test(self):
-        source = "from .engine.textutil import fence\n"
-        self.assertEqual(imports("nexkit.runlog", source), {"nexkit.engine.textutil"})
+    def test_other_imports_do_not_fail_the_test(self):
+        for module, source in (
+            ("nexkit.agent", "from . import program as engine_program"),
+            ("nexkit.agent", "from .host import sweep as engine_sweep"),
+            ("nexkit.agent", "from .protocol import stages"),
+            ("bin.nexkit", "from nexkit.cli import main"),
+        ):
+            with self.subTest(module=module, source=source):
+                self.assertFalse(engine_imports(module, f"{source}\n"))
 
 
 if __name__ == "__main__":

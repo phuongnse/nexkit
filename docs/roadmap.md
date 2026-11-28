@@ -36,7 +36,8 @@ These features make up NexKit 6, released from 1.0.0 (2026-10-05) to 6.13.1 (202
 
 Built so far: the protocol's schemas, `nexkit-engine step`, `prompt`, `sweep` and `serve`, the state
 document and its import from NexKit 6's markers, and the differential check against NexKit 6. The
-GitHub host already sends the engine the decisions that follow a plan, a blocked `/nexkit go` and a
+GitHub host runs the engine only as the `nexkit-engine` program and imports none of its code. It
+already sends the engine the decisions that follow a plan, a blocked `/nexkit go` and a
 round on a pull request. It also sends the accept of a merge and most of GitHub's refusals, the
 waits for required checks and for the base branch, the retries after a transient stop, the resumes
 after a usage limit, and the runner's `run.json`. The sweep sends its lost commands, released

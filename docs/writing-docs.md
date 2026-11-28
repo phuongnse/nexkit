@@ -390,6 +390,10 @@ when a list of what the code defines misses an entry. These rules close each of 
      `.claude/skills/` resolve.
    - `test_each_task_of_nexkit_maintain_links_a_delivery_section`: each task of the
      `nexkit-maintain` skill links a section of [Delivery](delivery.md).
+   - `test_each_checklist_item_names_one_doc_and_asks_for_each_of_its_rules`: each item of this
+     repository's `review.checklist` names one doc, section or the Agreed decisions, no rule twice,
+     and asks the review to check the diff against each of its rules, as
+     [Delivery](delivery.md#issues-and-pull-requests) says.
    - `test_the_plan_layout_lists_the_sections_the_code_writes`: the plan layout of
      [stages](stages.md) lists the sections that `publish.render_plan` writes.
    - `test_the_review_layout_lists_the_parts_the_code_writes`: the review layout of

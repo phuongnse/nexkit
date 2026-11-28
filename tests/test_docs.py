@@ -67,6 +67,12 @@ SECURITY = DOCS / "security.md"
 OUTCOMES_HEADER = "| Outcome | Meaning |"
 DELIVERY = DOCS / "delivery.md"
 LABELS_HEADER = "| Label | Kind |"
+REPO_CONFIG = ROOT / ".nexkit" / "config.json"
+CHECKLIST_TARGET = re.compile(
+    r"^The change keeps (?:every rule of |every Agreed decision in )?"
+    r"(docs/[\w./-]+?(?:#[\w-]+)?)(?=[:,\s])"
+)
+CHECKS_EACH_RULE = re.compile(r"\bcheck\b[^.]*?\bagainst (?:each of its rules|it)\b")
 # The labels of a kind, from the bullet of the delivery page that names them.
 KIND_LABELS = re.compile(r"label of its kind \(((?:`[\w-]+`(?:, | or )?)+)\)")
 COMMANDS_HEADER = "| Where | Comment | What happens |"
@@ -761,6 +767,68 @@ class DeliveryLabelsTests(unittest.TestCase):
                     code,
                     f"docs/delivery.md's label table lists {name}, which the code does not create",
                 )
+
+
+class DeliveryChecklistTests(unittest.TestCase):
+    def test_each_checklist_item_names_one_doc_and_asks_for_each_of_its_rules(self):
+        cfg = config.validate(json.loads(REPO_CONFIG.read_text()))
+        items = cfg["review"]["checklist"]
+        self.assertTrue(items, "this repository's review.checklist has no item")
+        targets = []
+        for number, item in enumerate(items, 1):
+            text = textutil.checklist_item(item)
+            with self.subTest(item=number):
+                found = CHECKLIST_TARGET.match(text)
+                self.assertIsNotNone(
+                    found,
+                    f"item {number} of review.checklist must start with 'The change keeps' and "
+                    "name its doc, section or the Agreed decisions, as docs/delivery.md says: "
+                    + text,
+                )
+                page, _, anchor = found.group(1).partition("#")
+                if page.endswith("/"):
+                    self.assertTrue((ROOT / page).is_dir(), f"item {number}: {page} is no folder")
+                else:
+                    self.assertTrue((ROOT / page).is_file(), f"item {number}: {page} is no file")
+                    if anchor:
+                        self.assertIn(
+                            anchor,
+                            anchors(ROOT / page),
+                            f"item {number}: {page} has no heading {anchor}",
+                        )
+                self.assertRegex(
+                    text,
+                    CHECKS_EACH_RULE,
+                    f"item {number} must ask the review to check the diff against each of its "
+                    "rules, as docs/delivery.md says",
+                )
+                if textutil.person_decides(item):
+                    self.assertTrue(
+                        anchor, f"item {number} is marked person, so it must name a section"
+                    )
+                targets.append((number, page, anchor))
+        seen = {}
+        for number, page, anchor in targets:
+            with self.subTest(overlap=number):
+                key = (page, anchor)
+                self.assertNotIn(
+                    key,
+                    seen,
+                    f"items {seen.get(key)} and {number} name the same rule: "
+                    f"{page}{'#' + anchor if anchor else ''}",
+                )
+                seen.setdefault(key, number)
+                if anchor:
+                    whole = seen.get((page, ""))
+                    self.assertIsNone(
+                        whole, f"item {whole} names all of {page}, and item {number} a section"
+                    )
+                else:
+                    sections = [n for n, p, a in targets if p == page and a]
+                    self.assertFalse(
+                        sections,
+                        f"item {number} names all of {page}, and items {sections} a section",
+                    )
 
 
 def mention_texts():

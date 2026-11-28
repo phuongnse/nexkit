@@ -44,8 +44,8 @@ a merge. GitHub's refusals, the merge's result, the waits for required checks an
 branch, the retries after a transient stop and the resumes after a usage limit are sent as well.
 So are a lost command, the runner's `run.json`, the ends of an item with no change or with its
 change on the base branch, and a parent's end. The sweep sends its lost commands, released
-conflicts, first plans and order of starts. Left: four kinds of decision still build the item's
-document from NexKit 6's markers. [Getting there](engine.md#getting-there) gives the detail.
+conflicts, first plans and order of starts. Left: some decisions still build the item's document
+from NexKit 6's markers. [Getting there](engine.md#getting-there) gives the detail.
 
 ## Later
 

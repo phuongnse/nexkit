@@ -940,6 +940,109 @@ def _reviews(record):
     )
 
 
+def _conflict_rounds_started(record):
+    """How many conflict rounds the command of `record` dispatched, by its `gh` snapshot."""
+    gh = record.get("gh")
+    if not isinstance(gh, dict):
+        return 0
+    return len(
+        [
+            dispatch
+            for dispatch in gh.get("dispatches", [])
+            if dispatch["inputs"].get("command") == "fix"
+            and dispatch["inputs"].get("auto") == "conflicts"
+        ]
+    )
+
+
+def _no_conflict_round_after_a_failed_review(sc, old, new):
+    """Whether the report of an implement round whose review failed started a conflict round
+    in NexKit 6 and none in `new`."""
+    return (
+        sc["path"] == "implement"
+        and sc.get("outcome") == "review_failed"
+        and _conflict_rounds_started(old) > 0
+        and _conflict_rounds_started(new) == 0
+    )
+
+
+KNOWN += [
+    {
+        "name": "no conflict round at once after a round whose review failed",
+        "family": "moved",
+        "by": "#758",
+        "why": (
+            "NexKit 6's report started a conflict round at once when an implement round "
+            "ended with a failed review on a pull request that conflicts with its base "
+            "branch. The engine decides from the stored state alone, and a failed item "
+            "waits for a person, who starts the next step; a fix round that is due merges "
+            "the base branch itself. The same holds for a round that ends waiting for CI. "
+            "`BaseMovedStoredTest` in tests/test_host.py shows both answers. Only a record "
+            "where NexKit 6 started a conflict round and the engine started none, after a "
+            "failed review, is excused."
+        ),
+        "match": _no_conflict_round_after_a_failed_review,
+    }
+]
+
+
+def _no_conflict_round_after(end):
+    """A match for a record whose latest round ended as `end` (see the `moved` family), where
+    NexKit 6 started a conflict round and the engine started none."""
+
+    def match(sc, old, new):
+        return (
+            sc.get("end") == end
+            and _conflict_rounds_started(old) > 0
+            and _conflict_rounds_started(new) == 0
+        )
+
+    return match
+
+
+KNOWN += [
+    {
+        "name": f"no conflict round while {what}",
+        "family": "moved",
+        "by": "#758",
+        "why": (
+            f"NexKit 6's push run and sweep started a conflict round for a pull request whose "
+            f"latest round {why}. The engine decides from the item's stored state alone, "
+            f"{reason} `NoConflictRoundAfterAFailedRoundTest.{test}` in tests/test_host.py "
+            f"shows the answer. Only a record where NexKit 6 started a conflict round and the "
+            f"engine started none, for a pull request whose latest round ended that way, is "
+            f"excused."
+        ),
+        "match": _no_conflict_round_after(end),
+    }
+    for end, what, why, reason, test in (
+        (
+            "agent_error",
+            "a fix round failed",
+            "failed with `agent_error`",
+            "and a failed item waits for a person, who starts the next step.",
+            "test_a_fix_round_that_failed_leaves_the_conflict_to_a_person",
+        ),
+        (
+            "lost",
+            "a round that ended without a report shows as on its way",
+            "ended without a report while its comment still said running",
+            "which still holds that round on its way until the lost-run detection stores its "
+            "end, so a move of the base branch waits for it.",
+            "test_a_round_whose_run_was_lost_holds_the_conflict_round_back",
+        ),
+        (
+            "stale",
+            "a chained round never ran",
+            "started the next round, which never ran",
+            "which still holds that round on its way until the lost-run detection stores its "
+            "end, so a move of the base branch waits for it.",
+            "test_a_chained_round_that_never_ran_holds_the_conflict_round_back",
+        ),
+    )
+]
+
+
 def listed(family, sc, old, new):
     """The name of the listed difference that explains how `old` and `new` differ, or None."""
     for known in KNOWN:

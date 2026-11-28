@@ -221,7 +221,9 @@ requests conflict.
 - NexKit's own merges, pushes to the default branch (through the `push` trigger that
   `nexkit init` writes), the end of every NexKit run and the hourly schedule start the
   check. A round that ran while the base branch moved holds its conflict round back, and
-  the sweep at its end starts it, also without autopilot. `nexkit doctor` warns when the
+  the sweep at its end starts it, also without autopilot, when the round left the pull
+  request ready for a person. A round that failed, or that ended waiting for CI, starts none:
+  a person decides, or the fix round that is due merges the base branch itself. `nexkit doctor` warns when the
   `push` trigger is missing; the end of the next run, or the schedule within an hour,
   still notices.
 - A pull request whose mergeability GitHub has not worked out yet is checked again by

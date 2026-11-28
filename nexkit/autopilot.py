@@ -1406,8 +1406,9 @@ def _handed_on(gh, issue, comment, run, start, now, cfg, what, write=False):
 def settle_ended(gh, number, comment, run):
     """Show a run comment on `number` that still says running as ended without a report,
     when its workflow run has ended. Returns whether it did. Sweeps do this for the issues
-    autopilot takes (see `_stalled`); conflict rounds without autopilot do it here, so a
-    round that ended without a report does not hold them back."""
+    autopilot takes (see `_stalled`); conflict rounds without autopilot do it here, so the
+    ended round's end is shown. The stored state still holds that round on its way until the
+    sweep's lost-run detection stores its end, and a base-branch move waits for it."""
     if run.get("status") != RUNNING or not _ended(gh, run):
         return False
     settle(gh, {"stale": {"number": number, "comment": comment["id"]}})

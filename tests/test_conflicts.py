@@ -14,7 +14,7 @@ from unittest import mock
 
 from nexkit import agent, autopilot, cli, first_state, host, item_state
 from nexkit.github import GitHubError, run_url
-from nexkit.maintain import is_conflicting, maintain, resolve_conflicts
+from nexkit.maintain import is_conflicting, maintain, resolve_conflicts, start_conflict_round
 from nexkit.report import _not_up_to_date
 from nexkit.route import route, skip_unaffected
 from nexkit.state import (
@@ -38,6 +38,7 @@ from tests.support import (
     store_fields,
     store_pending,
 )
+from tests.test_host import restate
 from tests.test_report import HEAD, ReportCase, decision
 from tests.test_route import comment_event
 
@@ -71,11 +72,10 @@ class SweepTests(unittest.TestCase):
             self.sweep()
         self.assertEqual(self.gh.dispatches, [])
         # What the host asks: the pull request conflicts, and no round runs its checks.
-        [(_, cfg, issue, number, head, conflicts, behind, checking, used, updates)] = [
+        [(_, cfg, issue, number, head, conflicts, behind)] = [
             call.args for call in moved.call_args_list
         ]
-        self.assertEqual((issue, number, conflicts, behind, checking), (5, 6, True, False, False))
-        self.assertEqual((used, updates), (0, 0))
+        self.assertEqual((issue, number, conflicts, behind), (5, 6, True, False))
         self.assertEqual(cfg["conflicts"], {"auto_resolve": True, "max_rounds": 3})
 
     def test_a_sweep_starts_nothing_where_the_engine_refuses(self):
@@ -85,11 +85,25 @@ class SweepTests(unittest.TestCase):
         self.assertIn("refused to decide its next step", line)
         self.assertEqual(self.gh.dispatches, [])
 
-    def test_the_conflict_rounds_used_go_to_the_engine(self):
-        self.round(6, 1, conflicts=True)
-        with mock.patch.object(host, "base_moved", return_value="round") as moved:
-            self.sweep()
-        self.assertEqual(moved.call_args.args[8], 1)
+    def test_the_conflict_rounds_used_are_the_stored_ones(self):
+        # The sweep passes no count: the engine takes the conflict rounds used from the item's
+        # stored `rounds`, and a pull request at the limit gets no conflict round.
+        host.store_import(self.gh, make_config(), 5)
+        restate(self.gh, 5, rounds={**item_state.read(self.gh, 5)[1]["rounds"], "conflicts": 3})
+        [line] = self.sweep()
+        self.assertIn("automatic conflict rounds are used up", line)
+        self.assertEqual(self.gh.dispatches, [])
+
+    def test_a_round_the_engine_leaves_out_says_the_limit_is_used_up_only_when_it_is(self):
+        host.store_import(self.gh, make_config(), 5)
+        found = {"left": False}
+        line = start_conflict_round(self.gh, 6, "main", "nexkit.yml", "main", 3, **found)
+        self.assertIn("so a person decides", line)
+        self.assertNotIn("used up", line)
+        restate(self.gh, 5, rounds={**item_state.read(self.gh, 5)[1]["rounds"], "conflicts": 3})
+        line = start_conflict_round(self.gh, 6, "main", "nexkit.yml", "main", 3, **found)
+        self.assertIn("automatic conflict rounds are used up", line)
+        self.assertEqual(self.gh.dispatches, [])
 
     def test_starts_a_round_only_for_conflicting_nexkit_pull_requests(self):
         self.assertEqual(self.sweep(), ["Started an automatic round on #6 to merge `main`."])
@@ -140,9 +154,11 @@ class SweepTests(unittest.TestCase):
         self.gh.runs[40] = {"status": "in_progress"}
         self.assertEqual(self.sweep(), [])
         self.assertFalse(self.gh.dispatches)
-        # A run that ended without a report, or whose run cannot be read, holds nothing up.
+        # A run that ended without a report stays on its way in the stored state until the
+        # sweep's lost-run detection stores its end: the base branch's move waits for it.
         self.gh.runs[40] = {"status": "completed"}
-        self.assertEqual(self.sweep(), ["Started an automatic round on #6 to merge `main`."])
+        self.sweep()
+        self.assertFalse(self.gh.dispatches)
 
     def test_unknown_mergeability(self):
         self.gh.pulls[6]["mergeable"] = None
@@ -160,10 +176,10 @@ class SweepTests(unittest.TestCase):
 
     def test_a_sweep_starts_the_round_of_a_conflicting_pull_request_once(self):
         # `main` moved while a fix round ran, which held the conflict round
-        # back; the round then stopped on an error. Nothing started it until a person did.
+        # back; the round then ended. Nothing started it until a person did.
         self.round(6, 1, status="running")
         self.assertEqual(self.swept(), [])
-        self.round(6, 2, status="failure", outcome="agent_error")
+        self.round(6, 2, status="success", outcome="ready")
         self.assertEqual(self.swept(), ["6"])
         # The start is recorded on the latest round, so the next sweep, before the
         # conflict round posts its comment, does not start it twice.
@@ -173,25 +189,36 @@ class SweepTests(unittest.TestCase):
         self.round(6, 3, status="running", conflicts=True, base_sha=BASE_SHA)
         self.assertEqual(self.swept(), [])
         self.gh.issue_comments[6][-1]["body"] = render_run(
-            {**self.gh.run_comments(6)[-1]["run"], "status": "failure", "outcome": "agent_blocked"}
+            {**self.gh.run_comments(6)[-1]["run"], "status": "success", "outcome": "ready"}
         )
         self.assertEqual(self.swept(), [])
         # The base branch moves: a new round.
         self.gh.branches["main"] = "e" * 40
         self.assertEqual(self.swept(), ["6"])
 
-    def test_a_round_that_ended_without_a_report_holds_nothing_up_without_autopilot(self):
+    def test_a_failed_round_gets_no_conflict_round_from_a_sweep(self):
+        # The engine's rule, which NexKit 6 did not have: an item whose round failed waits for
+        # a person, whatever the base branch does.
+        self.round(6, 1, status="failure", outcome="agent_error")
+        self.assertEqual(self.swept(), [])
+        self.gh.branches["main"] = "e" * 40
+        self.assertEqual(self.swept(), [])
+        self.assertEqual(self.gh.dispatches, [])
+
+    def test_a_round_that_ended_without_a_report_starts_no_conflict_round_of_the_sweep(self):
         # The fix round's runner was lost: its `finish` job starts a sweep, which with
-        # autopilot off only starts conflict rounds. It ends the round's comment itself.
+        # autopilot off ends the round's comment itself. The stored state still holds the
+        # round on its way, so the engine starts no conflict round for the base branch's move:
+        # a lost round is the lost-run detection's, not the move's.
         url = "https://github.com/acme/app/actions/runs/40"
         self.round(6, 1, status="running", url=url, head="b" * 40)
         self.gh.runs[40] = {"status": "in_progress"}
         self.assertEqual(self.swept(), [])
         self.gh.runs[40] = {"status": "completed", "conclusion": "failure"}
-        self.assertEqual(self.swept(), ["6"])
+        self.assertEqual(self.swept(), [])
         run = self.gh.run_comments(6)[-1]["run"]
         self.assertEqual((run["status"], run["outcome"]), ("failure", "lost"))
-        self.assertEqual(run["conflicts_started"], BASE_SHA)
+        self.assertNotIn("conflicts_started", run)
         self.assertEqual({s["state"] for s in self.gh.statuses}, {"error"})
         # With autopilot, its sweep handles such a round first, and may start it once more.
         self.round(6, 2, status="running", url=url)
@@ -205,9 +232,10 @@ class SweepTests(unittest.TestCase):
         self.round(6, 1, outcome="auto_fix")
         self.gh.issue_comments[6][-1]["updated_at"] = iso(datetime.now(UTC))
         self.assertEqual(self.swept(), [])
-        # One that did not run within hours holds nothing up.
+        # One that did not run within hours stays on its way in the stored state: the sweep's
+        # lost-run detection ends it, and the base branch's move waits for that.
         self.gh.issue_comments[6][-1]["updated_at"] = "2020-01-01T00:00:00Z"
-        self.assertEqual(self.swept(), ["6"])
+        self.assertEqual(self.swept(), [])
 
     def test_a_round_after_the_tried_one_lets_the_same_base_commit_be_tried_again(self):
         self.round(6, 1, conflicts=True, base_sha=BASE_SHA, status="failure")
@@ -352,12 +380,12 @@ class SupersededTests(unittest.TestCase):
         nothing = (self.gh.cancelled, self.gh.updated, rounds_started(self.gh))
         self.assertEqual(nothing, ([], [], []))
         self.assertEqual(self.latest()["run"]["status"], "running")
-        # What the host asks: behind, with no conflict, while the round runs its checks.
-        [(_, _, issue, number, head, conflicts, behind, checking, used, updates)] = [
+        # What the host asks: behind, with no conflict.
+        [(_, _, issue, number, head, conflicts, behind)] = [
             call.args for call in moved.call_args_list
         ]
         self.assertEqual((issue, number, head), (5, 6, CHECKED))
-        self.assertEqual((conflicts, behind, checking, used, updates), (False, True, True, 0, 0))
+        self.assertEqual((conflicts, behind), (False, True))
 
     def test_the_engine_answers_the_stop_of_a_round_whose_head_conflicts(self):
         self.gh.pulls[6]["mergeable"] = False
@@ -366,7 +394,7 @@ class SupersededTests(unittest.TestCase):
         self.assertEqual((self.gh.cancelled, rounds_started(self.gh)), ([], []))
         # Asked for the round's stop first, then for the round that no round runs against.
         first, *_ = moved.call_args_list
-        self.assertEqual(first.args[5:8], (True, False, True))
+        self.assertEqual(first.args[5:7], (True, False))
 
     def test_a_round_is_stopped_for_an_update_only_when_the_engine_answers_one(self):
         self.behind()
@@ -519,6 +547,15 @@ class SupersededTests(unittest.TestCase):
         }
         gh.comment(5, render_run(go))
         self.in_job(60, "combine")
+        # The round's publish job stored its commit, so the stored state shows the checks.
+        host.store_import(gh, self.cfg, 5)
+        restate(
+            gh,
+            5,
+            state="checking",
+            change={"id": "6", "version": CHECKED},
+            pending=[{"id": "a2.1", "next": None, "kind": "runChecks", "changeVersion": CHECKED}],
+        )
         self.behind()
         [line] = self.sweep()
         self.assertEqual(gh.cancelled, [60])
@@ -721,12 +758,18 @@ class ConcurrentStartTests(unittest.TestCase):
                 self.gh, "workflow_dispatch", sender, {**started[1], "auto": auto}, cfg=self.cfg
             )
             self.assertEqual(again["action"], "fix", auto)
+        # The stored state holds the round the reports and the resumes left, which the sweep's
+        # lost-run detection ends; here that end is stored by hand.
         self.gh.issue_comments[6][-1]["body"] = render_run({**row, "outcome": "lost"})
+        host.store_import(self.gh, self.cfg, 5)
+        restate(self.gh, 5, state="ready", pending=[], waits=[], recentEvents=[])
         self.assertEqual(
             route(self.gh, "workflow_dispatch", sender, started[1], cfg=self.cfg)["action"], "fix"
         )
         # After the base branch moves, a new round goes on too.
         self.gh.issue_comments[6][-1]["body"] = render_run(row)
+        host.store_import(self.gh, self.cfg, 5)
+        restate(self.gh, 5, state="ready", pending=[], waits=[], recentEvents=[])
         self.gh.branches["main"] = "e" * 40
         self.assertEqual(
             route(self.gh, "workflow_dispatch", sender, started[1], cfg=self.cfg)["action"], "fix"
@@ -903,10 +946,10 @@ class ConflictReportTests(ReportCase):
         self.assertFalse(rounds_started(self.gh))
         self.assertIn("conflict rounds are used up", self.gh.run_comments(6)[-1]["body"])
 
-    def test_the_end_of_any_round_starts_the_conflict_round_held_back_while_it_ran(self):
-        # `main` moved while a fix round ran, and the round stopped on
-        # an error without trying a merge. Its end sweeps, which starts the conflict round,
-        # also without autopilot.
+    def test_a_round_that_stopped_on_an_error_leaves_its_conflict_to_a_person(self):
+        # `main` moved while a fix round ran, and the round stopped on an error without trying
+        # a merge. Its end sweeps, also without autopilot, but the item failed, and the engine
+        # leaves a failed item to a person, so the sweep starts no conflict round.
         self.gh.pulls[6]["mergeable"] = False
         self.write("nexkit-agent", "result.json", {"status": "error", "error": "No change."})
         d = decision("fix", pr=6, target=6, head=HEAD, auto=True)
@@ -921,10 +964,7 @@ class ConflictReportTests(ReportCase):
                 workflow="nexkit.yml",
                 ref="main",
             )
-        [started] = rounds_started(self.gh)
-        self.assertEqual(
-            (started["inputs"]["number"], started["inputs"]["auto"]), ("6", "conflicts")
-        )
+        self.assertEqual(rounds_started(self.gh), [])
 
     def test_the_end_of_a_run_sweeps_for_conflicts_unless_a_round_is_on_its_way(self):
         from nexkit import autopilot
@@ -1175,6 +1215,22 @@ class MergeRefusalTests(ReportCase):
         self.assertIn("refused to decide its next step", text)
         self.assertNotIn("refused to decide its next step", plain)
 
+    def test_an_implement_round_whose_review_failed_leaves_its_conflict_to_a_person(self):
+        # The engine starts no conflict round for a failed item, though no conflict round was
+        # used: the round's comment says a person decides, not that the rounds are used up.
+        os.environ["GITHUB_RUN_ID"] = "1"  # the id the next report runs as
+        self.gh.comment(5, render_run({"command": "go", "url": run_url(), "status": "running"}))
+        self.candidate(review={"status": "error", "error": "Claude stopped (error_max_turns)."})
+        self.gh.pulls[6]["mergeable"] = False
+        cfg = make_config(conflicts={"auto_resolve": True, "max_rounds": 3})
+        outcome = self.run_report(cfg=cfg)
+        self.assertEqual(outcome["outcome"], "review_failed")
+        self.assertEqual(rounds_started(self.gh), [])
+        text = self.gh.run_comments(6)[-1]["body"]
+        self.assertIn("It conflicts with `main`.", text)
+        self.assertIn("so a person decides", text)
+        self.assertNotIn("are used up", text)
+
     def test_an_implement_round_that_ends_with_a_conflict_starts_its_conflict_round(self):
         os.environ["GITHUB_RUN_ID"] = "1"  # the id the next report runs as
         self.gh.comment(5, render_run({"command": "go", "url": run_url(), "status": "running"}))
@@ -1221,7 +1277,7 @@ class MergeRefusalTests(ReportCase):
         self.assertFalse(rounds_started(self.gh))
         self.assertEqual(self.gh.cancelled, [])
         args = moved.call_args.args
-        self.assertEqual((args[2], *args[5:]), (5, True, False, False, 0, 0))
+        self.assertEqual((args[2], *args[5:]), (5, True, False))
         self.assertNotIn("Started an automatic round", outcome["summary"])
 
     def test_an_implement_round_whose_conflict_round_the_engine_refuses_starts_none(self):

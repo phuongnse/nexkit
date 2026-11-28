@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/phuongnse/nexkit/protocol/v1/results/fix.schema.json",
-  "$comment": "The fix stage's result. `cause` and its evidence come first in a diagnosis round; `open_conflicts` need a person.",
+  "$comment": "The fix stage's result. `cause` and its evidence come first in a diagnosis round; `open_conflicts` need a person, and each points at the host's `location`.",
   "type": "object",
   "properties": {
     "status": {
@@ -71,13 +71,13 @@
       "items": {
         "type": "object",
         "properties": {
-          "file": {
+          "location": {
             "type": "string"
           },
           "base_change": {
             "type": "string"
           },
-          "pr_change": {
+          "this_change": {
             "type": "string"
           },
           "question": {
@@ -94,9 +94,9 @@
           }
         },
         "required": [
-          "file",
+          "location",
           "base_change",
-          "pr_change",
+          "this_change",
           "question",
           "options",
           "recommended"

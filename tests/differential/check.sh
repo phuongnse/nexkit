@@ -17,23 +17,5 @@ if [ -z "$dir" ]; then
     git -C "$dir" checkout --quiet --detach "$v6"
   fi
 fi
-python3 "$root/tests/differential/harness.py" --v6 "$dir" --sample "${NEXKIT_DIFF_SAMPLE:-400}" \
-  --fallbacks --forbid nexkit.host.close_done --forbid nexkit.host.stage_limited \
-  --forbid nexkit.host.stage_transient --forbid nexkit.host.resumes --forbid nexkit.host.command \
-  --forbid nexkit.host._on_base --forbid nexkit.host.closing_command \
-  --forbid nexkit.host.required_failed --forbid nexkit.host.accept_answer \
-  --forbid nexkit.host.update_failed --forbid nexkit.host.released \
-  --forbid nexkit.host.base_passes --forbid nexkit.host.conflicts_released \
-  --forbid nexkit.host.checks_waited \
-  --forbid nexkit.host.refusal_cleared --forbid nexkit.host.change_seen \
-  --forbid nexkit.host.part_ended --forbid nexkit.host.stopped_counts \
-  --forbid nexkit.host.first_plan --forbid nexkit.host.approved \
-  --forbid nexkit.host.vouched \
-  --forbid nexkit.host.after_go --forbid nexkit.host.round_carried_on \
-  --forbid nexkit.host.no_change_found --forbid nexkit.host.on_base_found \
-  --forbid nexkit.host.stage_untrusted --forbid nexkit.host.base_moved \
-  --forbid nexkit.host.stopped --forbid nexkit.host.stop_carried_on --forbid nexkit.host.lost_again \
-  --forbid nexkit.host.round_ended --forbid nexkit.host.after_round \
-  --forbid nexkit.host.plan_carried_on --forbid nexkit.host.plan_waits_for \
-  --forbid nexkit.host.after_plan --forbid nexkit.host.conflicting
+python3 "$root/tests/differential/harness.py" --v6 "$dir" --sample "${NEXKIT_DIFF_SAMPLE:-400}"
 python3 "$root/tests/walk.py" --walks "${NEXKIT_DIFF_WALKS:-1000}"

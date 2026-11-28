@@ -1218,14 +1218,11 @@ class DecideTest(HostCase):
         self.assertEqual(host.pending_id(doc, "runAgent", "fix"), first_state.RUN_ID)
         self.assertEqual(host.pending_id(doc, "runChecks"), first_state.RUN_ID)
 
-    def test_with_no_built_document_the_stored_state_alone_decides(self):
+    def test_the_stored_state_alone_decides(self):
         # A plan that waits, which a comment changes: the plan of #5 is running, and ignores one.
         self.issue(6)
         self.plan(6, {"questions": [ASKED]})
         seed(self.gh, make_config(), 6)
-        state = copy.deepcopy(self.read(6)[1])
-        self.assertIs(host.resync(state, None, {"id": "x"}), state)
-        self.assertIsNone(host.resync(None, None, {"id": "x"}))
         event = {
             "protocol": 1,
             "kind": "commented",
@@ -1235,7 +1232,7 @@ class DecideTest(HostCase):
             "by": {"id": "bob", "role": "reader"},
             "text": {"name": "comment", "ref": "9"},
         }
-        stored, _ = host.decide(self.gh, self.cfg, 6, event, None, write=True)
+        stored, _ = host.decide(self.gh, self.cfg, 6, event, write=True)
         self.assertEqual(stored["recentEvents"][-1], "comment-9")
         self.assertEqual(self.read(6)[1]["recentEvents"][-1], "comment-9")
         self.assertEqual(stored["state"], self.read(6)[1]["state"])
@@ -1243,32 +1240,11 @@ class DecideTest(HostCase):
         # read has nothing to decide on.
         with mock.patch.object(host, "stored", return_value=(None, None)):
             with self.assertRaises(host.Refused):
-                host.decide(self.gh, self.cfg, 6, {**event, "id": "comment-10"}, None)
-
-    def test_the_stored_state_decides_only_where_it_agrees_with_the_markers(self):
-        built = planning_doc()
-        event = {"id": "run-1"}
-        state = copy.deepcopy(built)
-        state.update(revision=4, recentEvents=["comment-9"])
-        state["pending"][0].update(id="a4.1", next="x")
-        # It agrees, apart from its revision, its events seen and the ids of its outbox.
-        self.assertIs(host.resync(state, built, event), state)
-        # An event it holds is decided on the markers, at its revision, with no duplicate.
-        state["recentEvents"] = ["comment-9", "run-1"]
-        base = host.resync(state, built, event)
-        self.assertEqual((base["revision"], base["recentEvents"]), (4, ["comment-9"]))
-        self.assertEqual(host._core(base), host._core(built))
-        # So is a state that says something else, or none.
-        state["recentEvents"] = []
-        state["state"] = "awaitingApproval"
-        self.assertEqual(host.resync(state, built, event)["state"], "planning")
-        self.assertEqual(host.resync(state, built, event)["revision"], 4)
-        self.assertIs(host.resync(None, built, event), built)
+                host.decide(self.gh, self.cfg, 6, {**event, "id": "comment-10"})
 
     def test_a_stage_result_names_the_pending_action_of_the_stored_outbox(self):
         comment, doc = self.read()
-        built = planning_doc(doc)
-        stored = copy.deepcopy(built)
+        stored = planning_doc(doc)
         stored.update(revision=2)
         stored["pending"][0]["id"] = "a2.1"
         self.assertTrue(item_state.write(self.gh, 5, stored, (comment, doc)))
@@ -1276,9 +1252,9 @@ class DecideTest(HostCase):
         event = host._result(5, plan, plan_data(plan), self.PLAN_RUN)
         seen, spy = self.spied()
         with mock.patch.object(host, "step", spy):
-            host.decide(self.gh, self.cfg, 5, event, built, action=("runAgent", "plan"), write=True)
+            host.decide(self.gh, self.cfg, 5, event, action=("runAgent", "plan"), write=True)
         [(sent, _, found)] = seen
-        # The stored document agrees with the markers, so it is what the result is decided on.
+        # The stored document is what the result is decided on.
         self.assertEqual((sent["revision"], sent["pending"][0]["id"]), (2, "a2.1"))
         self.assertEqual(seen[0][1]["action"], "a2.1")
         self.assertNotEqual(seen[0][1]["action"], first_state.RUN_ID)
@@ -1292,7 +1268,10 @@ class DecideTest(HostCase):
         self.assertEqual(host.wait_id({}, "usageLimit"), "w1.1")
 
     def test_events_sent_in_a_row_give_one_state_at_the_next_revision(self):
-        built = planning_doc()
+        comment, doc = self.read()
+        stored = {**planning_doc(doc), "revision": doc["revision"] + 1}
+        self.assertTrue(item_state.write(self.gh, 5, stored, (comment, doc)))
+        read = self.read()[1]["revision"]
         events = [
             host._event("held", 5, None, "held-5", label="on-hold"),
             host._event("tick", 5, None, "tick-5", wait="w1.1"),
@@ -1301,119 +1280,31 @@ class DecideTest(HostCase):
         before = copy.deepcopy(self.gh.comments(5))
         with mock.patch.object(host, "step", spy):
             state, answers = host.decide_all(
-                self.gh, self.cfg, 5, events, built, wait="time", until=lambda actions: False
+                self.gh, self.cfg, 5, events, wait="time", until=lambda actions: False
             )
         self.assertEqual([sent["kind"] for sent, _ in answers], ["held", "tick"])
         self.assertEqual(self.gh.comments(5), before)
         # The second event is sent on the state that the first gave.
         self.assertEqual(seen[1][0], seen[0][2]["state"])
         self.assertEqual(seen[1][1]["wait"], "w1.1")
-        self.assertEqual(state["revision"], 2)
+        self.assertEqual(state["revision"], read + 1)
         # The row stops after the event whose actions satisfy `until`.
         with mock.patch.object(host, "step", spy):
-            _, answers = host.decide_all(
-                self.gh, self.cfg, 5, events, built, until=lambda actions: True
-            )
+            _, answers = host.decide_all(self.gh, self.cfg, 5, events, until=lambda actions: True)
         self.assertEqual([sent["kind"] for sent, _ in answers], ["held"])
 
-    def test_with_no_configuration_the_markers_decide_and_nothing_is_read(self):
-        built = planning_doc()
+    def test_with_no_configuration_the_decision_is_refused_and_nothing_is_read(self):
         event = host._event("held", 5, None, "held-5", label="on-hold")
         gh = mock.Mock()
-        state, answers = host.decide_all(gh, None, 5, [event], built, found_policies={})
-        self.assertEqual(state["revision"], 2)
-        self.assertEqual(len(answers), 1)
+        with mock.patch.object(host, "step", side_effect=AssertionError("asked the engine")):
+            with self.assertRaises(host.Refused) as refused:
+                host.decide(gh, None, 5, event)
+            self.assertEqual(str(refused.exception), host.NO_CONFIG)
+            with self.assertRaises(host.Refused):
+                host.decide_all(gh, None, 5, [event], found_policies={})
+            with self.assertRaises(host.Refused):
+                host.decide(gh, None, 5, event, write=True)
         self.assertEqual(gh.mock_calls, [])
-
-    def test_the_stored_state_that_holds_any_event_of_a_row_is_decided_on_the_markers(self):
-        built = planning_doc()
-        state = copy.deepcopy(built)
-        state.update(revision=4, recentEvents=["comment-9"])
-        events = [{"id": "held-5"}, {"id": "resume-5"}]
-        self.assertIs(host.resync(state, built, events), state)
-        state["recentEvents"] = ["comment-9", "held-5"]
-        base = host.resync(state, built, events)
-        self.assertEqual((base["revision"], base["recentEvents"]), (4, ["comment-9"]))
-        state["recentEvents"] = ["resume-5", "held-5", "comment-9"]
-        self.assertEqual(host.resync(state, built, events)["recentEvents"], ["comment-9"])
-
-
-class FallbackTest(HostCase):
-    """`host.on_fallback` hears each decision that `resync` took from the markers' document, once,
-    with the function that asked, and nothing else changes in what the decision gives."""
-
-    def setUp(self):
-        super().setUp()
-        self.cfg = pilot(answer="recommended")
-        self.issue(5)
-        self.plan(5, {"questions": [ASKED]})
-        self.state = seed(self.gh, self.cfg, 5)[1]
-        self.heard = []
-
-    def event(self, name):
-        return host._event(
-            "commented",
-            5,
-            None,
-            name,
-            by=host._person("bob", "reader"),
-            text={"name": "comment", "ref": name},
-        )
-
-    def decide(self, name, built, **options):
-        with mock.patch.object(host, "on_fallback", lambda *heard: self.heard.append(heard)):
-            return host.decide(self.gh, self.cfg, 5, self.event(name), built, write=True, **options)
-
-    def test_a_built_document_that_agrees_with_the_stored_state_is_not_heard(self):
-        self.decide("c-1", copy.deepcopy(self.state))
-        self.assertEqual(self.heard, [])
-
-    def test_a_stored_state_that_differs_from_the_built_document_is_heard_once(self):
-        built = copy.deepcopy(self.state)
-        built["title"] = "Another title"
-        with mock.patch.object(host, "on_fallback", lambda *heard: self.heard.append(heard)):
-            host.decide(self.gh, self.cfg, 5, self.event("c-1"), built, write=True)
-        # The function that called `decide` is the one a later part converts.
-        [(origin, why)] = self.heard
-        self.assertEqual(why, "differs")
-        self.assertEqual(origin, f"{__name__}.{type(self).__name__}.{self._testMethodName}")
-
-    def test_an_event_that_the_stored_state_holds_already_is_heard_as_seen(self):
-        self.decide("c-1", copy.deepcopy(self.state))
-        self.decide("c-1", copy.deepcopy(self.state))
-        self.assertEqual([why for _, why in self.heard], ["seen"])
-
-    def test_a_decision_with_no_configuration_is_heard_as_no_state(self):
-        with mock.patch.object(host, "on_fallback", lambda *heard: self.heard.append(heard)):
-            host.decide(self.gh, None, 5, self.event("c-1"), copy.deepcopy(self.state))
-        self.assertEqual([why for _, why in self.heard], ["no state"])
-
-    def test_no_hook_changes_nothing_in_the_answer(self):
-        built = copy.deepcopy(self.state)
-        built["title"] = "Another title"
-        with mock.patch.object(host, "on_fallback", None):
-            quiet = host.decide(self.gh, self.cfg, 5, self.event("c-1"), built, write=True)
-        self.assertEqual(self.heard, [])
-        self.assertEqual(quiet[0]["revision"], self.state["revision"] + 1)
-
-    def test_a_write_that_lost_and_is_decided_again_is_heard_once(self):
-        real, seen = host.step, []
-
-        def racing(state, event, found_policies):
-            found = real(state, event, found_policies)
-            seen.append(state["revision"])
-            if len(seen) == 1:
-                comment, doc = item_state.read(self.gh, 5)
-                other = {**doc, "revision": doc["revision"] + 1}
-                self.assertTrue(item_state.write(self.gh, 5, other, (comment, doc)))
-            return found
-
-        built = copy.deepcopy(self.state)
-        built["title"] = "Another title"
-        with mock.patch.object(host, "step", racing), mock.patch.object(host.time, "sleep"):
-            self.decide("c-1", built)
-        self.assertEqual(seen, [1, 2])
-        self.assertEqual(len(self.heard), 1)
 
 
 class SweepTest(HostCase):
@@ -3216,14 +3107,11 @@ class AcceptAnswerTest(ReportCase):
         with mock.patch.object(host, "step", side_effect=host.Refused("no")):
             with self.assertRaises(host.Refused):
                 self.answer("waitingForChecks")
-        answer = {"state": {**engine_state(), "state": "failed", "waits": []}, "actions": []}
+        failed = {**first_state.empty("5"), "state": "failed", "waits": []}
+        answer = {"state": failed, "actions": []}
         with mock.patch.object(host, "step", return_value=answer):
             with self.assertRaises(host.Refused):
                 self.answer("waitingForChecks")
-
-
-def engine_state():
-    return host._pull_doc(None, 5, 6, "c" * 40, "accepting", 0)
 
 
 class ApprovedTest(TestCase):
@@ -3604,8 +3492,8 @@ class MergeDecideTest(ReportCase):
         event = host._event("tick", 5, self.AT, "merge-6-x", wait="w1.1")
         seen, spy = self.spied()
         with mock.patch.object(host, "step", spy):
-            host.decide(self.gh, self.CFG, 5, event, waiting, pull=6, wait="requiredChecks")
-            host.decide(self.gh, self.CFG, 5, event, waiting, pull=6)
+            host.decide(self.gh, self.CFG, 5, event, pull=6, wait="requiredChecks")
+            host.decide(self.gh, self.CFG, 5, event, pull=6)
         # With `wait`, the tick names the stored document's wait, and without it, its own.
         [(_, with_wait, _), (_, without, _)] = seen
         self.assertEqual(with_wait["wait"], named)
@@ -4082,16 +3970,15 @@ class DiagnosisTest(HostCase):
     """The fix round that `route` starts diagnoses what the engine names."""
 
     def test_only_an_automatic_round_diagnoses_the_repeated_failures(self):
-        head = "c" * 40
-        self.assertEqual(host.diagnosis(None, None, 5, 6, head, True, ["test"]), ["test"])
-        self.assertEqual(host.diagnosis(None, None, 5, 6, head, False, ["test"]), [])
-        self.assertEqual(host.diagnosis(None, None, 5, 6, head, True, []), [])
-        # On the item's stored state, with its configuration, the answer is the same.
-        self.issue(5)
-        self.gh.add_pull(6, 5, head_sha=head)
-        cfg = make_config()
-        self.assertEqual(host.diagnosis(self.gh, cfg, 5, 6, head, True, ["test"]), ["test"])
-        self.assertEqual(host.diagnosis(self.gh, cfg, 5, 6, head, False, ["test"]), [])
+        # It reads nothing from GitHub and asks the engine nothing.
+        with mock.patch.object(host, "step", side_effect=AssertionError("asked the engine")):
+            self.assertEqual(host.diagnosis(True, ["test"]), ["test"])
+            self.assertEqual(host.diagnosis(False, ["test"]), [])
+            self.assertEqual(host.diagnosis(True, []), [])
+            self.assertEqual(host.diagnosis(True, None), [])
+            # As many as the engine diagnoses at most.
+            names = [f"check-{n}" for n in range(12)]
+            self.assertEqual(host.diagnosis(True, names), names[:10])
 
     def test_route_takes_the_diagnosis_from_the_engine(self):
         self.issue(5)
@@ -4099,28 +3986,38 @@ class DiagnosisTest(HostCase):
         opened(self.gh, 6, "c" * 40)
         state = {**empty_state(5), "feedback": {"head": "c" * 40, "repeated": ["test"]}}
         self.gh.comment(6, render_state(state))
-        found = {}
+        found, fixes = {}, {}
         for auto in ("true", "conflicts", "false"):
             event = {"inputs": {"command": "fix", "number": "6", "note": "", "auto": auto}}
-            with mock.patch.object(host.program, "call", wraps=ANSWER) as answer:
+            replies = []
+
+            def record(*args, replies=replies):
+                replies.append(ANSWER(*args))
+                return replies[-1]
+
+            with mock.patch.object(host.program, "call", side_effect=record) as answer:
                 found[auto] = route(
                     self.gh, "workflow_dispatch", event, event["inputs"], cfg=self.cfg
                 )
-            # The command is the engine's to start. Only an automatic round then asks what it
-            # diagnoses: a person's round and a conflict round diagnose nothing. A conflict
-            # round is first counted from the observation that the head conflicts.
+            fixes[auto] = [
+                action
+                for reply in replies
+                for action in reply["actions"]
+                if action["kind"] == "runAgent" and action.get("stage") == "fix"
+            ]
+            # The command is the engine's to start, and the engine is asked once: the round that
+            # an automatic dispatch starts names the checks it diagnoses, so no event follows. A
+            # person's round and a conflict round diagnose nothing. A conflict round is first
+            # counted from the observation that the head conflicts.
             kinds = [call.args[1]["event"]["kind"] for call in answer.call_args_list]
-            self.assertEqual(len(kinds), 2 if auto == "true" else 1, kinds)
-            self.assertEqual(kinds[0], "changeObserved" if auto == "conflicts" else "requested")
+            self.assertEqual(len(kinds), 1, kinds)
+            self.assertEqual(kinds, ["changeObserved" if auto == "conflicts" else "requested"])
         self.assertEqual(found["true"]["diagnose"], ["test"])
+        # It is the list of the fix run that the engine started.
+        [fix] = fixes["true"]
+        self.assertEqual(found["true"]["diagnose"], fix["diagnose"])
         self.assertNotIn("diagnose", found["conflicts"])
         self.assertNotIn("diagnose", found["false"])
-        with mock.patch.object(host, "diagnosis", side_effect=host.Refused("No.")):
-            event = {"inputs": {"command": "fix", "number": "6", "note": "", "auto": "true"}}
-            self.assertNotIn(
-                "diagnose",
-                route(self.gh, "workflow_dispatch", event, event["inputs"], cfg=self.cfg),
-            )
 
 
 class RoundPublishedTest(HostCase):
@@ -4363,21 +4260,17 @@ class DispatchedTest(HostCase):
     def test_diagnosis_reads_the_pending_action_alone(self):
         action = {**first_state.agent_run("fix", self.HEAD), "diagnose": ["lint"]}
         with mock.patch.object(host, "step", side_effect=AssertionError("asked the engine")):
-            diagnosis = host.diagnosis(self.gh, self.cfg, 5, 6, self.HEAD, True, ["test"], action)
-            self.assertEqual(diagnosis, ["lint"])
-            self.assertEqual(
-                host.diagnosis(self.gh, self.cfg, 5, 6, self.HEAD, False, [], action), []
-            )
+            self.assertEqual(host.diagnosis(True, ["test"], action), ["lint"])
+            self.assertEqual(host.diagnosis(False, [], action), [])
             empty = {**action, "diagnose": []}
-            self.assertEqual(
-                host.diagnosis(self.gh, self.cfg, 5, 6, self.HEAD, True, ["test"], empty), []
-            )
+            self.assertEqual(host.diagnosis(True, ["test"], empty), [])
 
     def test_a_pending_action_of_a_persons_command_is_not_the_automatic_rounds(self):
         # A round that a person's command stored and `route` refused leaves its action
         # pending. An automatic dispatch still starts `fix`, and diagnoses as NexKit 6 does.
         self.fix_round(by="person", diagnose=[])
-        found = self.dispatch("fix")
+        with mock.patch.object(host, "step", side_effect=AssertionError("asked the engine")):
+            found = self.dispatch("fix")
         self.assertEqual((found["action"], found["diagnose"]), ("fix", ["test"]))
 
     def test_every_dispatched_command_carries_out_its_pending_action(self):
@@ -4457,17 +4350,15 @@ class DispatchedTest(HostCase):
         return restate(self.gh, 5, rounds=rounds, state="ready", pending=[])["rounds"]
 
     def test_a_dispatch_with_nothing_pending_keeps_the_stored_round_history(self):
-        # A conflict round and a person's fix are new requests that no built document decides:
-        # the history of the rounds stays whatever NexKit 6's markers say.
+        # A conflict round and a person's fix are new requests decided on the stored state: the
+        # history of the rounds stays what it holds.
         for auto, run in (("false", "1001"), ("conflicts", "1002")):
             with self.subTest(auto=auto):
                 if auto == "conflicts":
                     self.gh.pulls[6]["mergeable"] = False
                 stored = self.keep_history()
-                with mock.patch.object(host, "on_fallback") as fallback:
-                    found = self.dispatch("fix", auto=auto, run=run)
+                found = self.dispatch("fix", auto=auto, run=run)
                 self.assertEqual(found["action"], "fix")
-                fallback.assert_not_called()
                 rounds = item_state.read(self.gh, 5)[1]["rounds"]
                 self.assertEqual(rounds["fixes"], stored["fixes"])
                 self.assertEqual(rounds["lastReview"], stored["lastReview"])
@@ -4657,8 +4548,7 @@ class RoundStoredStateTest(ReportCase):
 class RoundDecideTest(ReportCase):
     """The decisions about a pull request's rounds read the item's stored state document, and
     those that run in the item's group store the engine's answer at the next revision
-    (`host.decide`). The counts are the stored ones, and a decision that falls back to the
-    markers' document keeps them (`host.resync`)."""
+    (`host.decide`). The counts are the stored ones."""
 
     GOOD = {"verdict": "approve", "criteria": [], "findings": []}
     RED = [{"name": "test", "passed": False, "output": "AssertionError"}]
@@ -4782,23 +4672,6 @@ class RoundDecideTest(ReportCase):
         rounds = self.read()[1]["rounds"]
         self.assertEqual((rounds["conflicts"], rounds["counted"]), (1, 2))
 
-    def test_the_fallback_raises_the_counts_that_the_markers_document_lacks(self):
-        state = self.store(conflicts=1, counted=2, updates=3)
-        event = {"id": "x", "kind": "stopped"}
-        for built, want in (
-            ({"counted": 0, "conflicts": 0}, (2, 1, 3)),
-            ({"counted": 5, "conflicts": 0, "updates": 1}, (5, 1, 3)),
-        ):
-            found = host.resync(state, {"revision": 1, "recentEvents": [], "rounds": built}, event)
-            rounds = found["rounds"]
-            self.assertEqual((rounds["counted"], rounds["conflicts"], rounds["updates"]), want)
-        # An optional count that neither document holds stays unwritten.
-        bare = {"revision": 1, "recentEvents": [], "rounds": {"counted": 0, "conflicts": 0}}
-        plain = copy.deepcopy(state)
-        del plain["rounds"]["updates"]
-        found = host.resync(plain, bare, event)
-        self.assertNotIn("updates", found["rounds"])
-
     def conflicting(self, held=None, **options):
         args = (self.gh, self.cfg, decision("fix", head="b"), 6, HEAD, held)
         return host.conflicting(*args, **options)
@@ -4911,31 +4784,6 @@ class RoundDecideTest(ReportCase):
         self.assertEqual(host.base_passes(*args, write=True), "fix")
         self.assertEqual(self.gh.comments(5), before)
 
-    def test_the_end_of_a_wait_decides_without_a_document_of_the_markers(self):
-        wait = {"bug": 77, "workflow": "ci.yml", "branch": "main"}
-        gh, cfg = self.gh, self.cfg
-
-        def ends(name, run, write):
-            if name == "released":
-                return host.released(gh, cfg, 5, 6, run, HEAD, write=write)
-            if name == "conflicts_released":
-                return host.conflicts_released(gh, cfg, 5, 6, run, HEAD, True, write=write)
-            return host.base_passes(gh, cfg, 5, 6, run, write=write)
-
-        waits = {
-            "released": {"outcome": "held", "held_back": "fix"},
-            "conflicts_released": {"outcome": "held", "held_back": "conflicts"},
-            "base_passes": {"outcome": "ci_waiting", "ci_wait": wait},
-        }
-        with mock.patch.object(host, "on_fallback") as fallback:
-            for name, fields in waits.items():
-                for write in (False, True):
-                    with self.subTest(function=name, write=write):
-                        self.waiting(**fields)
-                        ends(name, {"head": HEAD, **fields}, write)
-        origins = [call.args[0] for call in fallback.call_args_list]
-        self.assertEqual([one for one in origins if one.rsplit(".", 1)[-1] in waits], [])
-
     def test_a_stopped_round_stores_its_count_given_back(self):
         counts = host.stopped_counts
         args = (self.gh, self.cfg, 5, 6, HEAD, True)
@@ -4973,7 +4821,7 @@ class RoundDecideTest(ReportCase):
         before = copy.deepcopy(self.gh.comments(5)), copy.deepcopy(self.gh.comments(6))
         moved = host.base_moved(self.gh, self.cfg, 5, 6, HEAD, True, False)
         self.assertEqual(moved, "round")
-        self.assertEqual(host.diagnosis(self.gh, self.cfg, 5, 6, HEAD, True, ["test"]), ["test"])
+        self.assertEqual(host.diagnosis(True, ["test"]), ["test"])
         self.assertEqual((self.gh.comments(5), self.gh.comments(6)), before)
         self.assertEqual(self.read()[1]["revision"], 1)
 
@@ -5756,8 +5604,6 @@ class PartEndedTest(ReportCase):
                 self.ended(20)
 
     def test_a_round_keeps_the_policies_it_started_with_without_the_parents_end(self):
-        doc = host._pull_doc(make_config(), 5, 6, "c" * 40, "fixing", 0)
-        self.assertNotIn("parentEnd", doc["policies"])
         self.assertNotIn("parentEnd", host.policies(make_config()))
 
 

@@ -7,8 +7,7 @@ they go with NexKit 6's code once 7.0 ships.
 
 Nothing here is a test that `unittest discover` runs: the folder is no package, and no file's
 name starts with `test`. The one test that reads it is `tests/test_differential.py`, which loads
-`harness.py` by its path to test how it counts `--forbid`. The engine's mutation check reads
-nothing of it. Standard library only.
+the families that play a round's report. The engine's mutation check reads nothing of it. Standard library only.
 
 ## The differential check
 
@@ -16,8 +15,6 @@ nothing of it. Standard library only.
 git worktree add --detach ../nexkit-v6 8bf5190
 python3 tests/differential/harness.py --v6 ../nexkit-v6               # every scenario
 python3 tests/differential/harness.py --v6 ../nexkit-v6 --sample 400  # what CI plays
-python3 tests/differential/harness.py --v6 ../nexkit-v6 --fallbacks   # and the decisions that fall back
-python3 tests/differential/harness.py --v6 ../nexkit-v6 --forbid nexkit.host.close_done  # and fail on one
 ```
 
 `harness.py` plays every family of `families/` on NexKit 6, which must be a checkout of
@@ -47,23 +44,6 @@ head, unless it changed nothing: the pull request is at the head the round start
 import, and at the published head after it. The `diag` family's `route` stores each round itself
 before its `progress.start`, and `refusals` stores the import before the patches that make GitHub
 fail. An implement round starts from the import of a pull request already in its checks.
-
-`--fallbacks` lists under each family the decisions that `host.resync` took from the document that
-NexKit 6's markers give, instead of from the stored state, counted by the host function that
-asked and by why: `no state` (nothing is stored, or the decision has no configuration), `differs`
-(the stored state says something else) or `seen` (the stored state holds the event already). It
-prints `resync fell back: none` for a family with no such decision. `check.sh` passes it, so
-CI's log shows the list. A change that moves a function to the stored state shows that the
-function no longer appears there. The hook that counts them is `host.on_fallback`, which only a test
-or `play.py` sets.
-
-`--forbid FUNCTION` makes the check fail on a fallback. It names a host function as `decide_all`
-reports it, such as `nexkit.host.command`, and can be repeated. Each fallback of a named function
-counts as a difference that `known.py` does not list, whether or not `--fallbacks` is set, and the
-line `forbidden fallback` names it. A name that is no function of the tree is refused, so that a
-misspelt name cannot pass without checking anything. `check.sh` passes it for each function that
-decides on the stored state alone. Each change that moves a function there adds its own `--forbid`
-to `check.sh`, which is how the check shows that the function no longer falls back.
 
 `play.py ROOT FAMILY OUT --only I` plays one scenario on one tree, to look at it.
 
@@ -130,40 +110,20 @@ with the families of `ENGINE` that cover them, so that a change proves its rules
 until 7.0. It lists `start-resumes-a-blocked-item-on-a-conflict` as well, which no check sees
 today.
 
-The engine's state lives only for one call of the host while the GitHub host builds each
-item's document from NexKit 6's markers, apart from the decisions after a plan, for a first
-plan, the end of a part in
-its parent's state and about a pull request's rounds, which store their answer in the item's
-state comment but decide from the markers' document wherever it differs from the stored one. The
-plan's report, the question of what a plan waits for and the sweep's and the step run's decision
-after a plan (`plan_carried_on`, `plan_waits_for`, `after_plan`) decide on the stored state alone,
-and `check.sh` fails if any of them falls back; the import of a finished plan of an issue that
-autopilot takes plays the plan's result through the engine, so that state holds the engine's
-answer, which `after_plan` carries out. The
-decisions after a blocked or failed `/nexkit go`, after a fix round that stopped as blocked or a
-round that ran out of time, an implement round that finds no change, a fix round
-whose change is on the base branch, a usage limit, a transient error, a resume and a lost
-command decide on the stored state alone, and so do a person's command, NexKit's own dispatch of
-one and a closing command (`command`, `_on_base`, `closing_command`); `check.sh` fails if any of
-them (`after_go`, `round_carried_on`, `stopped`, `stop_carried_on`, `no_change_found`,
-`on_base_found`), a writer's vouch (`vouched`), the usage limit, the transient error, the resume,
-a lost command (`lost_again`), a command or a closing command falls back. A lost command counts
-its losses from the stored `again.lost` and sends only the tick of a wait that the stored state
-holds already, so the `lost` family seeds a stored state whose count the import keeps. So do the sweep's
-looks at a merge that waits for required checks or that GitHub refused, and what the merge finds
-(`checks_waited`, `refusal_cleared`, `change_seen`): they read the start of the wait and the head
-refused while mergeable from the stored state, and `check.sh` fails if any of them falls back.
-A round's checks and review (`round_ended`, `after_round`) decide on the stored state alone too, so
-each family that plays a round's report stores the item's state just after the round's
+The GitHub host decides every event on the item's stored state, or on the import in memory when
+none is stored, and stores its answer in the item's state comment. Only the first import builds a
+document from NexKit 6's markers. Every family stores the import of its items before its first
+event (`common.seed`), so a decision meets a stored state. The `lost` family seeds a stored state
+whose count of losses the import keeps, since a lost command counts its losses from the stored
+`again.lost`. The import of a finished plan of an issue that autopilot takes plays the plan's
+result through the engine, so that state holds the engine's answer, which `after_plan` carries
+out. Each family that plays a round's report stores the item's state just after the round's
 `progress.start`, with a scripted agent whose output fits the stage, so that the report stores the
 round before it decides the checks. The `chains` family, which dispatches rounds in any order,
 stores the import again as the next revision for each round after the first, as its dispatch
-stores the round in progress. `check.sh` fails if `round_ended` or `after_round` falls back.
-Every family stores the import of its items before its first event, so
-those decisions meet a stored state, and `--fallbacks` lists where they still decide from the
-markers' document. The counts of conflict rounds and automatic fix rounds are the stored ones,
-so a round that the stored state counts and NexKit 6's markers do not yet can differ, which
-`known.py` lists with its reason.
+stores the round in progress. The counts of conflict rounds and automatic fix rounds are the
+stored ones, so a round that the stored state counts and NexKit 6's markers do not yet can
+differ, which `known.py` lists with its reason.
 
 A rule that only matters across calls, such as keeping `rounds.automatic` after a round's checks
 or review judged it, shows to the walker but not on GitHub, so only the walker can see it broken.

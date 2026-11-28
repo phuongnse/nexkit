@@ -36,13 +36,16 @@ These features make up NexKit 6, released from 1.0.0 (2026-10-05) to 6.13.1 (202
 
 Built so far: the protocol's schemas, `nexkit-engine step`, `prompt`, `sweep` and `serve`, the state
 document and its import from NexKit 6's markers, and the differential check against NexKit 6. The
-GitHub host already sends the engine the decisions that follow a plan, a blocked `/nexkit go` and a
-round on a pull request. It also sends the accept of a merge and most of GitHub's refusals, the
-waits for required checks and for the base branch, the retries after a transient stop, the resumes
-after a usage limit, and the runner's `run.json`. The sweep sends its lost commands, released
-conflicts, first plans and order of starts. Left: the merge itself, conflicts that `maintain` finds
-after the base branch moves, a `/nexkit go` that ended in an agent
-error, autopilot's other starts and the rest that [Getting there](engine.md#getting-there) lists.
+GitHub host sends the engine every decision that moves an item. That covers a person's command and
+a closing command, a plan and what follows it, and a new issue's first plan. It also covers a
+blocked or failed `/nexkit go`, a writer's vouch and approval, a round on a pull request, and a
+stopped or timed-out round. Conflicts after the base branch moves are sent too, as is the accept of
+a merge. GitHub's refusals, the merge's result, the waits for required checks and for the base
+branch, the retries after a transient stop and the resumes after a usage limit are sent as well.
+So are a lost command, the runner's `run.json`, the ends of an item with no change or with its
+change on the base branch, and a parent's end. The sweep sends its lost commands, released
+conflicts, first plans and order of starts. Left: four kinds of decision still build the item's
+document from NexKit 6's markers. [Getting there](engine.md#getting-there) gives the detail.
 
 ## Later
 

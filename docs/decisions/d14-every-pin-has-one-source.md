@@ -17,8 +17,8 @@ workflow cannot read the runner or Python from `nexkit/__init__.py`, and it must
   and Python. The pipeline installs exactly those versions.
 - Code and steps that can read that file read it, so a runtime's version and the image's base are
   never repeated.
-- The workflows, and the caller template that `nexkit init` installs, repeat the runner and Python as
-  literals. A test keeps each copy equal to its pin.
+- The workflows and composite actions that NexKit ships, and the caller template that `nexkit init`
+  installs, repeat the runner and Python as literals. A test keeps each copy equal to its pin.
 - This repository's own development tools, ruff and actionlint, are pinned once in `scripts/lint.sh`.
   No workflow proposes them.
 - Tests use no matrix. They run the pinned versions and no others.

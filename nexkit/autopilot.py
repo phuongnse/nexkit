@@ -2013,12 +2013,13 @@ def carries_on(gh, cfg, decision, outcome, agent, ran=None):
         return _plan_carried_on(gh, cfg, decision, output, ran)
     if outcome == "agent_blocked" and decision["action"] == "implement":
         return _round_carried_on(gh, cfg, decision, agent, ran)
+    if outcome == "agent_blocked" and decision["action"] == "fix":
+        # Stored before the protected-paths answer, which the engine gives as a wait for a person.
+        return _stop_carried_on(gh, cfg, decision, agent, ran)
     if output.get("protected_paths"):
         # Only a person changes protected paths.
         return False
     timed_out = outcome == "agent_error" and agent.get("timed_out")
-    if outcome == "agent_blocked" and decision["action"] == "fix":
-        return _stop_carried_on(gh, cfg, decision, agent, ran)
     if timed_out and decision["action"] in ("implement", "fix"):
         return _stop_carried_on(gh, cfg, decision, agent, ran)
     if outcome != "agent_blocked":

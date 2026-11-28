@@ -482,7 +482,7 @@ class Item:
         timed_out = bool(run.get("timed_out"))
         doc = copy.deepcopy(self.doc)
         if stage == "fix":
-            # The fix round on the head it checked, as `host._round_doc` has it.
+            # The fix round on the head it checked, as the stored pending fix run names it.
             doc["state"] = "fixing"
             doc["pending"] = [agent_run("fix", doc["change"]["version"])]
             if not timed_out and autopilot.asked_again(self.pull_comments, self.comments):
@@ -498,7 +498,8 @@ class Item:
         else:
             output = host.fix_output(run) if stage == "fix" else host.round_output(run)
             name = host._run_event_id(run.get("url"))
-            event = host._stop_event(self.issue["number"], name, doc, output, timed_out)
+            version = (doc["change"] or {}).get("version")
+            event = host._stop_event(self.issue["number"], name, version, output, timed_out)
         self.seen(event, run)
         try:
             found = host.step(doc, event, policies)["state"]

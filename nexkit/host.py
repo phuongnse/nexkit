@@ -51,7 +51,14 @@ It also decides what follows a fix round that stopped as blocked with questions 
 paths, as after a blocked `/nexkit go` but on the pull request, where an answer that changes
 the issue's scope is a person's; and what follows an implement or fix round that ran out of
 time: one plan that splits the issue, unless the issue asked before, a parent asked, or it is a
-part at the deepest level.
+part at the deepest level. These decisions (`stopped`, `stop_carried_on`) read the item's stored
+state alone, which holds the round's depth and a split that an issue above it asked for (`depth`
+and `asked`, as the import stores them). `report` sends the round's result on the stored state,
+which waits for the round's agent run. The sweep sends it only while the stored state still
+waits for that run and does not hold the result's event yet; otherwise it carries out what the
+state holds: a pending run, with autopilot's answers shown when the state says it answered, or the
+wait for a person. A round that the import placed after the upgrade waits for a `start` instead,
+and autopilot's `requested` start, with no person, starts it, as for a blocked `/nexkit go`.
 
 It decides the end of a round's wait too, in the sweep: once the label that held back a merge
 or an automatic fix round is gone, a head pushed meanwhile is reviewed, and the fix round runs,
@@ -363,10 +370,11 @@ exactly as they are: a finished plan's import is `awaitingApproval`, which canno
 result, and a second send of one event, such as the plan's result that `report` and the step run
 both send, would be a duplicate. A plan's result keeps the marks of the answers that the engine
 gave to a round's questions (`_carry_replan`), which the markers cannot say, so that a round that
-asks again after such a re-plan is not answered twice in a row. `after_go` and `round_carried_on`
-no longer go through it: they pass no document of the markers. Nor do `no_change_found`,
-`on_base_found`, `stage_limited`, `stage_transient`, `stage_untrusted` and `resumes`, which decide
-on the stored state alone, and neither do `command`, `_on_base` and `closing_command`. So do
+asks again after such a re-plan is not answered twice in a row. `after_go`, `round_carried_on`,
+`stopped` and `stop_carried_on` no longer go through it: they pass no document of the markers.
+Nor do `no_change_found`, `on_base_found`, `stage_limited`, `stage_transient`, `stage_untrusted`
+and `resumes`, which decide on the stored state alone, and neither do `command`, `_on_base` and
+`closing_command`. So do
 `checks_waited`, `refusal_cleared` and `change_seen`: the
 sweep's looks at a merge that waits for required checks or that GitHub refused, and what the
 merge finds. So do `required_failed`, `accept_answer` and `update_failed`. `first_plan` and
@@ -375,7 +383,9 @@ So do `released`, `base_passes` and `conflicts_released`: the end of a wait is t
 stored hold (`_release_row`), autopilot's start for an import made after the label was gone, or,
 when `take` released the hold already, the stored pending action. `stopped_counts` too: whether a
 stopped round gives its count back is the stored `rounds.automatic` and the pending fix run, never
-a flag of its caller. The last move to the stored document removes `resync`.
+a flag of its caller; and a round whose result `stop_carried_on` stored in the same run sends
+nothing more, which the stored events seen show. The last move to the stored document removes
+`resync`.
 
 A row of events, such as a hold and then the stop, or a round's result and then a comment, is one
 write: the state after the last event, at the revision read plus one, since `item_state.write`
@@ -1855,12 +1865,10 @@ def after_go(gh, cfg, issue, comment, run, record, start, comments, write=False)
             events.append(
                 _event("blockerClosed", number, None, name, blocker=str(found), completed=done)
             )
-        if not send_result and doc["state"] in ("working", "planning"):
-            # Autopilot's answers start the round again: the import leaves no run pending for it.
-            if any(wait["for"] == "start" for wait in doc["waits"]):
-                name = f"start-{number}-{doc['revision']}"
-                fields = {"what": "start", "by": None, "note": "", "plan": None}
-                events.insert(0, _event("requested", number, None, name, **fields))
+        if not send_result:
+            begin = _restart(doc, number)
+            if begin is not None:
+                events.insert(0, begin)
                 restart = True
     if not events:
         view.by_event = heard
@@ -1884,6 +1892,22 @@ def after_go(gh, cfg, issue, comment, run, record, start, comments, write=False)
         # A request shows no answers, though the state says that autopilot's answers started it.
         actions = _with_answers(actions, state)
     return view.carry(actions or _held(state))
+
+
+def _restart(doc, number):
+    """Autopilot's `requested` start of the round that the stored state `doc` of work item
+    `number` waits to start, or None. An imported round that autopilot's answers or its split
+    restart has no run pending, only a `start` wait, in `working`, `planning` or `fixing`
+    (`first_state.Item.after_stop`)."""
+    if doc["state"] not in ("working", "planning", "fixing"):
+        return None
+    if any(a["kind"] == "runAgent" for a in doc["pending"]):
+        return None
+    if not any(wait["for"] == "start" for wait in doc["waits"]):
+        return None
+    name = f"start-{number}-{doc['revision']}"
+    fields = {"what": "start", "by": None, "note": "", "plan": None}
+    return _event("requested", number, None, name, **fields)
 
 
 def _with_answers(actions, doc):
@@ -2057,39 +2081,10 @@ def fix_output(run):
     }
 
 
-def _split_place(gh, issue, record):
-    """(depth, asked) of `issue` for a round that ran out of time: how deep a part it is, and
-    whether an issue above it asked for a split, which a part inherits
-    (`autopilot.split_refused`). Not read once the issue itself asked, as NexKit 6 reads it."""
-    if record.get("split_asked"):
-        return 0, False
-    above = autopilot.lineage(gh, issue)
-    asked = any(
-        autopilot.find_record(gh.comments(parent["number"]))[1].get("split_asked")
-        for parent in above
-    )
-    return autopilot.depth(issue, above), asked
-
-
-def _round_doc(issue, record, again, pull=None, head=None, place=(0, False)):
-    """`issue`'s document while its `/nexkit go`, or with `pull` a fix round of that pull
-    request on `head`, runs, which the engine waits for. `again` says that autopilot's
-    answers started it and no person commented since (`autopilot.asked_again`); `place` is
-    what `_split_place` reads."""
-    change = {"id": str(pull), "version": str(head or pull)} if pull else None
-    doc = _document(issue, record, change=change)
-    doc["state"] = "fixing" if pull else "working"
-    stage = "fix" if pull else "implement"
-    doc["pending"] = [first_state.agent_run(stage, (change or {}).get("version"))]
-    doc["asked"] += ["answers"] * again
-    doc["depth"] = place[0]
-    if place[1] and "split" not in doc["asked"]:
-        doc["asked"].append("split")
-    return doc
-
-
-def _stop_event(number, name, doc, output, timed_out, ran=None):
-    version = (doc["change"] or {}).get("version")
+def _stop_event(number, name, version, output, timed_out, ran=None):
+    """The result of a stopped round of work item `number`, named `name`: a time-out, or the
+    blocked `output` of the agent, on the change `version` that its fix round ran on (None for a
+    `/nexkit go`)."""
     result = {**spent(ran), "timedOut": timed_out, "output": None if timed_out else output}
     return _event(
         "actionFinished",
@@ -2103,32 +2098,48 @@ def _stop_event(number, name, doc, output, timed_out, ran=None):
 
 
 def stopped(gh, cfg, issue, run, record, start, comments, pull=None, pull_comments=(), write=False):
-    """The step after a round that stopped, whose marker is `run`, as the engine decides it:
-    with `pull`, a fix round of that pull request that stopped as blocked with questions or
-    protected paths (`autopilot.engine_round`); or a fix round or a `/nexkit go` that ran out
-    of time, after which autopilot asks once for a split. `comments` are the issue's,
-    `pull_comments` the pull request's, `record` autopilot's record and `start` what a
-    command that the step starts begins from. With `write`, which only the run of the item's
-    group passes, the engine's answer is stored (`decide`). Raises `Refused`."""
+    """The step after a round that stopped, whose marker is `run`, as the engine decides it on
+    the item's stored state alone: with `pull`, a fix round of that pull request that stopped as
+    blocked with questions or protected paths (`autopilot.engine_round`); or a fix round or a
+    `/nexkit go` that ran out of time, after which autopilot asks once for a split, unless the
+    stored `asked` and `depth` say a person decides. It sends only what that state does not hold
+    yet: the round's result, while the state still waits for that stage's agent run and does not
+    have the result's event among its recent events (`report` stores it otherwise). Then, when
+    the state waits to start a round that autopilot's answers or its split restart, as an
+    imported one does, autopilot's `requested` start; otherwise the step carries out what the
+    state holds (`_held`). `comments` and `pull_comments` are not read any more, and `record`
+    only for the words of a time-out's wait. `start` is what a command that the step starts
+    begins from. With `write`, which only the run of the item's group passes, the engine's
+    answer is stored (`decide`). Raises `Refused`, with no configuration or no state to decide
+    on."""
     number = issue["number"]
     timed_out = bool(run.get("timed_out"))
-    place = _split_place(gh, issue, record) if timed_out else (0, False)
-    again = False
-    if not timed_out:
-        again = autopilot.asked_again(pull_comments, comments)
-    doc = _round_doc(issue, record, again, pull, run.get("head"), place)
-    event = _stop_event(number, _run_event_id(run.get("url")), doc, fix_output(run), timed_out)
-    _, actions = decide(
-        gh,
-        cfg,
-        number,
-        event,
-        doc,
-        pull=pull,
-        action=("runAgent", "fix" if pull else "implement"),
-        write=write,
-    )
+    doc = stored(gh, cfg, number, pull)[1] if cfg is not None else None
+    if doc is None:
+        raise Refused("The item has no state to decide on.")
+    stage = "fix" if pull else "implement"
+    name = _run_event_id(run.get("url"))
+    waiting = any(a["kind"] == "runAgent" and a.get("stage") == stage for a in doc["pending"])
+    if waiting and name not in doc["recentEvents"]:
+        version = (doc["change"] or {}).get("version") if pull else None
+        event = _stop_event(number, name, version, fix_output(run), timed_out)
+        action = ("runAgent", stage)
+    else:
+        event, action = _restart(doc, number), None
+    if event is None:
+        actions = _held(doc)
+    else:
+        state, actions = decide(gh, cfg, number, event, None, pull=pull, action=action, write=write)
+        if action is None:
+            # A request shows no answers, though the state says that autopilot's answers started it.
+            actions = _with_answers(actions, state)
     kinds = {action["kind"]: action for action in actions}
+
+    def step(kind, reason, **fields):
+        # What the engine's answer asks for, which the stored state holds when it was stored
+        # before (`_held`), as `_RoundView.step` carries out an answer.
+        return autopilot._step(issue, kind, reason, **fields)
+
     found = [
         {"question": item["question"], "answer": item["recommended"]}
         for item in questions(run.get("questions"))
@@ -2136,11 +2147,11 @@ def stopped(gh, cfg, issue, run, record, start, comments, pull=None, pull_commen
     if timed_out and (kinds.get("runAgent") or {}).get("stage") == "plan":
         fields = {**start, "note": autopilot.SPLIT_NOTE, "remember": {"split_asked": True}}
         reason = "the agent ran out of time, so autopilot asks for a split"
-        return autopilot._step(issue, "start", reason, command="plan", **fields)
+        return step("start", reason, command="plan", **fields)
     if not timed_out and (kinds.get("runAgent") or {}).get("stage") == "fix":
         fields = {**start, "target": pull, "note": autopilot.answer_note(found)}
         reason = "autopilot answers the questions of the blocked round"
-        return autopilot._step(issue, "start", reason, command="fix", answers=found, **fields)
+        return step("start", reason, command="fix", answers=found, **fields)
     reason = (kinds.get("needPerson") or {}).get("reason")
     if pull:
         failed = autopilot.person(
@@ -2174,31 +2185,27 @@ ROUND_WAITS = {
 def stop_carried_on(gh, cfg, issue, decision, agent, ran=None, write=False):
     """Whether autopilot carries on after a fix round of `decision` that stopped as blocked,
     or an implement or fix round that ran out of time, with the agent's result `agent`, as
-    the engine decides what follows it, so that `report` mentions nobody. A wait for a person,
-    the closing answer included, makes `report` mention them. With `write`, which the `report`
-    of the item's group passes, the answer is stored (`decide`). Raises `Refused`."""
+    the engine decides what follows it on the item's stored state, which waits for that round's
+    agent run, so that `report` mentions nobody. The round's depth and a split that an issue
+    above it asked for are the stored `depth` and `asked`. A wait for a person, the closing
+    answer included, makes `report` mention them. With `write`, which the `report` of the item's
+    group passes, the answer is stored (`decide`), and the sweep's `stopped` then does not send
+    the result again. Raises `Refused`."""
     from .report import _autopilot_fields
 
-    comments = gh.comments(issue["number"])
-    record = autopilot.find_record(comments)[1]
     timed_out = bool(agent.get("timed_out"))
     pr = decision.get("pr") if decision["action"] == "fix" else None
-    again = False
-    if not timed_out:
-        again = autopilot.asked_again(gh.comments(pr) if pr else comments, comments if pr else ())
-    place = _split_place(gh, issue, record) if timed_out else (0, False)
     found = _autopilot_fields(agent)
     run = {**found, "protected_paths": ((agent.get("output") or {}).get("protected_paths") or [])}
-    doc = _round_doc(issue, record, again, pr, decision.get("head"), place)
     output = fix_output(run) if pr else round_output(run)
-    name = _run_event_id()
-    event = _stop_event(issue["number"], name, doc, output, timed_out, ran)
+    version = str(decision.get("head") or pr) if pr else None
+    event = _stop_event(issue["number"], _run_event_id(), version, output, timed_out, ran)
     _, actions = decide(
         gh,
         cfg,
         issue["number"],
         event,
-        doc,
+        None,
         pull=pr,
         action=("runAgent", "fix" if pr else "implement"),
         write=write,
@@ -3748,10 +3755,17 @@ def stopped_counts(gh, cfg, issue, pr, head, by_host, write=False):
     `stopped`; no policy decides a stop. With `write`, which only a run of the item's group
     passes, the answer is stored (`decide`); `maintain._give_back` runs in the push run's or the
     sweep's group and never does: it only previews, and the run that the push run starts in the
-    item's group stores the give-back (`command`, `base_moved` with `automatic`). Raises
+    item's group stores the give-back (`command`, `base_moved` with `automatic`). A round whose
+    agent stopped by itself and whose result `stop_carried_on` stored in this run, which the
+    stored events seen show (`_run_event_id`), sends nothing more: the stored `rounds.counted`
+    is the count, and a second result would overwrite the answer stored for the stop. Raises
     `Refused`."""
     version = str(head or pr)
     action = None
+    if write and not by_host:
+        doc = stored(gh, cfg, issue, pr)[1] if cfg is not None else None
+        if doc is not None and _run_event_id() in doc["recentEvents"]:
+            return _stored_count(doc, 0, "counted")
     if by_host:
         text = "The host stopped the round before its review."
         event = _event("stopped", issue, None, f"stop-{pr}-{version}", outcome="other", text=text)

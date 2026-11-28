@@ -6,9 +6,9 @@ What waits for the owner is the work that NexKit does not carry on by itself, as
 one list in four groups.
 
 1. **Open issues with no label:** `gh issue list --state open --search 'no:label'`.
-2. **Open issues with no milestone:** `gh issue list --state open --search 'no:milestone'`. An issue
-   that no roadmap row names correctly has none, so ask the owner to check each against the
-   milestone test of Delivery, and do not report one as wrong when it has its kind label.
+2. **Open issues with no milestone:** `gh issue list --state open --search 'no:milestone'`. Ask the
+   owner to check each against [the milestone test](../../../docs/delivery.md#labels-and-milestones),
+   and do not report one as wrong when it has its kind label.
 3. **Issues that a hold stops.** Read the labels of `autopilot.labels` in `.nexkit/config.json`
    that are marked as holds, and list the open issues of each
    (`gh issue list --state open --label <label>`).

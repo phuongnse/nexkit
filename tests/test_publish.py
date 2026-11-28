@@ -9,7 +9,6 @@ from pathlib import Path
 from unittest import mock
 
 from nexkit import agent, cli, first_state, gitutil, host, item_state
-from nexkit.context import gather
 from nexkit.github import GitHubError
 from nexkit.gitutil import GitError, merge_tree
 from nexkit.publish import PublishError, identity, publish, pull_body, render_plan, store_round
@@ -24,6 +23,7 @@ from tests.support import (
     git,
     make_config,
     profile_config,
+    prompt_texts,
 )
 
 CONTEXT = {"title": "Fix add", "issue": 5}
@@ -745,7 +745,7 @@ class PublishTests(unittest.TestCase):
             "status": "done",
             "output": {**PLAN, "revision": {"started_over": False, "changes": []}},
         }
-        context = {**CONTEXT, "since_plan": "No discussion."}
+        context = {**CONTEXT, "replan": True}
         publish(self.gh, decision("plan"), result, context, self.cfg, ".", self.out)
         self.assertIn("Revised the last plan.", latest_plan(self.gh.comments(5))["body"])
         publish(self.gh, decision("plan"), result, CONTEXT, self.cfg, ".", self.out)
@@ -772,7 +772,7 @@ class PublishTests(unittest.TestCase):
 
     def test_implementing_agent_receives_the_notes(self):
         self.gh.comment(5, render_plan(PLAN))
-        context = gather(self.gh, decision("implement"))
+        context = prompt_texts(self.gh, decision("implement"))
         self.assertIn("Add `test_add_negative`.", context["plan"])
         self.assertIn("Implementation notes", context["plan"])
 
@@ -917,15 +917,14 @@ class MergePublishTests(unittest.TestCase):
             "open_conflicts": [],
         }
         self.claude.configure(result=result, write=write, run=list(run))
-        context = {
-            **CONTEXT,
-            "pr": 6,
-            "body": "",
-            "discussion": "",
+        item = {"id": 5, "title": "Fix add", "body": "", "change": 6, "person": False}
+        inputs = {
+            "item": item,
+            "notes": "",
+            "discussion": {"item": [], "change": []},
             "plan": "",
-            "note": "",
-            **context,
         }
+        context = {**CONTEXT, "inputs": inputs, "state": None, "person": False, **context}
         result = agent.run_stage(
             "fix", context, self.cfg, work, self.out, program=str(self.claude.path), base="main"
         )

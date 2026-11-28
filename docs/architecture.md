@@ -20,7 +20,7 @@ engine's calls as a program that reads JSON on standard input.
 | `__main__.py` | Runs `cli.py`, so that `python3 -m nexkit` works |
 | `cli.py` | Every command, local and pipeline |
 | `route.py` | `route`: event → action, authorization, `verified_sha` |
-| `context.py`, `evidence.py`, `agent.py` | `agent` and `review`: prompt texts, CI evidence, agent run, patch |
+| `context.py`, `evidence.py`, `agent.py` | `agent` and `review`: the fetched inputs, the prompt request, CI evidence, agent run, patch |
 | `publish.py` | `publish`: plan comment, commit, push, pull request, and the store of a round's results in the item's state |
 | `checks.py`, `cache.py` | Setup and checks; the keys of cache restore |
 | `report.py` | `report`: statuses, reviews, run and state comments, and what happens next |
@@ -34,7 +34,7 @@ engine's calls as a program that reads JSON on standard input.
 | `status.py`, `snapshot.py`, `pin.py`, `github.py`, `gitutil.py` | `nexkit status` and its batched reads; the pinned release; REST, GraphQL and git helpers |
 | `schema.py`, `redact.py`, `runlog.py`, `textutil.py` | Result validation, secret removal, run log; the text limits and shortening that the host and the engine share |
 | `runtimes/` | Everything specific to one CLI or provider |
-| `protocol/` | The engine's protocol as JSON Schemas, with examples; `size.py` bounds its state document; `stages.py` holds each stage's run state, access, inputs and diff limit |
+| `protocol/` | The engine's protocol as JSON Schemas, with examples; `size.py` bounds its state document; `keys.py` converts keys between the protocol's camelCase and snake_case; `stages.py` holds each stage's run state, access, inputs and diff limit |
 | `engine/` | The engine: states and moves in `machine.py`; prompts in `prompt.py` and `prompts/`; `sweep.py` (starts); `cli.py` (`nexkit-engine`) and `serve.py` |
 | `templates/` | The caller workflow that `nexkit init` installs in a repository |
 

@@ -23,7 +23,7 @@ from nexkit.state import ACTIONS_BOT, PLAN_MARKER, render_run
 from nexkit.status import collect, render
 from nexkit.textutil import TEXT_LIMIT
 from tests.answers import NOT_ANSWERS, STEPS, _before, _calls
-from tests.support import BOT_LOGIN, FakeGitHub, make_config, play_steps, play_sweep
+from tests.support import BOT_LOGIN, FakeGitHub, make_config, play_steps, play_sweep, prompt_texts
 
 WORKFLOW = "acme/app/.github/workflows/nexkit.yml@refs/heads/main"
 PARENTS = make_config(close_parent_issues=True)
@@ -1105,8 +1105,6 @@ class AnswerAndSplitCase(AutopilotCase):
 
 class AnswerTests(AnswerAndSplitCase):
     def test_answers_recommended_questions_and_plans_again(self):
-        from nexkit.context import gather
-
         self.issue(5)
         self.posted_plan(5, questions=[QUESTION])
         self.sweep()
@@ -1115,7 +1113,7 @@ class AnswerTests(AnswerAndSplitCase):
         self.assertIn("1. Which port?\n   **8080**", answered["body"])
         # The next plan reads the answers as the owner's discussion since the plan.
         decision = {"action": "plan", "issue": 5, "pr": None, "note": ""}
-        context = gather(self.gh, decision)
+        context = prompt_texts(self.gh, decision)
         self.assertIn("NexKit autopilot for the owner", context["since_plan"])
         self.assertIn("**8080**", context["since_plan"])
         self.assertNotIn("nexkit:answers", context["since_plan"])
@@ -1124,12 +1122,10 @@ class AnswerTests(AnswerAndSplitCase):
         self.assertEqual(self.started(), [("plan", 5)])
 
     def test_another_bots_answers_are_not_the_owners(self):
-        from nexkit.context import gather
-
         self.issue(5)
         comment = self.gh.comment(5, "x\n\n" + autopilot.answers_marker({"answers": []}))
         comment["user"] = {"login": "evil[bot]", "type": "Bot"}
-        context = gather(self.gh, {"action": "plan", "issue": 5, "pr": None, "note": ""})
+        context = prompt_texts(self.gh, {"action": "plan", "issue": 5, "pr": None, "note": ""})
         self.assertNotIn("for the owner", context["discussion"])
 
     def test_waits_for_a_person_without_a_recommendation_or_without_answer(self):

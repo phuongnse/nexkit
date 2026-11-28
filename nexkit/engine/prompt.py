@@ -8,10 +8,12 @@ protocol's call sends them in camelCase, and `answer` converts them. The earlier
 the last review are not an input: they come from the call's `state`, as `rounds.fixes` and
 `rounds.lastReview`.
 
-A prompt is written in two parts, which `write` runs one after the other: `texts`, from what
-the host read about the work item, and `finish`, from what its round adds: the change's diff,
-the checks' results and the workspace. The GitHub host runs them in two jobs, since the job
-that reads GitHub holds a token and the one with the checkout holds none.
+A prompt is written in two internal steps, which `write` runs one after the other: `texts`,
+from what the host read about the work item, and `finish`, from what its round adds: the
+change's diff, the checks' results and the workspace. The GitHub host sends one `prompt` call
+for each prompt, from its agent step: the job that reads GitHub holds a token and fetches the
+inputs, and the agent job, with the checkout and no token, adds the diff, the checks and the
+workspace to them.
 
 A text that a prompt keeps only the start of goes whole to a file in the host's folder for
 texts, which the agent reads: the engine names the file in the prompt and answers its path
@@ -27,6 +29,7 @@ from importlib import resources
 from string import Template
 
 from .. import protocol
+from ..protocol.keys import camel, snake
 from ..protocol.stages import COMMIT, MAX_DIFF
 from ..textutil import (
     MAX_PARTS,
@@ -99,36 +102,6 @@ def file_name(key):
 def template(name):
     """A prompt's template: the engine's own package data, the same in every call."""
     return resources.files(__package__).joinpath(f"prompts/{name}.md").read_text()
-
-
-# The protocol names keys in camelCase; the engine's records, as NexKit's, in snake_case.
-
-
-def _camel_key(key):
-    head, *rest = key.split("_")
-    return head + "".join(part[:1].upper() + part[1:] for part in rest)
-
-
-def _snake_key(key):
-    return re.sub(r"[A-Z]", lambda match: "_" + match.group().lower(), key)
-
-
-def _keys(value, rename):
-    if isinstance(value, dict):
-        return {rename(key): _keys(item, rename) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_keys(item, rename) for item in value]
-    return value
-
-
-def camel(value):
-    """`value` with each key of its records in camelCase, as the protocol sends it."""
-    return _keys(value, _camel_key)
-
-
-def snake(value):
-    """`value` with each key of its records in snake_case, as the engine reads it."""
-    return _keys(value, _snake_key)
 
 
 class Shelf:

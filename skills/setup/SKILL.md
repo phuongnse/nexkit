@@ -63,6 +63,7 @@ files or repository settings, and wait for confirmation.
      a time budget: `{"name": "e2e", "run": "<command>", "shards": {"count": "<command
      that prints N>", "max": <n>}}`. Each shard gets `NEXKIT_SHARD=k/N`; the script reads
      it to pick its part (see the configuration reference, Parallel checks).
+     `nexkit init` does not write `shards`. Add it to `.nexkit/config.json` after step 4.
    If the repository has no tests yet, say so: NexKit can still run, but it cannot verify
    changes until a check exists. Suggest adding a test command first.
    If setup downloads toolchains or many dependencies, offer `cache` entries (see the

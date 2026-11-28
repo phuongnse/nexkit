@@ -1008,7 +1008,7 @@
       ]
     },
     "workspaceText": {
-      "$comment": "The host's own sentences on how the agent sees and edits the change, which the plan, implement and review prompts use in place of any host's. Each is a string of at most 500 characters and every field is required, in every call with a `workspace`, as the host's own text outside the `<untrusted>` tags: a host builds them only from its own fixed text, never from what people wrote. Each replaces one span of a prompt's line, so none holds a line break. The engine refuses a `workspace` without `text`, or without one of its fields, and names the missing field.",
+      "$comment": "The host's own sentences on how the agent sees and edits the change, which the plan, implement, fix and review prompts, and the sections of a review about a merge of the base and the round before, use in place of any host's. Each is a string of at most 500 characters and every field is required, in every call with a `workspace`, as the host's own text outside the `<untrusted>` tags: a host builds them only from its own fixed text, never from what people wrote. Each replaces one span of a prompt's line, so none holds a line break, except `mergeRule` and `sideHistory`, whose one sentence a template wraps over two lines. The engine refuses a `workspace` without `text`, or without one of its fields, and names the missing field.",
       "type": "object",
       "properties": {
         "location": {
@@ -1080,6 +1080,66 @@
           "$comment": "Where a person's change is, after \"changes nothing\", such as \"in this draft\".",
           "type": "string",
           "maxLength": 500
+        },
+        "fixLocation": {
+          "$comment": "Where the fix agent works, as the end of the fix prompt's first line before the change's name, such as \"working through the application's tools on\".",
+          "type": "string",
+          "maxLength": 500
+        },
+        "earlierWork": {
+          "$comment": "A whole sentence that says the change already holds earlier work, such as \"The draft already holds earlier edits.\".",
+          "type": "string",
+          "maxLength": 500
+        },
+        "mergeRule": {
+          "$comment": "The rule against merging by hand, a whole sentence, such as \"Do not take in the published request yourself. The application does that when the round needs it.\". It may hold line breaks, and indents its own further lines by two spaces as a bullet's continuation.",
+          "type": "string",
+          "maxLength": 500
+        },
+        "versionKind": {
+          "$comment": "The noun for one version of the change, which the merge and previous-review sections use before an id, such as \"version\".",
+          "type": "string",
+          "maxLength": 500
+        },
+        "baseKind": {
+          "$comment": "The noun for what the change is merged with, after \"the\", such as \"published request\".",
+          "type": "string",
+          "maxLength": 500
+        },
+        "mergeInto": {
+          "$comment": "Where the base was merged and in what state, after the base and its version, such as \"into the draft, without saving it\".",
+          "type": "string",
+          "maxLength": 500
+        },
+        "lastMerged": {
+          "$comment": "When the base last reached the change, after \"has moved since\", such as \"this draft last took it in\".",
+          "type": "string",
+          "maxLength": 500
+        },
+        "mergeUndo": {
+          "$comment": "How the agent leaves a merge in place, after \"Leave the merge in place:\", a whole clause that ends with a full stop, such as \"do not discard or publish it.\".",
+          "type": "string",
+          "maxLength": 500
+        },
+        "sideHistory": {
+          "$comment": "A sentence on how the agent sees what each side changed in a conflicted file, such as \"The draft's history shows what each side changed.\". It may hold line breaks, and indents its own further lines by two spaces as a bullet's continuation.",
+          "type": "string",
+          "maxLength": 500
+        },
+        "sideNote": {
+          "$comment": "A sentence that says a note one side left is no answer to a conflict, such as \"A side's note is not an answer.\".",
+          "type": "string",
+          "maxLength": 500
+        },
+        "otherVersions": {
+          "$comment": "A sentence for the review after no fix round, such as \"Any later versions were saved without a fix round.\".",
+          "type": "string",
+          "maxLength": 500
+        },
+        "workspaceName": {
+          "$comment": "Where the agent reads the change, in the engine's notes that a version or a diff is not there, such as \"this draft's history\".",
+          "type": "string",
+          "maxLength": 500
         }
       },
       "required": [
@@ -1096,7 +1156,19 @@
         "pipelineFiles",
         "pipelineFile",
         "protectedExample",
-        "personChange"
+        "personChange",
+        "fixLocation",
+        "earlierWork",
+        "mergeRule",
+        "versionKind",
+        "baseKind",
+        "mergeInto",
+        "lastMerged",
+        "mergeUndo",
+        "sideHistory",
+        "sideNote",
+        "otherVersions",
+        "workspaceName"
       ]
     },
     "words": {

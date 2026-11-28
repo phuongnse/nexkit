@@ -1,7 +1,7 @@
 
 ## Previous round
 
-NexKit already reviewed this pull request at commit $previous_head. Its findings, and the
+NexKit already reviewed this $change_kind at $version_kind $previous_head. Its findings, and the
 fix rounds since then, are below. The fix agent may have rejected a finding and given its
 reason in its summary.
 
@@ -9,7 +9,7 @@ reason in its summary.
 $previous_round
 </untrusted>
 
-## Changes since commit $previous_head
+## Changes since $version_kind $previous_head
 
 Changes that came from `$base` through a merge are left out.
 

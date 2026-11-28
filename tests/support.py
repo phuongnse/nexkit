@@ -75,7 +75,9 @@ def prompt_texts(
     shelf = prompt.Shelf(Path(texts).resolve() if texts else None)
     item = record["inputs"]["item"]
     words = agent.prompt_words(item["id"], item.get("change"))
-    out = prompt.texts(stage or decision["action"], record["inputs"], shelf, record["state"], words)
+    # The workspace is the host's, which the round adds beside what `gather` fetched.
+    inputs = {**record["inputs"], "workspace": {"text": agent.WORKSPACE_TEXT}}
+    out = prompt.texts(stage or decision["action"], inputs, shelf, record["state"], words)
     if shelf.folder:
         context.keep_texts(
             ({"path": path, "text": text} for path, text in shelf.files.items()), shelf.folder
@@ -104,7 +106,8 @@ def build_prompt(stage, texts, cfg, extra=None):
 
 def previous_round(repo, texts, base):
     """The review prompt's section about the previous review round."""
-    return prompt.previous_round(texts, base, agent.since_review(repo, texts, base))
+    since = agent.since_review(repo, texts, base)
+    return prompt.previous_round(texts, base, since, agent.WORKSPACE_TEXT)
 
 
 def evidence_text(found):

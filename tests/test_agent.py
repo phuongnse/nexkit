@@ -1731,7 +1731,8 @@ class ConflictTests(StageCase):
             self.assertIn(f"`{field}`", engine_prompt.template("fix"))
 
     def test_fix_prompt_asks_for_a_decision_instead_of_a_guess(self):
-        section = engine_prompt.conflicts_text("main", "b" * 40, ["Program.cs"])
+        words, text = agent.prompt_words(5, 6), agent.WORKSPACE_TEXT
+        section = engine_prompt.conflicts_text("main", "b" * 40, ["Program.cs"], words, text)
         self.assertIn("whether it has one right answer or needs a choice", section)
         self.assertIn("do not pick a side and do not guess", section)
         self.assertIn("return `status: blocked` and list every\n  such conflict", section)

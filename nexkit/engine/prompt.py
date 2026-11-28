@@ -10,8 +10,10 @@ the last review are not an input: they come from the call's `state`, as `rounds.
 come with the call, as `words`: the templates and the code here read them in place of any
 host's (`template_words`), and the engine refuses a stage's prompt without them. The host's
 own sentences on how the agent sees and edits the change come in the `workspace` input, as its
-`text` (`WORKSPACE_TEXTS`): the plan, implement and review templates read them in place of any
-host's, and the call's schema refuses a `workspace` without them.
+`text` (`WORKSPACE_TEXTS`): the plan, implement, fix and review templates, and the sections
+that `previous_review`, `previous_round`, `merge_review` and `conflicts_text` write about a
+merge of the base and the round before, read them in place of any host's, and the call's
+schema refuses a `workspace` without them.
 
 A prompt is written in two internal steps, which `write` runs one after the other: `texts`,
 from what the host read about the work item, and `finish`, from what its round adds: the
@@ -97,6 +99,18 @@ WORKSPACE_TEXTS = (
     "pipeline_file",
     "protected_example",
     "person_change",
+    "fix_location",
+    "earlier_work",
+    "merge_rule",
+    "version_kind",
+    "base_kind",
+    "merge_into",
+    "last_merged",
+    "merge_undo",
+    "side_history",
+    "side_note",
+    "other_versions",
+    "workspace_name",
 )
 # How the prompts mark a checklist item that a person decides.
 PERSON_MARK = "(a person decides)"
@@ -390,16 +404,17 @@ def feedback(checks=None, required=None, review=None, people=None, shelf=None):
     return "\n\n".join(parts) if parts else "No recorded feedback. Follow the note."
 
 
-def previous_review(last, fixes=(), merged=None):
+def previous_review(last, fixes=(), merged=None, text=None):
     """{previous_head, previous_round}: the `last` NexKit review of the change and the
     recorded `fixes` since, the newest of which is the round the review follows, whose merge of
-    the base is `merged`; None without a review."""
+    the base is `merged`; None without a review. `text` is the workspace's texts."""
     if not last:
         return None
     fixes = [dict(f) for f in fixes or [] if f["round"] > last["round"]]
     if fixes and merged and merged.get("base"):
         fixes[-1]["conflicts"] = merged.get("conflicts")
-    lines = [f"### Findings of the review of commit {last['head'][:7]} ({last['verdict']})", ""]
+    version = text["version_kind"]
+    lines = [f"### Findings of the review of {version} {last['head'][:7]} ({last['verdict']})", ""]
     for number, f in enumerate(last["findings"], 1):
         where = f"{f['file']}:{f['line']}" if f.get("file") else "general"
         lines.append(f"{number}. {f['severity']}, `{where}`: {clip(f['body'], 1500)}")
@@ -415,7 +430,7 @@ def previous_review(last, fixes=(), merged=None):
         ]
     lines += ["", "### Fix rounds since that review"]
     if not fixes:
-        lines += ["", "None. Any later commits were pushed without a NexKit fix round."]
+        lines += ["", f"None. {text['other_versions']}"]
     for number, fix in enumerate(fixes, 1):
         who = "automatic" if fix.get("auto") else "requested by a person"
         lines += [
@@ -434,9 +449,11 @@ def previous_review(last, fixes=(), merged=None):
             lines += ["", "Cause the fix agent found:", "", clip(fix["cause"], 2000)]
         if fix.get("conflicts"):
             files = ", ".join(f"`{name}`" for name in fix["conflicts"])
-            lines += ["", f"This round merged the base branch and resolved conflicts in {files}."]
+            base = text["base_kind"]
+            lines += ["", f"This round merged the {base} and resolved conflicts in {files}."]
         elif fix.get("conflicts") == []:
-            lines += ["", "This round merged the base branch, which merged without conflicts."]
+            base = text["base_kind"]
+            lines += ["", f"This round merged the {base}, which merged without conflicts."]
     return {"previous_head": last["head"], "previous_round": "\n".join(lines)}
 
 
@@ -520,6 +537,12 @@ def linked(found, shelf, words):
     return out
 
 
+def workspace_texts(inputs):
+    """The host's workspace texts of `inputs`, as `build` reads them: each a string."""
+    text = (inputs.get("workspace") or {}).get("text") or {}
+    return {key: str(value) for key, value in text.items()}
+
+
 def texts(stage, inputs, shelf, state=None, words=None):
     """The texts of a stage's prompt that come from what the host fetched: the item, its plan
     and discussions, what it links to, and the stage's own, in the order a prompt shortens
@@ -577,7 +600,10 @@ def texts(stage, inputs, shelf, state=None, words=None):
             before = previous.get("before") or 0
             shown = discussion(on_item[:before], shelf=shelf)
             context["since_plan"] = discussion(on_item[before:], notes=True, shelf=shelf)
-    reviewed = previous_review(last, fixes, merged)
+    reviewed = None
+    if stage == "review":
+        # Only a review has a workspace, whose texts name the version and the base.
+        reviewed = previous_review(last, fixes, merged, workspace_texts(inputs))
     if item.get("person"):
         # Its item is the change itself, with its description and comments, so the review
         # needs neither a plan nor the same discussion twice.
@@ -727,46 +753,53 @@ def _files(files):
     return "\n".join(f"- `{name}`" for name in files)
 
 
-def previous_round(context, base, since):
+def previous_round(context, base, since, text):
     """The review prompt's section about the previous review round, or "" for the first.
-    `since` is the diff from the reviewed commit to the change, or None when the checkout
-    does not have that commit."""
+    `since` is the diff from the reviewed version to the change, or None when the workspace
+    does not have that version. `text` is the workspace's texts."""
     commit = context.get("previous_head") or ""
     if not commit:
         return ""
+    version, name = text["version_kind"], text["workspace_name"]
     if not COMMIT.fullmatch(commit):
-        changes = "(the previously reviewed commit is unknown; use the full diff)"
+        changes = f"(the previously reviewed {version} is unknown; use the full diff)"
     elif since is None:
-        changes = f"(commit {commit[:7]} is not in this checkout; use the full diff)"
+        changes = f"({version} {commit[:7]} is not in {name}; use the full diff)"
     else:
         changes = clip_diff(since) or "(no changes since the previous review)"
-    return Template(template("review_previous")).safe_substitute(
+    return fill(
+        template("review_previous"),
+        context,
         previous_head=commit[:7],
         previous_round=context["previous_round"],
         changes=changes,
         base=base,
+        **text,
     )
 
 
-def merge_review(context, base, sides):
-    """The review prompt's section about a merge of the base branch in this run's fix round,
-    with what each side changed in the conflicted files, or "". `sides` holds the base's
-    diff and the change's in those files since their fork, or None when the checkout cannot
-    show them."""
+def merge_review(context, base, sides, text):
+    """The review prompt's section about a merge of the base in this run's fix round, with
+    what each side changed in the conflicted files, or "". `sides` holds the base's diff and
+    the change's in those files since their fork, or None when the workspace cannot show
+    them. `text` is the workspace's texts."""
     merged = context.get("merged") or {}
     head, commit, files = merged.get("head"), merged.get("base"), merged.get("conflicts")
     if not files or not all(COMMIT.fullmatch(c or "") for c in (head, commit)):
         return ""
     if sides is None:
-        sides = ["(not available in this checkout; read the files directly)"] * 2
+        sides = [f"(not available in {text['workspace_name']}; read the files directly)"] * 2
     else:
         sides = [clip_diff(side or "", MAX_DIFF // 4) or "(none)" for side in sides]
-    return Template(template("review_merge")).safe_substitute(
+    return fill(
+        template("review_merge"),
+        context,
         base=base,
         base_commit=commit[:7],
         files=_files(files),
         base_side=sides[0],
         pr_side=sides[1],
+        **text,
     )
 
 
@@ -888,18 +921,20 @@ def linked_text(context, stage=None):
     )
 
 
-def conflicts_text(base, commit, files, words=None):
-    """The fix prompt's section about a merge of the base branch, or ""."""
+def conflicts_text(base, commit, files, words=None, text=None):
+    """The fix prompt's section about a merge of the base, or "". `text` is the workspace's
+    texts."""
     if not commit:
         return ""
-    text = fill(
+    section = fill(
         template("fix_conflicts" if files else "fix_merged"),
         words,
         base=base,
         base_commit=commit[:7],
         files=_files(files),
+        **(text or {}),
     )
-    return text + "\n"
+    return section + "\n"
 
 
 def _megabytes(size):
@@ -1010,19 +1045,21 @@ def extras(
     checks=None,
     keeps=None,
     shelf=None,
+    text=None,
 ):
     """The texts of a stage's prompt that come from the round itself: the evidence, a fix
     round's merge of `base` (`merging`, {commit, files}), and a review's `diff`, its diff
     `since` the previous review, the `sides` of a merge in the fix round and the `checks`'
     results, whose whole outputs go to `shelf`. `keeps` is the most bytes the host keeps of the
-    CI runs."""
+    CI runs. `text` is the workspace's texts, which the merge sections read."""
     extra = {}
+    text = text or {}
     if stage in ("plan", "implement", "fix"):
         extra["ci_evidence"] = ci_evidence_text(context.get("ci_evidence"), keeps, context)
     if stage == "fix":
         merging = merging or {}
         files = merging.get("files") or []
-        extra["conflicts"] = conflicts_text(base, merging.get("commit"), files, context)
+        extra["conflicts"] = conflicts_text(base, merging.get("commit"), files, context, text)
         extra["evidence"] = evidence_text(context.get("evidence"))
         extra["earlier_fixes"] = context.get("earlier_fixes") or fill(NO_EARLIER_FIXES, context)
         extra["diagnosis"] = diagnosis_text(context.get("diagnose"))
@@ -1033,8 +1070,8 @@ def extras(
             "base": base,
             "diff": diff_text(diff),
             "check_results": check_results_text(checks, shelf),
-            "previous": previous_round(context, base, since),
-            "merge": merge_review(context, base, sides),
+            "previous": previous_round(context, base, since, text),
+            "merge": merge_review(context, base, sides, text),
         }
     extra["shortened"] = shortened_text(context)
     return extra
@@ -1164,6 +1201,7 @@ def finish(stage, context, inputs, policies, folder=None, keeps=None):
     shows part of. `keeps` is the most bytes the host keeps of the CI runs, by default as its
     inputs say."""
     shelf = Shelf(folder)
+    setting = settings(inputs, policies)
     if stage == "triage":
         previous = (inputs.get("previous_plan") or {}).get("profile")
         extra = triage_extras(context, policies.get("profiles") or {}, previous)
@@ -1180,9 +1218,10 @@ def finish(stage, context, inputs, policies, folder=None, keeps=None):
             checks=(inputs.get("checks") or {}).get("results") if stage == "review" else None,
             keeps=keeps or _keeps(inputs),
             shelf=shelf,
+            text={key: str(value) for key, value in setting["text"].items()},
         )
     return {
-        "text": build(stage, context, settings(inputs, policies), extra),
+        "text": build(stage, context, setting, extra),
         "shortened": shortened_names(context),
         "not_read": list((context.get("linked") or {}).get("skipped") or []),
         "files": [{"path": path, "text": text} for path, text in shelf.files.items()],

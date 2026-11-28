@@ -632,9 +632,11 @@ class Round:
         """The texts of the stage's prompt that come from GitHub, as the engine writes them
         from what the context step fetched."""
         folder = self.world.out / "texts"
+        # The workspace, with its texts, is the host's: it comes with the request.
+        workspace = prompt.snake(self.request()["inputs"]).get("workspace")
         return prompt.texts(
             self.stage,
-            self.context["inputs"],
+            {**self.context["inputs"], "workspace": workspace},
             prompt.Shelf(folder),
             self.context["state"],
             prompt.snake(self.request()["words"]),
@@ -753,6 +755,21 @@ APP_TEXT = {
     "pipelineFile": "a validation rule",
     "protectedExample": "`settings/limits`",
     "personChange": "in this draft",
+    "fixLocation": "working through the application's tools on",
+    "earlierWork": "The draft already holds earlier edits.",
+    "mergeRule": (
+        "Do not take in the published request yourself. "
+        "The application does that when the round needs it."
+    ),
+    "versionKind": "version",
+    "baseKind": "published request",
+    "mergeInto": "into the draft, without saving it",
+    "lastMerged": "this draft last took it in",
+    "mergeUndo": "do not discard or publish it.",
+    "sideHistory": "The draft's history shows what each side changed.",
+    "sideNote": "A side's note is not an answer.",
+    "otherVersions": "Any later versions were saved without a fix round.",
+    "workspaceName": "this draft's history",
 }
 # What each stage's prompt reads of `APP_TEXT`, by the text's name.
 APP_TEXT_READ = {
@@ -1055,6 +1072,7 @@ class PromptInputTests(unittest.TestCase):
         ]
         inputs = self.needs("review")
         inputs["item"]["change"] = "6"
+        inputs["workspace"]["text"] = agent.camel(agent.WORKSPACE_TEXT)
         inputs["diff"] = {**inputs["diff"], "merged": {"base": "b" * 40, "conflicts": ["a.py"]}}
         state = self.fix_state("v", fixes, last)
         text = engine.answer(self.request("review", inputs, state))["text"]
@@ -1361,9 +1379,74 @@ class PromptInputTests(unittest.TestCase):
                 self.assertIsNone(GIT_WORD.search(flat), GIT_WORD.search(flat))
                 self.assertIsNone(CI_WORD.search(flat), CI_WORD.search(flat))
 
+    def test_a_host_gives_the_workspace_texts_its_fix_and_merge_prompts_hold(self):
+        """Fix prompts that merge the base, and reviews that follow such a round, hold the
+        host's own texts, and no word of git or of a pull request."""
+        base = {"base": "live", "text": "x"}
+        merged = {"head": "c" * 40, "base": "b" * 40, "conflicts": ["rates.cfg"]}
+        sides = {"since": "y", "sides": ["s", "t"]}
+        last = {"round": 3, "version": "a" * 40, "verdict": "request_changes", "findings": []}
+        after = {
+            "round": 4,
+            "auto": False,
+            "diagnosis": False,
+            "summary": "Merged the base.",
+            "note": "",
+            "cause": "",
+        }
+        cases = {
+            "fix with conflicts": (
+                "fix",
+                {**base, "merging": {"commit": "b" * 40, "files": ["rates.cfg"]}},
+                None,
+                ("fixLocation", "earlierWork", "mergeRule", "versionKind", "mergeInto")
+                + ("sideHistory", "sideNote", "mergeUndo", "baseKind", "instructions")
+                + ("saving", "leftovers", "summaryUse"),
+            ),
+            "fix without conflicts": (
+                "fix",
+                {**base, "merging": {"commit": "b" * 40, "files": []}},
+                None,
+                ("lastMerged", "versionKind", "mergeInto", "baseKind", "mergeUndo"),
+            ),
+            "review with sides": (
+                "review",
+                {**base, **sides, "merged": merged},
+                [after],
+                ("versionKind", "baseKind"),
+            ),
+            "review without sides": (
+                "review",
+                {**base, "merged": merged},
+                [after],
+                ("versionKind", "baseKind", "workspaceName"),
+            ),
+            "review after no fix round": (
+                "review",
+                {**base, "since": "y"},
+                [],
+                ("versionKind", "otherVersions"),
+            ),
+        }
+        for name, (stage, diff, fixes, read) in cases.items():
+            with self.subTest(name):
+                inputs = self.needs(stage)
+                inputs["workspace"]["text"] = APP_TEXT
+                inputs["item"]["change"] = "3"
+                inputs["diff"] = diff
+                state = self.fix_state("v", fixes, last) if fixes is not None else None
+                text = engine.answer(self.request(stage, inputs, state))["text"]
+                flat = " ".join(text.split())
+                for field in read:
+                    self.assertIn(" ".join(APP_TEXT[field].split()), flat, field)
+                for phrase in NO_CHANGE:
+                    flat = flat.replace(phrase, "")
+                self.assertIsNone(GIT_WORD.search(flat), GIT_WORD.search(flat))
+                self.assertNotIn("pull request", flat)
+
     def test_a_prompt_without_the_workspace_texts_is_refused_and_names_what_is_missing(self):
         fields = self.defs["workspaceText"]["required"]
-        for stage in ("plan", "implement", "review"):
+        for stage in ("plan", "implement", "fix", "review"):
             with self.subTest(stage=stage):
                 request = self.request(stage, self.needs(stage))
                 del request["inputs"]["workspace"]["text"]

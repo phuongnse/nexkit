@@ -149,20 +149,38 @@ events and actions](engine-states.md). The runners, the policies a host decides 
   they had. [Hosts](engine-hosts.md#hosts) gives each host's words.
 - **The host's workspace text.** The `workspace` input's `text` object holds the host's own
   sentences on how the agent sees and edits the change. Each replaces one span of a line in the
-  plan, implement and review prompts, a review of a person's change included: `location`, where
-  the agent works ("working through the application's tools on request R-12"); `reviewLocation`,
-  what the review sees ("The review sees draft 3 as it is now."); `candidate`, the version the
-  checks ran on ("the candidate draft"); `instructions`, where the project's instructions are
-  ("(the application's style notes)"); `saving`, the rule on how the agent's edits are kept, a
-  whole sentence; `leftovers`, the rule on what the agent leaves behind, a whole sentence;
+  plan, implement, fix and review prompts, a review of a person's change included, and in the
+  sections about a merge of the base and the round before. `location`, where the agent works
+  ("working through the application's tools on request R-12"); `reviewLocation`, what the review
+  sees ("The review sees draft 3 as it is now."); `candidate`, the version the checks ran on
+  ("the candidate draft"); `instructions`, where the project's instructions are ("(the
+  application's style notes)"); `saving`, the rule on how the agent's edits are kept, a whole
+  sentence; `leftovers`, the rule on what the agent leaves behind, a whole sentence;
   `summaryUse`, what the agent's summary becomes ("the draft's note"); `checksOn`, where the
   checks ran ("run on this exact draft"); `diffHeading`, the heading of the diff ("Changes
-  against"); `pipeline`, what runs the checks ("the application's validation rules"); `pipelineFiles`
-  and `pipelineFile`, what a person's change to it touches, in the plural and with an article
-  ("validation rules", "a validation rule"); `protectedExample`, an example of a protected
-  path; and `personChange`, where a person's change is ("in this draft"). Each is a string of at
-  most 500 characters, and every field is required in every call with a `workspace`. The engine
-  refuses a call whose `workspace` has no `text`, or lacks one of its texts, and names the
+  against"); `pipeline`, what runs the checks ("the application's validation rules");
+  `pipelineFiles` and `pipelineFile`, what a person's change to it touches, in the plural and
+  with an article ("validation rules", "a validation rule"); `protectedExample`, an example of a
+  protected path; and `personChange`, where a person's change is ("in this draft"). The fix
+  stage reads the same `instructions`, `saving`, `leftovers` and `summaryUse`, and these:
+  `fixLocation`, where the fix agent works, which ends before the change's name ("working
+  through the application's tools on"); `earlierWork`, a sentence that the change already holds
+  earlier work ("The draft already holds earlier edits."); `mergeRule`, the rule against merging
+  by hand, a whole sentence; `versionKind` ("version") and `baseKind` ("published request"), the
+  nouns for one version of the change and for what it is merged with, which the fix prompt, the
+  merge sections and the review's previous round use ("version 3a4b5c6", "merged the published
+  request"); `mergeInto` ("into the draft, without saving it"), `lastMerged` ("this draft last
+  took it in") and `mergeUndo` ("do not discard or publish it."), how the base was merged, when
+  it last reached the change and how the agent leaves a merge in place; `sideHistory`, how the
+  agent sees what each side changed in a conflicted file, a whole sentence; `sideNote`, a
+  sentence that a side's note is not an answer; `otherVersions`, a sentence for a review after no
+  fix round ("Any later versions were saved without a fix round."); and `workspaceName`, where
+  the agent reads the change, which the engine's notes name when a version or a diff is not
+  there ("this draft's history"). Each is a string of at most 500 characters, and every field is
+  required in every call with a `workspace`. A text holds no line break, except `mergeRule` and
+  `sideHistory`: each is one sentence that a template wraps over two lines, and a host whose
+  text spans lines indents each further line by two spaces, as the bullet it sits in does. The
+  engine refuses a call whose `workspace` has no `text`, or lacks one of its texts, and names the
   missing field, as in `request.inputs.workspace.text.location is missing`. The texts sit outside
   the `<untrusted>` tags, as the host's own text, so a host builds them only from its own fixed
   text, never from what people wrote. [Hosts](engine-hosts.md#hosts) gives each host's texts.

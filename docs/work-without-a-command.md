@@ -76,8 +76,11 @@ base branch, so a conflict that needs a choice ends as `blocked` with its questi
   run, except one that waits for a usage limit or started the next round itself, starts
   a sweep that checks every open NexKit pull request, as autopilot's sweeps do; a run
   whose `report` did not finish starts it from its `finish` job, once the run ended. So
-  a round held back while another ran starts when that round ends, however it ended. The
-  hourly schedule checks too, which catches anything the others missed.
+  a round held back while another ran starts when that round ends, unless it failed. The
+  hourly schedule checks too, which catches anything the others missed. NexKit decides from
+  the item's stored state alone, so a pull request whose round failed, or ended waiting
+  for CI, gets no conflict round: a person decides, or the fix round that is due merges the
+  base branch itself.
 - **Unknown mergeability.** GitHub works out whether a pull request conflicts in the
   background after the base branch moves. While it has not (`mergeable` is `null` for
   half a minute), the check decides nothing for that pull request, and the next sweep or

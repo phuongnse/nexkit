@@ -5,8 +5,9 @@ report of an implement round that left a conflict round out (`_conflicts_after`)
 agent runs, or it ended) × whether the base branch's rules want pull requests up to date × whether
 the head lacks its tip × conflict rounds used (none, `conflicts.max_rounds`) × updates used (none,
 `conflicts.max_rounds`) × `conflicts.max_rounds` 1 or 3 × a hold label on the issue. Records the
-command, GitHub after it, the preview, two sweeps and `nexkit status`. A scenario drops the
-dimensions that its path and `mergeable` cannot reach."""
+command, GitHub after it, the preview, two sweeps and `nexkit status`. An implement round's
+report also plays a round whose review failed, so that the stored state it ends in is not
+only `ready`. A scenario drops the dimensions that its path and `mergeable` cannot reach."""
 
 import itertools
 import json
@@ -55,10 +56,14 @@ def scenarios():
         updates=["none", "max"],
         max_rounds=[1, 3],
         hold=[False, True],
+        outcome=["ready", "review_failed"],
     )
     seen = set()
     for values in itertools.product(*dims.values()):
         sc = dict(zip(dims, values, strict=True))
+        # Only an implement round's report ends in a round of its own: its review may fail.
+        if sc["path"] != "implement":
+            sc["outcome"] = "ready"
         # An implement round's report and a merge look at no round of the pull request's own.
         if sc["path"] in ("merge", "implement"):
             sc["latest"] = "ended"
@@ -147,7 +152,10 @@ def run(sc):
             art.checks(
                 [{"name": "test", "run": "make test", "exit_code": 0, "passed": True, "output": ""}]
             )
-            art.review({"status": "done", "tokens": TOK, "output": REVIEW})
+            if sc["outcome"] == "review_failed":
+                art.review({"status": "error", "error": "Claude stopped (error_max_turns)."})
+            else:
+                art.review({"status": "done", "tokens": TOK, "output": REVIEW})
             d = {
                 "action": "implement",
                 "issue": 5,

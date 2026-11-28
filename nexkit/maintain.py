@@ -1051,7 +1051,6 @@ def stop_superseded(gh, pull, base, conflicting, strict, workflow, ref, max_roun
     else:
         return ""
     comments = gh.comments(number)
-    rounds = [r for _, r in run_comments(comments) if "round" in r]
     from . import host
 
     try:
@@ -1065,9 +1064,6 @@ def stop_superseded(gh, pull, base, conflicting, strict, workflow, ref, max_roun
             head,
             bool(conflicting),
             not conflicting,
-            True,
-            conflict_rounds_used([r for r in rounds if r.get("conflicts")]),
-            updates_used(comments),
         )
     except host.Refused as error:
         return f"#{number}: {host.refused_reason(error)}"
@@ -1146,10 +1142,10 @@ def _give_back(gh, cfg, issue, number, comments, run):
     which only previews here: this runs in the push run's or the sweep's group, and only the
     item's own group stores its state. The run that the push run starts in that group, the
     conflict round or the review after the update, stores the give-back (`host.command`,
-    `host.base_moved` with `automatic`). Whether the round was an automatic one that counts is
-    the stored `rounds.automatic`, which the import marks for a counted automatic fix round
-    (`state.counted_fix`); a conflict round, and a retried or resumed one, counts toward no
-    automatic fix round here."""
+    `host.base_moved`, on the stored `rounds.automatic`). Whether the round was an automatic one
+    that counts is the stored `rounds.automatic`, which the import marks for a counted automatic
+    fix round (`state.counted_fix`); a conflict round, and a retried or resumed one, counts
+    toward no automatic fix round here."""
     from .host import Refused, stopped_counts
 
     state_id, state = read_state(comments)
@@ -1236,9 +1232,6 @@ def moved_round(gh, cfg, pull, base, workflow, ref, max_rounds, settle):
             pull["head"]["sha"],
             True,
             False,
-            False,
-            conflict_rounds_of(gh, number),
-            0,
         )
     except host.Refused as error:
         return f"#{number}: {host.refused_reason(error)}"

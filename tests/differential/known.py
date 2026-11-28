@@ -940,6 +940,52 @@ def _reviews(record):
     )
 
 
+def _conflict_rounds_started(record):
+    """How many conflict rounds the command of `record` dispatched, by its `gh` snapshot."""
+    gh = record.get("gh")
+    if not isinstance(gh, dict):
+        return 0
+    return len(
+        [
+            dispatch
+            for dispatch in gh.get("dispatches", [])
+            if dispatch["inputs"].get("command") == "fix"
+            and dispatch["inputs"].get("auto") == "conflicts"
+        ]
+    )
+
+
+def _no_conflict_round_after_a_failed_review(sc, old, new):
+    """Whether the report of an implement round whose review failed started a conflict round
+    in NexKit 6 and none in `new`."""
+    return (
+        sc["path"] == "implement"
+        and sc.get("outcome") == "review_failed"
+        and _conflict_rounds_started(old) > 0
+        and _conflict_rounds_started(new) == 0
+    )
+
+
+KNOWN += [
+    {
+        "name": "no conflict round at once after a round whose review failed",
+        "family": "moved",
+        "by": "#758",
+        "why": (
+            "NexKit 6's report started a conflict round at once when an implement round "
+            "ended with a failed review on a pull request that conflicts with its base "
+            "branch. The engine decides from the stored state alone, and a failed item "
+            "waits for a person, who starts the next step; a fix round that is due merges "
+            "the base branch itself. The same holds for a round that ends waiting for CI. "
+            "`BaseMovedStoredTest` in tests/test_host.py shows both answers. Only a record "
+            "where NexKit 6 started a conflict round and the engine started none, after a "
+            "failed review, is excused."
+        ),
+        "match": _no_conflict_round_after_a_failed_review,
+    }
+]
+
+
 def listed(family, sc, old, new):
     """The name of the listed difference that explains how `old` and `new` differ, or None."""
     for known in KNOWN:

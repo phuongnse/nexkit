@@ -4066,9 +4066,7 @@ class RoundDecideTest(ReportCase):
     def test_a_conflict_round_counts_from_the_stored_conflicts(self):
         self.store(conflicts=2)
         self.assertEqual(self.conflicting(used=0), "used_up")
-        self.assertEqual(
-            host.base_moved(self.gh, self.cfg, 5, 6, HEAD, True, False, False, 0, 0), "waits"
-        )
+        self.assertEqual(host.base_moved(self.gh, self.cfg, 5, 6, HEAD, True, False), "waits")
         self.waiting(outcome="held", held_back="conflicts")
         self.store(conflicts=2)
         args = (self.gh, self.cfg, 5, 6, {"head": HEAD, "held_back": "conflicts"}, HEAD, True)
@@ -4214,7 +4212,7 @@ class RoundDecideTest(ReportCase):
 
     def test_a_base_branch_move_and_a_diagnosis_leave_the_state_as_it_is(self):
         before = copy.deepcopy(self.gh.comments(5)), copy.deepcopy(self.gh.comments(6))
-        moved = host.base_moved(self.gh, self.cfg, 5, 6, HEAD, True, False, False, 0, 0)
+        moved = host.base_moved(self.gh, self.cfg, 5, 6, HEAD, True, False)
         self.assertEqual(moved, "round")
         self.assertEqual(host.diagnosis(self.gh, self.cfg, 5, 6, HEAD, True, ["test"]), ["test"])
         self.assertEqual((self.gh.comments(5), self.gh.comments(6)), before)
@@ -4237,6 +4235,86 @@ class RoundDecideTest(ReportCase):
         before = copy.deepcopy(self.gh.comments(7))
         self.assertEqual(host.released(self.gh, self.cfg, 7, 8, run, HEAD, write=True), "fix")
         self.assertEqual(self.gh.comments(7), before)
+
+
+class BaseMovedStoredTest(ReportCase):
+    """A move of the base branch is decided on the item's stored state alone: whether a round's
+    checks run is the stored `runChecks`, and the conflict rounds, the updates and the automatic
+    fix rounds counted are the stored `rounds` (`host.base_moved`)."""
+
+    def setUp(self):
+        super().setUp()
+        self.cfg = make_config(
+            fix={"max_auto_rounds": 3}, conflicts={"auto_resolve": True, "max_rounds": 2}
+        )
+        seed(self.gh, self.cfg, 5)
+
+    def read(self):
+        return item_state.read(self.gh, 5)[1]
+
+    def checking(self, automatic=True, **rounds):
+        """Store a round in its checks on `HEAD`, as the publish job leaves it: `checking` with
+        one `runChecks` the engine gave an id, and two automatic fix rounds counted, which the
+        stored `rounds.automatic` marks as this round's when `automatic`."""
+        doc = self.read()
+        found = {"counted": 2, **rounds}
+        if automatic:
+            found["automatic"] = True
+        checks = {"id": "a2.1", "next": None, "kind": "runChecks", "changeVersion": HEAD}
+        return restate(
+            self.gh,
+            5,
+            state="checking",
+            change={"id": "6", "version": HEAD},
+            pending=[checks],
+            rounds={**doc["rounds"], **found},
+        )
+
+    def test_a_conflict_stops_the_checks_of_a_round_and_gives_its_count_back(self):
+        before = self.checking()
+        self.assertEqual(host.base_moved(self.gh, self.cfg, 5, 6, HEAD, True, False), "round")
+        # Only the item's group stores the answer: the preview left the state as it was.
+        self.assertEqual(self.read(), before)
+        answer = host.base_moved(self.gh, self.cfg, 5, 6, HEAD, True, False, write=True)
+        self.assertEqual(answer, "round")
+        doc = self.read()
+        self.assertEqual(doc["revision"], before["revision"] + 1)
+        self.assertEqual((doc["rounds"]["counted"], doc["rounds"]["conflicts"]), (1, 1))
+
+    def test_a_round_that_does_not_count_keeps_its_count(self):
+        self.checking(automatic=False)
+        self.assertEqual(
+            host.base_moved(self.gh, self.cfg, 5, 6, HEAD, True, False, write=True), "round"
+        )
+        self.assertEqual(self.read()["rounds"]["counted"], 2)
+
+    def test_a_branch_behind_its_base_is_updated_while_its_checks_run(self):
+        self.checking()
+        self.assertEqual(host.base_moved(self.gh, self.cfg, 5, 6, HEAD, False, True), "update")
+
+    def test_the_updates_used_are_the_stored_ones(self):
+        self.checking(updates=2)
+        self.assertEqual(host.base_moved(self.gh, self.cfg, 5, 6, HEAD, False, True), "waits")
+
+    def test_the_conflict_rounds_used_are_the_stored_ones(self):
+        self.checking(conflicts=2)
+        self.assertEqual(host.base_moved(self.gh, self.cfg, 5, 6, HEAD, True, False), "waits")
+        self.assertEqual(self.read()["rounds"]["conflicts"], 2)
+
+    def test_a_conflict_on_a_round_waiting_for_the_base_branch_starts_no_conflict_round(self):
+        # The deliberate difference from NexKit 6, which started a conflict round at once after
+        # an implement round that ended waiting for CI: the stored state is `fixing` with a
+        # wait for the base branch's failure, and a conflict there waits, as the engine's rules
+        # say. A fix round that is due merges the base branch itself.
+        wait = {"id": "w1.1", "for": "baseFailure", "until": None, "on": "none"}
+        doc = self.read()
+        rounds = {**doc["rounds"], "due": True}
+        restate(self.gh, 5, state="fixing", pending=[], waits=[wait], rounds=rounds)
+        self.assertEqual(host.base_moved(self.gh, self.cfg, 5, 6, HEAD, True, False), "waits")
+        self.assertEqual(
+            host.base_moved(self.gh, self.cfg, 5, 6, HEAD, True, False, write=True), "waits"
+        )
+        self.assertEqual(self.read()["rounds"]["conflicts"], 0)
 
 
 class HeldConflictReleasedTest(HostCase):

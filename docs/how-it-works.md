@@ -248,7 +248,7 @@ backstop, for workflows installed before the `item` job, whose runs may overlap:
   try, run after it in the item's queue.
 - A conflict round does not start while any other round of the pull request runs either.
   When the base branch moved meanwhile, the sweep at the end of that round starts it,
-  however the round ended (see *Resolving conflicts* under [Work without a
+  unless the round failed, which a person decides (see *Resolving conflicts* under [Work without a
   command](work-without-a-command.md#work-without-a-command)). The one exception is a round in its checks, whose
   checks can no longer lead to a merge: NexKit stops it and starts the next round at once
   (see *Stopping a round in its checks* there).

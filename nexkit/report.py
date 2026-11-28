@@ -2212,9 +2212,6 @@ def _conflicts_after(gh, cfg, decision, pr, row, workflow, default_branch):
             row.get("head"),
             True,
             False,
-            False,
-            conflict_rounds_of(gh, pr, row),
-            0,
         )
         started = start_conflict_round(
             gh,

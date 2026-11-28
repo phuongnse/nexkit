@@ -2214,7 +2214,7 @@ class ScenarioTests(unittest.TestCase):
         for number in (5, 6):
             self.assertFalse(pipe.gh.comments_matching(number, "a person is needed"))
 
-    def test_a_base_branch_move_during_a_round_starts_the_conflict_round_at_its_end(self):
+    def test_a_base_branch_move_during_a_round_that_fails_leaves_the_conflict_to_a_person(self):
         pushed = []
 
         def move_base(pipe, pull):
@@ -2252,12 +2252,13 @@ class ScenarioTests(unittest.TestCase):
                 ("plan", 5, "planned"),
                 ("go", 5, "auto_fix"),
                 ("fix", 6, "agent_error"),
-                ("fix", 6, "merged"),
             ],
         )
+        # The round failed: the engine leaves the item to a person, and an agent's error is
+        # never retried by a conflict round (D6).
         conflict_rounds = [d for d in pipe.gh.dispatches if d["inputs"].get("auto") == "conflicts"]
-        self.assertEqual(len(conflict_rounds), 1)
-        self.assertEqual(pipe.gh.issues[5]["state"], "closed")
+        self.assertEqual(conflict_rounds, [])
+        self.assertEqual(pipe.gh.issues[5]["state"], "open")
         pipe.check(quiet=True)
 
     def test_a_merge_refused_because_the_head_moved_reviews_the_new_head(self):
@@ -4807,44 +4808,18 @@ class UpdatesStoredTest(unittest.TestCase):
         found = {"action": "fix", "issue": 5, "pr": 6, "target": 6, "head": self.HEAD}
         args = (self.gh, self.cfg, found, 6, self.HEAD, 0, self.RED, None, self.REVIEW)
         self.assertEqual(host.round_ended(*args, write=True)[0], "auto_fix")
-        # Its checks run: the round whose checks the push run stops.
-        comment, doc = item_state.read(self.gh, 5)
-        result = {**host.AGENT, "changeVersion": self.HEAD}
-        result["output"] = {"status": "done", "summary": "Fixed.", "checks_run": []}
-        event = host._event(
-            "actionFinished",
-            5,
-            None,
-            f"run-{doc['revision']}",
-            action=host.pending_id(doc, "runAgent", "fix"),
-            changeVersion=self.HEAD,
-            result=result,
-        )
-        found = host.step(doc, event, host.policies(self.cfg))
-        stored = {**found["state"], "revision": doc["revision"] + 1}
-        self.assertTrue(item_state.write(self.gh, 5, stored, (comment, doc)))
-        # The fix is published on the same head, and its checks follow.
-        comment, doc = item_state.read(self.gh, 5)
-        done = {"change": {"id": "6", "version": self.HEAD}, "refused": None}
-        done["observed"] = {
-            "changeId": "6",
-            "version": self.HEAD,
-            "conflicts": False,
-            "merged": False,
-            "empty": False,
-        }
-        event = host._event(
-            "actionFinished",
-            5,
-            None,
-            f"publish-{doc['revision']}",
-            action=host.pending_id(doc, "publish"),
-            changeVersion=None,
-            result=done,
-        )
-        found = host.step(doc, event, host.policies(self.cfg))
-        stored = {**found["state"], "revision": doc["revision"] + 1}
-        self.assertTrue(item_state.write(self.gh, 5, stored, (comment, doc)))
+        # The round's publish job stores the round, as it does after it pushes the fix on the
+        # same head: the stored state then waits for its checks, which the push run stops.
+        decision = {"action": "fix", "issue": 5, "pr": 6, "target": 6, "head": self.HEAD}
+        fixed = {"status": "done", "summary": "Fixed.", "checks_run": []}
+        agent = {"status": "done", "output": fixed}
+        published = {"published": True, "pr": 6, "head": self.HEAD}
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch.dict(os.environ, {"GITHUB_RUN_ID": "50"}),
+        ):
+            self.assertTrue(store_round(self.gh, self.cfg, decision, agent, published, tmp))
+        stored = item_state.read(self.gh, 5)[1]
         self.assertEqual([a["kind"] for a in stored["pending"]], ["runChecks"])
         self.assertEqual(stored["rounds"]["counted"], 1)
         self.assertTrue(stored["rounds"]["automatic"])

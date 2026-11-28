@@ -112,7 +112,7 @@ comment does not list these files: no person wrote them.
 that fits the stage's schema, such as one that leaves out a field or that Claude Code
 turned down as often as it allows (`error_max_structured_output_retries`). A field whose
 empty value means the same as leaving it out, such as `questions`, `blocker`,
-`outside_plan`, `reviewer_notes`, `protected_paths` or `no_change`, takes that empty value
+`outside_plan`, `reviewer_notes`, `protected` or `no_change`, takes that empty value
 instead. A blocked implement or fix result with an empty `blocker` and no question or open
 conflict to answer does not fit either: a blocked result must say why it stopped. Otherwise NexKit asks the same session once for its result alone, with what was
 wrong, and leaves the working tree as the agent left it, so an implement or fix round

@@ -179,13 +179,21 @@ def plan_data_record(output, passed=()):
     return _encode(PLAN_DATA_PREFIX, plan_record(output, passed))
 
 
+def protected_of(record):
+    """What a result, a plan record or a run marker says only a person changes: `protected`,
+    or the `protected_paths` of the results and comments of an earlier NexKit."""
+    record = record or {}
+    found = record.get("protected") if "protected" in record else record.get("protected_paths")
+    return list(found or [])
+
+
 def plan_record(output, passed=()):
     """What the record of a plan comment holds of the plan `output` (`plan_data_record`)."""
     data = {
         "questions": questions(output.get("questions")),
         "too_large": bool(output.get("too_large")),
     }
-    protected = [clip(p, 300) for p in output.get("protected_paths") or []][:20]
+    protected = [clip(p, 300) for p in protected_of(output)][:20]
     if protected:
         data["protected_paths"] = protected
     finding = filled(output.get("no_change"))

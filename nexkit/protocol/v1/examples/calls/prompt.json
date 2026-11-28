@@ -77,7 +77,7 @@
           "slow": false
         }
       ],
-      "protectedPaths": [
+      "protected": [
         ".github/"
       ],
       "text": {

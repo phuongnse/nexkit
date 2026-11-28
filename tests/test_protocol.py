@@ -29,7 +29,9 @@ PAGES = [HERE.parent / "docs" / name for name in ("engine-states.md", "engine-ho
 EXAMPLES = protocol.ROOT / "examples"
 # What NexKit 6.12.2 gave each stage's agent as its result schema, as `json.dumps` wrote it,
 # with no configuration and with profiles and a checklist, except that a review finding
-# points at a `location` in place of a `file` and a `line`, as the golden's edit by hand says.
+# points at a `location` in place of a `file` and a `line`, and that the plan, implement and fix
+# results name what only a person changes `protected` in place of `protected_paths`, as the
+# golden's edits by hand say.
 GOLDEN = json.loads((HERE / "golden" / "agent-schemas.json").read_text())
 # The keywords of a schema that an agent receives: `schema.problems` reads them without a
 # reader of `$ref`s, and NexKit 6 sent no others.

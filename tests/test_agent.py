@@ -85,7 +85,7 @@ DONE = {
     "outside_plan": [],
     "reviewer_notes": [],
     "no_change": "",
-    "protected_paths": [],
+    "protected": [],
 }
 FIX_DONE = {**DONE, "cause": "", "cause_outside": False, "open_conflicts": []}
 PLAN = {
@@ -99,7 +99,7 @@ PLAN = {
     "too_large": False,
     "split": [],
     "revision": {"started_over": True, "changes": []},
-    "protected_paths": [],
+    "protected": [],
     "no_change": "",
 }
 VERDICT = {
@@ -1362,12 +1362,22 @@ class RunStageTests(StageCase):
     def test_only_protected_paths_count_as_needing_a_person(self):
         listed = [".github/workflows/ci.yml", "src/app.py", "/.nexkit/config.json", "src/app.py"]
         self.claude.configure(
-            result={**DONE, "status": "blocked", "blocker": "CI", "protected_paths": listed}
+            result={**DONE, "status": "blocked", "blocker": "CI", "protected": listed}
         )
         result = self.run_stage("implement")
         self.assertEqual(
-            result["output"]["protected_paths"], [".github/workflows/ci.yml", ".nexkit/config.json"]
+            result["output"]["protected"], [".github/workflows/ci.yml", ".nexkit/config.json"]
         )
+
+    def test_a_result_with_the_protected_paths_of_an_earlier_nexkit_comes_out_as_protected(self):
+        listed = [".github/workflows/ci.yml", "src/app.py"]
+        old = {key: value for key, value in DONE.items() if key != "protected"}
+        self.claude.configure(
+            result={**old, "status": "blocked", "blocker": "CI", "protected_paths": listed}
+        )
+        result = self.run_stage("implement")
+        self.assertEqual(result["output"]["protected"], [".github/workflows/ci.yml"])
+        self.assertNotIn("protected_paths", result["output"])
 
     def test_blocked_agent_publishes_nothing(self):
         self.claude.configure(

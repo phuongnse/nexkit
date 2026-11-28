@@ -73,7 +73,7 @@ Split the docs out.
 NexKit's agents may not change these paths: `.github/`, `.nexkit/`. NexKit rejects a change to them,
 so a person makes such a change by hand. Plan a change outside them when one solves the
 issue as well. When the change must modify a protected path, list it in
-`protected_paths`.
+`protected`.
 
 ## When no change is needed
 
@@ -161,7 +161,7 @@ change.
   prove it.
 - `revision`: for a re-plan, as *How to use the latest plan* says. For a first plan,
   `started_over` is false and `changes` is empty.
-- `protected_paths`: the protected paths that the change must modify, each as a path in
+- `protected`: the protected paths that the change must modify, each as a path in
   the repository, such as `.github/workflows/ci.yml`. Empty when the change needs none.
   When it is not empty, a person decides whether to make that change by hand.
 - `no_change`: only when no change is needed, as *When no change is needed* says: the

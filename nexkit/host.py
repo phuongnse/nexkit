@@ -470,6 +470,7 @@ from .state import (
     plan_profile,
     plan_record,
     planned_parts,
+    protected_of,
     questions,
     recommended_option,
     replanning_options,
@@ -644,9 +645,18 @@ def plan_output(plan, data, run):
         asked,
         bool(data.get("too_large")),
         parts,
-        data.get("protected_paths") or [],
+        protected_of(data),
         data.get("no_change") or "",
     )
+
+
+def engine_output(output):
+    """A copy of an agent's `output` for the engine, which reads only `protected`: the list
+    that the results of an earlier NexKit name `protected_paths` moves to it."""
+    if "protected_paths" not in output:
+        return output
+    kept = {key: value for key, value in output.items() if key != "protected_paths"}
+    return {**kept, "protected": protected_of(output)}
 
 
 def _output(asked, too_large, split, protected, finding):
@@ -661,7 +671,7 @@ def _output(asked, too_large, split, protected, finding):
         "questions": asked,
         "too_large": too_large,
         "split": split,
-        "protected_paths": list(protected),
+        "protected": list(protected),
         "no_change": finding,
     }
 
@@ -1462,7 +1472,7 @@ class _PlanView:
             # older run that carried on records none.
             text = self.run.get("attention") or autopilot.CLOSE_UNFOUNDED
         elif reason == "handMadeChange":
-            text = autopilot.protected_reason(self.data["protected_paths"])
+            text = autopilot.protected_reason(protected_of(self.data))
         elif reason == "approval":
             # The plan is too large, and the engine splits an item with a change only from the
             # plan that a round which ran out of time asked for.
@@ -1769,7 +1779,7 @@ def round_output(run):
         "blocker": "",
         "questions": asked_of(run),
         "checks_run": [],
-        "protected_paths": list(run.get("protected_paths") or []),
+        "protected": protected_of(run),
         "changes": [],
         "testing": "",
         "outside_plan": [],
@@ -1982,7 +1992,7 @@ class _RoundView:
 
     def waits(self, reason):
         if reason == "handMadeChange":
-            text = autopilot.protected_reason(self.run["protected_paths"])
+            text = autopilot.protected_reason(protected_of(self.run))
         elif reason == "askedAgain":
             text = autopilot.REPEATED
         elif reason == "closeRecommended":
@@ -2013,7 +2023,7 @@ def round_carried_on(gh, cfg, issue, decision, agent, ran=None, write=False):
     from .report import _autopilot_fields
 
     found = _autopilot_fields(agent)
-    run = {**found, "protected_paths": ((agent.get("output") or {}).get("protected_paths") or [])}
+    run = {**found, "protected_paths": protected_of(agent.get("output"))}
     event = _event(
         "actionFinished",
         issue["number"],
@@ -2047,7 +2057,7 @@ def fix_output(run):
         "blocker": "",
         "questions": asked_of(run),
         "checks_run": [],
-        "protected_paths": list(run.get("protected_paths") or []),
+        "protected": protected_of(run),
         "cause": "",
         "cause_outside": False,
         "open_conflicts": [],
@@ -2146,7 +2156,7 @@ def stopped(gh, cfg, issue, run, record, start, comments, pull=None, pull_commen
 # What a sweep says of a fix round's questions that wait for a person, by the engine's reason,
 # in NexKit 6's words; "" for the round's own attention.
 ROUND_WAITS = {
-    "handMadeChange": lambda run: autopilot.protected_reason(run["protected_paths"]),
+    "handMadeChange": lambda run: autopilot.protected_reason(protected_of(run)),
     "askedAgain": lambda run: autopilot.REPEATED,
     "closeRecommended": lambda run: autopilot.CLOSE_UNFOUNDED,
     "replanRecommended": lambda run: autopilot.REPLAN_IN_PULL,
@@ -2169,7 +2179,7 @@ def stop_carried_on(gh, cfg, issue, decision, agent, ran=None, write=False):
     timed_out = bool(agent.get("timed_out"))
     pr = decision.get("pr") if decision["action"] == "fix" else None
     found = _autopilot_fields(agent)
-    run = {**found, "protected_paths": ((agent.get("output") or {}).get("protected_paths") or [])}
+    run = {**found, "protected_paths": protected_of(agent.get("output"))}
     output = fix_output(run) if pr else round_output(run)
     version = str(decision.get("head") or pr) if pr else None
     event = _stop_event(issue["number"], _run_event_id(), version, output, timed_out, ran)
@@ -2603,7 +2613,7 @@ def round_published(gh, cfg, decision, pr, head, agent, ran, conflicts):
             and checks[0].get("id") != first_state.RUN_ID
         )
     run = _run_event_id()
-    result = {**spent(ran), "changeVersion": head, "output": agent["output"]}
+    result = {**spent(ran), "changeVersion": head, "output": engine_output(agent["output"])}
     events = [
         _event(
             "actionFinished",

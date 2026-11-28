@@ -825,6 +825,11 @@ class PromptProgramTests(unittest.TestCase):
         self.assertEqual(
             engine.answer(request)["error"], "request.inputs.workspace.text is missing"
         )
+        request = example()
+        del request["inputs"]["workspace"]["protected"]
+        self.assertEqual(
+            engine.answer(request)["error"], "request.inputs.workspace.protected is missing"
+        )
         for stage, needs in (
             ("implement", ["plan"]),
             ("fix", ["plan", "diff"]),
@@ -1439,7 +1444,7 @@ class PromptInputTests(unittest.TestCase):
                 inputs = self.needs(stage)
                 inputs["workspace"] = {
                     "checks": [{"name": "validate", "run": "validate"}],
-                    "protectedPaths": ["settings/"],
+                    "protected": ["settings/"],
                     "text": APP_TEXT,
                 }
                 if stage == "review":
@@ -1587,7 +1592,7 @@ class PromptInputTests(unittest.TestCase):
         inputs = {
             "item": {"id": "/../../../home/runner/.bashrc#", "title": "x", "body": "B" * 70_000},
             "plan": None,
-            "workspace": {"checks": [], "protectedPaths": [], "text": APP_TEXT},
+            "workspace": {"checks": [], "protected": [], "text": APP_TEXT},
         }
         answer = engine.answer(self.request("implement", inputs))
         [kept] = answer["files"]
@@ -1607,7 +1612,7 @@ class PromptInputTests(unittest.TestCase):
         inputs = {
             "item": {"id": id, "title": "x", "body": "B" * 70_000},
             "plan": None,
-            "workspace": {"checks": [], "protectedPaths": [], "text": APP_TEXT},
+            "workspace": {"checks": [], "protected": [], "text": APP_TEXT},
         }
         answer = engine.answer({**self.request("implement", inputs), **request})
         self.assertNotIn("error", answer)

@@ -85,6 +85,11 @@ policies of the engine, and each has its place:
   points, such as "the record and its field, such as `form Customer › field Phone`". The engine
   keeps that location without reading it and shows it to the next prompts. See
   [The prompt](engine.md#the-prompt).
+- **What only a person changes** is the `workspace` input's `protected`: the host's text for each
+  thing an agent may not change, which the engine keeps without reading it. A plan, implement or
+  fix result names what its change needs of them `protected`. An application might send
+  "`settings/limits`", and a result that names it waits for a person to make the change. See
+  [The prompt](engine.md#the-prompt).
 - **`maxParallel` and `priority`** are the `sweep` call's policies: the most items that run at
   once, and the tags that go first. Neither is in `policies.schema.json`, so no state document
   keeps them.
@@ -205,6 +210,7 @@ The GitHub host sets each policy and its own settings as follows. The first colu
 | Evidence and required checks | The text of its CI runs (`the CI runs`, the folder the agent job downloaded them to, and no GitHub access in the session), a *Since* text that says whether a newer run of the workflow passed on the default branch, "GitHub refused the merge" with the sentence on branch protection, and "a check job keeps at most 50 MB of result files". It builds them from fixed text, numbers and the runner's own folder, never from what anyone wrote, and the prompts read as they always did. |
 | Words (`words`) | "GitHub issue #5" for the item, "pull request #6" for the change, "on GitHub" for where people write and read, and `/nexkit go`, `/nexkit fix` and "`/nexkit` commands" for its commands. It builds them from the numbers of the issue and the pull request and from fixed text, never from what anyone wrote. |
 | Workspace text (`workspace.text`) | "working in a checkout of the repository" for where the agent works, "CI configuration" and "workflows" for what runs the checks, "`.github/workflows/ci.yml`" for a protected path, "commit" and "base branch" for a version and its base, "`git log --merge -p`" for what each side of a conflict changed, "the file and line, such as `nexkit/report.py:262`, the file alone when it is not about one line, or an empty string when it is about no file" for a finding's location (`locationForm`), and its other texts, as fixed strings, so its prompts read as they always did. It builds them from fixed text, never from what anyone wrote. |
+| What only a person changes (`workspace.protected`, `protected` in a result) | `protected_paths` of the configuration, sent as `protected`. It keeps only the paths that the configuration protects in a result's list, and it reads `protected` or `protected_paths` from result files and stored comments, so its comments and markers look as they always did |
 | `maxParallel` and `priority` | `autopilot.max_parallel` and `autopilot.priority` |
 | Usage limits (`limit`, `limited`) | `usage_limit.*` |
 | Item budget (`budgets.item`) | None |

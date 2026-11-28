@@ -58,6 +58,7 @@ from .state import (
     latest_plan,
     plan_data,
     planned_parts,
+    protected_of,
     questions,
     read_state,
     round_questions,
@@ -1174,7 +1175,7 @@ def engine_round(run):
     with protected paths its change needs. The sweep of an issue sends every blocked
     `/nexkit go` to the engine (`_assess`)."""
     blocked = run.get("outcome") == "agent_blocked"
-    return blocked and bool(run.get("questions") or run.get("protected_paths"))
+    return blocked and bool(run.get("questions") or protected_of(run))
 
 
 def _meaningful(rounds):
@@ -2018,7 +2019,7 @@ def carries_on(gh, cfg, decision, outcome, agent, ran=None):
     if outcome == "agent_blocked" and decision["action"] == "fix":
         # Stored before the protected-paths answer, which the engine gives as a wait for a person.
         return _stop_carried_on(gh, cfg, decision, agent, ran)
-    if output.get("protected_paths"):
+    if protected_of(output):
         # Only a person changes protected paths.
         return False
     timed_out = outcome == "agent_error" and agent.get("timed_out")

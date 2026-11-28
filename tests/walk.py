@@ -300,7 +300,7 @@ class Walker:
             {"title": t, "body": "x", "depends_on": [i] if i else []} for i, t in enumerate(titles)
         ]
         found["no_change"] = rng.choice(["", "", "Done already."])
-        found["protected_paths"] = rng.choice([[], [], ["a"]])
+        found["protected"] = rng.choice([[], [], ["a"]])
         return found
 
     def round_output(self, rng, stage):
@@ -320,7 +320,7 @@ class Walker:
         found = copy.deepcopy(self.tc.FIXTURES[name])
         found["status"] = rng.choice(["blocked", "blocked", "done"])
         found["questions"] = questions
-        found["protected_paths"] = rng.choice([[], [], ["a.yml"]])
+        found["protected"] = rng.choice([[], [], ["a.yml"]])
         if stage == "implement":
             found["no_change"] = rng.choice(["", "", "Done already."])
         elif rng.random() < 0.2:

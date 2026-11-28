@@ -1517,7 +1517,7 @@ class Step:
             }
             for number, part in enumerate(named if len(named) <= MOST["split"] else [], 1)
         ]
-        paths = output.get("protected_paths", [])[: MOST["protected"]]
+        paths = output.get("protected", [])[: MOST["protected"]]
         self.s["plan"] = {
             "text": text,
             "questions": questions,
@@ -1780,7 +1780,7 @@ class Step:
         # A question with no text asks nothing.
         asked = [_question(item) for item in named if str(item["question"]).strip()]
         asked = asked[: MOST["questions"]]
-        if not asked and not output.get("protected_paths"):
+        if not asked and not output.get("protected"):
             self.move("failed")
             self.need("blocked", filled(output.get("blocker")) or "The agent was blocked.")
             return
@@ -1789,7 +1789,7 @@ class Step:
         # recommendation to close the item.
         found = stage == "implement" and bool(filled(output.get("no_change")))
         self.s["questions"] = {"ref": number, "stage": stage, "items": asked, "noChange": found}
-        if output.get("protected_paths"):
+        if output.get("protected"):
             self.need(
                 "handMadeChange", "The change needs paths that only a person changes.", number
             )

@@ -724,7 +724,7 @@ class SizeTest(unittest.TestCase):
         output = json.loads((protocol.ROOT / "examples" / "results" / "plan.json").read_text())
         many = [{"question": long, "options": [long] * 9, "recommended": 8, "closes": 2}] * 12
         split = [{"title": long, "body": "A part.", "depends_on": list(range(20_000))}] * 10
-        output.update(questions=many, protected_paths=[long] * 25, split=split, too_large=True)
+        output.update(questions=many, protected=[long] * 25, split=split, too_large=True)
         state, actions, _ = step(None, CREATED)
         state, actions, _ = step(state, PLAN)
         agent = {

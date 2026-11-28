@@ -28,6 +28,7 @@ from .state import (
     plan_data_record,
     profile_record,
     profile_text,
+    protected_of,
     questions,
 )
 
@@ -142,7 +143,7 @@ def _protected(paths):
 PLAN_FLOOR = 500
 # What in a plan `render_plan` never cuts: questions and their options, which autopilot
 # answers by their text, titles, checklist items and protected paths. NexKit bounds each.
-UNCUT = {"questions", "title", "item", "protected_paths"}
+UNCUT = {"questions", "title", "item", "protected", "protected_paths"}
 
 
 def _cut(value, most):
@@ -201,7 +202,7 @@ def _render_plan(output, profile, replan, passed, cut=None):
     characters, when they were."""
     finding = filled(output.get("no_change"))
     # As many and as long as the record keeps.
-    protected = [clip(p, 300) for p in output.get("protected_paths") or []][:20]
+    protected = [clip(p, 300) for p in protected_of(output)][:20]
     record, text = profile or (None, None)
     parts = [PLAN_MARKER, *([record] if record else []), "## Plan", "", output["summary"].strip()]
     parts += ["", *([text, ""] if text else [])]

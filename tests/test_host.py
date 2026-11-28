@@ -1,7 +1,9 @@
 """The GitHub host's calls of the engine: what follows a plan is the engine's answer, which
-autopilot and `route` carry out in NexKit 6's words. Most decisions store no state; those after
-a plan, for a first plan, after a vouch and about a pull request's rounds store the answer in
-the item's group (docs/engine.md#getting-there)."""
+autopilot and `route` carry out in NexKit 6's words. The decisions store their answer in the
+item's group, on the item's stored state (docs/engine.md#getting-there). A guard on the engine's
+answer, active for the whole module, fails any `step` that NexKit's code asks for on another
+state: the item's stored one, the state that the row's previous event gave, the import in memory
+while nothing is stored, or a call inside the first import."""
 
 import base64
 import contextlib
@@ -82,6 +84,124 @@ ASKED = {
     "recommended": 1,
     "closes": 3,
 }
+
+
+# The guard of docs/engine.md#getting-there: a `step` that NexKit's code asks for gets only the
+# item's stored state, the state the previous event of its row returned, the import in memory
+# while nothing is stored, or a call made inside the first import.
+REAL_REPLY = engine.reply
+REAL_IMPORT = first_state.import_item
+IMPORT_CODE = REAL_IMPORT.__code__
+STEP_CODE = host.step.__code__
+FIND = item_state.find
+VIOLATIONS = []
+# What each item's last `step` returned and what its import built, by (id of the client, item),
+# with the client so that its id is not reused.
+RETURNED = {}
+IMPORTS = {}
+PATCHERS = []
+
+
+class StepGuardError(AssertionError):
+    """A `step` that NexKit's code asked for on a state that no decision may send."""
+
+
+def _guarded_import(gh, cfg, number, *args, **kwargs):
+    state = REAL_IMPORT(gh, cfg, number, *args, **kwargs)
+    IMPORTS[(id(gh), str(number))] = (gh, json.loads(json.dumps(state)))
+    return state
+
+
+def _nexkit_stack(frame):
+    """The frames from `frame` outward that belong to NexKit's code asking for a `step`: not the
+    engine, the program transport or `host.step` itself."""
+    stack = []
+    while frame is not None:
+        name = frame.f_globals.get("__name__", "")
+        skipped = (
+            not name.startswith("nexkit.")
+            or name in ("nexkit.program", "nexkit.engine")
+            or name.startswith("nexkit.engine.")
+            or frame.f_code is STEP_CODE
+        )
+        if not skipped:
+            stack.append(frame)
+        frame = frame.f_back
+    return stack
+
+
+def _test_id(frame):
+    while frame is not None:
+        test = frame.f_locals.get("self")
+        if isinstance(test, TestCase):
+            return test.id()
+        frame = frame.f_back
+    return "outside a test"
+
+
+def _guarded_reply(call, data):
+    if call != "step":
+        return REAL_REPLY(call, data)
+    frame = sys._getframe(1)
+    stack = _nexkit_stack(frame)
+    if not stack:
+        return REAL_REPLY(call, data)  # A test asks the engine directly.
+    request = json.loads(data)
+    holder = next((f for f in stack if {"gh", "number"} <= f.f_locals.keys()), None)
+    if holder is None:
+        accepted, key = False, None
+    else:
+        key = (id(holder.f_locals["gh"]), str(holder.f_locals["number"]))
+        accepted = any(f.f_code is IMPORT_CODE for f in stack)
+    if not accepted and holder is not None:
+        gh, number = holder.f_locals["gh"], holder.f_locals["number"]
+        try:
+            stored = FIND(gh.comments(number))[1]
+        except Exception:  # A read that fails matches nothing.
+            stored = object()
+        state = request["state"]
+        accepted = (
+            state == stored
+            or (key in RETURNED and state == RETURNED[key][1])
+            or (stored is None and key in IMPORTS and state == IMPORTS[key][1])
+        )
+    if not accepted:
+        event = request.get("event") or {}
+        found = {
+            "test": _test_id(frame),
+            "event": f"{event.get('kind')} {event.get('id')}",
+            "function": holder.f_code.co_name if holder is not None else stack[0].f_code.co_name,
+        }
+        VIOLATIONS.append(found)
+        raise StepGuardError(
+            f"{found['test']}: {found['function']} asked for a step on a state that is not the "
+            f"item's stored one, the row's previous one or the import ({found['event']})"
+        )
+    answer = REAL_REPLY(call, data)
+    if key is not None and isinstance(answer, dict) and "state" in answer:
+        RETURNED[key] = (holder.f_locals["gh"], json.loads(json.dumps(answer["state"])))
+    return answer
+
+
+def setUpModule():
+    for target, name, stand_in in (
+        (engine, "reply", _guarded_reply),
+        (first_state, "import_item", _guarded_import),
+    ):
+        patcher = mock.patch.object(target, name, stand_in)
+        patcher.start()
+        PATCHERS.append(patcher)
+
+
+def tearDownModule():
+    while PATCHERS:
+        PATCHERS.pop().stop()
+    RETURNED.clear()
+    IMPORTS.clear()
+    found = list(VIOLATIONS)
+    VIOLATIONS.clear()
+    if found:
+        raise AssertionError(f"The guard failed {len(found)} step(s): {found}")
 
 
 def seed(gh, cfg, number, now=None):
@@ -900,6 +1020,82 @@ class RefusedTest(HostCase):
         self.assertEqual(
             route(self.gh, "issue_comment", event, cfg=self.cfg)["task"], "close_answer"
         )
+
+
+class StepGuardTest(HostCase):
+    """The guard of this module (`_guarded_reply`) fails a `step` on a state that no decision may
+    send and accepts the three that it may."""
+
+    def spied(self):
+        seen, real = [], host.step
+
+        def spy(state, event, found_policies):
+            seen.append((state, event))
+            return real(state, event, found_policies)
+
+        return seen, spy
+
+    def test_every_class_of_the_module_runs_under_the_guard(self):
+        self.assertIs(engine.reply, _guarded_reply)
+        self.assertIs(first_state.import_item, _guarded_import)
+
+    def test_a_document_built_from_the_empty_state_fails(self):
+        self.issue(5)
+        seed(self.gh, self.cfg, 5)
+        made_up = {**first_state.empty("5"), "title": "made up"}
+        before = len(VIOLATIONS)
+        event = host._event("held", 5, None, "held-5", label="on-hold")
+        try:
+            with mock.patch.object(host, "stored", return_value=(None, made_up)):
+                with self.assertRaises(StepGuardError):
+                    host.decide(self.gh, self.cfg, 5, event)
+            self.assertEqual(len(VIOLATIONS), before + 1)
+            self.assertEqual(VIOLATIONS[-1]["event"], "held held-5")
+        finally:
+            del VIOLATIONS[before:]
+
+    def test_a_failure_that_the_code_under_test_catches_is_still_recorded(self):
+        self.issue(5)
+        seed(self.gh, self.cfg, 5)
+        made_up = {**first_state.empty("5"), "title": "made up"}
+        before = len(VIOLATIONS)
+        event = host._event("held", 5, None, "held-5", label="on-hold")
+        try:
+            with mock.patch.object(host, "stored", return_value=(None, made_up)):
+                try:
+                    host.decide(self.gh, self.cfg, 5, event)
+                except AssertionError:
+                    pass
+            self.assertEqual(len(VIOLATIONS), before + 1)
+        finally:
+            del VIOLATIONS[before:]
+
+    def test_the_second_event_of_a_row_is_sent_on_the_state_the_first_gave(self):
+        self.issue(5)
+        doc = seed(self.gh, self.cfg, 5)[1]
+        events = [
+            host._event("held", 5, None, "held-5", label="on-hold"),
+            host._event("tick", 5, None, "tick-5", wait="w1.1"),
+        ]
+        before = len(VIOLATIONS)
+        seen, spy = self.spied()
+        with mock.patch.object(host, "step", spy):
+            host.decide_all(self.gh, self.cfg, 5, events, wait="time", until=lambda a: False)
+        self.assertEqual(len(seen), 2)
+        self.assertEqual(seen[0][0], doc)
+        self.assertNotEqual(seen[1][0], item_state.read(self.gh, 5)[1])
+        self.assertEqual(len(VIOLATIONS), before)
+
+    def test_the_steps_of_the_first_import_are_accepted(self):
+        cfg = pilot(answer="recommended")
+        self.issue(5)
+        self.plan(5, {"questions": [ASKED]}, url="https://github.com/acme/app/actions/runs/1")
+        before = len(VIOLATIONS)
+        seen, spy = self.spied()
+        with mock.patch.object(host, "step", spy):
+            seed(self.gh, cfg, 5)
+        self.assertTrue(seen)
+        self.assertEqual(len(VIOLATIONS), before)
 
 
 class DecideTest(HostCase):

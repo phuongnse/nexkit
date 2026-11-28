@@ -5,8 +5,10 @@ the one in its state comment or, when it has none, the import in memory (`stored
 event that GitHub shows through `decide`, or its events in a row through `decide_all`, stores the
 engine's answer in the item's group and carries out the answer with NexKit 6's code, in NexKit 6's
 words. Only the first import builds a document from NexKit 6's markers (`first_state.import_item`,
-`store_import`). After a plan, a stopped round and a review, `report` also sends what the runner's
-`run.json` says the agent spent (`spent`).
+`store_import`). `tests/test_host.py` fails any `step` that NexKit's code asks for on another
+state: anything but the stored document, the state the row's previous event gave, the import in
+memory while nothing is stored, or a call inside the first import. After a plan, a stopped round
+and a review, `report` also sends what the runner's `run.json` says the agent spent (`spent`).
 
 The engine decides what follows a plan: its approval by autopilot, the answers to its
 questions, once in a row, a writer's answer that only closes the issue, a plan that finds no
